@@ -159,15 +159,31 @@ fn physical_lines(block: &SyntaxNode) -> Vec<PhysicalLine> {
     lines
 }
 
-/// Whether `node` is a *block* Rd macro: a `ROXYGEN_RD_MACRO` spanning multiple
-/// `#'` lines, which it owns as threaded `ROXYGEN_MARKER` trivia. An inline macro
-/// (`\code{f}`) never contains a marker, so the presence of one is the
-/// distinguisher between atomic passthrough and ordinary inline reflow.
+/// Whether `node` is a *block* Rd macro: a `ROXYGEN_RD_MACRO` that both names a
+/// block-level macro (`is_block_rd_macro` — a list, table, display or examples
+/// wrapper) and spans multiple `#'` lines, which it owns as threaded
+/// `ROXYGEN_MARKER` trivia. Such a macro is atomic passthrough emitted flush.
+///
+/// **Spanning lines alone is not enough.** An inline `\code{…}`/`\href{…}{…}` the
+/// author soft-wrapped threads markers too, but it is markup inside a prose run,
+/// so it stays an atomic *chunk* the reflow positions — laying it out flush would
+/// be the input's line break deciding the output (Tenet 1). A single-line macro
+/// of either class never contains a marker, so it is always a chunk.
 fn is_block_macro(node: &SyntaxNode) -> bool {
     node.kind() == SyntaxKind::ROXYGEN_RD_MACRO
         && node
             .children_with_tokens()
             .any(|el| el.kind() == SyntaxKind::ROXYGEN_MARKER)
+        && rd_macro_node_name(node)
+            .as_deref()
+            .is_some_and(crate::parser::roxygen::is_block_rd_macro)
+}
+
+/// The macro name (without the leading `\`) of a `ROXYGEN_RD_MACRO` node.
+fn rd_macro_node_name(node: &SyntaxNode) -> Option<String> {
+    node.children_with_tokens()
+        .find(|el| el.kind() == SyntaxKind::ROXYGEN_RD_MACRO_NAME)
+        .map(|el| el.to_string().trim_start_matches('\\').to_string())
 }
 
 /// Emit a block Rd macro as atomic, marker-preserving passthrough: its own source
@@ -495,9 +511,73 @@ fn collect_logical_elements(
             NodeOrToken::Node(n) if is_cross_line_inline(&n) => {
                 collect_logical_elements(&n, out);
             }
+            // A reflowing tag whose folded value carries a *block* Rd macro: the
+            // tag stays atomic (its header and the prose before the macro are one
+            // unit) but the macro — and the closing line's trailing prose after it
+            // — are re-emitted as block-level elements, so the split below gives
+            // the macro its own line ([`tag_block_macro`]).
+            NodeOrToken::Node(n) if tag_block_macro_of(&n).is_some() => {
+                let stop = tag_block_macro_of(&n);
+                out.push(NodeOrToken::Node(n.clone()));
+                out.extend(
+                    n.children_with_tokens()
+                        .skip_while(|el| el.as_node() != stop.as_ref()),
+                );
+            }
             other => out.push(other),
         }
     }
+}
+
+/// [`tag_block_macro`] for a node that may or may not be a `ROXYGEN_TAG`.
+fn tag_block_macro_of(node: &SyntaxNode) -> Option<SyntaxNode> {
+    RoxygenTag::cast(node.clone())
+        .as_ref()
+        .and_then(tag_block_macro)
+}
+
+/// The **block** Rd macro folded into a reflowing tag's value: a multi-line
+/// `\name{ … }` whose opener the parser promoted mid-prose on one of the tag's
+/// continuation lines. A block macro always sits flush and never hangs under a
+/// tag, so the tag's value ends there — otherwise the same macro would lay out
+/// two different ways depending on whether the author's line break happened to
+/// put its opener at a line start (where the parser leaves it a section-level
+/// sibling) or mid-prose, and formatting would never reach a fixed point
+/// (Tenet 1). [`collect_logical_elements`] re-emits it as block-level content
+/// and every reader of the tag's prose stops before it
+/// ([`tag_content_children`]).
+///
+/// Only `NameBearingProse` and `SectioningProse` fold plain-prose continuations
+/// into the tag node at all, so only they can carry one.
+fn tag_block_macro(tag: &RoxygenTag) -> Option<SyntaxNode> {
+    matches!(
+        tag_class(tag),
+        TagClass::NameBearingProse | TagClass::SectioningProse
+    )
+    .then(|| tag.syntax().children().find(is_block_macro))
+    .flatten()
+}
+
+/// The tag's content children, stopping before a folded block Rd macro (see
+/// [`tag_block_macro`]). Without one, this is simply the tag's children.
+fn tag_content_children(
+    tag: &RoxygenTag,
+) -> impl Iterator<Item = NodeOrToken<SyntaxNode, SyntaxToken>> + use<'_> {
+    let stop = tag_block_macro(tag);
+    tag.syntax()
+        .children_with_tokens()
+        .take_while(move |el| stop.as_ref().is_none_or(|s| el.as_node() != Some(s)))
+}
+
+/// The source text of the tag's content children ([`tag_content_children`]) —
+/// the whole tag node's text unless its value folds a block Rd macro.
+fn tag_content_text(tag: &RoxygenTag) -> String {
+    tag_content_children(tag)
+        .map(|el| match el {
+            NodeOrToken::Token(t) => t.text().to_string(),
+            NodeOrToken::Node(n) => n.text().to_string(),
+        })
+        .collect()
 }
 
 /// Whether `node` is a resolved inline span (emphasis/strong, an inline link, a
@@ -1095,7 +1175,12 @@ impl SectionUnit {
                 + header.chars().count()
                 + 1
                 + one.chars().count();
-            if !self.force_form2 && inline_w <= line_width {
+            // A chunk that spans `#'` lines — a soft-wrapped inline Rd macro,
+            // glued whole — cannot sit inline after the header whatever its width:
+            // "fits on the tag line" is not a question one can ask of a body that
+            // is not one line. Form-2 puts the bare tag line above it instead.
+            let spans_lines = self.chunks.iter().any(|c| c.contains('\n'));
+            if !self.force_form2 && !spans_lines && inline_w <= line_width {
                 push_line(items, format!("{marker} {header} {one}"));
             } else {
                 push_line(items, format!("{marker} {header}"));
@@ -1398,11 +1483,61 @@ where
             NodeOrToken::Node(n) if is_cross_line_inline(&n) => {
                 chunk_into(n.children_with_tokens(), cur, out);
             }
+            // A soft-wrapped inline Rd macro: still one protected atom, but its
+            // internal `#'` break is the author's wrap, not content, so it is
+            // normalized away. That makes the atom identical to the one the same
+            // macro written on a single line produces, which is what keeps the
+            // input's line breaks out of the output (Tenet 1); on reparse the
+            // joined macro is an ordinary single-line span, so it is idempotent.
+            // A line-significant body (`\verb`, and the block macros that never
+            // reach here) renders its break, so it is glued verbatim below.
+            NodeOrToken::Node(n) if joins_soft_breaks(&n) => {
+                cur.push_str(&join_soft_breaks(&n.text().to_string()));
+            }
             // Protected span (or any other content token/node): glue it in.
             NodeOrToken::Token(t) => cur.push_str(t.text()),
             NodeOrToken::Node(n) => cur.push_str(&n.text().to_string()),
         }
     }
+}
+
+/// Whether `node` is an inline Rd macro carrying a soft wrap whose break does not
+/// render, so [`join_soft_breaks`] may collapse it. Block macros never reach the
+/// chunker (they are their own physical line), so this is purely the inline test.
+fn joins_soft_breaks(node: &SyntaxNode) -> bool {
+    node.kind() == SyntaxKind::ROXYGEN_RD_MACRO
+        && node
+            .children_with_tokens()
+            .any(|el| el.kind() == SyntaxKind::ROXYGEN_MARKER)
+        && !rd_macro_node_name(node)
+            .as_deref()
+            .is_some_and(crate::parser::roxygen::is_line_significant_rd_macro)
+}
+
+/// Collapse an inline Rd macro's soft wraps: a newline, the `#'` marker around
+/// it, and the whitespace on either side all become one space. R's renderers
+/// collapse a whitespace run inside such a body — engine-probed, `\code{a,`⏎`  b}`,
+/// `\code{a,   b}`, and `\code{a, b}` render identically through `Rd2txt` — so the
+/// author's wrap and continuation indent carry no meaning to preserve. (A body
+/// where they *would*, `\verb` and the block macros, never reaches here.)
+///
+/// A break sitting against a `{` or `}` collapses to nothing rather than a space:
+/// there is no content on that side for it to separate, so `\eqn{`⏎`x^2`⏎`}`
+/// joins to `\eqn{x^2}`, the same atom the one-line spelling gives.
+fn join_soft_breaks(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(nl) = rest.find('\n') {
+        out.push_str(rest[..nl].trim_end());
+        let after = rest[nl + 1..].trim_start();
+        let after = after.trim_start_matches('#');
+        rest = after.strip_prefix('\'').unwrap_or(after).trim_start();
+        if !out.ends_with('{') && !rest.starts_with('}') {
+            out.push(' ');
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The content elements of a line: everything after the marker and the single
@@ -1474,8 +1609,8 @@ fn emit_tag_passthrough(items: &mut Vec<Ir>, line: &PhysicalLine, tag: &RoxygenT
     // would never agree on a fixed point); the folded continuation segments
     // already carry their `#'` markers, and the first segment carries the
     // `@name [arg] <value>` header verbatim.
-    if is_multiline_tag(tag.syntax()) {
-        for (i, seg) in tag.syntax().text().to_string().split('\n').enumerate() {
+    if is_multiline_tag(tag) {
+        for (i, seg) in tag_content_text(tag).split('\n').enumerate() {
             if i == 0 {
                 push_line(items, format!("{marker} {}", seg.trim_end()));
             } else {
@@ -1585,7 +1720,7 @@ fn tag_header(tag: &RoxygenTag) -> Option<String> {
 /// keys on the field's first line, not the joined continuation).
 fn tag_first_line_value(tag: &RoxygenTag) -> String {
     let mut s = String::new();
-    for el in tag.syntax().children_with_tokens() {
+    for el in tag_content_children(tag) {
         match el.kind() {
             SyntaxKind::NEWLINE => break,
             k if is_tag_prose_kind(k) => match el {
@@ -1609,7 +1744,7 @@ fn tag_first_line_value(tag: &RoxygenTag) -> String {
 /// and trimmed — used for non-reflowed passthrough tags.
 fn tag_rest_verbatim(tag: &RoxygenTag) -> String {
     let mut s = String::new();
-    for el in tag.syntax().children_with_tokens() {
+    for el in tag_content_children(tag) {
         if is_tag_prose_kind(el.kind()) {
             match el {
                 NodeOrToken::Token(t) => s.push_str(t.text()),
@@ -1627,9 +1762,7 @@ fn tag_rest_verbatim(tag: &RoxygenTag) -> String {
 /// opportunities (`chunk_elements` treats a newline as a break and drops the
 /// continuation markers), letting the whole field value reflow as one run.
 fn tag_prose_chunks(tag: &RoxygenTag, out: &mut Vec<String>) {
-    let prose = tag
-        .syntax()
-        .children_with_tokens()
+    let prose = tag_content_children(tag)
         .filter(|el| is_tag_prose_kind(el.kind()) || el.kind() == SyntaxKind::NEWLINE);
     chunk_elements(prose, out);
 }
@@ -1637,11 +1770,13 @@ fn tag_prose_chunks(tag: &RoxygenTag, out: &mut Vec<String>) {
 /// Whether `node` is a `ROXYGEN_TAG` that folded plain-prose continuation lines
 /// into its value (see `emit_tag_line`) — it threads one or more `#'` markers, so
 /// it spans multiple physical lines. A single-line tag never contains a marker.
-fn is_multiline_tag(node: &SyntaxNode) -> bool {
-    node.kind() == SyntaxKind::ROXYGEN_TAG
-        && node
+fn is_multiline_tag(tag: &RoxygenTag) -> bool {
+    tag_content_children(tag).any(|el| match el {
+        NodeOrToken::Token(t) => t.kind() == SyntaxKind::ROXYGEN_MARKER,
+        NodeOrToken::Node(n) => n
             .descendants_with_tokens()
-            .any(|el| el.kind() == SyntaxKind::ROXYGEN_MARKER)
+            .any(|d| d.kind() == SyntaxKind::ROXYGEN_MARKER),
+    })
 }
 
 /// Whether `line` carries a folded multi-line tag with a **structured**
@@ -1657,13 +1792,13 @@ fn tag_folds_structured_line(line: &PhysicalLine) -> bool {
     let Some(tag) = line.tag() else {
         return false;
     };
-    if !is_multiline_tag(tag.syntax()) {
+    if !is_multiline_tag(&tag) {
         return false;
     }
     // Continuation segments each start with their own `#+'` marker (the fold
     // threads it into the tag node); strip it to classify the content, which
     // continues the tag's open prose (`in_paragraph`).
-    tag.syntax().text().to_string().lines().skip(1).any(|seg| {
+    tag_content_text(&tag).lines().skip(1).any(|seg| {
         let s = seg.trim();
         let hashes = s.len() - s.trim_start_matches('#').len();
         let content = match s[hashes..].strip_prefix('\'') {

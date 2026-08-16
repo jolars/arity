@@ -8,8 +8,8 @@
 
 use super::group::{LineKind, classify_line, is_line_body_kind, line_content_start};
 use super::{
-    advance_md_col, is_multi_arg_rd_macro, md_fence_run_closes, md_ws_gauge, scan_balanced,
-    utf8_len,
+    advance_md_col, is_block_rd_macro, is_multi_arg_rd_macro, md_fence_run_closes, md_ws_gauge,
+    scan_balanced, utf8_len,
 };
 use crate::parser::events::Event;
 use crate::parser::lexer::{RoxygenRole, TokKind, Token};
@@ -37,12 +37,29 @@ enum BodyFrame {
 ///   structural macro (`\tabular{format}`, `\item{term}`) immediately followed by
 ///   a `RoxygenText` that opens an unbalanced `{` body --- the macro's last
 ///   argument spans following lines.
+///
+/// Either shape must additionally name a **block-level** macro
+/// ([`is_block_rd_macro`]). Spanning lines is not what makes a macro a block: an
+/// inline `\code{…}`/`\href{…}{…}` the author soft-wrapped spans lines too, and
+/// promoting it here would make it a section-level sibling purely because its
+/// opener landed at a line start, while the same macro wrapped mid-prose stays
+/// inline markup ([`super::group::emit_prose_rest`]). It falls through to the
+/// prose path instead, which builds the identical inline `ROXYGEN_RD_MACRO`
+/// either way (Tenet 1).
 pub(super) fn is_block_macro_line(tokens: &[Token], start: usize) -> bool {
     let content = line_content_start(tokens, start);
     match tokens.get(content) {
-        Some(tok) if tok.kind == TokKind::RoxygenText => is_block_macro_opener(tok.text),
-        _ => is_form_b_block_macro(tokens, content),
+        Some(tok) if tok.kind == TokKind::RoxygenText => {
+            is_block_macro_opener(tok.text) && names_block_rd_macro(tok.text)
+        }
+        Some(tok) => is_form_b_block_macro(tokens, content) && names_block_rd_macro(tok.text),
+        None => false,
     }
+}
+
+/// Whether `text`, a `\name…` span, names a block-level Rd macro.
+fn names_block_rd_macro(text: &str) -> bool {
+    rd_macro_name(text).is_some_and(is_block_rd_macro)
 }
 
 /// Whether the token at `i` begins a **Form B** block macro: a *balanced*

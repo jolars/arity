@@ -538,9 +538,21 @@ fn emit_tag_line(tokens: &[Token], start: usize, md: bool, events: &mut Vec<Even
         return emit_md_setext_heading_from_value(tokens, head_end, events);
     }
 
-    while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
-        events.push(Event::Tok(i));
-        i += 1;
+    // A folding tag's own-line value takes the same mid-prose block-macro
+    // promotion its continuation lines get ([`emit_prose_rest`]), so a wrapped
+    // `\name{…}` builds the identical `ROXYGEN_RD_MACRO` wherever its opener
+    // happens to sit — otherwise `@details \eqn{` would stay literal prose while
+    // the same opener one line down became a macro node, and reflow could join a
+    // verbatim body across the wrap. The head tokens (`@`, name, arg, whitespace)
+    // can never trigger the promotion; only a value token can. A tag that does not
+    // fold keeps its own line structure, value tokens included.
+    if folds {
+        i = emit_prose_rest(tokens, i, events);
+    } else {
+        while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
+            events.push(Event::Tok(i));
+            i += 1;
+        }
     }
     // Only a *prose* tag's field spans its continuation lines; a code/examples,
     // verbatim-value, token-list, toggle, `@section`, or verbatim-Rd tag keeps its

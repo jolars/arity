@@ -1,0 +1,13 @@
+---
+source: crates/arity-formatter/tests/formatter.rs
+assertion_line: 376
+expression: formatted
+---
+#' @details
+#' The layout is described by the table
+#' \tabular{ll}{
+#'   a \tab b \cr
+#'   c \tab d
+#' }
+#' and nothing else.
+f <- function() NULL

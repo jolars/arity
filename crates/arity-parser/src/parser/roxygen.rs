@@ -31,6 +31,95 @@ pub(crate) use lex::{
     roxygen_line_tag, scan_rd_macro, tag_body_skips_markdown, tag_folds_prose_continuation,
 };
 
+/// **Block-level** Rd macros: those whose `{…}` content R renders as its own
+/// display construct — a list, a table, a preformatted or display-math block, an
+/// examples-only wrapper around whole lines of R, or a conditional/sectioning
+/// wrapper around any of those. Everything else (`\code`, `\emph`, `\link`,
+/// `\href`, `\eqn`, the system user macros, …) is **inline** markup that belongs
+/// in the surrounding prose run.
+///
+/// This is what makes the block/inline split a property of the *macro* rather
+/// than of the author's line breaks. An unbalanced `\name{` is the only shape
+/// that can span `#'` lines, so without this table "spans lines" was standing in
+/// for "is a block" — which made a merely soft-wrapped `\code{…}` parse as a
+/// section-level block when its opener happened to land at a line start, and as
+/// inline prose markup when it did not. Both the grouper's line-start gate
+/// ([`build::is_block_macro_line`]) and the formatter's layout consult this
+/// instead, so the two written forms produce the same tree and the same output
+/// (Tenet 1).
+///
+/// Names are `parse_Rd`'s, restricted to [`KNOWN_RD_MACROS`]; a package or user
+/// macro is never block-level (`parse_Rd` expands it into whatever it defines).
+const BLOCK_RD_MACROS: &[&str] = &[
+    // Lists and tables. `\item` is a list *entry*, one per line by construction.
+    "describe",
+    "itemize",
+    "enumerate",
+    "tabular",
+    "item",
+    // Display text: `\preformatted` is verbatim display, `\deqn` is display math
+    // (its inline sibling `\eqn` is not), `\out` is raw output R renders one
+    // `VERB` atom per source line.
+    "preformatted",
+    "deqn",
+    "out",
+    // Examples-only wrappers: their content is whole lines of R, not prose.
+    "dontrun",
+    "donttest",
+    "dontshow",
+    "testonly",
+    // Wrappers that carry any of the above, so they are block wherever they are.
+    "if",
+    "ifelse",
+    "section",
+    "subsection",
+    // Whole-line declarations.
+    "newcommand",
+    "renewcommand",
+];
+
+/// Whether the macro named `name` (without the leading `\`) is **block-level** —
+/// a display construct that owns its own lines rather than inline markup inside a
+/// prose run. See [`BLOCK_RD_MACROS`]. `pub` for the formatter, which keys a
+/// macro's layout on it (semver-loose, see the crate docs).
+pub fn is_block_rd_macro(name: &str) -> bool {
+    BLOCK_RD_MACROS.contains(&name)
+}
+
+/// Rd macros whose body's **line breaks survive rendering**, so a soft wrap
+/// inside one is content rather than layout. R's renderers were probed directly
+/// (`Rd2txt` over `\name{AAA,`⏎`BBB}` against `\name{AAA, BBB}`): every other
+/// macro's body renders identically either way — `parse_Rd` records one atom per
+/// source line, but the atoms are rejoined with a space on the way out — while
+/// `\verb` and `\preformatted` render the break as a break.
+///
+/// This is what lets a soft-wrapped inline macro chunk exactly like the same
+/// macro written on one line, instead of carrying the author's wrap into the
+/// output (Tenet 1). The block-level line-significant macros (`\preformatted`,
+/// `\out`, the `\dontrun` family) are in [`BLOCK_RD_MACROS`] too and never reach
+/// that path, but they are named here as well so the fact stands on its own.
+const LINE_SIGNIFICANT_RD_MACROS: &[&str] = &[
+    "verb",
+    "preformatted",
+    // Raw passthrough: the body is emitted to the target format untouched, so a
+    // break in it is whatever that format makes of it, not ours to normalize.
+    "out",
+    "Sexpr",
+    // Examples-only wrappers: the body is whole lines of R.
+    "dontrun",
+    "donttest",
+    "dontshow",
+    "testonly",
+];
+
+/// Whether the macro named `name` (without the leading `\`) renders its body's
+/// line breaks, so a soft wrap inside it must be preserved rather than joined.
+/// See [`LINE_SIGNIFICANT_RD_MACROS`]. `pub` for the formatter, which keys reflow
+/// on it (semver-loose, see the crate docs).
+pub fn is_line_significant_rd_macro(name: &str) -> bool {
+    LINE_SIGNIFICANT_RD_MACROS.contains(&name)
+}
+
 /// Inline Rd macros whose `{…}` content is **verbatim** (`VERB` in
 /// `tools::parse_Rd`): the body is raw text and nested `\macro` markup is *not*
 /// parsed. Confirmed against `parse_Rd` (see the projector's `rd_macros` work).

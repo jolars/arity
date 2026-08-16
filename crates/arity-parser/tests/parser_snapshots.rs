@@ -440,6 +440,7 @@ fn fixture_names() -> &'static [&'static str] {
         "roxygen_rd_figure",
         "roxygen_unterminated_code",
         "roxygen_unbalanced_macro",
+        "roxygen_wrapped_inline_macro",
         "roxygen_backtick_in_macro",
         "roxygen_unknown_macro",
         "roxygen_backslash_parity",
