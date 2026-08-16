@@ -791,11 +791,15 @@ pub(crate) fn rename_edits(
 /// starts with a letter or `.` (and a leading `.` is not followed by a digit),
 /// contains only letters, digits, `.`, and `_`, and isn't a reserved word.
 /// Backtick-quoted non-syntactic names are out of scope (the rename withholds).
+///
+/// "Letter" follows R, which is locale-dependent and in a UTF-8 locale admits
+/// any alphabetic character, so `café` and `日本語` are syntactic. Only ASCII
+/// digits count as digits, as in `make.names`.
 pub(crate) fn is_syntactic_r_name(name: &str) -> bool {
     let Some(first) = name.chars().next() else {
         return false;
     };
-    if !(first.is_ascii_alphabetic() || first == '.') {
+    if !(first.is_alphabetic() || first == '.') {
         return false;
     }
     if first == '.' && matches!(name.as_bytes().get(1), Some(b) if b.is_ascii_digit()) {
@@ -803,7 +807,7 @@ pub(crate) fn is_syntactic_r_name(name: &str) -> bool {
     }
     if !name
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_')
+        .all(|c| c.is_alphanumeric() || c == '.' || c == '_')
     {
         return false;
     }
@@ -837,6 +841,21 @@ pub(crate) fn is_reserved_word(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// R's letters are locale-dependent, so a UTF-8 name like `café` needs no
+    /// backticks and a rename to one must not be withheld (issue #108).
+    #[test]
+    fn non_ascii_letters_are_syntactic_names() {
+        for name in ["café", "日本語", "Ωx", ".δ_1", "x日"] {
+            assert!(is_syntactic_r_name(name), "{name:?} is a syntactic R name");
+        }
+        for name in ["😀", "a b", "1x", ".2way", "if", "×"] {
+            assert!(
+                !is_syntactic_r_name(name),
+                "{name:?} is not a syntactic R name"
+            );
+        }
+    }
 
     #[test]
     fn rename_cursor_offset_precise_slice_survives_disjoint_edits() {

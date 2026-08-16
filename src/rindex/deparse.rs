@@ -132,12 +132,15 @@ fn is_syntactic(name: &str) -> bool {
     }
     let mut chars = name.chars();
     let first = chars.next().unwrap();
-    if !(first.is_ascii_alphabetic() || first == '.') {
+    // R's "letter" is locale-dependent; in a UTF-8 locale any alphabetic
+    // character starts a name, so `café` deparses bare (issue #108). Only ASCII
+    // digits count as digits, as in `make.names`.
+    if !(first.is_alphabetic() || first == '.') {
         return false;
     }
     if !name
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_')
+        .all(|c| c.is_alphanumeric() || c == '.' || c == '_')
     {
         return false;
     }
@@ -417,6 +420,21 @@ mod tests {
     use super::*;
     use crate::rindex::rds::PairlistItem;
     use smol_str::SmolStr;
+
+    /// R's letters are locale-dependent, so a UTF-8 name is syntactic and
+    /// deparses bare --- `deparse(quote(café))` is `café`, not `` `café` ``
+    /// (issue #108).
+    #[test]
+    fn non_ascii_letters_deparse_without_backticks() {
+        let mut out = String::new();
+        write_name(&mut out, "café");
+        write_name(&mut out, "日本語");
+        assert_eq!(out, "café日本語");
+
+        let mut out = String::new();
+        write_name(&mut out, "😀");
+        assert_eq!(out, "`😀`");
+    }
 
     fn bare(kind: Rkind) -> Robj {
         Robj {
