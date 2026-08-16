@@ -26,3 +26,14 @@ pub use reparse::{
     reparse_with_options,
 };
 pub use validate::{has_r_invalid_name, is_single_expression};
+
+/// Lex `input` and return the number of tokens produced.
+///
+/// A benchmark-only entry point (`benches/lex.rs`): the lexer and its token
+/// type stay crate-internal, so the bench observes only the count while the
+/// full token vector is still built and dropped per call. Hidden from docs;
+/// not covered by semver stability guarantees.
+#[doc(hidden)]
+pub fn lex_token_count(input: &str) -> usize {
+    lexer::lex_with_md(input, false).len()
+}

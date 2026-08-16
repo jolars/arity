@@ -30,3 +30,7 @@ criterion = { version = "0.8.2", default-features = false, features = [
 [[bench]]
 name = "parse"
 harness = false
+
+[[bench]]
+name = "lex"
+harness = false
