@@ -40,7 +40,7 @@ enum BodyFrame {
 pub(super) fn is_block_macro_line(tokens: &[Token], start: usize) -> bool {
     let content = line_content_start(tokens, start);
     match tokens.get(content) {
-        Some(tok) if tok.kind == TokKind::RoxygenText => is_block_macro_opener(&tok.text),
+        Some(tok) if tok.kind == TokKind::RoxygenText => is_block_macro_opener(tok.text),
         _ => is_form_b_block_macro(tokens, content),
     }
 }
@@ -57,10 +57,10 @@ pub(super) fn is_block_macro_line(tokens: &[Token], start: usize) -> bool {
 pub(super) fn is_form_b_block_macro(tokens: &[Token], i: usize) -> bool {
     tokens.get(i).is_some_and(|tok| {
         tok.kind == TokKind::RoxygenRdMacro
-            && rd_macro_name(&tok.text).is_some_and(is_multi_arg_rd_macro)
+            && rd_macro_name(tok.text).is_some_and(is_multi_arg_rd_macro)
     }) && matches!(
         tokens.get(i + 1),
-        Some(next) if next.kind == TokKind::RoxygenText && opens_unbalanced_brace(&next.text)
+        Some(next) if next.kind == TokKind::RoxygenText && opens_unbalanced_brace(next.text)
     )
 }
 
@@ -108,7 +108,7 @@ pub(super) fn block_macro_opener_closes(tokens: &[Token], opener: usize) -> bool
         while let Some(tok) = tokens.get(i) {
             match &tok.kind {
                 TokKind::RoxygenText => {
-                    if brace_scan(&tok.text, &mut depth) {
+                    if brace_scan(tok.text, &mut depth) {
                         return true;
                     }
                     i += 1;
@@ -178,7 +178,7 @@ pub(super) fn is_md_list_start(tokens: &[Token], start: usize, para_open: bool) 
     match tokens.get(content) {
         Some(tok) if tok.kind == TokKind::RoxygenMdListMarker => {
             !para_open
-                || (md_list_marker_can_interrupt(&tok.text)
+                || (md_list_marker_can_interrupt(tok.text)
                     && !md_list_item_is_empty(tokens, content)
                     && !is_indent_code_line(tokens, start))
         }
@@ -286,7 +286,7 @@ fn list_line_indent(tokens: &[Token], marker: usize) -> usize {
     let mut k = marker + 1;
     let mut texts = Vec::new();
     while tokens.get(k).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
-        texts.push(tokens[k].text.as_str());
+        texts.push(tokens[k].text);
         k += 1;
     }
     md_ws_gauge(texts)
@@ -503,7 +503,7 @@ fn line_raw_content(tokens: &[Token], marker: usize) -> String {
         if !is_line_body_kind(&tok.kind) {
             break;
         }
-        s.push_str(&tok.text);
+        s.push_str(tok.text);
         i += 1;
     }
     s
@@ -623,7 +623,7 @@ pub(super) fn emit_md_block_quote_from_value(
     let mut i = ws_start;
     while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
         if tokens[i].kind == TokKind::RoxygenMdBlockQuote {
-            quote_state_update(&mut state, quote_inner_content(&tokens[i].text));
+            quote_state_update(&mut state, quote_inner_content(tokens[i].text));
         }
         events.push(Event::Tok(i));
         i += 1;
@@ -704,7 +704,7 @@ fn quote_state_update_line(tokens: &[Token], start: usize, state: &mut QuoteInne
     if let Some(tok) = tokens.get(content)
         && tok.kind == TokKind::RoxygenMdBlockQuote
     {
-        quote_state_update(state, quote_inner_content(&tok.text));
+        quote_state_update(state, quote_inner_content(tok.text));
     }
 }
 
@@ -884,7 +884,7 @@ pub(super) fn is_md_thematic_break_line(tokens: &[Token], start: usize) -> bool 
     match tokens.get(content).map(|t| &t.kind) {
         Some(TokKind::RoxygenMdThematicBreak) => true,
         Some(TokKind::RoxygenMdSetextUnderline) => {
-            setext_underline_is_thematic(&tokens[content].text)
+            setext_underline_is_thematic(tokens[content].text)
         }
         _ => false,
     }
@@ -989,7 +989,7 @@ pub(super) fn is_md_table_value(tokens: &[Token], value_start: usize) -> bool {
         if !is_line_body_kind(&tok.kind) {
             break;
         }
-        header.push_str(&tok.text);
+        header.push_str(tok.text);
         i += 1;
     }
     let Some(delim_marker) = following_line_marker(tokens, i) else {
@@ -1148,7 +1148,7 @@ fn emit_md_list_level_inner(
             }
             let mut ws_texts = Vec::new();
             while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
-                ws_texts.push(tokens[i].text.as_str());
+                ws_texts.push(tokens[i].text);
                 events.push(Event::Tok(i));
                 i += 1;
             }
@@ -1570,7 +1570,7 @@ fn emit_md_list_level_inner(
         // (CommonMark; engine-probed: `-` … `*` and `1.` … `2)` split), whether
         // or not a blank line intervenes.
         let sibling_marker = &tokens[line_content_start(tokens, m)].text;
-        if md_list_marker_type(sibling_marker) != md_list_marker_type(&tokens[item_marker].text) {
+        if md_list_marker_type(sibling_marker) != md_list_marker_type(tokens[item_marker].text) {
             break;
         }
         for idx in i..m {
@@ -1749,7 +1749,7 @@ pub(super) fn is_md_indented_code_value(tokens: &[Token], value_start: usize, md
         return false;
     }
     let ws = &tokens[value_start - 1];
-    ws.kind == TokKind::Whitespace && md_ws_gauge([ws.text.as_str()]) >= 5
+    ws.kind == TokKind::Whitespace && md_ws_gauge([ws.text]) >= 5
 }
 
 /// Emit a `ROXYGEN_MD_INDENTED_CODE` node for an indented code block opening as a
@@ -1874,7 +1874,7 @@ pub(super) fn emit_md_code_block(
     let mut opener = "";
     if tokens.get(i).map(|t| &t.kind) == Some(&TokKind::RoxygenMdFence) {
         events.push(Event::Tok(i)); // opener fence
-        opener = &tokens[i].text;
+        opener = tokens[i].text;
         i += 1;
     }
 
@@ -1903,7 +1903,7 @@ pub(super) fn emit_md_code_block_from_value(
     let mut opener = "";
     while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
         if tokens[i].kind == TokKind::RoxygenMdFence && opener.is_empty() {
-            opener = &tokens[i].text;
+            opener = tokens[i].text;
         }
         events.push(Event::Tok(i));
         i += 1;
@@ -1962,7 +1962,7 @@ fn finish_md_code_block(
         let is_closer = tokens.get(i).is_some_and(|t| {
             t.kind == TokKind::RoxygenMdFence
                 && ws_width <= base_indent + 3
-                && md_fence_run_closes(opener, &t.text)
+                && md_fence_run_closes(opener, t.text)
         });
         while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
             events.push(Event::Tok(i));
@@ -2174,7 +2174,7 @@ pub(super) fn emit_md_html_block_from_value(
     let mut i = ws_start;
     while tokens.get(i).is_some_and(|t| is_line_body_kind(&t.kind)) {
         if !(opener.is_empty() && tokens[i].kind == TokKind::Whitespace) {
-            opener.push_str(&tokens[i].text);
+            opener.push_str(tokens[i].text);
         }
         events.push(Event::Tok(i));
         i += 1;
@@ -2621,18 +2621,18 @@ fn emit_block_macro_from_opener(
     // the body brace.
     match tokens.get(i) {
         Some(tok) if tok.kind == TokKind::RoxygenText => {
-            arity = rd_macro_name(&tok.text).map_or(1, super::rd_macro_arity);
+            arity = rd_macro_name(tok.text).map_or(1, super::rd_macro_arity);
             // The opener token is unbalanced to end-of-line (the block-macro
             // gates), so this cannot close the macro; the remainder is empty.
-            emit_block_open(events, &tok.text, &mut frames, &mut closed);
+            emit_block_open(events, tok.text, &mut frames, &mut closed);
             i += 1;
         }
         Some(tok) if tok.kind == TokKind::RoxygenRdMacro => {
-            arity = rd_macro_name(&tok.text).map_or(1, super::rd_macro_arity);
-            groups = emit_block_open_arg_macro(events, &tok.text) + 1;
+            arity = rd_macro_name(tok.text).map_or(1, super::rd_macro_arity);
+            groups = emit_block_open_arg_macro(events, tok.text) + 1;
             i += 1;
             if let Some(next) = tokens.get(i) {
-                emit_block_body_open(events, &next.text, &mut frames, &mut closed);
+                emit_block_body_open(events, next.text, &mut frames, &mut closed);
                 i += 1;
             }
         }
@@ -2644,7 +2644,7 @@ fn emit_block_macro_from_opener(
         while let Some(tok) = tokens.get(i) {
             match &tok.kind {
                 TokKind::RoxygenText => {
-                    let mut rest = emit_block_content(events, &tok.text, &mut frames, &mut closed);
+                    let mut rest = emit_block_content(events, tok.text, &mut frames, &mut closed);
                     i += 1;
                     // A multi-argument macro's further adjacent groups: parse_Rd
                     // consumes a `{` touching the closing `}` (`\deqn{…}{ascii}`,
@@ -2831,7 +2831,7 @@ fn md_block_body_horizon(tokens: &[Token], start: usize, mut depth: i32) -> Opti
         while let Some(tok) = tokens.get(i) {
             match &tok.kind {
                 TokKind::RoxygenText => {
-                    if brace_scan_closes_body(&tok.text, &mut depth) {
+                    if brace_scan_closes_body(tok.text, &mut depth) {
                         return horizon;
                     }
                     i += 1;

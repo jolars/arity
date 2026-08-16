@@ -232,7 +232,12 @@ pub(crate) fn tag_folds_prose_continuation(name: &str) -> bool {
 /// block's resolved markdown mode (see [`resolve_roxygen_block`]), which keys
 /// the inline grammar (markdown emphasis/strong/code is recognized only when
 /// `md` is on). The pushed tokens' texts concatenate to exactly `text`.
-pub(crate) fn lex_roxygen_line(out: &mut Vec<Token>, text: &str, start: usize, md: bool) {
+pub(crate) fn lex_roxygen_line<'a>(
+    out: &mut Vec<Token<'a>>,
+    text: &'a str,
+    start: usize,
+    md: bool,
+) {
     debug_assert!(is_roxygen_comment(text));
     let bytes = text.as_bytes();
 
@@ -269,11 +274,17 @@ pub(crate) fn lex_roxygen_line(out: &mut Vec<Token>, text: &str, start: usize, m
 /// non-fragile Rd macro under `@md` as a markdown inline run (`\emph{*x*}`'s `*x*`).
 /// `line_start = false`, so the line-leading block recognizers (fence / HTML block /
 /// list marker) never fire — a macro argument is inline content, not a block.
-pub(super) fn lex_roxygen_prose_fragment(out: &mut Vec<Token>, text: &str, md: bool) {
+pub(super) fn lex_roxygen_prose_fragment<'a>(out: &mut Vec<Token<'a>>, text: &'a str, md: bool) {
     lex_roxygen_prose(out, text, 0, 0, md, false);
 }
 
-fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usize, md: bool) {
+fn lex_roxygen_tag<'a>(
+    out: &mut Vec<Token<'a>>,
+    text: &'a str,
+    start: usize,
+    mut pos: usize,
+    md: bool,
+) {
     let bytes = text.as_bytes();
 
     // `@`
@@ -288,7 +299,7 @@ fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usiz
     while pos < text.len() && (bytes[pos] as char).is_ascii_alphanumeric() {
         pos += 1;
     }
-    let name = text[name_start..pos].to_string();
+    let name = &text[name_start..pos];
     push(
         out,
         TokKind::RoxygenTagName,
@@ -303,7 +314,7 @@ fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usiz
         return;
     }
 
-    if is_arg_bearing_tag(&name) {
+    if is_arg_bearing_tag(name) {
         let arg_start = pos;
         // A backtick-quoted name may contain spaces (`@param `arg 1` desc`,
         // roxygen2 8.0.0's `split_two_part`): the argument runs to the closing
@@ -339,7 +350,7 @@ fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usiz
     // space after the tag head, so a deeper-indented value (>= 4 columns past
     // that space) is an indented code block whose content must lex as ordinary
     // tokens — every carve is gated on the indent.
-    if md && tag_folds_prose_continuation(&name) {
+    if md && tag_folds_prose_continuation(name) {
         let ws_len = pos - text[..pos].trim_end_matches([' ', '\t']).len();
         if ws_len <= 4 {
             if let Some(fence_end) = scan_md_fence(bytes, pos) {
@@ -421,9 +432,9 @@ fn lex_roxygen_tag(out: &mut Vec<Token>, text: &str, start: usize, mut pos: usiz
 /// Recognizers are conservative and line-scoped: any malformed or unterminated
 /// span stays inside the surrounding prose run (so the round-trip is unaffected
 /// either way, and reflow only ever treats a *complete* span as atomic).
-fn lex_roxygen_prose(
-    out: &mut Vec<Token>,
-    text: &str,
+fn lex_roxygen_prose<'a>(
+    out: &mut Vec<Token<'a>>,
+    text: &'a str,
     start: usize,
     pos: usize,
     md: bool,
@@ -1093,7 +1104,12 @@ fn scan_md_fence(bytes: &[u8], i: usize) -> Option<usize> {
 /// must have checked [`scan_md_list_marker`] at `pos`. Returns the position of
 /// the content after the last carved marker (or the line end when the quote
 /// leaf consumed the remainder).
-fn carve_md_list_markers(out: &mut Vec<Token>, text: &str, start: usize, pos: usize) -> usize {
+fn carve_md_list_markers<'a>(
+    out: &mut Vec<Token<'a>>,
+    text: &'a str,
+    start: usize,
+    pos: usize,
+) -> usize {
     let bytes = text.as_bytes();
     let mut p = pos;
     let mut end = scan_md_list_marker(bytes, p).expect("caller checked scan_md_list_marker");
@@ -2150,13 +2166,20 @@ pub(crate) fn scan_rd_macro(bytes: &[u8], i: usize) -> Option<usize> {
 /// Push `text[off..off + len]` as a token of `kind` at absolute offset
 /// `start + off`. A zero-length span pushes nothing (so optional whitespace and
 /// empty trailing content never produce empty tokens).
-fn push(out: &mut Vec<Token>, kind: TokKind, text: &str, start: usize, off: usize, len: usize) {
+fn push<'a>(
+    out: &mut Vec<Token<'a>>,
+    kind: TokKind,
+    text: &'a str,
+    start: usize,
+    off: usize,
+    len: usize,
+) {
     if len == 0 {
         return;
     }
     out.push(Token {
         kind,
-        text: text[off..off + len].to_string(),
+        text: &text[off..off + len],
         start: start + off,
         end: start + off + len,
     });
@@ -2164,7 +2187,7 @@ fn push(out: &mut Vec<Token>, kind: TokKind, text: &str, start: usize, off: usiz
 
 /// Consume a run of spaces/tabs starting at `pos`, pushing a `Whitespace` token
 /// if non-empty, and return the new position.
-fn take_ws(out: &mut Vec<Token>, text: &str, start: usize, pos: usize) -> usize {
+fn take_ws<'a>(out: &mut Vec<Token<'a>>, text: &'a str, start: usize, pos: usize) -> usize {
     let bytes = text.as_bytes();
     let mut end = pos;
     while end < text.len() && matches!(bytes[end], b' ' | b'\t') {
@@ -2424,7 +2447,7 @@ mod tests {
                         | TokKind::RoxygenMdThematicBreak
                 )
             })
-            .map(|t| (t.kind, t.text))
+            .map(|t| (t.kind, t.text.to_string()))
             .collect()
     }
 

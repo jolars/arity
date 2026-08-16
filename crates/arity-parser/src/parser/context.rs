@@ -4,14 +4,14 @@ use crate::parser::diagnostics::ParseDiagnostic;
 use crate::parser::lexer::Token;
 
 pub(crate) struct ParserCtx<'a> {
-    tokens: &'a [Token],
+    tokens: &'a [Token<'a>],
     /// The markdown mode of a roxygen block with no `@md`/`@noMd` directive
     /// (see `ParseOptions`), threaded to the nested `emit_roxygen_block` sites.
     md_default: bool,
 }
 
 impl<'a> ParserCtx<'a> {
-    pub(crate) fn new(tokens: &'a [Token], md_default: bool) -> Self {
+    pub(crate) fn new(tokens: &'a [Token<'a>], md_default: bool) -> Self {
         Self { tokens, md_default }
     }
 
@@ -19,11 +19,11 @@ impl<'a> ParserCtx<'a> {
         self.md_default
     }
 
-    pub(crate) fn token(&self, i: usize) -> Option<&'a Token> {
+    pub(crate) fn token(&self, i: usize) -> Option<&'a Token<'a>> {
         self.tokens.get(i)
     }
 
-    pub(crate) fn tokens(&self) -> &'a [Token] {
+    pub(crate) fn tokens(&self) -> &'a [Token<'a>] {
         self.tokens
     }
 

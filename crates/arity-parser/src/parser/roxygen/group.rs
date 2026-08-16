@@ -73,10 +73,10 @@ fn block_md(tokens: &[Token], start: usize, md_default: bool) -> bool {
     let mut i = start;
     loop {
         // Reconstruct the line text (marker + body tokens) and check for a directive.
-        let mut line = String::from(&*tokens[i].text);
+        let mut line = String::from(tokens[i].text);
         let mut j = i + 1;
         while tokens.get(j).is_some_and(|t| is_line_body_kind(&t.kind)) {
-            line.push_str(&tokens[j].text);
+            line.push_str(tokens[j].text);
             j += 1;
         }
         if let Some(on) = super::lex::roxygen_md_directive(&line) {
@@ -393,7 +393,7 @@ pub(super) fn emit_prose_rest(tokens: &[Token], mut i: usize, events: &mut Vec<E
         // groups already their own `RoxygenRdMacro` token) — either way the last
         // argument opens here and closes on a following `#'` line.
         let opens_block_macro = if tok.kind == TokKind::RoxygenText {
-            is_block_macro_opener(&tok.text)
+            is_block_macro_opener(tok.text)
         } else {
             is_form_b_block_macro(tokens, i)
         };
@@ -445,7 +445,7 @@ fn emit_tag_line(tokens: &[Token], start: usize, md: bool, events: &mut Vec<Even
     while tokens.get(j).is_some_and(|t| is_line_body_kind(&t.kind)) {
         let tok = &tokens[j];
         if tok.kind == TokKind::RoxygenTagName {
-            tag_name = Some(&tok.text);
+            tag_name = Some(tok.text);
         }
         if tok.kind.roxygen_role() == Some(RoxygenRole::Content) {
             value_start = Some(j);

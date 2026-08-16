@@ -31,9 +31,9 @@ fn push_token(builder: &mut GreenNodeBuilder<'_>, tok: &Token) {
     // sub-parsed so the CST models what `tools::parse_Rd` parses (nested macros
     // become child nodes), which the projector then translates faithfully.
     if matches!(tok.kind, TokKind::RoxygenRdMacro) {
-        build_rd_macro(builder, &tok.text);
+        build_rd_macro(builder, tok.text);
     } else {
-        builder.token(syntax_kind_for(&tok.kind).into(), tok.text.as_str());
+        builder.token(syntax_kind_for(&tok.kind).into(), tok.text);
     }
 }
 

@@ -89,7 +89,7 @@ pub(super) fn resolve_emphasis(tokens: &[Token], events: &mut Vec<Event>, md: bo
             // which binds tighter than emphasis) bounds the run.
             Event::Tok(i) => {
                 if tokens[i].kind == TokKind::RoxygenTagName {
-                    raw_scope = super::lex::tag_body_skips_markdown(&tokens[i].text);
+                    raw_scope = super::lex::tag_body_skips_markdown(tokens[i].text);
                 }
                 run.push(i);
             }
@@ -158,7 +158,7 @@ pub(super) enum RunItem {
 }
 
 /// The token behind a run item, when it is one.
-fn item_token<'a>(tokens: &'a [Token], item: &RunItem) -> Option<&'a Token> {
+fn item_token<'a>(tokens: &'a [Token<'a>], item: &RunItem) -> Option<&'a Token<'a>> {
     match item {
         RunItem::Tok(i) => Some(&tokens[*i]),
         _ => None,
@@ -169,7 +169,7 @@ fn item_token<'a>(tokens: &'a [Token], item: &RunItem) -> Option<&'a Token> {
 /// its cmark-visible text).
 fn item_text<'a>(tokens: &'a [Token], item: &'a RunItem) -> &'a str {
     match item {
-        RunItem::Tok(i) => &tokens[*i].text,
+        RunItem::Tok(i) => tokens[*i].text,
         RunItem::Text(s) => s,
         RunItem::Span { text, .. } => text,
     }
@@ -249,7 +249,7 @@ fn resolve_multiline_spans(tokens: &[Token], run: &[usize]) -> Option<Vec<RunIte
             TokKind::Newline => logical.push('\n'),
             TokKind::RoxygenMarker | TokKind::Whitespace => {}
             TokKind::RoxygenRdMacro => logical.push_str("x-"),
-            _ => logical.push_str(&tokens[i].text),
+            _ => logical.push_str(tokens[i].text),
         }
         ranges.push(s..logical.len());
     }
@@ -598,7 +598,7 @@ impl Arena {
                     let ch = tok.text.as_bytes()[0];
                     let len = tok.text.len(); // a same-char ASCII run: bytes == chars
                     let (can_open, can_close) = flanking(ch, neighbor(p, false), neighbor(p, true));
-                    let node = arena.push_node(NodeData::Delim(tok.text.clone()));
+                    let node = arena.push_node(NodeData::Delim(tok.text.to_string()));
                     arena.push_delim(node, ch, len, can_open, can_close);
                 }
                 RunItem::Tok(idx) => {
@@ -981,7 +981,7 @@ fn match_brackets(tokens: &[Token], run: &[RunItem]) -> Vec<BracketRole> {
             q += 1;
             continue;
         }
-        if is_bracket_open(&tok.text) {
+        if is_bracket_open(tok.text) {
             stack.push((q, true));
             roles[q] = BracketRole::LiteralBracket; // until matched below
             q += 1;
@@ -1049,7 +1049,7 @@ fn classify_closer(
 ) -> Option<(String, usize, Vec<Event>, Option<String>)> {
     let close_tok = item_token(tokens, &run[closer_q])?;
     if close_tok.text != "]" {
-        return Some((close_tok.text.clone(), closer_q + 1, Vec::new(), None));
+        return Some((close_tok.text.to_string(), closer_q + 1, Vec::new(), None));
     }
     // A cross-line inline `(…)` destination on the lookahead (the same-line form
     // was carved as a composite `](url)` closer token by the lexer).
@@ -1103,7 +1103,7 @@ fn cross_line_inline_dest(
                 TokKind::Newline => logical.push('\n'),
                 TokKind::RoxygenMarker | TokKind::Whitespace => {}
                 TokKind::RoxygenRdMacro => break,
-                _ => logical.push_str(&tokens[*i].text),
+                _ => logical.push_str(tokens[*i].text),
             },
             RunItem::Text(t) => logical.push_str(t),
             RunItem::Span { .. } => break,

@@ -76,7 +76,7 @@ fn emit_close_run(
             Some(TokKind::LBrack2) if pos + 1 < run_end => {
                 out.push(Token {
                     kind: TokKind::RBrack2,
-                    text: "]]".to_string(),
+                    text: "]]",
                     start: pos,
                     end: pos + 2,
                 });
@@ -86,7 +86,7 @@ fn emit_close_run(
             Some(TokKind::LBrack) => {
                 out.push(Token {
                     kind: TokKind::RBrack,
-                    text: "]".to_string(),
+                    text: "]",
                     start: pos,
                     end: pos + 1,
                 });
@@ -98,7 +98,7 @@ fn emit_close_run(
             _ => {
                 out.push(Token {
                     kind: TokKind::RBrack,
-                    text: "]".to_string(),
+                    text: "]",
                     start: pos,
                     end: pos + 1,
                 });
@@ -118,7 +118,7 @@ mod tests {
     }
 
     fn text_total(tokens: &[Token]) -> String {
-        tokens.iter().map(|t| t.text.clone()).collect()
+        tokens.iter().map(|t| t.text).collect()
     }
 
     #[test]

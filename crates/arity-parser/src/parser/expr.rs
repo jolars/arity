@@ -30,7 +30,7 @@ fn next_operator<'a>(
     ctx: &ParserCtx<'a>,
     start: usize,
     inside_brackets: bool,
-) -> Option<(usize, &'a Token)> {
+) -> Option<(usize, &'a Token<'a>)> {
     let op_idx = ctx.skip_ws(start);
     let op = ctx.token(op_idx)?;
     if matches!(op.kind, TokKind::Newline | TokKind::Comment) {
@@ -283,7 +283,7 @@ fn parse_expr_with_mode(
         {
             let rhs_tok_idx = ctx.skip_ws(rhs.start);
             if let Some(tok) = tokens.get(rhs_tok_idx)
-                && ident_is_special_constant(tok.text.as_str())
+                && ident_is_special_constant(tok.text)
             {
                 push_token_diagnostic(
                     diagnostics,

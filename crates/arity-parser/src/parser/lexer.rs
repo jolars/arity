@@ -232,9 +232,13 @@ impl TokKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Token {
+pub(crate) struct Token<'a> {
     pub(crate) kind: TokKind,
-    pub(crate) text: String,
+    /// The token's text: a slice of the lexed input, or a `'static` literal
+    /// for fixed-text tokens. Redundant with `start..end` but kept so
+    /// consumers never re-slice the input; the tree builder copies it into
+    /// the green tree, which is where the borrow ends.
+    pub(crate) text: &'a str,
     pub(crate) start: usize,
     pub(crate) end: usize,
 }
@@ -258,14 +262,14 @@ fn three_bytes(bytes: &[u8], i: usize, pat: &[u8; 3]) -> bool {
 }
 
 #[cfg(test)]
-pub(crate) fn lex(input: &str) -> Vec<Token> {
+pub(crate) fn lex(input: &str) -> Vec<Token<'_>> {
     lex_with_md(input, false)
 }
 
 /// Lex `input` with `md_default` as the markdown mode of roxygen blocks
 /// carrying no `@md`/`@noMd` directive (see
 /// [`ParseOptions`](crate::parser::core::ParseOptions)).
-pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
+pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token<'_>> {
     let mut out = Vec::new();
     let mut i = 0usize;
     let bytes = input.as_bytes();
@@ -290,7 +294,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if i + 1 < bytes.len() && (bytes[i + 1] as char) == '\n' {
                     out.push(Token {
                         kind: TokKind::Newline,
-                        text: "\r\n".to_string(),
+                        text: "\r\n",
                         start: i,
                         end: i + 2,
                     });
@@ -298,7 +302,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 } else {
                     out.push(Token {
                         kind: TokKind::Newline,
-                        text: "\r".to_string(),
+                        text: "\r",
                         start: i,
                         end: i + 1,
                     });
@@ -308,7 +312,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
             '\n' => {
                 out.push(Token {
                     kind: TokKind::Newline,
-                    text: "\n".to_string(),
+                    text: "\n",
                     start: i,
                     end: i + 1,
                 });
@@ -354,7 +358,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 } else {
                     out.push(Token {
                         kind: TokKind::Comment,
-                        text: line.to_string(),
+                        text: line,
                         start,
                         end: j,
                     });
@@ -364,7 +368,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
             '~' => {
                 out.push(Token {
                     kind: TokKind::Tilde,
-                    text: "~".to_string(),
+                    text: "~",
                     start: i,
                     end: i + 1,
                 });
@@ -373,7 +377,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
             '?' => {
                 out.push(Token {
                     kind: TokKind::Question,
-                    text: "?".to_string(),
+                    text: "?",
                     start: i,
                     end: i + 1,
                 });
@@ -382,7 +386,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
             '$' => {
                 out.push(Token {
                     kind: TokKind::Dollar,
-                    text: "$".to_string(),
+                    text: "$",
                     start: i,
                     end: i + 1,
                 });
@@ -391,7 +395,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
             '@' => {
                 out.push(Token {
                     kind: TokKind::At,
-                    text: "@".to_string(),
+                    text: "@",
                     start: i,
                     end: i + 1,
                 });
@@ -400,7 +404,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
             ';' => {
                 out.push(Token {
                     kind: TokKind::Semicolon,
-                    text: ";".to_string(),
+                    text: ";",
                     start: i,
                     end: i + 1,
                 });
@@ -409,7 +413,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
             ',' => {
                 out.push(Token {
                     kind: TokKind::Comma,
-                    text: ",".to_string(),
+                    text: ",",
                     start: i,
                     end: i + 1,
                 });
@@ -418,7 +422,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
             '+' => {
                 out.push(Token {
                     kind: TokKind::Plus,
-                    text: "+".to_string(),
+                    text: "+",
                     start: i,
                     end: i + 1,
                 });
@@ -428,7 +432,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if i + 1 < bytes.len() && (bytes[i + 1] as char) == '*' {
                     out.push(Token {
                         kind: TokKind::Caret,
-                        text: "**".to_string(),
+                        text: "**",
                         start: i,
                         end: i + 2,
                     });
@@ -436,7 +440,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 } else {
                     out.push(Token {
                         kind: TokKind::Star,
-                        text: "*".to_string(),
+                        text: "*",
                         start: i,
                         end: i + 1,
                     });
@@ -446,7 +450,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
             '^' => {
                 out.push(Token {
                     kind: TokKind::Caret,
-                    text: "^".to_string(),
+                    text: "^",
                     start: i,
                     end: i + 1,
                 });
@@ -455,7 +459,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
             '(' => {
                 out.push(Token {
                     kind: TokKind::LParen,
-                    text: "(".to_string(),
+                    text: "(",
                     start: i,
                     end: i + 1,
                 });
@@ -464,7 +468,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
             '\\' => {
                 out.push(Token {
                     kind: TokKind::LambdaFn,
-                    text: "\\".to_string(),
+                    text: "\\",
                     start: i,
                     end: i + 1,
                 });
@@ -473,7 +477,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
             ')' => {
                 out.push(Token {
                     kind: TokKind::RParen,
-                    text: ")".to_string(),
+                    text: ")",
                     start: i,
                     end: i + 1,
                 });
@@ -482,7 +486,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
             '{' => {
                 out.push(Token {
                     kind: TokKind::LBrace,
-                    text: "{".to_string(),
+                    text: "{",
                     start: i,
                     end: i + 1,
                 });
@@ -491,7 +495,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
             '}' => {
                 out.push(Token {
                     kind: TokKind::RBrace,
-                    text: "}".to_string(),
+                    text: "}",
                     start: i,
                     end: i + 1,
                 });
@@ -507,14 +511,14 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                     i += 1;
                     out.push(Token {
                         kind: TokKind::UserOp,
-                        text: input[start..i].to_string(),
+                        text: &input[start..i],
                         start,
                         end: i,
                     });
                 } else {
                     out.push(Token {
                         kind: TokKind::Unknown,
-                        text: input[start..i].to_string(),
+                        text: &input[start..i],
                         start,
                         end: i,
                     });
@@ -537,7 +541,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 }
                 out.push(Token {
                     kind: TokKind::String,
-                    text: input[start..i].to_string(),
+                    text: &input[start..i],
                     start,
                     end: i,
                 });
@@ -563,7 +567,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 }
                 out.push(Token {
                     kind: TokKind::Ident,
-                    text: input[start..i].to_string(),
+                    text: &input[start..i],
                     start,
                     end: i,
                 });
@@ -580,7 +584,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                     }
                     out.push(Token {
                         kind: TokKind::Whitespace,
-                        text: input[start..i].to_string(),
+                        text: &input[start..i],
                         start,
                         end: i,
                     });
@@ -590,7 +594,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if two_bytes(bytes, i, b"||") {
                     out.push(Token {
                         kind: TokKind::Or2,
-                        text: "||".to_string(),
+                        text: "||",
                         start: i,
                         end: i + 2,
                     });
@@ -601,7 +605,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if two_bytes(bytes, i, b"&&") {
                     out.push(Token {
                         kind: TokKind::And2,
-                        text: "&&".to_string(),
+                        text: "&&",
                         start: i,
                         end: i + 2,
                     });
@@ -624,7 +628,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                             }
                             out.push(Token {
                                 kind: TokKind::Ident,
-                                text: input[start..i].to_string(),
+                                text: &input[start..i],
                                 start,
                                 end: i,
                             });
@@ -652,7 +656,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                         }
                         out.push(Token {
                             kind: TokKind::Ident,
-                            text: input[start..i].to_string(),
+                            text: &input[start..i],
                             start,
                             end: i,
                         });
@@ -682,7 +686,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                         }
                         out.push(Token {
                             kind: TokKind::Ident,
-                            text: input[start..i].to_string(),
+                            text: &input[start..i],
                             start,
                             end: i,
                         });
@@ -705,7 +709,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                         }
                         out.push(Token {
                             kind: TokKind::Ident,
-                            text: input[start..i].to_string(),
+                            text: &input[start..i],
                             start,
                             end: i,
                         });
@@ -752,7 +756,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                         } else {
                             TokKind::Float
                         },
-                        text: input[start..i].to_string(),
+                        text: &input[start..i],
                         start,
                         end: i,
                     });
@@ -762,7 +766,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if two_bytes(bytes, i, b"==") {
                     out.push(Token {
                         kind: TokKind::Equal2,
-                        text: "==".to_string(),
+                        text: "==",
                         start: i,
                         end: i + 2,
                     });
@@ -773,7 +777,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if two_bytes(bytes, i, b"!=") {
                     out.push(Token {
                         kind: TokKind::NotEqual,
-                        text: "!=".to_string(),
+                        text: "!=",
                         start: i,
                         end: i + 2,
                     });
@@ -784,7 +788,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if c == '!' {
                     out.push(Token {
                         kind: TokKind::Bang,
-                        text: "!".to_string(),
+                        text: "!",
                         start: i,
                         end: i + 1,
                     });
@@ -795,7 +799,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if three_bytes(bytes, i, b":::") {
                     out.push(Token {
                         kind: TokKind::Colon3,
-                        text: ":::".to_string(),
+                        text: ":::",
                         start: i,
                         end: i + 3,
                     });
@@ -806,7 +810,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if two_bytes(bytes, i, b"::") {
                     out.push(Token {
                         kind: TokKind::Colon2,
-                        text: "::".to_string(),
+                        text: "::",
                         start: i,
                         end: i + 2,
                     });
@@ -817,7 +821,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if two_bytes(bytes, i, b":=") {
                     out.push(Token {
                         kind: TokKind::Walrus,
-                        text: ":=".to_string(),
+                        text: ":=",
                         start: i,
                         end: i + 2,
                     });
@@ -828,7 +832,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if two_bytes(bytes, i, b"|>") {
                     out.push(Token {
                         kind: TokKind::Pipe,
-                        text: "|>".to_string(),
+                        text: "|>",
                         start: i,
                         end: i + 2,
                     });
@@ -839,7 +843,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if three_bytes(bytes, i, b"<<-") {
                     out.push(Token {
                         kind: TokKind::SuperAssign,
-                        text: "<<-".to_string(),
+                        text: "<<-",
                         start: i,
                         end: i + 3,
                     });
@@ -850,7 +854,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if three_bytes(bytes, i, b"->>") {
                     out.push(Token {
                         kind: TokKind::SuperAssignRight,
-                        text: "->>".to_string(),
+                        text: "->>",
                         start: i,
                         end: i + 3,
                     });
@@ -861,7 +865,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if two_bytes(bytes, i, b"<-") {
                     out.push(Token {
                         kind: TokKind::AssignLeft,
-                        text: "<-".to_string(),
+                        text: "<-",
                         start: i,
                         end: i + 2,
                     });
@@ -872,7 +876,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if two_bytes(bytes, i, b"->") {
                     out.push(Token {
                         kind: TokKind::AssignRight,
-                        text: "->".to_string(),
+                        text: "->",
                         start: i,
                         end: i + 2,
                     });
@@ -883,7 +887,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if c == '-' {
                     out.push(Token {
                         kind: TokKind::Minus,
-                        text: "-".to_string(),
+                        text: "-",
                         start: i,
                         end: i + 1,
                     });
@@ -894,7 +898,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if c == '/' {
                     out.push(Token {
                         kind: TokKind::Slash,
-                        text: "/".to_string(),
+                        text: "/",
                         start: i,
                         end: i + 1,
                     });
@@ -905,7 +909,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if c == ':' {
                     out.push(Token {
                         kind: TokKind::Colon,
-                        text: ":".to_string(),
+                        text: ":",
                         start: i,
                         end: i + 1,
                     });
@@ -916,7 +920,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if two_bytes(bytes, i, b"<=") {
                     out.push(Token {
                         kind: TokKind::LessThanOrEqual,
-                        text: "<=".to_string(),
+                        text: "<=",
                         start: i,
                         end: i + 2,
                     });
@@ -927,7 +931,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if two_bytes(bytes, i, b">=") {
                     out.push(Token {
                         kind: TokKind::GreaterThanOrEqual,
-                        text: ">=".to_string(),
+                        text: ">=",
                         start: i,
                         end: i + 2,
                     });
@@ -938,7 +942,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if c == '=' {
                     out.push(Token {
                         kind: TokKind::AssignEq,
-                        text: "=".to_string(),
+                        text: "=",
                         start: i,
                         end: i + 1,
                     });
@@ -949,7 +953,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if c == '|' {
                     out.push(Token {
                         kind: TokKind::Or,
-                        text: "|".to_string(),
+                        text: "|",
                         start: i,
                         end: i + 1,
                     });
@@ -960,7 +964,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if c == '&' {
                     out.push(Token {
                         kind: TokKind::And,
-                        text: "&".to_string(),
+                        text: "&",
                         start: i,
                         end: i + 1,
                     });
@@ -971,7 +975,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if c == '<' {
                     out.push(Token {
                         kind: TokKind::LessThan,
-                        text: "<".to_string(),
+                        text: "<",
                         start: i,
                         end: i + 1,
                     });
@@ -982,7 +986,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if c == '>' {
                     out.push(Token {
                         kind: TokKind::GreaterThan,
-                        text: ">".to_string(),
+                        text: ">",
                         start: i,
                         end: i + 1,
                     });
@@ -993,7 +997,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if two_bytes(bytes, i, b"[[") {
                     out.push(Token {
                         kind: TokKind::LBrack2,
-                        text: "[[".to_string(),
+                        text: "[[",
                         start: i,
                         end: i + 2,
                     });
@@ -1004,7 +1008,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if two_bytes(bytes, i, b"]]") {
                     out.push(Token {
                         kind: TokKind::RBrack2,
-                        text: "]]".to_string(),
+                        text: "]]",
                         start: i,
                         end: i + 2,
                     });
@@ -1015,7 +1019,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if c == '[' {
                     out.push(Token {
                         kind: TokKind::LBrack,
-                        text: "[".to_string(),
+                        text: "[",
                         start: i,
                         end: i + 1,
                     });
@@ -1026,7 +1030,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 if c == ']' {
                     out.push(Token {
                         kind: TokKind::RBrack,
-                        text: "]".to_string(),
+                        text: "]",
                         start: i,
                         end: i + 1,
                     });
@@ -1084,7 +1088,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                                 // R hex numeric constants are doubles unless integer-suffixed.
                                 TokKind::Float
                             },
-                            text: input[start..i].to_string(),
+                            text: &input[start..i],
                             start,
                             end: i,
                         });
@@ -1144,7 +1148,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                             } else {
                                 TokKind::Int
                             },
-                            text: input[start..i].to_string(),
+                            text: &input[start..i],
                             start,
                             end: i,
                         });
@@ -1192,7 +1196,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                                     let end = dash_end + 1;
                                     out.push(Token {
                                         kind: TokKind::String,
-                                        text: input[start..end].to_string(),
+                                        text: &input[start..end],
                                         start,
                                         end,
                                     });
@@ -1233,7 +1237,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                     };
                     out.push(Token {
                         kind,
-                        text: text.to_string(),
+                        text,
                         start,
                         end: i,
                     });
@@ -1251,7 +1255,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token> {
                 let len = ch.len_utf8();
                 out.push(Token {
                     kind: TokKind::Unknown,
-                    text: input[i..i + len].to_string(),
+                    text: &input[i..i + len],
                     start: i,
                     end: i + len,
                 });
@@ -1442,7 +1446,7 @@ mod tests {
         // Lossless round-trip (every byte accounted for) confirms no panic and no
         // dropped input.
         for input in ["\u{a0}||", "a\u{a0}&&b", "\u{a0}<-1", "x\u{a0}[[1]]"] {
-            let reconstructed: String = lex(input).iter().map(|t| t.text.as_str()).collect();
+            let reconstructed: String = lex(input).iter().map(|t| t.text).collect();
             assert_eq!(reconstructed, input, "lossless lex of {input:?}");
         }
     }

@@ -713,7 +713,7 @@ pub fn resolve_md_inline_pieces(pieces: &[MdArgPiece]) -> crate::syntax::SyntaxN
             // off `kind`/`text` only), so a synthetic macro token needs no real span.
             MdArgPiece::Macro(m) => tokens.push(Token {
                 kind: TokKind::RoxygenRdMacro,
-                text: m.clone(),
+                text: m,
                 start: 0,
                 end: 0,
             }),
