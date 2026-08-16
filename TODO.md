@@ -804,7 +804,44 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
     rule run, unrelated to the LSP path.
   - Salsa's `SourceFile.text` is still a `String`, so the lint thread's write
     phase makes one owned copy per keystroke. Making it an `Arc<str>` would
-    remove the last copy.
+    remove the last copy. (Superseded by the fuller entry below.)
+
+- [ ] **`Arc<str>` document text end to end.** Ported from fatou's
+  `experiment/arc-str` branch (2026-08-16), where the whole change was
+  ~70 lines in the root crate: `SourceFile.text: Arc<str>` (setters take `impl Into<Arc<str>>`),
+  `PrevParse.text: Arc<str>` (the per-parse clone at `src/incremental.rs:448`
+  becomes a refcount bump), `TextBuffer` holding `Arc<str>` beside the spliced
+  `LineIndex`, and the lint thread's `req.buffer.text().to_string()`
+  (`src/lsp/lint_thread.rs:508`) becoming an O(1) handle. With db, base, and
+  buffer sharing one allocation, the staleness guards get an `Arc::ptr_eq`
+  fast path in front of the content compare: fatou's no-op upsert went from
+  39 us to a flat 150 ns at 1 MB. The cost is that an edit rebuilds the
+  string (two passes) instead of splicing in place — at 1 MB roughly
+  +10-30 us per keystroke, well under the reparse it precedes. Salsa 0.28
+  takes the field as-is; the setter never compares, so keep the explicit `!=`
+  guards and add `ptr_eq` in front, never instead.
+
+- [ ] **Bypass `diff_edit` when the staged chain is one verified edit.** The
+  reparse path declines a staged chain below two edits, so the single-
+  keystroke case — the common one — always re-derives its edit by diffing the
+  two whole texts, per keystroke, from an edit it was literally just handed.
+  Fatou measured that diff at ~200 us of a ~500 us end-to-end keystroke at
+  1 MB, more than the token-tier reparse itself. Panache profiled the same
+  shape and found it negligible (7 us against a 1.9 ms parse), so measure
+  with the pipeline bench below before and after; R should sit closer to
+  fatou (fast parse, byte-wise diff) than to panache.
+
+- [ ] **A didChange -> upsert -> parse pipeline bench.** Port fatou's
+  `benches/salsa_keystroke.rs`: replay alternating insert/delete keystrokes
+  through the real path (`apply_edit` on the live buffer, `upsert_file`,
+  stage, demand the tree), with three rows per size — no-op upsert (the
+  staleness guard alone), write phase without a parse, and end-to-end. The
+  existing `pipeline/` bench group times patch-plus-reparse but not the salsa
+  write phase, and fatou's version of exactly this blind spot is what hid a
+  6x end-to-end regression in an otherwise well-benchmarked PR. Alternate
+  insert and delete so every iteration is a genuine revision, and consider
+  panache's mechanized gate (declared per-case expectations plus a
+  corpus-presence check) instead of an eyeballed table.
 
 ## DESCRIPTION and package metadata
 
