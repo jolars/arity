@@ -86,6 +86,84 @@ fn separated_statements_are_not_diagnosed() {
     }
 }
 
+/// R's `formlist` production admits only `SYMBOL` and `SYMBOL = expr` slots,
+/// so the forms a call's argument list tolerates — an empty slot, a string
+/// name — are syntax errors in a parameter list (issue #109).
+#[test]
+fn invalid_function_formals_are_diagnosed() {
+    for src in [
+        // Empty slots: leading, doubled, and trailing commas.
+        "function(x,) 1\n",
+        "function(,x) 1\n",
+        "function(x,,y) 1\n",
+        "function(,) 1\n",
+        "\\(x,) 1\n",
+        "function(x,\n) 1\n",
+        // A name position that is not a symbol.
+        "function(\"a b\" = 1) 1\n",
+        "function(1) 1\n",
+        "function(TRUE) 1\n",
+        "function(NULL = 1) 1\n",
+        "function(break) 1\n",
+        "function(if) 1\n",
+        // A slot with two names, and a `=` with no default value.
+        "function(x y) 1\n",
+        "function(x = 1 y) 1\n",
+        "function(x =, y) 1\n",
+        "function(x = ) 1\n",
+    ] {
+        let output = parse(src);
+        assert!(
+            !output.diagnostics.is_empty(),
+            "expected a formal-list diagnostic for {src:?}"
+        );
+        assert_eq!(
+            reconstruct(src),
+            src,
+            "lossless round-trip failed for {src:?}"
+        );
+    }
+}
+
+/// The flip side: every slot shape R accepts must stay clean. `...`, `..1`,
+/// dotted and backticked names are all symbols, including a backticked
+/// reserved word, which is a name rather than the constant it spells.
+#[test]
+fn valid_function_formals_are_not_diagnosed() {
+    for src in [
+        "function() 1\n",
+        "function( ) 1\n",
+        "function(\n) 1\n",
+        "function(x) 1\n",
+        "function(x, y) 1\n",
+        "function(x = 1) 1\n",
+        "function(...) 1\n",
+        "function(x, ...) 1\n",
+        "function(..., x) 1\n",
+        "function(..1) 1\n",
+        "function(.x) 1\n",
+        "function(`a b` = 1) 1\n",
+        "function(`TRUE`) 1\n",
+        "function(x = c(1, 2)) 1\n",
+        "function(x = f(a, b), y = 2) 1\n",
+        "function(x = if (a) 1 else 2) 1\n",
+        "function(\n  x, # a comment\n  y\n) 1\n",
+        "\\(x, y = 2) 1\n",
+    ] {
+        let output = parse(src);
+        assert!(
+            output.diagnostics.is_empty(),
+            "expected no diagnostics for {src:?}, got {:?}",
+            output.diagnostics
+        );
+        assert_eq!(
+            reconstruct(src),
+            src,
+            "lossless round-trip failed for {src:?}"
+        );
+    }
+}
+
 fn fixture_input(name: &str) -> String {
     let path = Path::new("tests")
         .join("fixtures")
@@ -166,6 +244,9 @@ fn fixture_names() -> &'static [&'static str] {
         "function_newline_body",
         "function_missing_body",
         "function_missing_rparen_body",
+        "function_formal_empty_slots",
+        "function_formal_string_name",
+        "function_formal_missing_default",
         "unclosed_block",
         "stray_close_paren_toplevel",
         "call_simple",

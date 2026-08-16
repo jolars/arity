@@ -1,0 +1,34 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..47
+  FUNCTION_EXPR@0..14
+    FUNCTION_KW@0..8 "function"
+    LPAREN@8..9 "("
+    IDENT@9..10 "x"
+    COMMA@10..11 ","
+    RPAREN@11..12 ")"
+    WHITESPACE@12..13 " "
+    INT@13..14 "1"
+  NEWLINE@14..15 "\n"
+  FUNCTION_EXPR@15..29
+    FUNCTION_KW@15..23 "function"
+    LPAREN@23..24 "("
+    COMMA@24..25 ","
+    IDENT@25..26 "x"
+    RPAREN@26..27 ")"
+    WHITESPACE@27..28 " "
+    INT@28..29 "1"
+  NEWLINE@29..30 "\n"
+  FUNCTION_EXPR@30..46
+    FUNCTION_KW@30..38 "function"
+    LPAREN@38..39 "("
+    IDENT@39..40 "x"
+    COMMA@40..41 ","
+    COMMA@41..42 ","
+    IDENT@42..43 "y"
+    RPAREN@43..44 ")"
+    WHITESPACE@44..45 " "
+    INT@45..46 "1"
+  NEWLINE@46..47 "\n"

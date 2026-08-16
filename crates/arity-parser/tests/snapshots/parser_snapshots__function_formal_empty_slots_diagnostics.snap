@@ -1,0 +1,21 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+expression: "format!(\"{:#?}\", output.diagnostics)"
+---
+[
+    ParseDiagnostic {
+        message: "expected a function parameter name",
+        start: 11,
+        end: 12,
+    },
+    ParseDiagnostic {
+        message: "expected a function parameter name",
+        start: 24,
+        end: 25,
+    },
+    ParseDiagnostic {
+        message: "expected a function parameter name",
+        start: 41,
+        end: 42,
+    },
+]

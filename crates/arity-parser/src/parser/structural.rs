@@ -2,7 +2,7 @@ use crate::parser::context::{ParserCtx, push_token_diagnostic_ctx as push_token_
 use crate::parser::cursor::find_function_body_recovery;
 use crate::parser::diagnostics::ParseDiagnostic;
 use crate::parser::events::{Event, ExprParse, push_range};
-use crate::parser::expr::{parse_expr, parse_expr_in_brackets};
+use crate::parser::expr::{ident_is_special_constant, parse_expr, parse_expr_in_brackets};
 use crate::parser::lexer::{TokKind, Token};
 use crate::parser::recovery::push_empty_error_node;
 use crate::syntax::SyntaxKind;
@@ -367,6 +367,19 @@ pub(crate) fn parse_for_expr(
     })
 }
 
+/// Reported wherever a function parameter list has something other than a
+/// symbol in a name position — an empty slot, a literal, a reserved word.
+const MISSING_PARAMETER_NAME: &str = "expected a function parameter name";
+
+/// Whether an identifier is a word R reserves, and so rejects as a parameter
+/// name. The rest of R's reserved words (`if`, `for`, `function`, …) lex as
+/// their own [`TokKind`] and are caught by not being a [`TokKind::Ident`] at
+/// all; only the constants and `break`/`next` arrive as identifiers. A
+/// backticked name is not one of these: its text carries the backticks.
+fn is_reserved_formal_name(text: &str) -> bool {
+    ident_is_special_constant(text) || matches!(text, "break" | "next")
+}
+
 pub(crate) fn parse_function_expr(
     tokens: &[Token],
     start: usize,
@@ -421,47 +434,109 @@ pub(crate) fn parse_function_expr(
             // turning the default into a node means a non-trivial default
             // (`if`/call/binary/block) is shaped — and so formats — like the same
             // expression anywhere else, instead of arriving as a loose token run.
+            //
+            // The walk doubles as the formal list's grammar check. R's
+            // `formlist` admits only `SYMBOL` and `SYMBOL = expr` slots, so the
+            // shapes a call's argument list tolerates — an empty slot, a string
+            // name — are syntax errors here (issue #109). Diagnosing is all
+            // that happens: the tokens still land in the tree exactly as
+            // written, so the round-trip stays lossless.
             let mut i = cursor;
+            // Whether the slot being walked has anything in its name position.
+            // A `(` or a `,` clears it; R's grammar requires exactly one symbol
+            // before the slot's `,` or the list's `)`.
+            let mut slot_named = false;
+            let mut seen_comma = false;
             while i < close {
-                if matches!(tokens[i].kind, TokKind::AssignEq) {
-                    events.push(Event::Tok(i)); // =
-                    let val_start = i + 1;
-                    let mut value_idx = val_start;
-                    while value_idx < close
-                        && matches!(
-                            tokens.get(value_idx).map(|t| &t.kind),
-                            Some(TokKind::Whitespace | TokKind::Newline | TokKind::Comment)
-                        )
-                    {
-                        value_idx += 1;
+                match tokens[i].kind {
+                    TokKind::AssignEq => {
+                        if !slot_named {
+                            push_token_diagnostic(diagnostics, MISSING_PARAMETER_NAME, &tokens[i]);
+                        }
+                        slot_named = true;
+                        events.push(Event::Tok(i)); // =
+                        let val_start = i + 1;
+                        let mut value_idx = val_start;
+                        while value_idx < close
+                            && matches!(
+                                tokens.get(value_idx).map(|t| &t.kind),
+                                Some(TokKind::Whitespace | TokKind::Newline | TokKind::Comment)
+                            )
+                        {
+                            value_idx += 1;
+                        }
+                        if value_idx >= close
+                            || matches!(
+                                tokens.get(value_idx).map(|t| &t.kind),
+                                Some(TokKind::Comma)
+                            )
+                        {
+                            // No default expression (a malformed `a =,` / `a =)`); keep
+                            // the trivia so the round-trip stays lossless.
+                            push_token_diagnostic(
+                                diagnostics,
+                                "expected a default value after '='",
+                                &tokens[i],
+                            );
+                            for idx in val_start..value_idx {
+                                events.push(Event::Tok(idx));
+                            }
+                            i = value_idx;
+                        } else if let Some(val) =
+                            parse_expr_in_brackets(tokens, value_idx, 0, diagnostics, md_default)
+                        {
+                            for idx in val_start..val.start {
+                                events.push(Event::Tok(idx));
+                            }
+                            events.extend(val.events);
+                            i = val.end;
+                        } else {
+                            for idx in val_start..value_idx {
+                                events.push(Event::Tok(idx));
+                            }
+                            i = value_idx;
+                        }
                     }
-                    if value_idx >= close
-                        || matches!(tokens.get(value_idx).map(|t| &t.kind), Some(TokKind::Comma))
-                    {
-                        // No default expression (a malformed `a =,` / `a =)`); keep
-                        // the trivia so the round-trip stays lossless.
-                        for idx in val_start..value_idx {
-                            events.push(Event::Tok(idx));
+                    TokKind::Comma => {
+                        if !slot_named {
+                            push_token_diagnostic(diagnostics, MISSING_PARAMETER_NAME, &tokens[i]);
                         }
-                        i = value_idx;
-                    } else if let Some(val) =
-                        parse_expr_in_brackets(tokens, value_idx, 0, diagnostics, md_default)
-                    {
-                        for idx in val_start..val.start {
-                            events.push(Event::Tok(idx));
-                        }
-                        events.extend(val.events);
-                        i = val.end;
-                    } else {
-                        for idx in val_start..value_idx {
-                            events.push(Event::Tok(idx));
-                        }
-                        i = value_idx;
+                        slot_named = false;
+                        seen_comma = true;
+                        events.push(Event::Tok(i));
+                        i += 1;
                     }
-                } else {
-                    events.push(Event::Tok(i));
-                    i += 1;
+                    ref kind
+                        if matches!(kind, TokKind::Whitespace | TokKind::Newline)
+                            || kind.is_comment_like() =>
+                    {
+                        events.push(Event::Tok(i));
+                        i += 1;
+                    }
+                    ref kind => {
+                        let is_name = matches!(kind, TokKind::Ident)
+                            && !is_reserved_formal_name(tokens[i].text);
+                        if !is_name {
+                            push_token_diagnostic(diagnostics, MISSING_PARAMETER_NAME, &tokens[i]);
+                        } else if slot_named {
+                            push_token_diagnostic(
+                                diagnostics,
+                                "expected ',' between function parameters",
+                                &tokens[i],
+                            );
+                        }
+                        // Whatever stands here fills the name position, so a
+                        // following `=` is not separately reported as nameless.
+                        slot_named = true;
+                        events.push(Event::Tok(i));
+                        i += 1;
+                    }
                 }
+            }
+            // A trailing `,` leaves a final empty slot, which R rejects at the
+            // `)`. An empty list (`function()`) has no slot at all.
+            if seen_comma && !slot_named {
+                push_token_diagnostic(diagnostics, MISSING_PARAMETER_NAME, &tokens[close]);
             }
             events.push(Event::Tok(close)); // )
             cursor = close + 1;

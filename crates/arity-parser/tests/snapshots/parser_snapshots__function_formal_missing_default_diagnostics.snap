@@ -1,0 +1,16 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+expression: "format!(\"{:#?}\", output.diagnostics)"
+---
+[
+    ParseDiagnostic {
+        message: "expected a default value after '='",
+        start: 11,
+        end: 12,
+    },
+    ParseDiagnostic {
+        message: "expected ',' between function parameters",
+        start: 30,
+        end: 31,
+    },
+]
