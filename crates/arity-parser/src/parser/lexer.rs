@@ -261,6 +261,70 @@ fn three_bytes(bytes: &[u8], i: usize, pat: &[u8; 3]) -> bool {
         && bytes.get(i + 2) == Some(&pat[2])
 }
 
+/// True when `ch` can open an R symbol. R's names are locale-dependent: in a
+/// UTF-8 locale `gram.y` starts one on any `iswalpha` character, so `日本語` and
+/// `café` are ordinary identifiers (issue #108).
+///
+/// Unicode's Alphabetic property is the portable stand-in for `iswalpha`, and
+/// there is no exact one --- `iswalpha` is whatever the platform's C library
+/// says, which is not a Unicode property and not even stable across libcs. Over
+/// the assigned code points below U+30000 the two agree on all but non-ASCII
+/// decimal digits (Nd), which glibc classes as alpha purely because POSIX
+/// reserves `digit` for `0`-`9`; arity rejects `۱` as a name start where R
+/// accepts it. See [`is_name_continue`] for the divergence in the other
+/// direction.
+#[inline]
+fn is_name_start(ch: char) -> bool {
+    ch.is_alphabetic()
+}
+
+/// True when `ch` can continue an R symbol: [`is_name_start`] plus digits, `.`,
+/// and `_` (R's `iswalnum`). Combining marks and symbols are excluded, matching
+/// R --- `a` followed by U+0301 is two tokens there too.
+///
+/// Alphanumeric is Alphabetic plus *all* of Unicode's number categories, so it
+/// is one bucket wider than `iswalnum`: arity keeps an Other_Number (`a²`)
+/// inside a name where R ends the name before it. Erring wide here costs a
+/// missed diagnostic on input R rejects; erring narrow (ASCII digits only)
+/// would break `x۱`, which R accepts and which is far likelier to appear.
+#[inline]
+fn is_name_continue(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_' || ch == '.'
+}
+
+/// Advance past the run of [`is_name_continue`] characters starting at `i`,
+/// returning the byte offset one past the run. Decoding per char (rather than
+/// per byte) is what keeps a multibyte letter inside the name.
+#[inline]
+fn scan_name_continue(input: &str, i: usize) -> usize {
+    let bytes = input.as_bytes();
+    let mut i = i;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b.is_ascii() {
+            if !is_name_continue(b as char) {
+                break;
+            }
+            i += 1;
+        } else {
+            // `i` is on a char boundary, so the decode cannot fail.
+            let ch = input[i..].chars().next().unwrap();
+            if !is_name_continue(ch) {
+                break;
+            }
+            i += ch.len_utf8();
+        }
+    }
+    i
+}
+
+/// The char at `i`, decoded in full. `i` is always on a char boundary at the
+/// call sites, so the fallback never fires.
+#[inline]
+fn char_at(input: &str, i: usize) -> char {
+    input[i..].chars().next().unwrap_or('\0')
+}
+
 #[cfg(test)]
 pub(crate) fn lex(input: &str) -> Vec<Token<'_>> {
     lex_with_md(input, false)
@@ -615,17 +679,10 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token<'_>> {
 
                 if c == '.' {
                     if i + 1 < bytes.len() {
-                        let next = bytes[i + 1] as char;
-                        if next.is_ascii_alphabetic() || next == '_' {
+                        let next = char_at(input, i + 1);
+                        if is_name_start(next) || next == '_' {
                             let start = i;
-                            i += 2;
-                            while i < bytes.len() {
-                                let ch = bytes[i] as char;
-                                if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.') {
-                                    break;
-                                }
-                                i += 1;
-                            }
+                            i = scan_name_continue(input, i + 1 + next.len_utf8());
                             out.push(Token {
                                 kind: TokKind::Ident,
                                 text: &input[start..i],
@@ -646,14 +703,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token<'_>> {
                         // so the whole symbol lexes as one identifier; with none,
                         // the text is just `...`.
                         let start = i;
-                        i += 3;
-                        while i < bytes.len() {
-                            let ch = bytes[i] as char;
-                            if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.') {
-                                break;
-                            }
-                            i += 1;
-                        }
+                        i = scan_name_continue(input, i + 3);
                         out.push(Token {
                             kind: TokKind::Ident,
                             text: &input[start..i],
@@ -677,13 +727,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token<'_>> {
                         while i < bytes.len() && (bytes[i] as char).is_ascii_digit() {
                             i += 1;
                         }
-                        while i < bytes.len() {
-                            let ch = bytes[i] as char;
-                            if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.') {
-                                break;
-                            }
-                            i += 1;
-                        }
+                        i = scan_name_continue(input, i);
                         out.push(Token {
                             kind: TokKind::Ident,
                             text: &input[start..i],
@@ -699,14 +743,7 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token<'_>> {
                     // by a digit (`.5`) is a numeric literal handled below.
                     if !(i + 1 < bytes.len() && (bytes[i + 1] as char).is_ascii_digit()) {
                         let start = i;
-                        i += 1;
-                        while i < bytes.len() {
-                            let ch = bytes[i] as char;
-                            if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.') {
-                                break;
-                            }
-                            i += 1;
-                        }
+                        i = scan_name_continue(input, i + 1);
                         out.push(Token {
                             kind: TokKind::Ident,
                             text: &input[start..i],
@@ -1214,16 +1251,12 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token<'_>> {
                     }
                 }
 
-                if c.is_ascii_alphabetic() || c == '_' {
+                // `c` is only faithful for ASCII, so decode the char in full
+                // before asking whether it opens a name.
+                let first = char_at(input, i);
+                if is_name_start(first) || first == '_' {
                     let start = i;
-                    i += 1;
-                    while i < bytes.len() {
-                        let ch = bytes[i] as char;
-                        if !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.') {
-                            break;
-                        }
-                        i += 1;
-                    }
+                    i = scan_name_continue(input, i + first.len_utf8());
                     let text = &input[start..i];
                     let kind = match text {
                         "if" => TokKind::IfKw,
@@ -1244,15 +1277,11 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token<'_>> {
                     continue;
                 }
 
-                // Catch-all. `c` (= `bytes[i] as char`) is only a faithful char
-                // for ASCII; a non-ASCII byte begins a multibyte UTF-8 char, so
-                // read the whole char from the source and advance by its full
-                // width. Emitting one byte at a time would Latin-1-mangle it (a
-                // U+00A0 → `Â` + U+00A0) and leave `i` mid-char for the next
-                // iteration --- both a losslessness break. `i` is always on a
-                // char boundary here, so `chars().next()` cannot fail.
-                let ch = input[i..].chars().next().unwrap_or(c);
-                let len = ch.len_utf8();
+                // Catch-all. Advance by the whole char's width: emitting one
+                // byte at a time would Latin-1-mangle it (a U+00A0 → `Â` +
+                // U+00A0) and leave `i` mid-char for the next iteration ---
+                // both a losslessness break.
+                let len = first.len_utf8();
                 out.push(Token {
                     kind: TokKind::Unknown,
                     text: &input[i..i + len],
@@ -1437,6 +1466,70 @@ mod tests {
         assert_eq!(tokens[0].kind, TokKind::Float);
         assert_eq!(tokens[0].text, "1.");
         assert_eq!(tokens[1].kind, TokKind::Semicolon);
+    }
+
+    /// R's symbol grammar is locale-dependent: in a UTF-8 locale `gram.y` starts
+    /// a name on any `iswalpha` character and continues it on `iswalnum`, so
+    /// `日本語` and `café` are ordinary identifiers (issue #108).
+    #[test]
+    fn lexes_non_ascii_letters_as_ident_tokens() {
+        for input in [
+            "日本語",
+            "café",
+            "Ωx",
+            ".δ_1",
+            "µ",
+            "ª",
+            "々",
+            "Ⅰ",
+            "一1",
+            "x日",
+        ] {
+            let tokens = lex(input);
+            assert_eq!(tokens.len(), 1, "{input:?} should lex as one token");
+            assert_eq!(tokens[0].kind, TokKind::Ident, "{input:?}");
+            assert_eq!(tokens[0].text, input);
+        }
+    }
+
+    /// Non-letters stay unknown, matching R's rejection of them in a name: an
+    /// emoji (So), a combining mark (Mn), and the multiplication sign (Sm) are
+    /// all "unexpected input" to R's parser, mid-name as much as at the start.
+    #[test]
+    fn does_not_lex_non_alphanumeric_non_ascii_as_ident() {
+        for input in ["😀", "\u{301}", "×", "\u{a0}"] {
+            let tokens = lex(input);
+            assert_eq!(tokens.len(), 1, "{input:?} should lex as one token");
+            assert_eq!(tokens[0].kind, TokKind::Unknown, "{input:?}");
+            assert_eq!(tokens[0].text, input);
+        }
+
+        // A combining acute after `a` ends the name rather than joining it.
+        let tokens = lex("a\u{301}");
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].kind, TokKind::Ident);
+        assert_eq!(tokens[0].text, "a");
+        assert_eq!(tokens[1].kind, TokKind::Unknown);
+        assert_eq!(tokens[1].text, "\u{301}");
+    }
+
+    /// The two places Unicode's Alphabetic/Alphanumeric properties diverge from
+    /// R's libc `iswalpha`/`iswalnum` (see [`is_name_start`]). Pinned so the
+    /// approximation stays a deliberate choice rather than a silent drift; both
+    /// need a name made only of exotic characters to bite.
+    #[test]
+    fn known_divergences_from_r_name_classification() {
+        // R starts a name on a non-ASCII decimal digit (a glibc `alpha` quirk);
+        // arity does not, so `۱ <- 1` is diagnosed here and valid there.
+        let tokens = lex("\u{6f1}");
+        assert_eq!(tokens[0].kind, TokKind::Unknown);
+
+        // R ends a name before an Other_Number; arity keeps it, so `a²` is one
+        // identifier here and a syntax error there.
+        let tokens = lex("a\u{b2}");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].kind, TokKind::Ident);
+        assert_eq!(tokens[0].text, "a\u{b2}");
     }
 
     #[test]

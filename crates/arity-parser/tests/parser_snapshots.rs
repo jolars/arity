@@ -181,6 +181,7 @@ fn fixture_names() -> &'static [&'static str] {
         "assignment_float",
         "numeric_dot_leading",
         "dotdotdot_names",
+        "unicode_identifiers",
         "binary_comment_after_operator",
         "assignment_string",
         "assignment_eq",

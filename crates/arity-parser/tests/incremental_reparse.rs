@@ -188,6 +188,11 @@ const SOURCES: &[&str] = &[
     // Multi-line top-level statement continued by a trailing operator, so edits
     // near the line break exercise the merge/split boundary.
     "total <- first +\n  second\nn <- 10\n",
+    // Multibyte identifiers (issue #108): the sweep edits at every char
+    // boundary, so a token relex that mis-measured a name's width would show up
+    // as a tree mismatch here.
+    "日本語 <- 1\ncafé <- 日本語 + 2\n",
+    "f <- function(café, 日本語 = 1) {\n  café + 日本語\n}\n",
 ];
 
 #[test]

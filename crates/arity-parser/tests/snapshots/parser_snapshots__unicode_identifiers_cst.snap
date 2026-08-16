@@ -1,0 +1,73 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..130
+  ASSIGNMENT_EXPR@0..14
+    IDENT@0..9 "日本語"
+    WHITESPACE@9..10 " "
+    ASSIGN_LEFT@10..12 "<-"
+    WHITESPACE@12..13 " "
+    INT@13..14 "1"
+  NEWLINE@14..15 "\n"
+  ASSIGNMENT_EXPR@15..25
+    IDENT@15..20 "café"
+    WHITESPACE@20..21 " "
+    ASSIGN_LEFT@21..23 "<-"
+    WHITESPACE@23..24 " "
+    INT@24..25 "2"
+  NEWLINE@25..26 "\n"
+  ASSIGNMENT_EXPR@26..36
+    IDENT@26..31 ".δ_1"
+    WHITESPACE@31..32 " "
+    ASSIGN_LEFT@32..34 "<-"
+    WHITESPACE@34..35 " "
+    INT@35..36 "3"
+  NEWLINE@36..37 "\n"
+  ASSIGNMENT_EXPR@37..61
+    IDENT@37..40 "Ωx"
+    WHITESPACE@40..41 " "
+    ASSIGN_LEFT@41..43 "<-"
+    WHITESPACE@43..44 " "
+    BINARY_EXPR@44..61
+      IDENT@44..49 "café"
+      WHITESPACE@49..50 " "
+      PLUS@50..51 "+"
+      WHITESPACE@51..52 " "
+      IDENT@52..61 "日本語"
+  NEWLINE@61..62 "\n"
+  ASSIGNMENT_EXPR@62..107
+    IDENT@62..63 "f"
+    WHITESPACE@63..64 " "
+    ASSIGN_LEFT@64..66 "<-"
+    WHITESPACE@66..67 " "
+    FUNCTION_EXPR@67..107
+      FUNCTION_KW@67..75 "function"
+      LPAREN@75..76 "("
+      IDENT@76..85 "日本語"
+      COMMA@85..86 ","
+      WHITESPACE@86..87 " "
+      IDENT@87..92 "café"
+      WHITESPACE@92..93 " "
+      ASSIGN_EQ@93..94 "="
+      WHITESPACE@94..95 " "
+      INT@95..96 "1"
+      RPAREN@96..97 ")"
+      WHITESPACE@97..98 " "
+      IDENT@98..107 "日本語"
+  NEWLINE@107..108 "\n"
+  BINARY_EXPR@108..129
+    CALL_EXPR@108..123
+      IDENT@108..112 "list"
+      LPAREN@112..113 "("
+      ARG_LIST@113..122
+        ARG@113..122
+          IDENT@113..118 "café"
+          WHITESPACE@118..119 " "
+          ASSIGN_EQ@119..120 "="
+          WHITESPACE@120..121 " "
+          INT@121..122 "1"
+      RPAREN@122..123 ")"
+    DOLLAR@123..124 "$"
+    IDENT@124..129 "café"
+  NEWLINE@129..130 "\n"
