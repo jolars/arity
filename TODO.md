@@ -1071,10 +1071,33 @@ measurement to re-run against any change to the driver.
   into its own "used by others" set.
 
 - [ ] **`ProjectScope` materializes one shared per-package set per member.**
-  What is left of the entry above: `project_graph` is still 10.4 ms of a 22.3 ms
-  24-thread run, and still serial. The post-fix split of `ProjectScope::build`
-  (86 members) is almost entirely one shape — a set that is the *same for the
-  whole package*, cloned once per member:
+  What is left of the entry above, and **the whole of the remaining jarl gap**.
+
+  arity does *less* total work than jarl and still loses on wall time, because
+  half its 24-thread run is one serial region. Measured on the tidyr package
+  root (`bash time`, 20 runs, pinned):
+
+  | | wall 1t | wall 24t | CPU 24t | speedup |
+  | ------------ | -------- | ------- | -------- | ------- |
+  | arity before | — | 66.4 ms | 182.9 ms | — |
+  | arity after | 99.7 ms | 49.0 ms | 173.1 ms | 2.03x |
+  | jarl 0.5.0 | 120.2 ms | 23.4 ms | 212.8 ms | 5.14x |
+
+  jarl burns **23% more CPU** and is still 2.1x faster in wall time. It has no
+  cross-file project layer, so it has no serial region at all. Amdahl on
+  arity's 2.03x implies ~47% serial, and the phase split through the *real*
+  CLI (real index, real excludes; the harness figures above understate it)
+  confirms it — 16.4 ms serial of a 32.4 ms call, of which `project_graph` is
+  **12.2 ms, 38% of the entire run**. Everything else in the CLI is noise:
+  `lint_index` is 0.04 ms (the lazy load works), rendering 826 findings is
+  1.2 ms, `serde_json` is 1.5% of CPU.
+
+  So this one item is the gap. Removing ~10 ms of it takes serial to ~5 ms and
+  Amdahl to ~11x, i.e. wall to roughly jarl's 23 ms.
+
+  The post-fix split of `ProjectScope::build` (86 members) is almost entirely
+  one shape — a set that is the *same for the whole package*, cloned once per
+  member:
 
   | step | cost | what is duplicated |
   | ----------------- | ------ | ------------------------------- |
