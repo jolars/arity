@@ -34,7 +34,7 @@ use crate::project::description::DescriptionFacts;
 use crate::project::exports::DefKind;
 use crate::project::native::dynlib_bound_names;
 use crate::project::roxygen::TopicMember;
-use crate::project::scope::{FileFacts, FileScope, LayeredSet, ProjectScope, package_root};
+use crate::project::scope::{FileFacts, FileScope, LayeredSet, ProjectScope, package_root_of_dir};
 use crate::project::source::{SourceEdgeKey, SourceTarget};
 use crate::rindex::provider::{attach_members, package_indexed, resolve_origin};
 use crate::semantic::symbols::{LoadedPackage, PackageOrigin};
@@ -196,9 +196,16 @@ impl Visibility {
 /// the result is stored in the [`PackageGraph`](crate::incremental::PackageGraph)
 /// input so [`workspace_project`] stays pure.
 pub fn discover_packages(member_paths: &[PathBuf]) -> Vec<PackageInfo> {
+    // Dedup by parent directory before walking up. The root walk reads only
+    // `path.parent()`, so asking once per *file* re-walks one directory chain
+    // once per sibling — 86 walks for a package whose members share one `R/`,
+    // each stat-ing two entries per ancestor. The root set is identical.
     let roots: BTreeSet<PathBuf> = member_paths
         .iter()
-        .filter_map(|p| package_root(p))
+        .filter_map(|p| p.parent())
+        .collect::<BTreeSet<&Path>>()
+        .into_iter()
+        .filter_map(package_root_of_dir)
         .collect();
     roots
         .into_iter()

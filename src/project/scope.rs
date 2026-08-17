@@ -1053,7 +1053,18 @@ pub fn is_package_root(dir: &Path) -> bool {
 /// Walk up from `path` to find an enclosing R package root: a directory with
 /// both a `DESCRIPTION` file and an `R/` subdirectory. Touches the filesystem.
 pub fn package_root(path: &Path) -> Option<PathBuf> {
-    let mut dir = path.parent();
+    path.parent().and_then(package_root_of_dir)
+}
+
+/// [`package_root`] for a directory already in hand: the nearest ancestor of (or
+/// equal to) `dir` that is a package root.
+///
+/// Split out because the answer depends only on the directory. Each step stats
+/// two entries, and the walk runs to the filesystem root when there is no
+/// package at all, so a caller holding many files should dedup by parent
+/// directory and ask once per directory rather than once per file.
+pub fn package_root_of_dir(dir: &Path) -> Option<PathBuf> {
+    let mut dir = Some(dir);
     while let Some(d) = dir {
         if is_package_root(d) {
             return Some(d.to_path_buf());

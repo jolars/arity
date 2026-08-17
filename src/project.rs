@@ -39,7 +39,7 @@ pub use roxygen::{
 };
 pub use scope::{
     FileFacts, FileScope, LayeredSet, PathSetView, ProjectScope, ReadBinding, ReadSite,
-    is_package_root, package_root,
+    is_package_root, package_root, package_root_of_dir,
 };
 pub use sequence::{collect_top_level_events, collect_top_level_events_spanned};
 pub use source::{

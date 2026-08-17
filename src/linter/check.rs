@@ -23,9 +23,9 @@ use crate::incremental::{
 use crate::project::description::DescriptionFacts;
 use crate::project::{
     PackageCollation, PackageDeclarations, PackageUsage, Project, ProjectMember,
-    expected_r_sources, external_resolution, package_facts_for, package_root, package_usage,
-    package_usage_for, project_graph, project_roxygen_topics, roxygen_topics_for, visible_symbols,
-    workspace_project,
+    expected_r_sources, external_resolution, package_facts_for, package_root, package_root_of_dir,
+    package_usage, package_usage_for, project_graph, project_roxygen_topics, roxygen_topics_for,
+    visible_symbols, workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::SymbolProvider;
@@ -459,7 +459,16 @@ pub fn check_paths_with_index(
 /// residents: excluded from linting, but their bindings are real package API.
 fn excluded_package_sources(lint_files: &[PathBuf]) -> Vec<PathBuf> {
     let linted: HashSet<&PathBuf> = lint_files.iter().collect();
-    let roots: BTreeSet<PathBuf> = lint_files.iter().filter_map(|p| package_root(p)).collect();
+    // Dedup by parent directory first, as [`discover_packages`] does: the root
+    // walk depends only on the parent, so one walk per directory answers for
+    // every file in it.
+    let roots: BTreeSet<PathBuf> = lint_files
+        .iter()
+        .filter_map(|p| p.parent())
+        .collect::<BTreeSet<&Path>>()
+        .into_iter()
+        .filter_map(package_root_of_dir)
+        .collect();
     let mut extra = Vec::new();
     for root in roots {
         let r_dir = root.join("R");
