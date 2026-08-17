@@ -498,73 +498,13 @@ impl ProjectScope {
             }
         }
 
-        // Derive the two directions from `sees`.
-        let mut visible: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
-        let mut read_by_others: HashMap<PathBuf, BTreeSet<String>> = files
-            .iter()
-            .map(|f| (f.path.clone(), BTreeSet::new()))
-            .collect();
-        let mut namespace_exports: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
-        let mut s3_methods: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
-        for (i, f) in files.iter().enumerate() {
-            // Starting from the whole package's exports rather than the
-            // siblings' is the same set: the member's own exports are removed
-            // again below, which is also what makes `visible` strictly
-            // cross-file — own bindings resolve locally.
-            let mut defs = match f
-                .package_root
-                .as_deref()
-                .and_then(|r| package_exports.get(r))
-            {
-                Some(union) => union.clone(),
-                None => BTreeSet::new(),
-            };
-            for target in &sourced[i] {
-                if let Some(target) = by_path.get(target) {
-                    defs.extend(target.exports.iter().cloned());
-                }
-            }
-            for name in &f.exports {
-                defs.remove(name);
-            }
-            visible.insert(f.path.clone(), defs);
-        }
-
-        // Every file `f` sees contributes `f`'s reads to that file's "used by
-        // others" set. For a package member that is every sibling, so take the
-        // package-wide union and drop only the names *this* member alone reads:
-        // a name with two or more readers survives the exclusion of any single
-        // one, and a name with one reader survives unless that reader is us.
-        for (i, f) in files.iter().enumerate() {
-            let Some(counts) = f
-                .package_root
-                .as_deref()
-                .and_then(|r| package_read_counts.get(r))
-            else {
-                continue;
-            };
-            let used = read_by_others
-                .get_mut(&f.path)
-                .expect("every file is seeded above");
-            for (&name, &count) in counts {
-                if count > 1 || !reads[i].contains(name) {
-                    used.insert(name.to_string());
-                }
-            }
-        }
-        for i in 0..files.len() {
-            for target in &sourced[i] {
-                if let Some(used) = read_by_others.get_mut(*target) {
-                    used.extend(reads[i].iter().cloned());
-                }
-            }
-        }
-
-        // Fold NAMESPACE declarations into the same two directions: imported
-        // names resolve (visible) and exported names count as used (via
-        // `namespace_exports`). A wholesale `import(pkg)` is *recorded*, not
-        // resolved: whether pkg's exports are enumerable needs the library
-        // index, which this pure builder does not have.
+        // NAMESPACE declarations, parsed once per root. This runs *before* the
+        // two derivations because the imported names belong in `visible`'s
+        // shared layer; the per-member fan-out stays below.
+        let mut ns_exported: HashMap<&Path, BTreeSet<String>> = HashMap::new();
+        let mut ns_s3: HashMap<&Path, BTreeSet<String>> = HashMap::new();
+        let mut ns_imported: HashMap<&Path, BTreeSet<String>> = HashMap::new();
+        let mut ns_wildcards: HashMap<&Path, BTreeSet<String>> = HashMap::new();
         for (root, text) in namespaces {
             let Some(members) = package_members.get(root.as_path()) else {
                 continue;
@@ -575,67 +515,143 @@ impl ProjectScope {
                 .flat_map(|f| f.exports.iter().map(|n| n.to_string()))
                 .collect();
             let info = parse_namespace(text, &object_names);
-            let exported: BTreeSet<String> = info.exports.iter().cloned().collect();
-            let imported: BTreeSet<String> = info.imported_names.iter().cloned().collect();
+            let root = root.as_path();
+            ns_exported.insert(root, info.exports.iter().cloned().collect());
+            ns_s3.insert(root, info.s3_methods.iter().cloned().collect());
+            ns_imported.insert(root, info.imported_names.iter().cloned().collect());
             let wildcards: BTreeSet<String> = info.imported_packages.iter().cloned().collect();
+            if !wildcards.is_empty() {
+                ns_wildcards.insert(root, wildcards);
+            }
+        }
 
+        // Derive the two directions from `sees`, each as one layer shared by the
+        // whole package plus a per-file delta.
+
+        // `visible`'s shared layer: the package's export union, plus what its
+        // NAMESPACE `importFrom`s and its `useDynLib()` binds. Native routines
+        // belong here rather than being reached through `sees` because nothing
+        // in the R sources defines them, yet a reference to one resolves
+        // anywhere in the package — not only in a `.Call()` head.
+        //
+        // Those last two are also kept apart as `exempt`: they are folded in
+        // *after* the own-export removal, so a name that is both an own export
+        // and an import (or a native routine) stays visible.
+        let mut visible_shared: HashMap<&Path, Arc<BTreeSet<String>>> = HashMap::new();
+        let mut visible_exempt: HashMap<&Path, BTreeSet<String>> = HashMap::new();
+        for (&root, exports) in &package_exports {
+            let mut exempt = BTreeSet::new();
+            if let Some(imported) = ns_imported.get(root) {
+                exempt.extend(imported.iter().cloned());
+            }
+            if let Some(routines) = native_routines.get(root) {
+                exempt.extend(routines.iter().cloned());
+            }
+            let mut shared = exports.clone();
+            shared.extend(exempt.iter().cloned());
+            visible_shared.insert(root, Arc::new(shared));
+            visible_exempt.insert(root, exempt);
+        }
+
+        let empty_shared: Arc<BTreeSet<String>> = Arc::new(BTreeSet::new());
+        let mut visible: HashMap<PathBuf, LayeredSet> = HashMap::with_capacity(files.len());
+        for (i, f) in files.iter().enumerate() {
+            let root = f.package_root.as_deref();
+            let shared = root
+                .and_then(|r| visible_shared.get(r))
+                .unwrap_or(&empty_shared)
+                .clone();
+            // `source()` edges are directional and sparse, so the closure's
+            // exports stay a per-file layer.
+            let mut added = BTreeSet::new();
+            for target in &sourced[i] {
+                if let Some(target) = by_path.get(target) {
+                    added.extend(target.exports.iter().cloned());
+                }
+            }
+            // Own bindings resolve locally, which is what makes `visible`
+            // strictly cross-file. `removed` outranks `added` — a file that
+            // redefines a name it also sources does not see the sourced one —
+            // but not `exempt`, which is folded in later.
+            let exempt = root.and_then(|r| visible_exempt.get(r));
+            let removed: BTreeSet<String> = f
+                .exports
+                .iter()
+                .filter(|n| exempt.is_none_or(|e| !e.contains(*n)))
+                .cloned()
+                .collect();
+            visible.insert(f.path.clone(), LayeredSet::new(shared, added, removed));
+        }
+
+        // Every file `f` sees contributes `f`'s reads to that file's "used by
+        // others" set. For a package member that is every sibling, so the shared
+        // layer is the package-wide read union and the per-file delta drops only
+        // the names *this* member alone reads. `source()` edges stay per-file,
+        // and are computed first because they *win* over that exclusion.
+        let mut read_added: HashMap<&Path, BTreeSet<String>> = HashMap::new();
+        for i in 0..files.len() {
+            for target in &sourced[i] {
+                read_added
+                    .entry(*target)
+                    .or_default()
+                    .extend(reads[i].iter().cloned());
+            }
+        }
+        let read_shared: HashMap<&Path, Arc<BTreeSet<String>>> = package_read_counts
+            .iter()
+            .map(|(&root, counts)| {
+                (
+                    root,
+                    Arc::new(counts.keys().map(|n| (*n).to_string()).collect()),
+                )
+            })
+            .collect();
+
+        let mut read_by_others: HashMap<PathBuf, LayeredSet> = HashMap::with_capacity(files.len());
+        for (i, f) in files.iter().enumerate() {
+            let root = f.package_root.as_deref();
+            let shared = root
+                .and_then(|r| read_shared.get(r))
+                .unwrap_or(&empty_shared)
+                .clone();
+            let added = read_added.remove(f.path.as_path()).unwrap_or_default();
+            // A name with two or more readers survives the exclusion of any
+            // single one; a name with one reader survives unless that reader is
+            // us — and even then, a file that `source()`s us may read it, which
+            // `added` has already recorded.
+            let removed: BTreeSet<String> = match root.and_then(|r| package_read_counts.get(r)) {
+                Some(counts) => reads[i]
+                    .iter()
+                    .filter(|n| counts.get(n.as_str()) == Some(&1) && !added.contains(*n))
+                    .cloned()
+                    .collect(),
+                None => BTreeSet::new(),
+            };
+            read_by_others.insert(f.path.clone(), LayeredSet::new(shared, added, removed));
+        }
+
+        // Fan the parsed NAMESPACE facts out to each root's members. Both
+        // resolution directions are already folded in above — imported names sit
+        // in `visible`'s shared layer — so what is left is the record of what the
+        // package exports. A wholesale `import(pkg)` is *recorded*, not resolved:
+        // whether pkg's exports are enumerable needs the library index, which
+        // this pure builder does not have.
+        let mut namespace_exports: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
+        let mut s3_methods: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
+        for (&root, members) in &package_members {
             for member in members {
                 let path = member.to_path_buf();
-                namespace_exports
-                    .entry(path.clone())
-                    .or_default()
-                    .extend(exported.iter().cloned());
-                s3_methods
-                    .entry(path.clone())
-                    .or_default()
-                    .extend(info.s3_methods.iter().cloned());
-                if let Some(vis) = visible.get_mut(&path) {
-                    vis.extend(imported.iter().cloned());
+                if let Some(exported) = ns_exported.get(root) {
+                    namespace_exports.insert(path.clone(), exported.clone());
                 }
-                if !wildcards.is_empty() {
-                    wildcard_imports
-                        .entry(path)
-                        .or_default()
-                        .extend(wildcards.iter().cloned());
+                if let Some(s3) = ns_s3.get(root) {
+                    s3_methods.insert(path.clone(), s3.clone());
+                }
+                if let Some(wildcards) = ns_wildcards.get(root) {
+                    wildcard_imports.insert(path, wildcards.clone());
                 }
             }
         }
-
-        // `useDynLib()` binds native routines in the package namespace, so a
-        // reference to one resolves anywhere in the package — not only in a
-        // `.Call()` head. Nothing in the R sources defines them, which is why
-        // they are injected here rather than reached through `sees`.
-        for (root, routines) in native_routines {
-            let Some(members) = package_members.get(root.as_path()) else {
-                continue;
-            };
-            for member in members {
-                if let Some(vis) = visible.get_mut(*member) {
-                    vis.extend(routines.iter().cloned());
-                }
-            }
-        }
-
-        // Step-2 shim: the sets are still materialized per member above, then
-        // wrapped whole. The real shared/added/removed derivation replaces this.
-        let visible: HashMap<PathBuf, LayeredSet> = visible
-            .into_iter()
-            .map(|(p, s)| {
-                (
-                    p,
-                    LayeredSet::new(Arc::new(s), BTreeSet::new(), BTreeSet::new()),
-                )
-            })
-            .collect();
-        let read_by_others: HashMap<PathBuf, LayeredSet> = read_by_others
-            .into_iter()
-            .map(|(p, s)| {
-                (
-                    p,
-                    LayeredSet::new(Arc::new(s), BTreeSet::new(), BTreeSet::new()),
-                )
-            })
-            .collect();
 
         Self {
             visible,
