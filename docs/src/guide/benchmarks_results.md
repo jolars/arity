@@ -5,7 +5,7 @@
 <div class="bench-chart-block">
 <figure class="bench-figure">
 <div class="bench-chart"></div>
-<script type="application/json" class="bench-data">[{"document":"MASS/polr.R","tool":"arity","mean_ms":5.8455,"ratio":1.0,"ratio_label":"baseline","stddev_ms":0.4767,"min_ms":4.9571,"max_ms":7.9215},{"document":"MASS/polr.R","tool":"air","mean_ms":7.9158,"ratio":1.354169874262253,"ratio_label":"1.4x slower","stddev_ms":0.4918,"min_ms":7.0364,"max_ms":9.4193},{"document":"MASS/polr.R","tool":"styler","mean_ms":3005.2278,"ratio":514.109622786759,"ratio_label":"514.1x slower","stddev_ms":16.7858,"min_ms":2991.9473,"max_ms":3024.0944},{"document":"tidyr/pivot-wide.R","tool":"arity","mean_ms":4.66,"ratio":1.0,"ratio_label":"baseline","stddev_ms":0.4174,"min_ms":3.9505,"max_ms":6.9153},{"document":"tidyr/pivot-wide.R","tool":"air","mean_ms":5.2126,"ratio":1.1185836909871245,"ratio_label":"1.1x slower","stddev_ms":0.4361,"min_ms":4.51,"max_ms":8.4923},{"document":"tidyr/pivot-wide.R","tool":"styler","mean_ms":1657.7481,"ratio":355.7399356223176,"ratio_label":"355.7x slower","stddev_ms":20.3054,"min_ms":1637.9878,"max_ms":1678.5579},{"document":"small","tool":"arity","mean_ms":18.8899,"ratio":1.0,"ratio_label":"baseline","stddev_ms":1.2909,"min_ms":16.4381,"max_ms":24.1338},{"document":"small","tool":"air","mean_ms":24.7004,"ratio":1.3075982403294881,"ratio_label":"1.3x slower","stddev_ms":1.2469,"min_ms":22.6597,"max_ms":28.3625},{"document":"small","tool":"styler","mean_ms":11257.2645,"ratio":595.9409261033674,"ratio_label":"595.9x slower","stddev_ms":27.5045,"min_ms":11235.0162,"max_ms":11288.0166},{"document":"large","tool":"arity","mean_ms":472.637,"ratio":1.0,"ratio_label":"baseline","stddev_ms":11.2247,"min_ms":460.7096,"max_ms":493.4121},{"document":"large","tool":"air","mean_ms":311.0487,"ratio":0.6581133089453428,"ratio_label":"1.5x faster","stddev_ms":9.7044,"min_ms":297.7228,"max_ms":329.7785}]</script>
+<script type="application/json" class="bench-data">[{"document":"MASS/polr.R","tool":"arity","mean_ms":4.6895,"ratio":1.0,"ratio_label":"baseline","stddev_ms":0.4927,"min_ms":3.7386,"max_ms":6.6182},{"document":"MASS/polr.R","tool":"air","mean_ms":7.9339,"ratio":1.691843480115151,"ratio_label":"1.7x slower","stddev_ms":0.573,"min_ms":7.0557,"max_ms":10.7287},{"document":"MASS/polr.R","tool":"styler","mean_ms":2915.8726,"ratio":621.7875253225291,"ratio_label":"621.8x slower","stddev_ms":15.2694,"min_ms":2906.3331,"max_ms":2933.4838},{"document":"tidyr/pivot-wide.R","tool":"arity","mean_ms":4.0691,"ratio":1.0,"ratio_label":"baseline","stddev_ms":0.4606,"min_ms":3.1811,"max_ms":5.9827},{"document":"tidyr/pivot-wide.R","tool":"air","mean_ms":5.0702,"ratio":1.246024919515372,"ratio_label":"1.2x slower","stddev_ms":0.3703,"min_ms":4.5158,"max_ms":8.2501},{"document":"tidyr/pivot-wide.R","tool":"styler","mean_ms":1619.5695,"ratio":398.016637585707,"ratio_label":"398.0x slower","stddev_ms":13.3935,"min_ms":1607.4078,"max_ms":1633.9242},{"document":"small","tool":"arity","mean_ms":5.2542,"ratio":1.0,"ratio_label":"baseline","stddev_ms":0.5629,"min_ms":4.0913,"max_ms":7.2269},{"document":"small","tool":"air","mean_ms":25.5041,"ratio":4.85404057706216,"ratio_label":"4.9x slower","stddev_ms":1.4496,"min_ms":23.0805,"max_ms":30.4521},{"document":"small","tool":"styler","mean_ms":11679.5085,"ratio":2222.8899737352976,"ratio_label":"2222.9x slower","stddev_ms":102.7043,"min_ms":11591.587,"max_ms":11792.3935},{"document":"large","tool":"arity","mean_ms":36.2492,"ratio":1.0,"ratio_label":"baseline","stddev_ms":1.4541,"min_ms":33.6755,"max_ms":39.3381},{"document":"large","tool":"air","mean_ms":291.6079,"ratio":8.044533396599096,"ratio_label":"8.0x slower","stddev_ms":1.7069,"min_ms":289.1824,"max_ms":294.2404}]</script>
 <figcaption>Formatting speed on single files relative to arity, one dot per document: the largest source file of each benchmarked package, then two synthetic corpus tiers. The vertical axis is mean wall-clock time as a ratio to arity on a log scale, so arity lies on the dashed baseline at 1; faster tools fall below it and slower tools rise above. Hover a dot for the exact figures.</figcaption>
 </figure>
 <noscript>Enable JavaScript for the interactive chart; the data table below has the same numbers.</noscript>
@@ -15,35 +15,35 @@
 <table>
 <thead><tr><th>Tool</th><th>Mean (ms)</th><th>Min (ms)</th><th>Max (ms)</th><th>Relative</th></tr></thead>
 <tbody>
-<tr><td>arity</td><td>5.8455</td><td>4.9571</td><td>7.9215</td><td>baseline</td></tr>
-<tr><td>air</td><td>7.9158</td><td>7.0364</td><td>9.4193</td><td>1.4x slower</td></tr>
-<tr><td>styler</td><td>3005.2278</td><td>2991.9473</td><td>3024.0944</td><td>514.1x slower</td></tr>
+<tr><td>arity</td><td>4.6895</td><td>3.7386</td><td>6.6182</td><td>baseline</td></tr>
+<tr><td>air</td><td>7.9339</td><td>7.0557</td><td>10.7287</td><td>1.7x slower</td></tr>
+<tr><td>styler</td><td>2915.8726</td><td>2906.3331</td><td>2933.4838</td><td>621.8x slower</td></tr>
 </tbody>
 </table>
 <h5>tidyr/pivot-wide.R (23349 bytes, 807 lines)</h5>
 <table>
 <thead><tr><th>Tool</th><th>Mean (ms)</th><th>Min (ms)</th><th>Max (ms)</th><th>Relative</th></tr></thead>
 <tbody>
-<tr><td>arity</td><td>4.6600</td><td>3.9505</td><td>6.9153</td><td>baseline</td></tr>
-<tr><td>air</td><td>5.2126</td><td>4.5100</td><td>8.4923</td><td>1.1x slower</td></tr>
-<tr><td>styler</td><td>1657.7481</td><td>1637.9878</td><td>1678.5579</td><td>355.7x slower</td></tr>
+<tr><td>arity</td><td>4.0691</td><td>3.1811</td><td>5.9827</td><td>baseline</td></tr>
+<tr><td>air</td><td>5.0702</td><td>4.5158</td><td>8.2501</td><td>1.2x slower</td></tr>
+<tr><td>styler</td><td>1619.5695</td><td>1607.4078</td><td>1633.9242</td><td>398.0x slower</td></tr>
 </tbody>
 </table>
-<h5>small (128902 bytes, 8892 lines)</h5>
+<h5>small (133856 bytes, 9190 lines)</h5>
 <table>
 <thead><tr><th>Tool</th><th>Mean (ms)</th><th>Min (ms)</th><th>Max (ms)</th><th>Relative</th></tr></thead>
 <tbody>
-<tr><td>arity</td><td>18.8899</td><td>16.4381</td><td>24.1338</td><td>baseline</td></tr>
-<tr><td>air</td><td>24.7004</td><td>22.6597</td><td>28.3625</td><td>1.3x slower</td></tr>
-<tr><td>styler</td><td>11257.2645</td><td>11235.0162</td><td>11288.0166</td><td>595.9x slower</td></tr>
+<tr><td>arity</td><td>5.2542</td><td>4.0913</td><td>7.2269</td><td>baseline</td></tr>
+<tr><td>air</td><td>25.5041</td><td>23.0805</td><td>30.4521</td><td>4.9x slower</td></tr>
+<tr><td>styler</td><td>11679.5085</td><td>11591.5870</td><td>11792.3935</td><td>2222.9x slower</td></tr>
 </tbody>
 </table>
-<h5>large (1546824 bytes, 106704 lines)</h5>
+<h5>large (1606272 bytes, 110280 lines)</h5>
 <table>
 <thead><tr><th>Tool</th><th>Mean (ms)</th><th>Min (ms)</th><th>Max (ms)</th><th>Relative</th></tr></thead>
 <tbody>
-<tr><td>arity</td><td>472.6370</td><td>460.7096</td><td>493.4121</td><td>baseline</td></tr>
-<tr><td>air</td><td>311.0487</td><td>297.7228</td><td>329.7785</td><td>1.5x faster</td></tr>
+<tr><td>arity</td><td>36.2492</td><td>33.6755</td><td>39.3381</td><td>baseline</td></tr>
+<tr><td>air</td><td>291.6079</td><td>289.1824</td><td>294.2404</td><td>8.0x slower</td></tr>
 </tbody>
 </table>
 </details>
@@ -54,7 +54,7 @@
 <div class="bench-chart-block">
 <figure class="bench-figure">
 <div class="bench-chart"></div>
-<script type="application/json" class="bench-data">[{"document":"tidyr","tool":"arity","mean_ms":25.4796,"ratio":1.0,"ratio_label":"baseline","stddev_ms":0.9609,"min_ms":23.6112,"max_ms":28.0976},{"document":"tidyr","tool":"air","mean_ms":35.4748,"ratio":1.3922824534137113,"ratio_label":"1.4x slower","stddev_ms":0.9484,"min_ms":33.9106,"max_ms":38.0428},{"document":"MASS","tool":"arity","mean_ms":50.8426,"ratio":1.0,"ratio_label":"baseline","stddev_ms":1.2419,"min_ms":48.8145,"max_ms":53.4183},{"document":"MASS","tool":"air","mean_ms":61.4861,"ratio":1.2093421658215748,"ratio_label":"1.2x slower","stddev_ms":1.3215,"min_ms":59.4653,"max_ms":65.0481}]</script>
+<script type="application/json" class="bench-data">[{"document":"tidyr","tool":"arity","mean_ms":21.8164,"ratio":1.0,"ratio_label":"baseline","stddev_ms":0.8782,"min_ms":20.1607,"max_ms":24.22},{"document":"tidyr","tool":"air","mean_ms":35.5525,"ratio":1.62962266918465,"ratio_label":"1.6x slower","stddev_ms":0.9658,"min_ms":33.5811,"max_ms":37.985},{"document":"MASS","tool":"arity","mean_ms":44.9899,"ratio":1.0,"ratio_label":"baseline","stddev_ms":1.3854,"min_ms":42.2315,"max_ms":49.3543},{"document":"MASS","tool":"air","mean_ms":62.2538,"ratio":1.3837283479180882,"ratio_label":"1.4x slower","stddev_ms":1.2998,"min_ms":59.6198,"max_ms":64.3389}]</script>
 <figcaption>Formatting speed on real R packages (the tidyr and MASS source trees) relative to arity, on the same log-ratio axis.</figcaption>
 </figure>
 <noscript>Enable JavaScript for the interactive chart; the data table below has the same numbers.</noscript>
@@ -64,16 +64,16 @@
 <table>
 <thead><tr><th>Tool</th><th>Mean (ms)</th><th>Min (ms)</th><th>Max (ms)</th><th>Relative</th></tr></thead>
 <tbody>
-<tr><td>arity</td><td>25.4796</td><td>23.6112</td><td>28.0976</td><td>baseline</td></tr>
-<tr><td>air</td><td>35.4748</td><td>33.9106</td><td>38.0428</td><td>1.4x slower</td></tr>
+<tr><td>arity</td><td>21.8164</td><td>20.1607</td><td>24.2200</td><td>baseline</td></tr>
+<tr><td>air</td><td>35.5525</td><td>33.5811</td><td>37.9850</td><td>1.6x slower</td></tr>
 </tbody>
 </table>
 <h5>MASS (214820 bytes, 5951 lines)</h5>
 <table>
 <thead><tr><th>Tool</th><th>Mean (ms)</th><th>Min (ms)</th><th>Max (ms)</th><th>Relative</th></tr></thead>
 <tbody>
-<tr><td>arity</td><td>50.8426</td><td>48.8145</td><td>53.4183</td><td>baseline</td></tr>
-<tr><td>air</td><td>61.4861</td><td>59.4653</td><td>65.0481</td><td>1.2x slower</td></tr>
+<tr><td>arity</td><td>44.9899</td><td>42.2315</td><td>49.3543</td><td>baseline</td></tr>
+<tr><td>air</td><td>62.2538</td><td>59.6198</td><td>64.3389</td><td>1.4x slower</td></tr>
 </tbody>
 </table>
 </details>
@@ -86,7 +86,7 @@
 <div class="bench-chart-block">
 <figure class="bench-figure">
 <div class="bench-chart"></div>
-<script type="application/json" class="bench-data">[{"document":"MASS/polr.R","tool":"arity","mean_ms":26.2369,"ratio":1.0,"ratio_label":"baseline","stddev_ms":1.5585,"min_ms":23.8034,"max_ms":31.0467},{"document":"MASS/polr.R","tool":"jarl","mean_ms":12.8946,"ratio":0.4914681231395478,"ratio_label":"2.0x faster","stddev_ms":0.5434,"min_ms":11.9362,"max_ms":15.0183},{"document":"MASS/polr.R","tool":"lintr","mean_ms":1106.3045,"ratio":42.16597616334247,"ratio_label":"42.2x slower","stddev_ms":17.2817,"min_ms":1088.3735,"max_ms":1122.8541},{"document":"tidyr/pivot-wide.R","tool":"arity","mean_ms":20.9963,"ratio":1.0,"ratio_label":"baseline","stddev_ms":0.9218,"min_ms":18.8055,"max_ms":23.3214},{"document":"tidyr/pivot-wide.R","tool":"jarl","mean_ms":10.9198,"ratio":0.5200821097050432,"ratio_label":"1.9x faster","stddev_ms":0.578,"min_ms":9.4974,"max_ms":12.8576},{"document":"tidyr/pivot-wide.R","tool":"lintr","mean_ms":995.9262,"ratio":47.433414458737964,"ratio_label":"47.4x slower","stddev_ms":15.6979,"min_ms":986.5383,"max_ms":1014.0487},{"document":"small","tool":"arity","mean_ms":32.5569,"ratio":1.0,"ratio_label":"baseline","stddev_ms":1.4612,"min_ms":29.8406,"max_ms":36.1271},{"document":"small","tool":"jarl","mean_ms":28.3228,"ratio":0.8699476915799723,"ratio_label":"1.1x faster","stddev_ms":1.2537,"min_ms":26.0793,"max_ms":33.789},{"document":"small","tool":"lintr","mean_ms":9949.3436,"ratio":305.5986165759025,"ratio_label":"305.6x slower","stddev_ms":94.5368,"min_ms":9893.0505,"max_ms":10058.4872},{"document":"large","tool":"arity","mean_ms":343.8745,"ratio":1.0,"ratio_label":"baseline","stddev_ms":8.7147,"min_ms":335.9537,"max_ms":363.002},{"document":"large","tool":"jarl","mean_ms":393.3544,"ratio":1.1438894131434578,"ratio_label":"1.1x slower","stddev_ms":8.1381,"min_ms":385.9586,"max_ms":410.6601}]</script>
+<script type="application/json" class="bench-data">[{"document":"MASS/polr.R","tool":"arity","mean_ms":34.6267,"ratio":1.0,"ratio_label":"baseline","stddev_ms":1.2013,"min_ms":31.8181,"max_ms":37.2392},{"document":"MASS/polr.R","tool":"jarl","mean_ms":12.5843,"ratio":0.3634276439857105,"ratio_label":"2.8x faster","stddev_ms":0.5666,"min_ms":11.528,"max_ms":16.1308},{"document":"MASS/polr.R","tool":"lintr","mean_ms":1022.917,"ratio":29.541278839739277,"ratio_label":"29.5x slower","stddev_ms":6.882,"min_ms":1016.7854,"max_ms":1030.3606},{"document":"tidyr/pivot-wide.R","tool":"arity","mean_ms":34.3928,"ratio":1.0,"ratio_label":"baseline","stddev_ms":1.3002,"min_ms":31.8439,"max_ms":38.5921},{"document":"tidyr/pivot-wide.R","tool":"jarl","mean_ms":10.3324,"ratio":0.3004233444209253,"ratio_label":"3.3x faster","stddev_ms":0.4936,"min_ms":9.2549,"max_ms":12.0949},{"document":"tidyr/pivot-wide.R","tool":"lintr","mean_ms":864.8972,"ratio":25.14762392128585,"ratio_label":"25.1x slower","stddev_ms":4.2177,"min_ms":860.763,"max_ms":869.1937},{"document":"small","tool":"arity","mean_ms":38.7628,"ratio":1.0,"ratio_label":"baseline","stddev_ms":1.2788,"min_ms":36.1947,"max_ms":41.7501},{"document":"small","tool":"jarl","mean_ms":27.8227,"ratio":0.7177680662903609,"ratio_label":"1.4x faster","stddev_ms":1.1423,"min_ms":25.9523,"max_ms":31.2586},{"document":"small","tool":"lintr","mean_ms":10403.8851,"ratio":268.3986992683707,"ratio_label":"268.4x slower","stddev_ms":53.7363,"min_ms":10368.7438,"max_ms":10465.7436},{"document":"large","tool":"arity","mean_ms":1228.0541,"ratio":1.0,"ratio_label":"baseline","stddev_ms":4.4534,"min_ms":1222.9162,"max_ms":1230.8081},{"document":"large","tool":"jarl","mean_ms":361.6716,"ratio":0.2945078722509049,"ratio_label":"3.4x faster","stddev_ms":8.906,"min_ms":352.5653,"max_ms":382.6164}]</script>
 <figcaption>Linting speed on single files relative to arity, one dot per document, on the same log-ratio axis as the formatter charts.</figcaption>
 </figure>
 <noscript>Enable JavaScript for the interactive chart; the data table below has the same numbers.</noscript>
@@ -96,35 +96,35 @@
 <table>
 <thead><tr><th>Tool</th><th>Mean (ms)</th><th>Min (ms)</th><th>Max (ms)</th><th>Relative</th></tr></thead>
 <tbody>
-<tr><td>arity</td><td>26.2369</td><td>23.8034</td><td>31.0467</td><td>baseline</td></tr>
-<tr><td>jarl</td><td>12.8946</td><td>11.9362</td><td>15.0183</td><td>2.0x faster</td></tr>
-<tr><td>lintr</td><td>1106.3045</td><td>1088.3735</td><td>1122.8541</td><td>42.2x slower</td></tr>
+<tr><td>arity</td><td>34.6267</td><td>31.8181</td><td>37.2392</td><td>baseline</td></tr>
+<tr><td>jarl</td><td>12.5843</td><td>11.5280</td><td>16.1308</td><td>2.8x faster</td></tr>
+<tr><td>lintr</td><td>1022.9170</td><td>1016.7854</td><td>1030.3606</td><td>29.5x slower</td></tr>
 </tbody>
 </table>
 <h5>tidyr/pivot-wide.R (23349 bytes, 807 lines)</h5>
 <table>
 <thead><tr><th>Tool</th><th>Mean (ms)</th><th>Min (ms)</th><th>Max (ms)</th><th>Relative</th></tr></thead>
 <tbody>
-<tr><td>arity</td><td>20.9963</td><td>18.8055</td><td>23.3214</td><td>baseline</td></tr>
-<tr><td>jarl</td><td>10.9198</td><td>9.4974</td><td>12.8576</td><td>1.9x faster</td></tr>
-<tr><td>lintr</td><td>995.9262</td><td>986.5383</td><td>1014.0487</td><td>47.4x slower</td></tr>
+<tr><td>arity</td><td>34.3928</td><td>31.8439</td><td>38.5921</td><td>baseline</td></tr>
+<tr><td>jarl</td><td>10.3324</td><td>9.2549</td><td>12.0949</td><td>3.3x faster</td></tr>
+<tr><td>lintr</td><td>864.8972</td><td>860.7630</td><td>869.1937</td><td>25.1x slower</td></tr>
 </tbody>
 </table>
-<h5>small (128902 bytes, 8892 lines)</h5>
+<h5>small (133856 bytes, 9190 lines)</h5>
 <table>
 <thead><tr><th>Tool</th><th>Mean (ms)</th><th>Min (ms)</th><th>Max (ms)</th><th>Relative</th></tr></thead>
 <tbody>
-<tr><td>arity</td><td>32.5569</td><td>29.8406</td><td>36.1271</td><td>baseline</td></tr>
-<tr><td>jarl</td><td>28.3228</td><td>26.0793</td><td>33.7890</td><td>1.1x faster</td></tr>
-<tr><td>lintr</td><td>9949.3436</td><td>9893.0505</td><td>10058.4872</td><td>305.6x slower</td></tr>
+<tr><td>arity</td><td>38.7628</td><td>36.1947</td><td>41.7501</td><td>baseline</td></tr>
+<tr><td>jarl</td><td>27.8227</td><td>25.9523</td><td>31.2586</td><td>1.4x faster</td></tr>
+<tr><td>lintr</td><td>10403.8851</td><td>10368.7438</td><td>10465.7436</td><td>268.4x slower</td></tr>
 </tbody>
 </table>
-<h5>large (1546824 bytes, 106704 lines)</h5>
+<h5>large (1606272 bytes, 110280 lines)</h5>
 <table>
 <thead><tr><th>Tool</th><th>Mean (ms)</th><th>Min (ms)</th><th>Max (ms)</th><th>Relative</th></tr></thead>
 <tbody>
-<tr><td>arity</td><td>343.8745</td><td>335.9537</td><td>363.0020</td><td>baseline</td></tr>
-<tr><td>jarl</td><td>393.3544</td><td>385.9586</td><td>410.6601</td><td>1.1x slower</td></tr>
+<tr><td>arity</td><td>1228.0541</td><td>1222.9162</td><td>1230.8081</td><td>baseline</td></tr>
+<tr><td>jarl</td><td>361.6716</td><td>352.5653</td><td>382.6164</td><td>3.4x faster</td></tr>
 </tbody>
 </table>
 </details>
@@ -135,7 +135,7 @@
 <div class="bench-chart-block">
 <figure class="bench-figure">
 <div class="bench-chart"></div>
-<script type="application/json" class="bench-data">[{"document":"tidyr","tool":"arity","mean_ms":23.4758,"ratio":1.0,"ratio_label":"baseline","stddev_ms":0.9418,"min_ms":21.8269,"max_ms":27.5558},{"document":"tidyr","tool":"jarl","mean_ms":13.0743,"ratio":0.5569267075030456,"ratio_label":"1.8x faster","stddev_ms":0.6655,"min_ms":11.91,"max_ms":15.6657},{"document":"tidyr","tool":"lintr","mean_ms":8417.3967,"ratio":358.5563303486995,"ratio_label":"358.6x slower","stddev_ms":36.636,"min_ms":8391.5407,"max_ms":8459.3213},{"document":"MASS","tool":"arity","mean_ms":27.6244,"ratio":1.0,"ratio_label":"baseline","stddev_ms":1.0801,"min_ms":25.7413,"max_ms":30.8305},{"document":"MASS","tool":"jarl","mean_ms":17.8624,"ratio":0.6466167590970302,"ratio_label":"1.5x faster","stddev_ms":0.9985,"min_ms":16.162,"max_ms":22.1038},{"document":"MASS","tool":"lintr","mean_ms":8694.5697,"ratio":314.7423907849582,"ratio_label":"314.7x slower","stddev_ms":38.7733,"min_ms":8652.4471,"max_ms":8728.77}]</script>
+<script type="application/json" class="bench-data">[{"document":"tidyr","tool":"arity","mean_ms":38.1821,"ratio":1.0,"ratio_label":"baseline","stddev_ms":1.2429,"min_ms":34.5424,"max_ms":40.6848},{"document":"tidyr","tool":"jarl","mean_ms":13.3644,"ratio":0.350017416538116,"ratio_label":"2.9x faster","stddev_ms":0.7761,"min_ms":11.9525,"max_ms":16.1228},{"document":"tidyr","tool":"lintr","mean_ms":8370.1497,"ratio":219.21658840137133,"ratio_label":"219.2x slower","stddev_ms":67.3297,"min_ms":8298.7033,"max_ms":8432.4219},{"document":"MASS","tool":"arity","mean_ms":38.9271,"ratio":1.0,"ratio_label":"baseline","stddev_ms":1.4929,"min_ms":35.7318,"max_ms":44.1744},{"document":"MASS","tool":"jarl","mean_ms":18.0099,"ratio":0.46265712061777003,"ratio_label":"2.2x faster","stddev_ms":0.9759,"min_ms":15.9407,"max_ms":21.0764},{"document":"MASS","tool":"lintr","mean_ms":8824.9732,"ratio":226.7051283039322,"ratio_label":"226.7x slower","stddev_ms":68.412,"min_ms":8778.0649,"max_ms":8903.472}]</script>
 <figcaption>Linting speed on real R packages (the tidyr and MASS source trees) relative to arity, on the same log-ratio axis.</figcaption>
 </figure>
 <noscript>Enable JavaScript for the interactive chart; the data table below has the same numbers.</noscript>
@@ -145,18 +145,18 @@
 <table>
 <thead><tr><th>Tool</th><th>Mean (ms)</th><th>Min (ms)</th><th>Max (ms)</th><th>Relative</th></tr></thead>
 <tbody>
-<tr><td>arity</td><td>23.4758</td><td>21.8269</td><td>27.5558</td><td>baseline</td></tr>
-<tr><td>jarl</td><td>13.0743</td><td>11.9100</td><td>15.6657</td><td>1.8x faster</td></tr>
-<tr><td>lintr</td><td>8417.3967</td><td>8391.5407</td><td>8459.3213</td><td>358.6x slower</td></tr>
+<tr><td>arity</td><td>38.1821</td><td>34.5424</td><td>40.6848</td><td>baseline</td></tr>
+<tr><td>jarl</td><td>13.3644</td><td>11.9525</td><td>16.1228</td><td>2.9x faster</td></tr>
+<tr><td>lintr</td><td>8370.1497</td><td>8298.7033</td><td>8432.4219</td><td>219.2x slower</td></tr>
 </tbody>
 </table>
 <h5>MASS (214820 bytes, 5951 lines)</h5>
 <table>
 <thead><tr><th>Tool</th><th>Mean (ms)</th><th>Min (ms)</th><th>Max (ms)</th><th>Relative</th></tr></thead>
 <tbody>
-<tr><td>arity</td><td>27.6244</td><td>25.7413</td><td>30.8305</td><td>baseline</td></tr>
-<tr><td>jarl</td><td>17.8624</td><td>16.1620</td><td>22.1038</td><td>1.5x faster</td></tr>
-<tr><td>lintr</td><td>8694.5697</td><td>8652.4471</td><td>8728.7700</td><td>314.7x slower</td></tr>
+<tr><td>arity</td><td>38.9271</td><td>35.7318</td><td>44.1744</td><td>baseline</td></tr>
+<tr><td>jarl</td><td>18.0099</td><td>15.9407</td><td>21.0764</td><td>2.2x faster</td></tr>
+<tr><td>lintr</td><td>8824.9732</td><td>8778.0649</td><td>8903.4720</td><td>226.7x slower</td></tr>
 </tbody>
 </table>
 </details>
