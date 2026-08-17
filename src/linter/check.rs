@@ -454,8 +454,21 @@ pub fn check_paths_with_index(
         })
         .sum();
 
+    // Hand the database's teardown to the pool instead of paying for it here.
+    // Freeing a project's worth of memos, green trees, and semantic models is
+    // ~2.4 ms on tidyr — serial, at the very end, and pure latency for a batch
+    // run that is about to exit. `rayon::spawn` is fire-and-forget: if the
+    // process exits first the drop simply never runs (the kernel reclaims the
+    // address space wholesale), and an embedder that keeps linting gets the
+    // memory back promptly on a pool thread rather than on its own.
+    //
+    // Sound because the handle is `Send`, every worker clone was already
+    // dropped when the parallel passes returned, and nothing below reads `db`.
+    let checked_files = tracked.len() + description_count;
+    rayon::spawn(move || drop(db));
+
     Ok(LintResult {
-        checked_files: tracked.len() + description_count,
+        checked_files,
         total_findings,
         reports,
         skipped,
