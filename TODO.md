@@ -1199,22 +1199,79 @@ measurement to re-run against any change to the driver.
     name per file. Deltas of −25, −9, −47 us on `project_graph` over three
     interleaved rounds, with overlapping distributions. Noise.
 
-  What is left of the 2.9 ms, ranked and measured:
-
-  - **Render is 1.25 ms** and re-reads from disk (`main.rs`'s `source_for`) every
-    file with a finding, for snippet context — a third read of bytes pass 1
-    already had. 153 findings on tidyr.
-  - **Four sequential disk passes still cost 3.15 ms**: `discover` walks the
-    tree, then `excluded_package_sources` and `discover_packages` each re-list
-    `R/` and re-read `DESCRIPTION`, and pass 1 reads every file. One walk feeding
-    all of them is the structural fix.
-  - `project_graph` 1.35 ms, now dominated by `parse_namespace` and the per-file
-    `LayeredSet` assembly rather than by copying.
-  - `package_usage` 0.53 ms, serial on the owner handle.
+  What is left has its own entries below: the parallel passes' scaling (the
+  large one), the four sequential disk passes, and render's re-read. Two serial
+  items are named nowhere else and are too small to warrant one — `project_graph`
+  at 1.35 ms, now dominated by `parse_namespace` and the per-file `LayeredSet`
+  assembly rather than by copying, and `package_usage` at 0.53 ms on the owner
+  handle.
 
   Still deliberately not done: merging the two warm-up barriers (`warm_scope` is
-  1 us) and largest-first scheduling (rayon's indexed splitter already reaches
-  single-item leaves at 86 items on 24 threads).
+  1 us). Largest-first scheduling has moved to the entry below — the old reason
+  for dismissing it does not answer the question that matters.
+
+- [ ] **The parallel passes get ~7x out of 24 threads, and that is now the whole
+  gap.** Unattributed. Measure before touching anything — the entry above is
+  what happens when you don't.
+
+  Both blocks scale about the same, and both are far off linear (in-process
+  harness, tidyr, median of 60 runs; note this path passes an **empty** package
+  index, so pass 2 is ~5 ms lighter here than in the real CLI):
+
+  | phase | 1 thread | 24 threads | speedup |
+  | ------------------ | -------- | -------- | ------- |
+  | warm-up | 27.09 ms | 3.97 ms | 6.8x |
+  | pass 2 | 31.28 ms | 4.30 ms | 7.3x |
+  | whole run | 64.27 ms | 14.31 ms | 4.5x |
+
+  In the real CLI those two are 5.94 ms and 9.61 ms of a 22.73 ms run, so **15.5
+  of 22.7 ms sits in blocks running at ~29% efficiency**. Lifting them to 12x is
+  worth more than the entire 6.49 ms serial region, and it is precisely where
+  jarl wins: arity is **1.56x faster single-threaded** (83.8 ms against 130.6)
+  and loses at 24 threads on scaling alone (3.0x against jarl's 5.1x). jarl is
+  not doing less work; it is spreading it better.
+
+  **The 1t column above is from the in-process harness, not the real CLI** — no
+  one has run a real-CLI phase split at one thread, so the per-phase 1t figures
+  with a live index are unknown. Get those first; the ranking below could change.
+
+  Three candidates, none measured:
+
+  - **Tail latency in pass 2.** The earlier dismissal ("rayon's indexed splitter
+    already reaches single-item leaves at 86 items") answered the wrong
+    question: fine splitting says nothing about *which* item runs last. tidyr has
+    one 23 KB file among 86, and if it starts late it is the critical path
+    however finely the range was split. Time each file in pass 2 and look at the
+    distribution before assuming this is balanced.
+  - **Salsa memo contention.** Every worker holds its own db clone over shared
+    memo storage. `record_query`'s mutex was ruled out before, but only as
+    O(files) rather than O(nodes) — that argument is about *volume*, not about
+    24 threads contending on the same lock.
+  - **Allocator or memory bandwidth.** mimalloc already won here once (~38% of a
+    format under glibc against ~10%), but that was a single-file profile. Two
+    dozen threads building green trees concurrently is a different regime.
+
+  Whichever it is, `--mode lint-dir` with per-file timings decides between the
+  first and the other two in one measurement.
+
+- [ ] **Four sequential disk passes, 3.15 ms, one walk's worth of information.**
+  `collect_source_files` walks the tree; then `excluded_package_sources` and
+  `discover_packages` each re-list every `R/` and re-read every `DESCRIPTION`;
+  then pass 1 reads every file. The entry above removed the *duplicated work
+  inside* those passes (one root walk per directory instead of per file, one
+  `DESCRIPTION` read instead of two) but left the pass structure alone. Feeding
+  all four from a single walk is the structural fix and the largest serial item
+  left after render.
+
+- [ ] **Render re-reads from disk what pass 1 already had.** `main.rs`'s
+  `source_for` closure calls `fs::read_to_string` per file with a finding, to
+  render snippet context — a third read of bytes the salsa database held until
+  moments earlier (153 findings on tidyr, 1.25 ms including teardown). The
+  texts are `Arc<str>` (`incremental.rs:60`), so the fix is plumbing, not I/O:
+  hand a handle out with the report for each file that has findings. The
+  deferred database teardown is not an obstacle — a cloned `Arc` keeps its own
+  refcount, so the text survives the `rayon::spawn` drop regardless of when it
+  runs.
 
 ## DESCRIPTION and package metadata
 
