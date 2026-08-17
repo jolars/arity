@@ -998,31 +998,104 @@ measurement to re-run against any change to the driver.
   the reporting pass); that is now two `meta.json` reads rather than two full
   loads, so it is tidiness, not the cost.
 
-- [ ] **`check_paths_with_index` converts little of its CPU into wall time.**
-  The largest real-world factor, and the hardest. On `tidyr/R` (41 files, 24
-  cores) arity gets a 1.7x speedup where jarl gets 3.9x, from an equal
-  single-threaded start:
+- [x] **`check_paths_with_index` converted little of its CPU into wall time.**
+  Investigated and largely fixed. It was neither salsa contention nor the serial
+  prologue: it was **project-wide folds first-computed inside the parallel
+  passes**, and a **quadratic in `ProjectScope::build`**.
 
-  | threads | arity | jarl |
-  | ------- | ------ | ------ |
-  | 1 | 50.7 ms | 53.2 ms |
-  | 4 | 47.3 ms | 19.4 ms |
-  | 8 | 35.9 ms | 14.6 ms |
-  | 24 | 29.5 ms | 13.6 ms |
+  The two readings that pointed at contention were both wrong, and are recorded
+  here so nobody re-derives them. `wait_until_cold` at 92.3% inclusive is not
+  idling — rayon *executes stolen jobs inside it*, so every worker's real work
+  hangs under that frame. `salsa::` at 54.8% inclusive contains every tracked
+  function body. The user-time growth (40.8 -> 61.7 ms) was real but is what
+  rayon's spin-before-sleep looks like when workers park on a long serial
+  region, which is exactly what was happening.
 
-  arity's *user* time grows 40.8 -> 61.7 ms as threads are added while jarl's
-  stays flat at ~48 ms through 8 threads, which is contention rather than work.
-  `--mode lint-dir` puts `wait_until_cold` at 92.3% inclusive and `salsa` at
-  54.8%; the rayon workers share one memo store through `db.clone()` handles.
-  Around the fan-out sit three genuinely serial phases: the pass-1
-  read-and-`upsert_file` loop over every file, the HIGH-durability
-  `set_library_index` write (which must precede the warm-up, see the comment
-  there), and the `workspace_project(&db)` fold. Amdahl on the measured 1.7x
-  implies ~56% serial.
+  Measured with a throwaway `Instant` phase split through
+  `--mode lint-dir --path <tidyr>` (86 members, 24 threads, median of 60
+  iterations after 15 warm-up). Serial phases in **bold**:
 
-  Wants its own investigation before any change: establish whether the cost is
-  salsa memo contention or those serial phases, because the fixes are
-  unrelated. Whatever moves here is guarded by `tests/salsa_incremental.rs`.
+  | phase | before | after |
+  | ---------------------- | ------- | ------- |
+  | **`project_graph`** | 19.7 ms | 10.4 ms |
+  | **`package_usage`** | 5.8 ms | 0.5 ms |
+  | **`project_roxygen_topics`** | 3.2 ms | 0.1 ms |
+  | warm-up (parallel) | 3.3 ms | 3.9 ms |
+  | pass 2 (parallel) | 4.5 ms | 4.3 ms |
+  | **prologue** (discover, read, upsert, `set_members`, ...) | 2.7 ms | 2.6 ms |
+  | **total** | 39.9 ms | 22.3 ms |
+
+  The prologue the old entry blamed is **2.6 ms of 22.3**; parallelizing the
+  pass-1 reads would buy ~0.4 ms and was not done. The `record_query` mutex is
+  O(files), not O(nodes), and never showed up.
+
+  Two fixes, both guarded by `tests/salsa_incremental.rs` plus a differential
+  diff:
+
+  1. `check.rs` forced only `workspace_project` on the owner handle, so three
+     folds were first-computed by whichever pass-2/3 worker arrived first — and
+     salsa's `block_on` parks a rayon worker without telling rayon, so that
+     costs the whole pool. `warm_file` also skipped `file_roxygen_topics` and
+     `package_references`, leaving those to be folded serially. Warm both, force
+     all three folds on the owner.
+  2. `ProjectScope::build` derived `visible` and `read_by_others` by walking
+     every ordered pair of package members. A package is a clique, so each side
+     now folds once per root (export union minus own exports; read union minus
+     the names only this member reads, decided by a per-name reader count).
+
+  Wall time, `arity lint`, median of 20 interleaved runs per order, `taskset`
+  pinned, quiet machine. jarl 0.5.0 for scale:
+
+  | corpus | threads | before | after | jarl |
+  | ------------------- | --- | -------- | ------- | ------- |
+  | tidyr (86 members) | 1 | 109.2 ms | 98.0 ms | 124.8 ms |
+  | | 4 | 75.4 ms | 53.9 ms | |
+  | | 8 | 69.6 ms | 50.6 ms | |
+  | | 24 | 64.1 ms | 49.4 ms | 28.6 ms |
+  | tidyr/R (41 files) | 1 | 43.7 ms | 42.0 ms | 49.3 ms |
+  | | 24 | 27.8 ms | 24.6 ms | 14.8 ms |
+  | MASS | 1 | 119.5 ms | 112.5 ms | |
+  | | 24 | 72.4 ms | 56.8 ms | |
+
+  Note the corpus matters: both fixes scale with *member* count, so `tidyr/R`
+  alone (41 files, no `DESCRIPTION`, so no pass 3) moves far less than the
+  package root. The old table's `tidyr/R` figures are kept above as the
+  historical baseline but were taken under a different machine state; the
+  before/after pairs here are same-session.
+
+  Findings byte-identical over tidyr, tidyr/R, MASS, and this repo's `tests/`
+  at 1, 4, and 24 threads, with `old@1t == old@24t` as the control.
+  `a_members_own_qualified_read_is_not_a_use_by_others` pins the clique fold's
+  counting guard — the one case where a member references a name it also
+  defines (`pkg:::foo()`), which is how a naive union leaks a file's own reads
+  into its own "used by others" set.
+
+- [ ] **`ProjectScope` materializes one shared per-package set per member.**
+  What is left of the entry above: `project_graph` is still 10.4 ms of a 22.3 ms
+  24-thread run, and still serial. The post-fix split of `ProjectScope::build`
+  (86 members) is almost entirely one shape — a set that is the *same for the
+  whole package*, cloned once per member:
+
+  | step | cost | what is duplicated |
+  | ----------------- | ------ | ------------------------------- |
+  | `read_by_others` | 4.8 ms | the package's read union, per member |
+  | `package_siblings`| 1.9 ms | `P \ {f}`, as owned `PathBuf`s |
+  | `sees` | 1.4 ms | `P \ {f}` again, same paths |
+  | `namespace_exports` + `s3_methods` | 1.5 ms | one NAMESPACE's export set, per member |
+  | `visible` | 0.6 ms | the package's export union, per member |
+
+  All five are `HashMap<PathBuf, …>` fields read through `FileScope`, so the fix
+  is one representation change, not five: hold the per-package set once
+  (`Arc`/index) plus the small per-member difference, and answer
+  `read_elsewhere`/`resolves` against the pair. That turns `O(N x |union|)` into
+  `O(|union| + N)`. It touches `FileScope`'s accessors and `visible_symbols`,
+  which clones these sets into `Visibility` — so it is a real refactor, and it
+  needs the same differential diff the entry above used.
+
+  Also left, deliberately: parallelizing the pass-1 reads (~0.4 ms, measured),
+  merging the two warm-up barriers (`warm_scope` is 1 us), and largest-first
+  scheduling (rayon's indexed splitter already reaches single-item leaves at
+  86 items on 24 threads).
 
 ## DESCRIPTION and package metadata
 
