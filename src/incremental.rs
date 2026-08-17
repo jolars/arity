@@ -53,8 +53,11 @@ pub struct SourceFile {
     /// spellings of the same path never mint two inputs.
     #[returns(ref)]
     pub path: Option<PathBuf>,
+    /// The document text as a shared immutable handle. The live LSP buffer and
+    /// [`PrevParse`] hold this same allocation, so text changes hands without
+    /// being copied and the staleness guards get an `Arc::ptr_eq` fast path.
     #[returns(ref)]
-    pub text: String,
+    pub text: Arc<str>,
     /// The package-wide roxygen markdown default resolved for this file (see
     /// [`crate::project::description`]): a directive-less roxygen block parses
     /// in markdown mode when it is set. A separate input field so flipping it
@@ -264,8 +267,11 @@ pub struct DescriptionFile {
     /// The package root holding this `DESCRIPTION`. Set once, never mutated.
     #[returns(ref)]
     pub root: PathBuf,
+    /// A shared handle, for the same reason as [`SourceFile::text`]: an open
+    /// `DESCRIPTION` is authoritative in salsa, so its text arrives from the
+    /// live buffer on every keystroke.
     #[returns(ref)]
-    pub text: String,
+    pub text: Arc<str>,
 }
 
 /// Every tracked `DESCRIPTION`, as a salsa **singleton** input at
@@ -351,7 +357,9 @@ pub struct ParsedDocument {
 /// otherwise-pure tracked query.
 #[derive(Debug, Clone)]
 pub struct PrevParse {
-    pub text: String,
+    /// The same allocation the [`SourceFile`] input and the live buffer hold, so
+    /// storing the base after each parse is a refcount bump.
+    pub text: Arc<str>,
     pub green: rowan::GreenNode,
     pub diagnostics: Vec<ParseDiagnostic>,
     /// The roxygen markdown default this parse ran under. A reparse may only
@@ -359,6 +367,22 @@ pub struct PrevParse {
     /// old tree's roxygen interpretation is stale even where the text is
     /// untouched.
     pub roxygen_markdown: bool,
+}
+
+/// Whether two document handles carry the same text.
+///
+/// `Arc::ptr_eq` sits **in front of** the content compare, never in place of it.
+/// The live buffer, the [`SourceFile`] input, and [`PrevParse`] share one
+/// allocation until the next edit, so the common case — a re-lint of an unedited
+/// buffer, a staleness guard on a read — settles without reading a byte. But an
+/// edit mints a fresh allocation regardless of what it did to the text: typing a
+/// character and deleting it again leaves *equal* text at a *different* address,
+/// and a pointer test alone would call that a change and invalidate the world.
+///
+/// Written out rather than left to `Arc<str>`'s own `PartialEq`, whose pointer
+/// short-circuit is an unspecified `std` optimization.
+pub(crate) fn text_is(a: &Arc<str>, b: &Arc<str>) -> bool {
+    Arc::ptr_eq(a, b) || a == b
 }
 
 #[salsa::db]
@@ -410,7 +434,7 @@ pub fn parsed_document(db: &dyn IncrementalDb, file: SourceFile) -> ParsedDocume
     // identical to `parse_with_options(text, options)`.
     let reparsed = db
         .reparse_prev(file)
-        .filter(|prev| prev.text != *text && prev.roxygen_markdown == markdown)
+        .filter(|prev| !text_is(&prev.text, text) && prev.roxygen_markdown == markdown)
         .and_then(|prev| {
             let old_root = SyntaxNode::new_root(prev.green.clone());
             let precise = pending.as_deref().and_then(|edits| {
@@ -437,7 +461,7 @@ pub fn parsed_document(db: &dyn IncrementalDb, file: SourceFile) -> ParsedDocume
     let (green, diagnostics): (rowan::GreenNode, Vec<ParseDiagnostic>) = match reparsed {
         Some((r, _)) => (r.green, r.diagnostics),
         None => {
-            let parsed = parse_with_options(text.as_str(), &options);
+            let parsed = parse_with_options(text, &options);
             (parsed.cst.green().to_owned(), parsed.diagnostics)
         }
     };
@@ -799,7 +823,7 @@ impl IncrementalDatabase {
     /// participates in path-based cross-file resolution. Used by tests and
     /// one-shot single-file checks; the LSP/CLI use
     /// [`upsert_file`](Self::upsert_file) with the real path.
-    pub fn add_file(&self, text: impl Into<String>) -> SourceFile {
+    pub fn add_file(&self, text: impl Into<Arc<str>>) -> SourceFile {
         let id = self
             .source_map
             .lock()
@@ -808,7 +832,7 @@ impl IncrementalDatabase {
         SourceFile::new(self, id, None, text.into(), false)
     }
 
-    pub fn set_file_text(&mut self, file: SourceFile, text: impl Into<String>) {
+    pub fn set_file_text(&mut self, file: SourceFile, text: impl Into<Arc<str>>) {
         file.set_text(self).to(text.into());
     }
 
@@ -1071,7 +1095,12 @@ impl IncrementalDatabase {
     /// Insert or update the [`DescriptionFile`] input for `root`, reusing the
     /// existing input so its cached [`description_facts`] survive. Skips the
     /// write when the text is unchanged.
-    pub fn upsert_description(&mut self, root: &Path, text: String) -> (DescriptionFile, bool) {
+    pub fn upsert_description(
+        &mut self,
+        root: &Path,
+        text: impl Into<Arc<str>>,
+    ) -> (DescriptionFile, bool) {
+        let text = text.into();
         let existing = self
             .description_map
             .lock()
@@ -1080,7 +1109,7 @@ impl IncrementalDatabase {
             .copied();
         match existing {
             Some(file) => {
-                if file.text(self) == &text {
+                if text_is(file.text(self), &text) {
                     return (file, false);
                 }
                 file.set_text(self)
@@ -1134,8 +1163,9 @@ impl IncrementalDatabase {
     /// when one is already tracked. The hot path for editor buffers: a keystroke
     /// updates the text of an existing input so unchanged downstream queries stay
     /// cached.
-    pub fn upsert_file(&mut self, path: &Path, text: String) -> SourceFile {
+    pub fn upsert_file(&mut self, path: &Path, text: impl Into<Arc<str>>) -> SourceFile {
         let key = normalize_path(path);
+        let text = text.into();
         let existing = self
             .source_map
             .lock()
@@ -1148,7 +1178,7 @@ impl IncrementalDatabase {
                 // Skip the write when the text is unchanged: setting an input
                 // unconditionally bumps the revision and would re-run every
                 // downstream query (a sibling file re-read on each keystroke).
-                if file.text(self) != &text {
+                if !text_is(file.text(self), &text) {
                     file.set_text(self).to(text);
                 }
                 file
@@ -1329,6 +1359,17 @@ impl Analysis {
     /// The text currently tracked for `file`.
     pub fn file_text(&self, file: SourceFile) -> &str {
         self.0.file_text(file)
+    }
+
+    /// Whether `file`'s tracked text is exactly `text` — the staleness gate the
+    /// read path opens with, deciding whether the cached parse still describes
+    /// the buffer under the cursor.
+    ///
+    /// Takes the buffer's shared handle rather than a `&str` so the common case
+    /// (the lint thread upserted this very allocation) answers by pointer. See
+    /// [`text_is`] for why the content compare stays behind it.
+    pub fn file_text_is(&self, file: SourceFile, text: &Arc<str>) -> bool {
+        text_is(file.text(&self.0), text)
     }
 
     /// The package-wide roxygen markdown default tracked for `file`.

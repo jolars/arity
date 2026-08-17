@@ -18,7 +18,7 @@ pub(crate) fn signature_help_via_db(
     let index = snapshot.library_data().unwrap_or_default();
     let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         let file = snapshot.lookup_file(path)?;
-        if snapshot.file_text(file) != text {
+        if !snapshot.file_text_is(file, &buffer.text_arc()) {
             return None;
         }
         let root = snapshot.parsed_tree(file);

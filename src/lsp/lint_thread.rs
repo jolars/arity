@@ -503,9 +503,7 @@ impl LintWorker {
 
         // Write-phase: push the live buffer + sibling files into the persistent
         // db. Cheap — the parse/model are lazy salsa queries deferred to analyze.
-        let active = self
-            .db
-            .upsert_file(&req.path, req.buffer.text().to_string());
+        let active = self.db.upsert_file(&req.path, req.buffer.text_arc());
         // Stage the precise per-change edits (Stage B) for the parse this upsert
         // will force below (via `prepare_document_in_project`). Overwrites any
         // unconsumed sequence; `parsed_document` verifies they reconstruct the
@@ -616,9 +614,7 @@ impl LintWorker {
             .db
             .lookup_description(&root)
             .map(|file| crate::incremental::description_facts(&self.db, file).clone());
-        let (file, _) = self
-            .db
-            .upsert_description(&root, req.buffer.text().to_string());
+        let (file, _) = self.db.upsert_description(&root, req.buffer.text_arc());
         let after = crate::incremental::description_facts(&self.db, file);
         if before.as_ref() != Some(after) {
             // A `Roxygen` field change can flip the package-wide markdown
@@ -650,7 +646,7 @@ impl LintWorker {
 
         let buffer = Arc::clone(&req.buffer);
         let path = req.path.clone();
-        let content = req.buffer.text().to_string();
+        let content = req.buffer.text_arc();
         self.spawn_analyze(&req, buffer, move |analysis| {
             crate::linter::check::check_description_in_project(analysis, &path, &content, &rules)
         })

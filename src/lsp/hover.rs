@@ -25,7 +25,7 @@ pub(crate) fn hover_via_db(
     }
     let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         let file = snapshot.lookup_file(path)?;
-        if snapshot.file_text(file) != text {
+        if !snapshot.file_text_is(file, &buffer.text_arc()) {
             return None;
         }
         let root = snapshot.parsed_tree(file);

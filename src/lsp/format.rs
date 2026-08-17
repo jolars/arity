@@ -41,7 +41,7 @@ pub(crate) fn format_edits_via_db(
 
     let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         let file = snapshot.lookup_file(path)?;
-        if snapshot.file_text(file) != text {
+        if !snapshot.file_text_is(file, &buffer.text_arc()) {
             // The tracked input lags the live buffer; the cached tree is stale.
             return None;
         }
@@ -76,7 +76,7 @@ pub(crate) fn format_range_edits_via_db(
     let text = buffer.text();
     let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         let file = snapshot.lookup_file(path)?;
-        if snapshot.file_text(file) != text {
+        if !snapshot.file_text_is(file, &buffer.text_arc()) {
             // The tracked input lags the live buffer; the cached tree is stale.
             return None;
         }

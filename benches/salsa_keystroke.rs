@@ -31,6 +31,7 @@
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use arity::incremental::IncrementalDatabase;
 use arity::parser::Edit;
@@ -70,8 +71,11 @@ const SIZES: [(&str, usize); 2] = [("130k", 130 * 1024), ("1m", 1024 * 1024)];
 ///
 /// - an owned `String` document: `buffer.text().to_string()`, an O(N) copy
 /// - a shared `Arc<str>` document: `buffer.text_arc()`, a refcount bump
-fn handoff(buffer: &TextBuffer) -> String {
-    buffer.text().to_string()
+///
+/// Keeping it behind one shim is what makes the rows comparable across a change
+/// to how document text is stored: swap this body, re-run, read the deltas.
+fn handoff(buffer: &TextBuffer) -> Arc<str> {
+    buffer.text_arc()
 }
 
 /// The staleness guard alone: re-upserting text the database already holds.

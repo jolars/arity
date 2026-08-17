@@ -1,6 +1,6 @@
 //! Text paired with its line index, kept in sync across edits.
 //!
-//! An open LSP document is a [`TextBuffer`] behind an `Arc`. Two properties
+//! An open LSP document is a [`TextBuffer`] behind an `Arc`. Three properties
 //! follow from that and are what the LSP layer relies on:
 //!
 //! - **Text and index never disagree.** Every mutation goes through
@@ -11,26 +11,43 @@
 //! - **A shared buffer is immutable.** The main loop mutates only a uniquely
 //!   owned one (via `Arc::make_mut`), so a read job holding an `Arc` observes
 //!   exactly the bytes of the version it was dispatched at.
+//! - **The text itself is shared past the buffer.** It is an `Arc<str>`, and the
+//!   salsa `SourceFile` input and the reparse base hold that same allocation, so
+//!   handing the document to the analysis layer is a refcount bump rather than a
+//!   copy, and the staleness guards can settle the common case with
+//!   `Arc::ptr_eq`. The price is that an edit rebuilds the string instead of
+//!   splicing in place — see [`TextBuffer::apply_edit`].
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use crate::text::LineIndex;
 
 /// A text buffer and its [`LineIndex`], maintained together.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextBuffer {
-    text: String,
+    text: Arc<str>,
     index: LineIndex,
 }
 
 impl TextBuffer {
-    pub fn new(text: String) -> Self {
+    pub fn new(text: impl Into<Arc<str>>) -> Self {
+        let text = text.into();
         let index = LineIndex::new(&text);
         Self { text, index }
     }
 
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// The text as a shared handle: an O(1) clone, for the salsa boundary and
+    /// anything else that *stores* the document rather than borrowing it.
+    ///
+    /// Reintroducing a `text().to_string()` on a dispatch path is the regression
+    /// this exists to prevent.
+    pub fn text_arc(&self) -> Arc<str> {
+        Arc::clone(&self.text)
     }
 
     /// The line index for [`text`](Self::text). Always current: it is patched in
@@ -51,10 +68,19 @@ impl TextBuffer {
     /// it.
     ///
     /// `range` is **clamped** into the buffer and de-inverted first. A client
-    /// may send a `didChange` whose range is inverted or past the end, and
-    /// `String::replace_range` panics on both — on the LSP main loop that would
-    /// take down the server, so a nonsense range is coerced rather than trusted.
-    /// Offsets are snapped to char boundaries for the same reason.
+    /// may send a `didChange` whose range is inverted or past the end, and both
+    /// are nonsense a server must not die on, so the range is coerced rather
+    /// than trusted. Offsets are snapped to char boundaries for the same reason.
+    ///
+    /// The text is rebuilt rather than spliced in place: an `Arc<str>` cannot be
+    /// mutated, and sharing one allocation with the salsa layer is worth more
+    /// than an in-place splice (see the module docs). This is the one linear
+    /// pass over the document a keystroke pays for text, and it sits in front of
+    /// a reparse that costs an order of magnitude more.
+    ///
+    /// The clamp above is what makes the capacity arithmetic safe — with `start
+    /// <= end <= len` guaranteed it can neither underflow nor size a buffer that
+    /// duplicates a region. Keep the rebuild below it.
     pub fn apply_edit(&mut self, range: Range<usize>, insert: &str) {
         let mut start = range.start.min(self.text.len());
         let mut end = range.end.clamp(start, self.text.len());
@@ -65,7 +91,11 @@ impl TextBuffer {
             end += 1;
         }
 
-        self.text.replace_range(start..end, insert);
+        let mut next = String::with_capacity(self.text.len() - (end - start) + insert.len());
+        next.push_str(&self.text[..start]);
+        next.push_str(insert);
+        next.push_str(&self.text[end..]);
+        self.text = Arc::from(next);
         self.index.apply_edit(start..end, insert);
 
         // The patch must land exactly where a rebuild would; anything else is a
@@ -83,7 +113,13 @@ impl From<String> for TextBuffer {
 
 impl From<&str> for TextBuffer {
     fn from(text: &str) -> Self {
-        Self::new(text.to_string())
+        Self::new(text)
+    }
+}
+
+impl From<Arc<str>> for TextBuffer {
+    fn from(text: Arc<str>) -> Self {
+        Self::new(text)
     }
 }
 

@@ -202,6 +202,37 @@ fn upsert_reuses_input_for_same_path() {
 }
 
 #[test]
+fn upsert_of_equal_text_in_a_fresh_allocation_writes_nothing() {
+    // The guard in `upsert_file` is the only thing standing between a no-op
+    // upsert and a rebuild of the world: salsa's setter never compares, it just
+    // bumps the revision. So the guard must answer on *content*, not on identity
+    // — typing a character and deleting it again leaves the buffer holding equal
+    // text in a brand-new allocation, and that must still count as unchanged.
+    //
+    // This is what fails if the `Arc::ptr_eq` fast path is ever put in place of
+    // the content compare rather than in front of it.
+    use std::path::Path;
+    let mut db = IncrementalDatabase::default();
+    let path = Path::new("/proj/a.R");
+
+    let file = db.upsert_file(path, "x <- 1\n".to_string());
+    let _ = db.parsed_tree(file);
+    db.clear_query_log();
+
+    // Built at runtime so it cannot share a `'static` allocation with the first.
+    let same: String = "x <- 1\n".chars().collect();
+    let again = db.upsert_file(path, same);
+    let _ = db.parsed_tree(again);
+
+    assert!(file == again, "same path must reuse the SourceFile input");
+    assert!(
+        db.query_log().is_empty(),
+        "re-upserting equal text must not invalidate anything, got {} queries",
+        db.query_log().len()
+    );
+}
+
+#[test]
 fn clone_shares_inputs_and_cached_parse() {
     // A clone is a second handle onto the same storage: it sees the same
     // path→input map and reuses the owner's memoized parse without re-running it.
