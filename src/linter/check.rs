@@ -206,9 +206,15 @@ pub fn check_paths_with_index(
     let mut tracked: HashMap<PathBuf, SourceFile> = HashMap::new();
 
     // Pass 1: track every readable file. Parsing is deferred to the parallel
-    // warm-up below, so this loop is disk reads and salsa input writes only.
+    // warm-up below, so this phase is disk reads and salsa input writes only.
     // Membership is derived from the workspace file-set below; files with parse
     // diagnostics are tracked but `workspace_project` drops them from the scope.
+    //
+    // The reads run in parallel and the writes serially, because salsa is
+    // strictly single-writer — `upsert_file` takes `&mut db`. Splitting them
+    // that way overlaps the prologue's I/O without touching that rule. The
+    // results stay in `files` order, so which IO error aborts the run, and the
+    // order of `skipped`, are what the serial loop produced.
     //
     // A file that isn't valid UTF-8 is skipped-and-recorded rather than aborting
     // the whole run — one ISO-8859 source shouldn't kill linting of every other
@@ -216,8 +222,9 @@ pub fn check_paths_with_index(
     // errors (permission, vanished mid-walk) remain hard failures.
     let mut skipped: Vec<PathBuf> = Vec::new();
     let mut readable: Vec<PathBuf> = Vec::with_capacity(files.len());
-    for path in files {
-        let content = match fs::read_to_string(&path) {
+    let contents: Vec<io::Result<String>> = files.par_iter().map(fs::read_to_string).collect();
+    for (path, content) in files.into_iter().zip(contents) {
+        let content = match content {
             Ok(content) => content,
             Err(err) if err.kind() == io::ErrorKind::InvalidData => {
                 skipped.push(path);
@@ -262,9 +269,15 @@ pub fn check_paths_with_index(
     // `undefined-symbol`. They join the workspace below but are absent from
     // `files`, so pass 2 never lints them. Mirrors the LSP's exclude-free sibling
     // discovery in `seed_workspace_for`.
+    //
+    // Read in parallel and upsert serially, as pass 1 above. Unlike pass 1 an
+    // unreadable one is dropped rather than recorded: nobody asked for these.
     let mut scope_only: Vec<SourceFile> = Vec::new();
-    for path in excluded_package_sources(&files) {
-        if let Ok(content) = fs::read_to_string(&path) {
+    let excluded = excluded_package_sources(&files);
+    let excluded_contents: Vec<io::Result<String>> =
+        excluded.par_iter().map(fs::read_to_string).collect();
+    for (path, content) in excluded.into_iter().zip(excluded_contents) {
+        if let Ok(content) = content {
             scope_only.push(db.upsert_file(&path, content));
         }
     }
