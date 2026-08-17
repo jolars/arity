@@ -863,26 +863,38 @@ actually measure. Re-measure with `taskset -c 2` and `hyperfine -i` (lint exits
 non-zero on findings); the thread-scaling table in the third entry is the
 measurement to re-run against any change to the driver.
 
-- [ ] **`misplaced-suppression` walks the whole tree per directive.**
-  `honored_here` (`src/linter/rules/meta/misplaced_suppression.rs`) calls
+- [x] **`misplaced-suppression` walked the whole tree per directive.** Done.
+  `honored_here` (`src/linter/rules/meta/misplaced_suppression.rs`) called
   `ctx.root.descendants_with_tokens()` once per format directive purely to
   re-find the `COMMENT` token whose `text_range` it was already handed, so the
-  rule costs O(directives x tree size). `root.token_at_offset(...)` answers the
-  same question in O(depth).
+  rule cost O(directives x tree size). The range comes from a `COMMENT` on the
+  same tree (`SuppressionMap::build`), so `token_at_offset(...).right_biased()`
+  now descends straight to it in O(depth); the kind and range checks stay, so an
+  offset landing anywhere else answers "not honored" exactly as the walk did.
 
-  This is what the `large` single-file benchmark measures. `scripts/bench.sh`
+  This is what the `large` single-file benchmark measured. `scripts/bench.sh`
   builds the synthetic tiers by concatenating the *formatter fixtures*, which
-  carry 9 directives per 67 KB block, so repeating the block 24x multiplies
-  both factors and the rule's work goes up 576x. On `corpus_16.R` it profiles
-  at 66.3% inclusive, driving `rowan::cursor::PreorderWithTokens::next` to
-  57.3%. Proof by deletion: stripping the 216 directive comments (0.5% of the
-  bytes) from the 1.6 MB tier takes arity 1341 ms -> 378 ms, against jarl's
-  392 ms on the same input.
+  carry 9 directives per 67 KB block, so repeating the block 24x multiplied both
+  factors and the rule's work went up 576x. On `corpus_16.R` it profiled at
+  66.3% inclusive, driving `rowan::cursor::PreorderWithTokens::next` to 57.3%.
+
+  Mean `arity lint` on the synthetic tiers (20 interleaved runs, pinned to one
+  core): 1.6 MB 1.386 s -> 551.5 ms (-60%, min -57%); 1 MB 636.9 -> 306.7 ms
+  (-52%). At 65 KB it is within noise (24.9 -> 24.2 ms) — the term only bites
+  when directive count and tree size grow together. Against jarl the 1.6 MB tier
+  went from 3.6x slower to 1.5x. Findings byte-identical over the formatter
+  fixtures (2332), `tests/` (39), tidyr (44), and MASS (115).
 
   Real R code has no `# arity-format` directives at all (neither tidyr nor MASS
-  has one), so the published 3.4x is mostly an artifact of the corpus. The
-  quadratic is still real, and it is an LSP cliff on a directive-heavy large
+  has one), so the published 3.4x was mostly an artifact of the corpus. The
+  quadratic was real regardless, and was an LSP cliff on a directive-heavy large
   file.
+
+  Left open: the curve is still mildly superlinear in the tail (per-65 KB unit
+  dips to ~16 ms mid-range, then climbs to ~23 ms at 1.6 MB). Confirm that on a
+  non-degenerate input before chasing it — the tiers are 24 identical copies of
+  one block, which is its own plausible trigger (`duplicated-function-definition`
+  and friends see 24 of every name).
 
 - [ ] **The rindex is re-deserialized from JSON on every invocation.**
   `arity lint` on a four-line file costs 12.6 ms where `arity format` costs
