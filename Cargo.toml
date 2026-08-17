@@ -82,6 +82,10 @@ name = "format_edits"
 harness = false
 
 [[bench]]
+name = "salsa_keystroke"
+harness = false
+
+[[bench]]
 name = "profile"
 harness = false
 
