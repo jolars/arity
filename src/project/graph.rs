@@ -251,14 +251,15 @@ const R_SOURCE_EXTS: [&str; 6] = ["R", "r", "S", "s", "Q", "q"];
 /// entries from `DESCRIPTION`. Union (not intersection) so neither a stale
 /// `Collate:` nor an unlisted file can shrink the expected set and let an
 /// incomplete package pass. Touches disk.
+/// [`r_dir_sources`] already unions the `Collate:` entries in, so this adds
+/// nothing to what it returns — re-reading and re-parsing `DESCRIPTION` here
+/// only paid for the same union twice.
 pub fn expected_r_sources(root: &Path) -> BTreeSet<String> {
-    let mut expected = r_dir_sources(root);
-    expected.extend(crate::project::description::facts_at(root).collate);
-    expected
+    r_dir_sources(root)
 }
 
-/// The R source *basenames* on disk under `root/R`. The disk-listing half of
-/// [`expected_r_sources`]; the `Collate:` half comes from the DESCRIPTION facts.
+/// The R source *basenames* a package at `root` will load: the `R/*.[RrSsQq]`
+/// listing on disk, unioned with the `Collate:` entries from its `DESCRIPTION`.
 pub fn r_dir_sources(root: &Path) -> BTreeSet<String> {
     let mut expected: BTreeSet<String> = BTreeSet::new();
     if let Ok(entries) = std::fs::read_dir(root.join("R")) {
