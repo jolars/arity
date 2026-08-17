@@ -917,302 +917,38 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
 
 #### The jarl gap (measured 2026-08-17)
 
-`arity lint` is slower than jarl in `benches/benchmark_results.json` for three
-independent reasons, none of them "the rules are slow". Single-threaded on real
-R code arity is already *ahead* — tidyr+MASS sources concatenated to 460 KB,
-921 KB, and 1.38 MB run 99.9/210.8/341.7 ms against jarl's
-133.4/306.3/518.4 ms. The three entries below are what the published numbers
-actually measure. Re-measure with `taskset -c 2` and `hyperfine -i` (lint exits
-non-zero on findings); the thread-scaling table in the third entry is the
-measurement to re-run against any change to the driver.
+**The gap is now scaling, not work.** On tidyr arity is **1.56x faster than
+jarl single-threaded** (83.8 ms against 130.6) and **1.11x slower on 24
+threads** (28.3 against 25.4); on MASS the 24-thread ratio is 1.01x. arity is
+not doing more work — it converts less of it into wall time, getting 3.0x out
+of 24 threads against jarl's 5.1x.
 
-- [x] **`misplaced-suppression` walked the whole tree per directive.** Done.
-  `honored_here` (`src/linter/rules/meta/misplaced_suppression.rs`) called
-  `ctx.root.descendants_with_tokens()` once per format directive purely to
-  re-find the `COMMENT` token whose `text_range` it was already handed, so the
-  rule cost O(directives x tree size). The range comes from a `COMMENT` on the
-  same tree (`SuppressionMap::build`), so `token_at_offset(...).right_biased()`
-  now descends straight to it in O(depth); the kind and range checks stay, so an
-  offset landing anywhere else answers "not honored" exactly as the walk did.
+Five rounds of fixes got here; the archaeology is in `git log` (search
+`perf(linter)` and `perf(project)`) and the traps that outlived them are in
+doc comments next to the code they guard — `LayeredSet`'s asymmetric `removed`,
+`PathSetView`'s disjointness invariant, and `ProjectScope::build`'s
+`Some(r) == Some(r)` root test, each naming the test that fails when it is
+violated. What remains open is below, largest first.
 
-  This is what the `large` single-file benchmark measured. `scripts/bench.sh`
-  builds the synthetic tiers by concatenating the *formatter fixtures*, which
-  carry 9 directives per 67 KB block, so repeating the block 24x multiplied both
-  factors and the rule's work went up 576x. On `corpus_16.R` it profiled at
-  66.3% inclusive, driving `rowan::cursor::PreorderWithTokens::next` to 57.3%.
+Re-measure with `hyperfine -i` (lint exits non-zero on findings) and `taskset`
+for the single-threaded row; `--no-cache` is a `format` flag and does nothing
+here. Interleave old and new round by round — the wall-time noise floor on a
+28 ms run is 1-2 ms, wide enough to swallow a real 0.7 ms win, so a change that
+small needs a phase timer rather than a stopwatch.
 
-  Mean `arity lint` on the synthetic tiers (20 interleaved runs, pinned to one
-  core): 1.6 MB 1.386 s -> 551.5 ms (-60%, min -57%); 1 MB 636.9 -> 306.7 ms
-  (-52%). At 65 KB it is within noise (24.9 -> 24.2 ms) — the term only bites
-  when directive count and tree size grow together. Against jarl the 1.6 MB tier
-  went from 3.6x slower to 1.5x. Findings byte-identical over the formatter
-  fixtures (2332), `tests/` (39), tidyr (44), and MASS (115).
-
-  Real R code has no `# arity-format` directives at all (neither tidyr nor MASS
-  has one), so the published 3.4x was mostly an artifact of the corpus. The
-  quadratic was real regardless, and was an LSP cliff on a directive-heavy large
-  file.
-
-  Left open: the curve is still mildly superlinear in the tail (per-65 KB unit
-  dips to ~16 ms mid-range, then climbs to ~23 ms at 1.6 MB). Confirm that on a
-  non-degenerate input before chasing it — the tiers are 24 identical copies of
-  one block, which is its own plausible trigger (`duplicated-function-definition`
-  and friends see 24 of every name).
-
-- [x] **The rindex was re-deserialized from JSON on every invocation.** Done:
-  the lint CLI's load is lazy (`IndexedProvider::from_cache_lazy`). It reads
-  `meta.json` up front and defers each `{pkg}@{ver}.json` to the first question
-  asked about that package, memoized in a per-package `OnceLock`.
-
-  The eager load was answering no question at all on most runs. `resolve_origin`,
-  `package_indexed`, and `attach_members` are keyed by package name and consulted
-  only for the packages a file *attaches* — `library()`, a NAMESPACE `import()`,
-  a package's own declared attaches — yet the load deserialized all 44 harvested
-  packages (14 MB) to keep 118 KB of export names. `perf` put ~50% of a four-line
-  `arity lint` in serde_json, and 33.5% of the whole run in `skip_to_escape` +
-  `ignore_str` alone: scanning help bodies and formal defaults character by
-  character to find where to discard them.
-
-  Median `arity lint` (interleaved rounds, quiet machine, pinned to one core
-  except where noted): four-line file 11.7 -> 2.8 ms (-76%, min -76%); a
-  directory attaching five packages 16.5 -> 10.6 ms (-36%); `tidyr/R` (41 files,
-  24 cores, unpinned) 30.7 -> 26.7 ms (-13%). Findings byte-identical on
-  `tidyr/R` and on files attaching dplyr, ggplot2, MASS, tidyverse, and eulerr.
-
-  The cost was machine-dependent — it existed only where a local R library had
-  been harvested, so a fresh CI runner never paid it and the benchmark machine
-  did.
-
-  Left open: a names-only sidecar (or a non-JSON format) for the membership
-  view. Laziness cut the *number* of files parsed, not the cost of one, so a
-  file that does `library(ggplot2)` still parses 2 MB of JSON for ~30 KB of
-  names. Worth doing only if the attaching case measures as a real cost.
-
-- [ ] **`arity lint --fix` costs 61 ms on a four-line file** with an *empty*
-  rindex cache, against 3.9 ms for the same file without `--fix` — a fixed cost
-  15x the file's own lint, and unrelated to the index. A first `perf` pass put
-  80% inclusive under a page-fault frame with unreliable dwarf attribution, so
-  the culprit is not yet named; `BUNDLED_EXPORTS` (518 KB, 40k names, ~4.4 ms to
-  build) is a candidate but nowhere near the whole figure. Note `run_lint` also
-  builds the library index twice on this path (`apply_fixes_to_paths` and then
-  the reporting pass); that is now two `meta.json` reads rather than two full
-  loads, so it is tidiness, not the cost.
-
-- [x] **`check_paths_with_index` converted little of its CPU into wall time.**
-  Investigated and largely fixed. It was neither salsa contention nor the serial
-  prologue: it was **project-wide folds first-computed inside the parallel
-  passes**, and a **quadratic in `ProjectScope::build`**.
-
-  The two readings that pointed at contention were both wrong, and are recorded
-  here so nobody re-derives them. `wait_until_cold` at 92.3% inclusive is not
-  idling — rayon *executes stolen jobs inside it*, so every worker's real work
-  hangs under that frame. `salsa::` at 54.8% inclusive contains every tracked
-  function body. The user-time growth (40.8 -> 61.7 ms) was real but is what
-  rayon's spin-before-sleep looks like when workers park on a long serial
-  region, which is exactly what was happening.
-
-  Measured with a throwaway `Instant` phase split through
-  `--mode lint-dir --path <tidyr>` (86 members, 24 threads, median of 60
-  iterations after 15 warm-up). Serial phases in **bold**:
-
-  | phase | before | after |
-  | ---------------------- | ------- | ------- |
-  | **`project_graph`** | 19.7 ms | 10.4 ms |
-  | **`package_usage`** | 5.8 ms | 0.5 ms |
-  | **`project_roxygen_topics`** | 3.2 ms | 0.1 ms |
-  | warm-up (parallel) | 3.3 ms | 3.9 ms |
-  | pass 2 (parallel) | 4.5 ms | 4.3 ms |
-  | **prologue** (discover, read, upsert, `set_members`, ...) | 2.7 ms | 2.6 ms |
-  | **total** | 39.9 ms | 22.3 ms |
-
-  The prologue the old entry blamed is **2.6 ms of 22.3**; parallelizing the
-  pass-1 reads would buy ~0.4 ms and was not done. The `record_query` mutex is
-  O(files), not O(nodes), and never showed up.
-
-  Two fixes, both guarded by `tests/salsa_incremental.rs` plus a differential
-  diff:
-
-  1. `check.rs` forced only `workspace_project` on the owner handle, so three
-     folds were first-computed by whichever pass-2/3 worker arrived first — and
-     salsa's `block_on` parks a rayon worker without telling rayon, so that
-     costs the whole pool. `warm_file` also skipped `file_roxygen_topics` and
-     `package_references`, leaving those to be folded serially. Warm both, force
-     all three folds on the owner.
-  2. `ProjectScope::build` derived `visible` and `read_by_others` by walking
-     every ordered pair of package members. A package is a clique, so each side
-     now folds once per root (export union minus own exports; read union minus
-     the names only this member reads, decided by a per-name reader count).
-
-  Wall time, `arity lint`, median of 20 interleaved runs per order, `taskset`
-  pinned, quiet machine. jarl 0.5.0 for scale:
-
-  | corpus | threads | before | after | jarl |
-  | ------------------- | --- | -------- | ------- | ------- |
-  | tidyr (86 members) | 1 | 109.2 ms | 98.0 ms | 124.8 ms |
-  | | 4 | 75.4 ms | 53.9 ms | |
-  | | 8 | 69.6 ms | 50.6 ms | |
-  | | 24 | 64.1 ms | 49.4 ms | 28.6 ms |
-  | tidyr/R (41 files) | 1 | 43.7 ms | 42.0 ms | 49.3 ms |
-  | | 24 | 27.8 ms | 24.6 ms | 14.8 ms |
-  | MASS | 1 | 119.5 ms | 112.5 ms | |
-  | | 24 | 72.4 ms | 56.8 ms | |
-
-  Note the corpus matters: both fixes scale with *member* count, so `tidyr/R`
-  alone (41 files, no `DESCRIPTION`, so no pass 3) moves far less than the
-  package root. The old table's `tidyr/R` figures are kept above as the
-  historical baseline but were taken under a different machine state; the
-  before/after pairs here are same-session.
-
-  Findings byte-identical over tidyr, tidyr/R, MASS, and this repo's `tests/`
-  at 1, 4, and 24 threads, with `old@1t == old@24t` as the control.
-  `a_members_own_qualified_read_is_not_a_use_by_others` pins the clique fold's
-  counting guard — the one case where a member references a name it also
-  defines (`pkg:::foo()`), which is how a naive union leaks a file's own reads
-  into its own "used by others" set.
-
-- [x] **`ProjectScope` materialized one shared per-package set per member.**
-  What was left of the entry above, and most of the jarl gap. Fixed.
-
-  The whole serial region was one shape — a set that is the *same for the whole
-  package*, cloned once per member, and then cloned again per member into the
-  salsa `Visibility` memo:
-
-  | step | cost | what was duplicated |
-  | ----------------- | ------ | ------------------------------- |
-  | `read_by_others` | 4.8 ms | the package's read union, per member |
-  | `package_siblings`| 1.9 ms | `P \ {f}`, as owned `PathBuf`s |
-  | `sees` | 1.4 ms | `P \ {f}` again, same paths |
-  | `namespace_exports` + `s3_methods` | 1.5 ms | one NAMESPACE's export set, per member |
-  | `visible` | 0.6 ms | the package's export union, per member |
-
-  So it was one representation change, not five. `visible` and `read_by_others`
-  became a `LayeredSet` — an `Arc`'d per-root layer plus the small per-file
-  delta, answered by one `contains`; the three NAMESPACE sets became `Arc`
-  handles; `sees`/`package_siblings`/`seen_by` became `PathSetView`s over one
-  shared member set. `O(N x |union|)` became `O(|union| + N)`.
-
-  Wall time, `arity lint <tidyr>`, hyperfine, 20 runs after 5 warm-ups, same
-  session and machine state as the table this replaces:
-
-  | | wall 1t | wall 24t | CPU 24t | speedup |
-  | ------------ | -------- | ------- | -------- | ------- |
-  | arity before | 102.9 ms | 49.6 ms | 177.0 ms | 2.07x |
-  | arity after | 80.2 ms | 29.6 ms | 148.0 ms | 2.71x |
-  | jarl 0.5.0 | 122.4 ms | 23.3 ms | 212.8 ms | 5.25x |
-
-  1.67x on 24 threads and 1.28x on one, and 16% less CPU — the work is *gone*,
-  not moved. arity is now **1.52x faster than jarl single-threaded**, and the
-  24-thread gap is 1.26x, down from 2.1x. Amdahl on 2.71x implies ~34% serial,
-  down from ~46%.
-
-  **The one thing to know before touching `ProjectScope::build` again:** the two
-  `LayeredSet`s pre-adjust `removed` *differently*, and that asymmetry is the
-  encoding of two different pass orderings in the old code. `visible` subtracts
-  the NAMESPACE imports and native routines (folded in *after* the own-export
-  removal) and deliberately does **not** subtract `added`; `read_by_others`
-  subtracts `added` (the per-`source()`-edge fold ran *after* the clique fold)
-  and nothing else. Making the two uniform looks like a simplification and
-  silently flips behavior. `own_export_that_is_also_importfrom_stays_visible`,
-  `own_export_shadowing_a_sourced_export_is_not_visible`, and
-  `sourcer_read_beats_the_solo_reader_exclusion` are what fail.
-
-  Two more traps, both found the hard way. `sees_extra` must stay **disjoint**
-  from the root's member set or a member that also `source()`s a sibling counts
-  twice; and "same package root" is `Some(r) == Some(r)`, never `None == None`,
-  or every script-to-script `source()` edge silently disappears.
-
-  Findings byte-identical over tidyr, tidyr/R, MASS, and this repo's `tests/`
-  at 1, 4, and 24 threads, with `old@1t == old@24t` as the control.
-
-- [x] **The lint wall-time gap, attributed and more than halved.** The entry
-  this replaces was right to insist on measuring: `project_graph` was **2.0 ms**,
-  not the 10.4 ms the old table implied, and the two candidates it named were
-  worth 0.5 ms between them. The serial region had moved somewhere nobody had
-  looked.
-
-  Phase split of the **real CLI** (not the in-process harness — it passes an
-  empty package index and so under-measures pass 2 by ~5 ms), `arity lint
-  <tidyr>`, median over 40 processes, 24 threads:
-
-  | phase | before | after |
-  | ------------------- | ------- | ------- |
-  | discover | 0.89 ms | 0.85 ms |
-  | read + upsert | 1.39 ms | 1.35 ms |
-  | scope-only members | 0.57 ms | 0.22 ms |
-  | `set_workspace_members` (disk) | 1.15 ms | 0.73 ms |
-  | `workspace_project` | 0.14 ms | 0.15 ms |
-  | **`project_graph`** | **2.01 ms** | **1.35 ms** |
-  | `project_roxygen_topics` | 0.06 ms | 0.06 ms |
-  | `package_usage` | 0.51 ms | 0.53 ms |
-  | pass 3 | 0.17 ms | 0.19 ms |
-  | render + database teardown | 3.35 ms | 1.25 ms |
-  | **serial total** | **10.24 ms** | **6.49 ms** |
-  | warm-up (parallel) | 5.52 ms | 5.94 ms |
-  | pass 2 (parallel) | 9.23 ms | 9.61 ms |
-
-  Four fixes, in descending order of what they bought:
-
-  1. **The salsa database destructor was 2.4 ms**, serial, at the very end of a
-     batch run about to exit — the single largest serial item, and unnamed by
-     anyone. `rayon::spawn(move || drop(db))`: if the process exits first the
-     drop never runs and the kernel reclaims the address space wholesale.
-  2. **`package_root` walked the filesystem once per file** in both
-     `discover_packages` and `excluded_package_sources`, when it reads only
-     `path.parent()` — 86 walks of one chain for a package whose members share
-     one `R/`. Dedup the parents first.
-  3. **`project_graph` copied every per-file fact twice**: once into `FileFacts`,
-     then three of the five again into `ProjectScope`. The five queries now
-     return `Arc` and the three retained maps collapse into one map of handles.
-     `parse_namespace` also took `&[String]` for a list it reads only under
-     `exportPattern`, so every member's every export was copied to build an
-     argument most packages never look at.
-  4. **`expected_r_sources` read `DESCRIPTION` twice per root** — leftover from
-     the rename in `3340923`, which left the `Collate:` union in both halves.
-
-  Wall time, median and min of 84 interleaved runs per binary per thread count:
-
-  | corpus | threads | before | after | jarl 0.5.0 |
-  | ------------------- | --- | -------- | -------- | -------- |
-  | tidyr (86 members) | 1 | 88.7 ms | 83.8 ms | 130.6 ms |
-  | | 24 | 32.2 ms | **28.3 ms** | 25.4 ms |
-  | MASS | 1 | 90.5 ms | 87.4 ms | 129.7 ms |
-  | | 24 | 29.7 ms | **26.2 ms** | 25.9 ms |
-  | tidyr/R (41 files) | 1 | 41.4 ms | 41.0 ms | 54.1 ms |
-  | | 24 | 21.0 ms | 19.8 ms | 14.8 ms |
-
-  The 24-thread gap on tidyr is **1.11x, down from 1.27x** (6.5 ms → 2.9 ms);
-  on MASS it is 1.01x. Single-threaded arity stays ~1.5x faster than jarl.
-  Findings byte-identical over tidyr, tidyr/R, MASS, and this repo's `tests/`
-  at 1, 4, and 24 threads, with `old@1t == old@24t` as the control.
-
-  **Two things measured and rejected — do not redo them.**
-
-  - **`SmolStr` through the project layer.** `Binding::name` and `IdentRef::name`
-    are already `SmolStr` and the projections threw it away with `.to_string()`
-    per occurrence, so this looked like the biggest remaining lever. Built in
-    full (`file_exports`/`file_free_reads`/`file_qualified_reads`, `FileFacts`,
-    `LayeredSet`, and `build`'s internals; `FileScope`'s accessors need no change
-    because `SmolStr: Borrow<str>`). It moved `project_graph` 1.335 → 1.290 ms
-    and **wall time not at all** (24t 28.34 → 28.03 ms over 84 interleaved runs;
-    1t flat). Fix 3 had already removed the copying it targeted.
-  - **`reads` as `Vec<BTreeSet<&str>>`** instead of an owned `String` per read
-    name per file. Deltas of −25, −9, −47 us on `project_graph` over three
-    interleaved rounds, with overlapping distributions. Noise.
-
-  What is left has its own entries below: the parallel passes' scaling (the
-  large one), the four sequential disk passes, and render's re-read. Two serial
-  items are named nowhere else and are too small to warrant one — `project_graph`
-  at 1.35 ms, now dominated by `parse_namespace` and the per-file `LayeredSet`
-  assembly rather than by copying, and `package_usage` at 0.53 ms on the owner
-  handle.
-
-  Still deliberately not done: merging the two warm-up barriers (`warm_scope` is
-  1 us). Largest-first scheduling has moved to the entry below — the old reason
-  for dismissing it does not answer the question that matters.
+**Measured and rejected — do not redo.** `SmolStr` through the project layer
+(`file_exports`/`file_free_reads`/`file_qualified_reads`, `FileFacts`,
+`LayeredSet`, `build`'s internals; `FileScope`'s accessors need no change
+because `SmolStr: Borrow<str>`): built in full, moved `project_graph`
+1.335 -> 1.290 ms and wall time not at all, because sharing the per-file facts
+as `Arc` handles had already removed the copying it targeted. Likewise `reads`
+as `Vec<BTreeSet<&str>>` — deltas of -25, -9, -47 us over three interleaved
+rounds, distributions overlapping.
 
 - [ ] **The parallel passes get ~7x out of 24 threads, and that is now the whole
-  gap.** Unattributed. Measure before touching anything — the entry above is
-  what happens when you don't.
+  gap.** Unattributed. Measure before touching anything: the last two rounds
+  both found the serial region somewhere other than where the standing entry
+  said it was.
 
   Both blocks scale about the same, and both are far off linear (in-process
   harness, tidyr, median of 60 runs; note this path passes an **empty** package
@@ -1226,10 +962,8 @@ measurement to re-run against any change to the driver.
 
   In the real CLI those two are 5.94 ms and 9.61 ms of a 22.73 ms run, so **15.5
   of 22.7 ms sits in blocks running at ~29% efficiency**. Lifting them to 12x is
-  worth more than the entire 6.49 ms serial region, and it is precisely where
-  jarl wins: arity is **1.56x faster single-threaded** (83.8 ms against 130.6)
-  and loses at 24 threads on scaling alone (3.0x against jarl's 5.1x). jarl is
-  not doing less work; it is spreading it better.
+  worth more than the entire 6.49 ms serial region — of which the two entries
+  after this one are 4.4 ms, and nothing else exceeds 1.35 ms.
 
   **The 1t column above is from the in-process harness, not the real CLI** — no
   one has run a real-CLI phase split at one thread, so the per-phase 1t figures
@@ -1254,14 +988,22 @@ measurement to re-run against any change to the driver.
   Whichever it is, `--mode lint-dir` with per-file timings decides between the
   first and the other two in one measurement.
 
+  **Two ways to misread the profile, both already fallen for once.**
+  `wait_until_cold` at 92.3% inclusive is *not* idling — rayon executes stolen
+  jobs inside it, so every worker's real work hangs under that frame. `salsa::`
+  at 54.8% inclusive is not overhead — it contains every tracked function body.
+  User time growing while wall time does not is what rayon's spin-before-sleep
+  looks like when workers park on a serial region, so it points at the serial
+  region rather than at contention.
+
 - [ ] **Four sequential disk passes, 3.15 ms, one walk's worth of information.**
   `collect_source_files` walks the tree; then `excluded_package_sources` and
   `discover_packages` each re-list every `R/` and re-read every `DESCRIPTION`;
-  then pass 1 reads every file. The entry above removed the *duplicated work
+  then pass 1 reads every file. The last round removed the *duplicated work
   inside* those passes (one root walk per directory instead of per file, one
   `DESCRIPTION` read instead of two) but left the pass structure alone. Feeding
-  all four from a single walk is the structural fix and the largest serial item
-  left after render.
+  all four from a single walk is the structural fix, and the largest serial item
+  left.
 
 - [ ] **Render re-reads from disk what pass 1 already had.** `main.rs`'s
   `source_for` closure calls `fs::read_to_string` per file with a finding, to
@@ -1272,6 +1014,33 @@ measurement to re-run against any change to the driver.
   deferred database teardown is not an obstacle — a cloned `Arc` keeps its own
   refcount, so the text survives the `rayon::spawn` drop regardless of when it
   runs.
+
+- [ ] **`arity lint --fix` costs 61 ms on a four-line file** with an *empty*
+  rindex cache, against 3.9 ms for the same file without `--fix` — a fixed cost
+  15x the file's own lint, and unrelated to the index. A first `perf` pass put
+  80% inclusive under a page-fault frame with unreliable dwarf attribution, so
+  the culprit is not yet named; `BUNDLED_EXPORTS` (518 KB, 40k names, ~4.4 ms to
+  build) is a candidate but nowhere near the whole figure. Note `run_lint` also
+  builds the library index twice on this path (`apply_fixes_to_paths` and then
+  the reporting pass); that is now two `meta.json` reads rather than two full
+  loads, so it is tidiness, not the cost.
+
+- [ ] **The synthetic tiers are still mildly superlinear in the tail.** Per-65 KB
+  unit cost dips to ~16 ms mid-range, then climbs to ~23 ms at 1.6 MB. Confirm
+  it on a non-degenerate input before chasing it: `scripts/bench.sh` builds the
+  tiers as 24 identical copies of one block, which is its own plausible trigger
+  (`duplicated-function-definition` and friends see 24 of every name). Left over
+  from the `misplaced-suppression` fix, which removed the quadratic that
+  dominated these tiers.
+
+- [ ] **A names-only sidecar for the rindex membership view.** Making the lint
+  CLI's index load lazy cut the *number* of `{pkg}@{ver}.json` files parsed, not
+  the cost of parsing one, so a file that does `library(ggplot2)` still walks
+  2 MB of JSON for ~30 KB of names — the rest is help bodies and formal defaults
+  that `skip_to_escape`/`ignore_str` scan character by character only to discard.
+  A names-only sidecar, or a non-JSON format, answers the membership questions
+  (`resolve_origin`, `package_indexed`, `attach_members`) without them. Worth
+  doing only once the attaching case measures as a real cost.
 
 ## DESCRIPTION and package metadata
 
