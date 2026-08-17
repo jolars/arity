@@ -23,6 +23,7 @@ GGally
 GPArotation
 GlobalOptions
 Hmisc
+IRdisplay
 KernSmooth
 Lahman
 MASS
@@ -195,6 +196,7 @@ gargle
 gdtools
 generics
 gert
+ggalluvial
 ggdist
 ggforce
 ggfun
@@ -396,6 +398,7 @@ raster
 rbenchmark
 rbibutils
 rcmdcheck
+rdtools
 reactR
 reactable
 readr
