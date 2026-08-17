@@ -17,7 +17,7 @@ use rowan::TextRange;
 use salsa::{Durability, Setter};
 
 use crate::parser::{
-    Edit, ParseDiagnostic, ParseOptions, apply_edits, diff_edit, map_range_through_edit,
+    Edit, ParseDiagnostic, ParseOptions, diff_edit, edits_produce, map_range_through_edit,
     map_range_through_edits, parse_with_options, reparse_edits_with_options, reparse_with_options,
 };
 use crate::project::{
@@ -1972,7 +1972,7 @@ impl Analysis {
     ///
     /// - **Precise.** When `edits` carries the per-change sequence transforming
     ///   `taken_at_text` into the current text (in application order), and an
-    ///   apply-and-verify check confirms it reconstructs that text exactly, the
+    ///   [`edits_produce`] check confirms it reconstructs that text exactly, the
     ///   range folds through it with [`map_range_through_edits`]. Disjoint edits
     ///   stay disjoint, so a node sitting *between* two of them survives.
     /// - **Fallback.** Otherwise a single spanning [`diff_edit`] is recovered
@@ -1996,7 +1996,7 @@ impl Analysis {
             return ptr.try_to_node(&root);
         }
         let mapped = match edits {
-            Some(edits) if !edits.is_empty() && apply_edits(taken_at_text, edits) == current => {
+            Some(edits) if !edits.is_empty() && edits_produce(taken_at_text, edits, current) => {
                 map_range_through_edits(ptr.text_range(), edits)?
             }
             _ => {

@@ -735,7 +735,7 @@ pub fn compute_rename_with_anchor(
 /// mapping its range forward) and add the stored intra-node offset.
 ///
 /// When the anchor accumulated the precise per-change edits since prepare and
-/// they reconstruct `current_text` exactly (apply-and-verify), the node range
+/// they reconstruct `current_text` exactly ([`edits_produce`]), the node range
 /// folds through them with [`map_range_through_edits`] — disjoint edits stay
 /// disjoint, so a node between two of them survives where a single coalesced
 /// [`diff_edit`] would straddle it. A missing, empty, or misaligned sequence
@@ -747,7 +747,7 @@ pub(crate) fn rename_cursor_offset(current_text: &str, anchor: &RenameAnchor) ->
     } else {
         let mapped = match &anchor.edits {
             Some(edits)
-                if !edits.is_empty() && apply_edits(&anchor.text, edits) == current_text =>
+                if !edits.is_empty() && edits_produce(&anchor.text, edits, current_text) =>
             {
                 map_range_through_edits(anchor.node_ptr.text_range(), edits)?
             }

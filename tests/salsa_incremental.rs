@@ -451,6 +451,87 @@ fn stale_staged_edits_fall_back_to_diff_edit() {
 }
 
 #[test]
+fn single_staged_edit_uses_precise_reparse() {
+    // The common case: one keystroke, one staged edit. It takes the precise path
+    // like a multi-cursor batch does -- there is no two-edit floor -- so the
+    // parse never re-derives an edit it was just handed.
+    let mut db = IncrementalDatabase::default();
+    let path = Path::new("/proj/a.R");
+    let base = "x <- foo(alpha)\ny <- bar(b)\n";
+    let file = db.upsert_file(path, base.to_string());
+
+    let _ = db.parsed_tree(file);
+    assert_eq!(db.precise_reparse_hits(), 0);
+
+    let at = base.find("alpha").unwrap() + 1;
+    db.stage_edits(
+        file,
+        vec![Edit {
+            range: at..at,
+            insert: "X".to_string(),
+        }],
+    );
+    let edited = "x <- foo(aXlpha)\ny <- bar(b)\n";
+    db.upsert_file(path, edited.to_string());
+
+    assert_eq!(db.parsed_tree(file).text().to_string(), edited);
+    assert_eq!(db.reparse_hits(), 1);
+    assert_eq!(
+        db.precise_reparse_hits(),
+        1,
+        "a single staged edit should be served by the precise path"
+    );
+
+    let fresh = arity::parser::parse(edited);
+    assert_eq!(
+        db.parsed_tree(file).text().to_string(),
+        fresh.cst.text().to_string()
+    );
+    assert!(db.parse_diagnostics(file).is_empty());
+}
+
+#[test]
+fn out_of_bounds_staged_edit_falls_back_to_diff_edit() {
+    // Staged edits are caller data. A range the previous text cannot hold (a
+    // coalescing gap, a misordered batch) must be rejected like any other stale
+    // sequence -- the lint thread owns the only database, so a panic here would
+    // take the whole language server's analysis down.
+    let mut db = IncrementalDatabase::default();
+    let path = Path::new("/proj/a.R");
+    let base = "x <- foo(a)\n";
+    let file = db.upsert_file(path, base.to_string());
+    let _ = db.parsed_tree(file);
+
+    db.stage_edits(
+        file,
+        vec![Edit {
+            range: 9_999..9_999,
+            insert: ", w".to_string(),
+        }],
+    );
+    let edited = "x <- foo(a, w)\n";
+    db.upsert_file(path, edited.to_string());
+
+    assert_eq!(
+        db.parsed_tree(file).text().to_string(),
+        edited,
+        "buffer still correct via diff_edit fallback"
+    );
+    assert_eq!(
+        db.precise_reparse_hits(),
+        0,
+        "an unapplicable staged edit must not drive the tree"
+    );
+
+    let fresh = arity::parser::parse(edited);
+    assert_eq!(
+        db.parsed_tree(file).text().to_string(),
+        fresh.cst.text().to_string()
+    );
+    assert!(db.parse_diagnostics(file).is_empty());
+}
+
+#[test]
 fn body_edit_keeps_model_in_sync() {
     // Editing a file's contents recomputes its semantic model so downstream
     // consumers see the new bindings.

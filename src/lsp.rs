@@ -140,7 +140,7 @@ use crate::incremental::{
 use crate::linter::rules::ResolvedRules;
 use crate::linter::{Diagnostic, LintError, Severity};
 use crate::parser::{
-    Edit, ParseOptions, apply_edits, diff_edit, map_range_through_edit, map_range_through_edits,
+    Edit, ParseOptions, diff_edit, edits_produce, map_range_through_edit, map_range_through_edits,
     parse, parse_with_options,
 };
 use crate::project::DefKind;
