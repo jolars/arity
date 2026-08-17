@@ -103,6 +103,12 @@ the same hard invariants — losslessness above all. Roadmap in `TODO.md`.
 
 - Keep the reparse ladder viable: token → block → top-level statement → full
   reparse (`parser/reparse.rs`). Any grammar change has to survive it.
+- **An `Edit` is caller data, so every reparse entry point is total**: a range
+  the text cannot take answers `None`, never a panic (`Edit::fits`). A staged
+  chain verifies against `target` *before* it reparses, and never materializes
+  the final text — the guard is `Edit::produces`, not `apply`. Keep it that
+  way: an `apply`-then-compare on this path puts a whole-document copy back
+  into every keystroke, and a panic there takes the LSP's lint thread with it.
 - `syntax/ptr.rs` node pointers are **position-independent** — don't bake
   offsets into them.
 - Store **green** nodes in salsa, never red: `SyntaxNode` is not `Send`/`Eq`.

@@ -842,27 +842,78 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
   by the reparse: `Arc<String>` + `Arc::make_mut` costs one copy per splice
   rather than two (`Arc<str>` cannot adopt a `String`'s allocation).
 
-- [ ] **Bypass `diff_edit` when the staged chain is one verified edit.** The
-  reparse path declines a staged chain below two edits, so the single-
-  keystroke case — the common one — always re-derives its edit by diffing the
-  two whole texts, per keystroke, from an edit it was literally just handed.
-  Fatou measured that diff at ~200 us of a ~500 us end-to-end keystroke at
-  1 MB, more than the token-tier reparse itself. Panache profiled the same
-  shape and found it negligible (7 us against a 1.9 ms parse), so measure
-  with the pipeline bench below before and after; R should sit closer to
-  fatou (fast parse, byte-wise diff) than to panache.
+- [x] **Verify a staged chain instead of rebuilding it.** This entry began as
+  "bypass `diff_edit` when the staged chain is one verified edit," on fatou's
+  premise that the reparse path declines a chain below two edits. **That was
+  never true here.** `reparse_edits_with_options` split the chain with
+  `split_first`, which accepts a one-element slice, and `parsed_document`
+  reaches `diff_edit` through a lazy `or_else` — so a single keystroke already
+  took the precise path and already skipped the diff. There was no `diff_edit`
+  to bypass.
 
-- [ ] **A didChange -> upsert -> parse pipeline bench.** Port fatou's
-  `benches/salsa_keystroke.rs`: replay alternating insert/delete keystrokes
-  through the real path (`apply_edit` on the live buffer, `upsert_file`,
-  stage, demand the tree), with three rows per size — no-op upsert (the
-  staleness guard alone), write phase without a parse, and end-to-end. The
-  existing `pipeline/` bench group times patch-plus-reparse but not the salsa
-  write phase, and fatou's version of exactly this blind spot is what hid a
-  6x end-to-end regression in an otherwise well-benchmarked PR. Alternate
-  insert and delete so every iteration is a genuine revision, and consider
-  panache's mechanized gate (declared per-case expectations plus a
-  corpus-presence check) instead of an eyeballed table.
+  The cost was one layer down and is now gone. The chain applied every edit to
+  get a whole new `String`, then compared that whole `String` against the
+  buffer, to answer a question that is three `memcmp`s wide:
+
+  ```rust
+  let mut text = first.apply(old_text);   // allocate + copy the document
+  ...
+  if text != target { return None; }      // compare the document
+  ```
+
+  Splitting the *last* edit off instead (`split_last`) makes the final text the
+  one thing never built: `Edit::produces` decides `apply(old) == target` by
+  comparing the three spans in place. A one-edit chain now allocates nothing.
+  The guard also moved *ahead* of the reparse it gates, so a stale sequence no
+  longer pays a splice before being thrown away.
+
+  Measured with `benches/salsa_keystroke.rs` (130 KB / 1 MB, `--baseline`):
+
+  | row | before | after |
+  | --- | --- | --- |
+  | whole keystroke | 23.7 us / 182 us | **21.3 us / 165 us** |
+  | write phase (control) | 4.63 us / 163 us | 4.47 us / 162 us |
+  | no-op upsert (control) | 0.74 us / 0.74 us | 0.72 us / 0.73 us |
+
+  **-8.7% and -8.6%.** The two control rows never reach the chain and moved
+  under 3%, which is this machine's run-to-run drift. What came off is 2.3 us
+  at 130 KB against 17 us at 1 MB — linear in the document, which is what a
+  whole-document allocate-copy-compare looks like and what nothing else in the
+  row does.
+
+  Verifying rather than applying also made the reparse surface **total**. An
+  `Edit` is caller data: a range the text cannot take used to panic in rowan's
+  `covering_element` assert or in a `replace_range`, and the lint thread owns
+  the only database, so that took the server's analysis down rather than
+  falling back. `produces` answers `false` for an out-of-bounds, inverted, or
+  mid-character range, and `reparse_with_options` now declines one up front.
+  Three tests in `incremental_reparse.rs` and one in `salsa_incremental.rs`
+  pin it; all four panicked before.
+
+  `edits_produce` is the same thing for a slice, and replaced the two
+  `apply_edits(old, edits) == current` span-mapping guards (`resolve_ptr`,
+  `rename_cursor_offset`), which had the same rebuild and the same panic.
+
+  Not done, deliberately: skipping the `diff_edit` fallback when a verified
+  single staged edit is declined by the ladder. `diff_edit` can return a
+  *tighter* edit than the staged one — typing one character over a selection —
+  so it sometimes reaches a cheaper tier. Dropping it would trade a correct
+  optimization for a coarser tree.
+
+- [x] **A didChange -> upsert -> parse pipeline bench.** `benches/salsa_keystroke.rs`
+  replays alternating insert/delete keystrokes through the real path
+  (`apply_edit` on the live buffer, `upsert_file`, stage, demand the tree),
+  with three rows per size — no-op upsert (the staleness guard alone), write
+  phase without a parse, and end-to-end. The existing `pipeline/` group times
+  patch-plus-reparse but not the salsa write phase, and fatou's version of
+  exactly this blind spot is what hid a 6x end-to-end regression in an
+  otherwise well-benchmarked PR. Run it with
+  `cargo bench --bench salsa_keystroke`; there is no `task` target.
+
+- [ ] **Mechanize the keystroke bench's gate.** Both entries above are read off
+  an eyeballed table, which is how a control row drifting 3% and a real row
+  moving 9% end up needing a paragraph to tell apart. Consider panache's
+  approach: declared per-case expectations plus a corpus-presence check.
 
 #### The jarl gap (measured 2026-08-17)
 
