@@ -33,7 +33,7 @@ use crate::project::description::DescriptionFacts;
 use crate::project::exports::DefKind;
 use crate::project::native::dynlib_bound_names;
 use crate::project::roxygen::TopicMember;
-use crate::project::scope::{FileFacts, FileScope, ProjectScope, package_root};
+use crate::project::scope::{FileFacts, FileScope, LayeredSet, ProjectScope, package_root};
 use crate::project::source::{SourceEdgeKey, SourceTarget};
 use crate::rindex::provider::{attach_members, package_indexed, resolve_origin};
 use crate::semantic::symbols::{LoadedPackage, PackageOrigin};
@@ -143,9 +143,11 @@ pub struct Project<'db> {
 /// (and `Eq`) so the salsa memo backdates when a file's visibility is unchanged.
 #[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub struct Visibility {
-    pub visible: BTreeSet<String>,
+    /// Held as layers, so the package-wide union this file shares with every
+    /// sibling is one `Arc` handle rather than a per-member copy.
+    pub visible: LayeredSet,
     /// Names of this file's bindings *read* by a file that can see it.
-    pub read_by_others: BTreeSet<String>,
+    pub read_by_others: LayeredSet,
     /// Names this file's package `export()`s (public API). Kept apart from
     /// `read_by_others` so a rule can distinguish "a sibling calls it" from
     /// "it is exported" — see [`FileScope::namespace_export_names`].
@@ -594,8 +596,8 @@ pub fn visible_symbols<'db>(
     };
     let scope = graph.for_file(path);
     Visibility {
-        visible: scope.visible_names().clone(),
-        read_by_others: scope.read_names().clone(),
+        visible: scope.visible_layer().clone(),
+        read_by_others: scope.read_layer().clone(),
         namespace_exports: scope.namespace_export_names().clone(),
         s3_methods: scope.s3_method_names().clone(),
         wildcard_imports: scope.wildcard_import_packages().clone(),
@@ -1036,6 +1038,43 @@ mod tests {
             target: SourceTarget::Path(PathBuf::from(target)),
             local,
         }
+    }
+
+    /// `Visibility` now holds shared layers behind `Arc`, and salsa backdates a
+    /// memo by comparing the old and new values. Two distinct allocations with
+    /// equal contents must compare equal, or a rebuilt-but-unchanged project
+    /// graph would stop backdating and cost every keystroke a re-lint of every
+    /// file.
+    #[test]
+    fn visibility_equality_is_content_not_pointer() {
+        let names = || -> BTreeSet<String> { ["foo".to_string()].into_iter().collect() };
+        let layer = || {
+            crate::project::LayeredSet::new(
+                std::sync::Arc::new(names()),
+                BTreeSet::new(),
+                BTreeSet::new(),
+            )
+        };
+        let a = Visibility {
+            visible: layer(),
+            read_by_others: layer(),
+            namespace_exports: names(),
+            s3_methods: BTreeSet::new(),
+            wildcard_imports: BTreeSet::new(),
+            incomplete: false,
+        };
+        let b = a.clone();
+        // `b` shares `a`'s allocations; `c` is rebuilt from scratch.
+        let c = Visibility {
+            visible: layer(),
+            read_by_others: layer(),
+            namespace_exports: names(),
+            s3_methods: BTreeSet::new(),
+            wildcard_imports: BTreeSet::new(),
+            incomplete: false,
+        };
+        assert_eq!(a, b);
+        assert_eq!(a, c);
     }
 
     fn dynamic_edge() -> SourceEdgeKey {

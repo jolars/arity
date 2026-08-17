@@ -32,7 +32,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use rowan::TextRange;
 
@@ -41,9 +41,77 @@ use crate::rindex::harvest::parse_namespace;
 use crate::semantic::symbols::unbacktick;
 
 static EMPTY: BTreeSet<String> = BTreeSet::new();
-// `HashSet::new` isn't `const` (its hasher state isn't const-constructible), so
-// unlike `EMPTY` this needs lazy init.
+// `HashSet::new` and `Arc::new` aren't `const`, so unlike `EMPTY` these need
+// lazy init.
 static EMPTY_PATHS: LazyLock<HashSet<PathBuf>> = LazyLock::new(HashSet::new);
+static EMPTY_LAYER: LazyLock<LayeredSet> = LazyLock::new(LayeredSet::default);
+
+/// A name set held as one layer shared by a whole package plus a small
+/// per-file delta, so a package's export union (or read union) is materialized
+/// **once** instead of once per member.
+///
+/// Membership is one uniform predicate:
+/// `contains(n) = (shared(n) || added(n)) && !removed(n)`.
+///
+/// That one formula stands in for two *different* pass orderings inside
+/// [`ProjectScope::build`], and it is [`build`](ProjectScope::build) that makes
+/// it work, by pre-adjusting `removed` differently for each set:
+///
+/// - `visible` — the own-export removal runs *after* the `source()` closure is
+///   folded in but *before* the NAMESPACE imports and native routines, so
+///   `removed` is the file's exports **minus** those two, and deliberately is
+///   **not** reduced by `added`.
+/// - `read_by_others` — the per-`source()`-edge contribution runs *after* the
+///   package clique fold, so it overrides the fold's exclusion, and `removed`
+///   **is** reduced by `added`.
+///
+/// The asymmetry is the encoding of those orderings, not an oversight: making
+/// the two uniform flips observable behavior. `own_export_shadowing_a_sourced_export_is_not_visible`
+/// and `sourcer_read_beats_the_solo_reader_exclusion` are the tests that catch it.
+#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
+pub struct LayeredSet {
+    /// One allocation per package root, shared by every member.
+    shared: Arc<BTreeSet<String>>,
+    /// Names this file gains over `shared`.
+    added: BTreeSet<String>,
+    /// Names this file loses from `shared`, pre-adjusted (see type docs).
+    removed: BTreeSet<String>,
+}
+
+impl LayeredSet {
+    pub fn new(
+        shared: Arc<BTreeSet<String>>,
+        added: BTreeSet<String>,
+        removed: BTreeSet<String>,
+    ) -> Self {
+        Self {
+            shared,
+            added,
+            removed,
+        }
+    }
+
+    #[inline]
+    pub fn contains(&self, name: &str) -> bool {
+        // `shared` answers almost every query, and the common answer is "no";
+        // checking it first keeps the miss to one lookup plus one.
+        (self.shared.contains(name) || self.added.contains(name)) && !self.removed.contains(name)
+    }
+
+    /// Every name, deduplicated, in no guaranteed order. For tests and
+    /// diagnostics — the hot paths ask [`contains`](Self::contains).
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.shared
+            .iter()
+            .chain(self.added.iter().filter(|n| !self.shared.contains(*n)))
+            .map(String::as_str)
+            .filter(|n| !self.removed.contains(*n))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.iter().next().is_none()
+    }
+}
 
 /// One file's contribution to cross-file resolution.
 #[derive(Debug, Clone)]
@@ -76,12 +144,12 @@ pub struct FileFacts {
 #[derive(Debug, Default)]
 pub struct ProjectScope {
     /// Per file: top-level names reachable from the files it can see.
-    visible: HashMap<PathBuf, BTreeSet<String>>,
+    visible: HashMap<PathBuf, LayeredSet>,
     /// Per file: names *read* by some file that can see it. Reads only — the
     /// NAMESPACE-export contribution lives in `namespace_exports`, so a caller
     /// can ask "does a sibling call this?" separately from "is this public
     /// API?".
-    read_by_others: HashMap<PathBuf, BTreeSet<String>>,
+    read_by_others: HashMap<PathBuf, LayeredSet>,
     /// Per package file: the names its package's NAMESPACE `export()`s. Both
     /// sets feed [`FileScope::used_elsewhere`]; only this one marks public API.
     namespace_exports: HashMap<PathBuf, BTreeSet<String>>,
@@ -163,8 +231,8 @@ pub enum ReadSite {
 
 /// One file's view of its project.
 pub struct FileScope<'a> {
-    visible: &'a BTreeSet<String>,
-    read_by_others: &'a BTreeSet<String>,
+    visible: &'a LayeredSet,
+    read_by_others: &'a LayeredSet,
     namespace_exports: &'a BTreeSet<String>,
     s3_methods: &'a BTreeSet<String>,
     /// Packages this file's NAMESPACE `import()`s wholesale.
@@ -189,8 +257,8 @@ impl<'a> FileScope<'a> {
     /// [`crate::project::Visibility`] memo back a `FileScope` without going
     /// through [`ProjectScope::for_file`].
     pub fn new(
-        visible: &'a BTreeSet<String>,
-        read_by_others: &'a BTreeSet<String>,
+        visible: &'a LayeredSet,
+        read_by_others: &'a LayeredSet,
         namespace_exports: &'a BTreeSet<String>,
         s3_methods: &'a BTreeSet<String>,
         wildcard_imports: &'a BTreeSet<String>,
@@ -211,15 +279,18 @@ impl<'a> FileScope<'a> {
         self.wildcard_imports
     }
 
-    /// The names visible to this file from the rest of the project.
-    pub fn visible_names(&self) -> &BTreeSet<String> {
+    /// The names visible to this file from the rest of the project, as the
+    /// shared-plus-delta layers. Handed out whole so
+    /// [`Visibility`](crate::project::Visibility) can clone the shared layer by
+    /// handle instead of materializing the package's union per member.
+    pub fn visible_layer(&self) -> &LayeredSet {
         self.visible
     }
 
     /// The names of this file's bindings actually *read* by some file that can
-    /// see it. Excludes the NAMESPACE-export contribution — see
+    /// see it, as layers. Excludes the NAMESPACE-export contribution — see
     /// [`namespace_export_names`](Self::namespace_export_names).
-    pub fn read_names(&self) -> &BTreeSet<String> {
+    pub fn read_layer(&self) -> &LayeredSet {
         self.read_by_others
     }
 
@@ -545,6 +616,27 @@ impl ProjectScope {
             }
         }
 
+        // Step-2 shim: the sets are still materialized per member above, then
+        // wrapped whole. The real shared/added/removed derivation replaces this.
+        let visible: HashMap<PathBuf, LayeredSet> = visible
+            .into_iter()
+            .map(|(p, s)| {
+                (
+                    p,
+                    LayeredSet::new(Arc::new(s), BTreeSet::new(), BTreeSet::new()),
+                )
+            })
+            .collect();
+        let read_by_others: HashMap<PathBuf, LayeredSet> = read_by_others
+            .into_iter()
+            .map(|(p, s)| {
+                (
+                    p,
+                    LayeredSet::new(Arc::new(s), BTreeSet::new(), BTreeSet::new()),
+                )
+            })
+            .collect();
+
         Self {
             visible,
             read_by_others,
@@ -565,8 +657,8 @@ impl ProjectScope {
     /// empty, non-dynamic scope.
     pub fn for_file(&self, path: &Path) -> FileScope<'_> {
         FileScope {
-            visible: self.visible.get(path).unwrap_or(&EMPTY),
-            read_by_others: self.read_by_others.get(path).unwrap_or(&EMPTY),
+            visible: self.visible.get(path).unwrap_or(&EMPTY_LAYER),
+            read_by_others: self.read_by_others.get(path).unwrap_or(&EMPTY_LAYER),
             namespace_exports: self.namespace_exports.get(path).unwrap_or(&EMPTY),
             s3_methods: self.s3_methods.get(path).unwrap_or(&EMPTY),
             wildcard_imports: self.wildcard_imports.get(path).unwrap_or(&EMPTY),
@@ -908,8 +1000,8 @@ mod tests {
         }
     }
 
-    fn names(set: &BTreeSet<String>) -> Vec<String> {
-        let mut v: Vec<String> = set.iter().map(|s| s.to_string()).collect();
+    fn layer_names(layer: &LayeredSet) -> Vec<String> {
+        let mut v: Vec<String> = layer.iter().map(|s| s.to_string()).collect();
         v.sort();
         v
     }
@@ -1062,7 +1154,7 @@ mod tests {
         ];
         let scope = build_scope(&files);
         assert_eq!(
-            names(scope.for_file(Path::new("/s/a.R")).visible),
+            layer_names(scope.for_file(Path::new("/s/a.R")).visible_layer()),
             vec!["bar", "baz"]
         );
     }

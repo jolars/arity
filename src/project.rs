@@ -38,7 +38,8 @@ pub use roxygen::{
     has_title, inherits_params, joins_other_topic, param_doc, topic_key, topic_member,
 };
 pub use scope::{
-    FileFacts, FileScope, ProjectScope, ReadBinding, ReadSite, is_package_root, package_root,
+    FileFacts, FileScope, LayeredSet, ProjectScope, ReadBinding, ReadSite, is_package_root,
+    package_root,
 };
 pub use sequence::{collect_top_level_events, collect_top_level_events_spanned};
 pub use source::{
