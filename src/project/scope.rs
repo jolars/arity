@@ -113,6 +113,49 @@ impl LayeredSet {
     }
 }
 
+/// A set of files answered as one layer shared by a whole package plus a small
+/// extra, minus the file it is answered for. Lets `P \ {f}` be a shared handle
+/// and a `Path` comparison instead of an owned `HashSet<PathBuf>` per member.
+///
+/// `members` and `extra` are **disjoint by construction** — [`ProjectScope::build`]
+/// filters same-root targets out of `extra` — so [`iter`](Self::iter) and
+/// [`len`](Self::len) need no deduplication. A package member that also
+/// `source()`s a sibling reaches it both ways and must still count once.
+#[derive(Debug, Clone, Copy)]
+pub struct PathSetView<'a> {
+    members: Option<&'a HashSet<PathBuf>>,
+    extra: &'a HashSet<PathBuf>,
+    exclude: &'a Path,
+}
+
+impl<'a> PathSetView<'a> {
+    #[inline]
+    pub fn contains(&self, path: &Path) -> bool {
+        path != self.exclude
+            && (self.members.is_some_and(|m| m.contains(path)) || self.extra.contains(path))
+    }
+
+    pub fn len(&self) -> usize {
+        self.members
+            .map_or(0, |m| m.len() - usize::from(m.contains(self.exclude)))
+            + self.extra.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &'a Path> {
+        let exclude = self.exclude;
+        self.members
+            .into_iter()
+            .flatten()
+            .chain(self.extra.iter())
+            .map(PathBuf::as_path)
+            .filter(move |p| *p != exclude)
+    }
+}
+
 /// One file's contribution to cross-file resolution.
 #[derive(Debug, Clone)]
 pub struct FileFacts {
@@ -161,19 +204,21 @@ pub struct ProjectScope {
     wildcard_imports: HashMap<PathBuf, BTreeSet<String>>,
     /// Files whose cross-file visibility is incomplete (unresolved `source()`).
     dynamic: HashSet<PathBuf>,
-    /// Per file: the set of *other* files it can see (package siblings, plus the
-    /// transitive non-local `source()` closure). Directional: `a` sourcing `b`
-    /// puts `b` in `sees[a]` but not the reverse. The raw reachability relation
-    /// `visible`/`used_by_others` are derived from; retained so scope-aware
-    /// cross-file resolution (rename/references) can partition by visibility
-    /// component. Span-free, so it stays body-edit-stable.
-    sees: HashMap<PathBuf, HashSet<PathBuf>>,
-    /// Per package file: its co-members under the same package root (excluding
-    /// itself). Package siblings share one *flat* namespace, so two siblings
-    /// defining the same top-level name are the same binding slot (a
-    /// redefinition) — unlike `source()` edges, which only make a name *visible*
-    /// and shadow by order. Absent for non-package files. Span-free.
-    package_siblings: HashMap<PathBuf, HashSet<PathBuf>>,
+    /// Per package root: its member set, held once and shared by every member.
+    /// [`sees`](Self::sees) and [`package_siblings`](Self::package_siblings) are
+    /// this set minus the file being asked about, so neither needs a per-member
+    /// copy. Span-free, so it stays body-edit-stable.
+    root_members: HashMap<PathBuf, Arc<HashSet<PathBuf>>>,
+    /// Per package file: its root, so a view can reach `root_members`.
+    file_root: HashMap<PathBuf, PathBuf>,
+    /// Per file: the part of its transitive non-local `source()` closure that is
+    /// **not** a package co-member. Directional: `a` sourcing `b` puts `b` here
+    /// for `a` but not the reverse. Kept disjoint from `root_members` so a
+    /// sourced sibling is not counted twice.
+    sees_extra: HashMap<PathBuf, HashSet<PathBuf>>,
+    /// The reverse of `sees_extra`, so [`seen_by`](Self::seen_by) is a lookup
+    /// rather than a scan of every file's closure.
+    seen_by_extra: HashMap<PathBuf, HashSet<PathBuf>>,
     /// Per package file: whether its package root's analyzed member set is
     /// *complete* (covers every `R/*.[RrSsQq]` source the package loads). When
     /// false, a def/read could hide in an unanalyzed sibling, so a flat-namespace
@@ -369,19 +414,23 @@ impl ProjectScope {
             }
         }
 
-        // Each package file's co-members (excluding itself), for the flat
-        // shared-namespace relation that aliasing/conflict detection needs.
-        let mut package_siblings: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
-        for members in package_members.values() {
-            for &member in members {
-                let siblings = members
-                    .iter()
-                    .filter(|&&other| other != member)
-                    .map(|&other| other.to_path_buf())
-                    .collect();
-                package_siblings.insert(member.to_path_buf(), siblings);
-            }
-        }
+        // Each root's member set, held once. Both file-set relations — the flat
+        // shared-namespace one that aliasing/conflict detection needs, and the
+        // visibility one — are this set minus the file being asked about, so
+        // neither is materialized per member.
+        let root_members: HashMap<PathBuf, Arc<HashSet<PathBuf>>> = package_members
+            .iter()
+            .map(|(&root, members)| {
+                (
+                    root.to_path_buf(),
+                    Arc::new(members.iter().map(|&p| p.to_path_buf()).collect()),
+                )
+            })
+            .collect();
+        let file_root: HashMap<PathBuf, PathBuf> = files
+            .iter()
+            .filter_map(|f| Some((f.path.clone(), f.package_root.clone()?)))
+            .collect();
 
         // Per package file, its root's completeness verdict (a root absent from
         // the map is vacuously complete). Only recorded for package files.
@@ -417,20 +466,12 @@ impl ProjectScope {
         // the same for all of them and can be folded once instead of once per
         // ordered pair. `source()` edges are directional and sparse, so they stay
         // a per-edge fold.
-        let mut sees: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
+        let mut sees_extra: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
+        let mut seen_by_extra: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
         let mut sourced: Vec<Vec<&Path>> = Vec::with_capacity(files.len());
         let mut dynamic: HashSet<PathBuf> = HashSet::new();
         let mut wildcard_imports: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
         for f in files {
-            let mut seen: HashSet<PathBuf> = HashSet::new();
-            if let Some(root) = &f.package_root {
-                for member in &package_members[root.as_path()] {
-                    if *member != f.path {
-                        seen.insert(member.to_path_buf());
-                    }
-                }
-            }
-
             let mut via_source: Vec<&Path> = Vec::new();
             let mut unresolved = false;
             let mut visited: HashSet<&Path> = HashSet::from([f.path.as_path()]);
@@ -442,7 +483,6 @@ impl ProjectScope {
                         Dependency::Unresolved => unresolved = true,
                         Dependency::Path(p) => match by_path.get(p) {
                             Some(target) if visited.insert(target.path.as_path()) => {
-                                seen.insert(target.path.clone());
                                 via_source.push(target.path.as_path());
                                 queue.push(target);
                             }
@@ -458,7 +498,23 @@ impl ProjectScope {
             if unresolved {
                 dynamic.insert(f.path.clone());
             }
-            sees.insert(f.path.clone(), seen);
+            // Keep the closure disjoint from the root's member set: a member
+            // that also `source()`s a sibling reaches it both ways, and a view
+            // that stored it twice would over-count.
+            // Two rootless scripts both have `package_root == None`, which is
+            // *not* shared membership — only a `Some` root that matches is.
+            let extra: HashSet<PathBuf> = via_source
+                .iter()
+                .filter(|t| f.package_root.is_none() || by_path[*t].package_root != f.package_root)
+                .map(|t| t.to_path_buf())
+                .collect();
+            for target in &extra {
+                seen_by_extra
+                    .entry(target.clone())
+                    .or_default()
+                    .insert(f.path.clone());
+            }
+            sees_extra.insert(f.path.clone(), extra);
             sourced.push(via_source);
         }
 
@@ -660,8 +716,10 @@ impl ProjectScope {
             s3_methods,
             wildcard_imports,
             dynamic,
-            sees,
-            package_siblings,
+            root_members,
+            file_root,
+            sees_extra,
+            seen_by_extra,
             package_complete,
             top_level_events,
             exports: exports_by_path,
@@ -682,35 +740,50 @@ impl ProjectScope {
         }
     }
 
+    /// The members of `path`'s package root, if it has one. The base of every
+    /// file-set view: each one is this set minus `path` itself.
+    fn members_of(&self, path: &Path) -> Option<&HashSet<PathBuf>> {
+        self.file_root
+            .get(path)
+            .and_then(|root| self.root_members.get(root))
+            .map(|members| &**members)
+    }
+
     /// The set of *other* files `path` can see (package siblings + non-local
     /// `source()` closure). Directional. Empty for files outside the analyzed
     /// set.
-    pub fn sees(&self, path: &Path) -> &HashSet<PathBuf> {
-        match self.sees.get(path) {
-            Some(seen) => seen,
-            None => &EMPTY_PATHS,
+    pub fn sees<'a>(&'a self, path: &'a Path) -> PathSetView<'a> {
+        PathSetView {
+            members: self.members_of(path),
+            extra: self.sees_extra.get(path).unwrap_or(&EMPTY_PATHS),
+            exclude: path,
         }
     }
 
     /// The inverse of [`sees`](Self::sees): the files that can see `path` (i.e.
     /// resolve `path`'s top-level bindings). For renaming a binding defined in
     /// `path`, these are the files whose reads can bind to it.
-    pub fn seen_by(&self, path: &Path) -> HashSet<PathBuf> {
-        self.sees
-            .iter()
-            .filter(|(_, seen)| seen.contains(path))
-            .map(|(p, _)| p.clone())
-            .collect()
+    ///
+    /// The package half is symmetric (siblings see each other), so it is the
+    /// same member set; only the `source()` half needs inverting, and that
+    /// inverse is stored.
+    pub fn seen_by<'a>(&'a self, path: &'a Path) -> PathSetView<'a> {
+        PathSetView {
+            members: self.members_of(path),
+            extra: self.seen_by_extra.get(path).unwrap_or(&EMPTY_PATHS),
+            exclude: path,
+        }
     }
 
     /// The package co-members of `path` (excluding itself), which share one flat
     /// namespace with it. Empty for non-package files. Unlike [`sees`](Self::sees),
     /// this is the *aliasing* relation: two siblings defining the same top-level
     /// name are the same binding slot.
-    pub fn package_siblings(&self, path: &Path) -> &HashSet<PathBuf> {
-        match self.package_siblings.get(path) {
-            Some(siblings) => siblings,
-            None => &EMPTY_PATHS,
+    pub fn package_siblings<'a>(&'a self, path: &'a Path) -> PathSetView<'a> {
+        PathSetView {
+            members: self.members_of(path),
+            extra: &EMPTY_PATHS,
+            exclude: path,
         }
     }
 
