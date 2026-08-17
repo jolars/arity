@@ -86,6 +86,23 @@ misleading (rename).
   in-flight read sees exactly the bytes of the version it was dispatched at.
   `version` lives on `Document`, outside the `Arc`, because the staleness gate
   compares it and not the contents.
+- **The text is one shared `Arc<str>`** across the buffer, salsa's `SourceFile`,
+  and `PrevParse`, so the write phase, the reparse base, and every staleness
+  gate move a handle rather than a document. **Reintroducing a
+  `.text().to_string()` on the dispatch path is the regression to watch for** —
+  use `buffer.text_arc()`. The price is that an edit rebuilds the string instead
+  of splicing in place (`+76%` on the write phase at 1 MB, against a whole
+  keystroke that did not move); `Arc<String>` + `Arc::make_mut` would halve that
+  rebuild and is worth reaching for only if the row stops being dwarfed by the
+  reparse.
+- **`Arc::ptr_eq` goes in *front of* a content compare, never in place of one**
+  (`incremental::text_is`). An edit mints a fresh allocation whatever it did to
+  the text, so typing a character and deleting it again leaves equal text at a
+  new address — a pointer test alone would call that a change and invalidate the
+  world. `upsert_of_equal_text_in_a_fresh_allocation_writes_nothing` is what
+  fails if the two are ever swapped. Written out rather than left to `Arc<str>`'s
+  own `PartialEq`, whose pointer short-circuit is an unspecified `std`
+  optimization.
 - **Reads clone the `Arc`, never the text**, and answer off
   `buffer.line_index()`. A handler that calls `LineIndex::new` on the live
   buffer has reintroduced the per-request rescan. The remaining `LineIndex::new`

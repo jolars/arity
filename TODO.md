@@ -813,22 +813,34 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
     rule run, unrelated to the LSP path.
   - Salsa's `SourceFile.text` is still a `String`, so the lint thread's write
     phase makes one owned copy per keystroke. Making it an `Arc<str>` would
-    remove the last copy. (Superseded by the fuller entry below.)
+    remove the last copy. (Done — see the entry below.)
 
-- [ ] **`Arc<str>` document text end to end.** Ported from fatou's
-  `experiment/arc-str` branch (2026-08-16), where the whole change was
-  ~70 lines in the root crate: `SourceFile.text: Arc<str>` (setters take `impl Into<Arc<str>>`),
-  `PrevParse.text: Arc<str>` (the per-parse clone at `src/incremental.rs:448`
-  becomes a refcount bump), `TextBuffer` holding `Arc<str>` beside the spliced
-  `LineIndex`, and the lint thread's `req.buffer.text().to_string()`
-  (`src/lsp/lint_thread.rs:508`) becoming an O(1) handle. With db, base, and
-  buffer sharing one allocation, the staleness guards get an `Arc::ptr_eq`
-  fast path in front of the content compare: fatou's no-op upsert went from
-  39 us to a flat 150 ns at 1 MB. The cost is that an edit rebuilds the
-  string (two passes) instead of splicing in place — at 1 MB roughly
-  +10-30 us per keystroke, well under the reparse it precedes. Salsa 0.28
-  takes the field as-is; the setter never compares, so keep the explicit `!=`
-  guards and add `ptr_eq` in front, never instead.
+- [x] **`Arc<str>` document text end to end.** `TextBuffer`, `SourceFile`,
+  `DescriptionFile`, and `PrevParse` share one allocation, so the write phase,
+  the reparse base, and the staleness gates move a handle rather than a
+  document, and the guards get an `Arc::ptr_eq` fast path in front of the
+  content compare (`incremental::text_is`). Deref coercion absorbed nearly all
+  of it: the only breaks were one `as_str()` and the two `upsert_*` guards.
+
+  Measured with the new `benches/salsa_keystroke.rs` (130 KB / 1 MB):
+
+  | row | before | after |
+  | --- | --- | --- |
+  | no-op upsert | 4.1 us / 32 us | **0.74 us / 0.75 us** |
+  | write phase | 3.0 us / 20 us | 4.5 us / 35 us |
+  | whole keystroke | 24 us / 182 us | 24 us / 181 us |
+
+  The no-op upsert is now **flat in document size** — that row is a pointer
+  test, not a `memcmp`, and it is what every re-lint of an unedited buffer
+  pays (a `RelintAll` fan-out, a `didSave`, each sibling file). The write
+  phase pays for the rebuild an `Arc<str>` forces in place of an in-place
+  splice, but the whole keystroke did not move: the freed `PrevParse` clone
+  covers it almost exactly. `line_index`'s rows are unaffected — that bench
+  times index work only, never the text splice.
+
+  Deferred halving option, should the write-phase row ever stop being dwarfed
+  by the reparse: `Arc<String>` + `Arc::make_mut` costs one copy per splice
+  rather than two (`Arc<str>` cannot adopt a `String`'s allocation).
 
 - [ ] **Bypass `diff_edit` when the staged chain is one verified edit.** The
   reparse path declines a staged chain below two edits, so the single-
