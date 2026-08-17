@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.19.1](https://github.com/jolars/arity/compare/v0.19.0...v0.19.1) (2026-08-17)
+
+### Bug Fixes
+- **roxygen:** classify Rd block macros by name ([`49f2f40`](https://github.com/jolars/arity/commit/49f2f40771d38496a46af29d6326515c28838dd3)), closes [#106](https://github.com/jolars/arity/issues/106)
+- accept non-ASCII letters in syntactic R names ([`2c29b2f`](https://github.com/jolars/arity/commit/2c29b2f94215dac1adfe86ea1643ba7b935f5dc6)), refs [#108](https://github.com/jolars/arity/issues/108)
+
+### Performance Improvements
+- **linter:** seed the project scope once, not per document ([`f12344c`](https://github.com/jolars/arity/commit/f12344cb140631f79ab568933d1d48a4639e6abb))
+- **project:** share the per-file facts instead of copying them twice ([`ebb1d4f`](https://github.com/jolars/arity/commit/ebb1d4f127896240f966547e0352fbf71be19ee1))
+- **linter:** hand the salsa database teardown to the pool ([`210f8fc`](https://github.com/jolars/arity/commit/210f8fc92641e7fa4527330115f792abeae25bca))
+- **linter:** read the prologue's files in parallel ([`938367b`](https://github.com/jolars/arity/commit/938367b9b9a8220bcab7a75a0769bad5fe747db7))
+- **project:** stop reading DESCRIPTION twice per package root ([`262e460`](https://github.com/jolars/arity/commit/262e4604580582aa84da808e08a8243da28bfdf8))
+- **project:** walk to a package root once per directory ([`7b75a3c`](https://github.com/jolars/arity/commit/7b75a3c1461350bc319f3d5c4339bb6d556eee19))
+- **project:** share one NAMESPACE's sets across a package's members ([`21d1738`](https://github.com/jolars/arity/commit/21d17383ae01521439dcc90563633743a2efd8d5))
+- **project:** answer the file-set relations from one shared member set ([`2777621`](https://github.com/jolars/arity/commit/277762165fe6fc748d780d1593205e095cca898f))
+- **project:** derive visibility from shared layers, not per-member sets ([`36005a0`](https://github.com/jolars/arity/commit/36005a0fd114dc228433756d40187f40f14944fa))
+- **project:** fold a package clique once, not per ordered pair ([`e1ecf4e`](https://github.com/jolars/arity/commit/e1ecf4ec9b8023ecb93d0c49a6247e6fce0524bb))
+- **linter:** warm every fold input before the parallel passes ([`6c0ee06`](https://github.com/jolars/arity/commit/6c0ee06e87905f069a5a6766e0f47be241ea76b9))
+- **lsp,incremental:** verify edit slices without applying them ([`7654bbd`](https://github.com/jolars/arity/commit/7654bbd6276891d09bbbc9ab458addc9621f9543))
+- **text,lsp:** back document text with Arc<str> ([`e80c63a`](https://github.com/jolars/arity/commit/e80c63ac068635b33723ca50d534e646da6ed306))
+- **rindex:** load the lint index lazily, per package ([`f472c69`](https://github.com/jolars/arity/commit/f472c69ecbd1fd3239004d976cd4b24c73e4c66a))
+- **linter:** find a directive's comment by offset ([`0151f48`](https://github.com/jolars/arity/commit/0151f48471e6936e673629d52542e8ca95d66774))
+
+### Dependencies
+- updated crates/arity-formatter to v0.4.1
+- updated crates/arity-parser to v0.5.1
+
 ## [0.19.0](https://github.com/jolars/arity/compare/v0.18.0...v0.19.0) (2026-08-14)
 
 The most prominent feature of this release is that Arity now handles the `DESCRIPTION`

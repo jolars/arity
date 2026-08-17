@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.1](https://github.com/jolars/arity/compare/arity-parser-v0.5.0...arity-parser-v0.5.1) (2026-08-17)
+
+### Bug Fixes
+- **parser:** stop unterminated `%` at the line end ([`96ef35b`](https://github.com/jolars/arity/commit/96ef35b5ef61721ba27a08652eb7061a13ad1d31)), closes [#107](https://github.com/jolars/arity/issues/107)
+- **roxygen:** classify Rd block macros by name ([`49f2f40`](https://github.com/jolars/arity/commit/49f2f40771d38496a46af29d6326515c28838dd3)), closes [#106](https://github.com/jolars/arity/issues/106)
+- **parser:** lex non-ASCII letters as identifiers ([`e9a8974`](https://github.com/jolars/arity/commit/e9a8974f8c8e88a50e62f2d4c4be2e60644c4966)), closes [#108](https://github.com/jolars/arity/issues/108)
+- **parser:** diagnose invalid function formal lists ([`6b63efe`](https://github.com/jolars/arity/commit/6b63efe459bc703aefba1079346aecc2d462b1cd)), closes [#109](https://github.com/jolars/arity/issues/109)
+
+### Performance Improvements
+- **parser:** verify a staged chain without rebuilding it ([`35976b9`](https://github.com/jolars/arity/commit/35976b97e4979e16f6ea965cb2b7990f61735545))
+- **parser:** borrow token text from the input ([`b439507`](https://github.com/jolars/arity/commit/b4395070a10e3ac9e64ff2057800a9efac1295a8))
+
 ## [0.5.0](https://github.com/jolars/arity/compare/arity-parser-v0.4.0...arity-parser-v0.5.0) (2026-08-14)
 
 ### Breaking changes
