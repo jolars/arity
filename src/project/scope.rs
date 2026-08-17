@@ -1131,6 +1131,74 @@ mod tests {
         assert!(scope.seen_by(Path::new("/s/a.R")).is_empty());
     }
 
+    /// A package member that also `source()`s a sibling reaches it two ways.
+    /// `sees` is a set, so the sibling is still one entry — a representation
+    /// that keeps the member half and the `source()` half apart has to keep them
+    /// disjoint or it double-counts here.
+    #[test]
+    fn sees_does_not_double_count_a_sourced_sibling() {
+        let files = [
+            facts(
+                "/pkg/R/a.R",
+                &[],
+                &[],
+                vec![source_path("/pkg/R/b.R", false)],
+                Some("/pkg"),
+            ),
+            facts("/pkg/R/b.R", &["bar"], &[], vec![], Some("/pkg")),
+        ];
+        let scope = build_scope(&files);
+        let a = scope.sees(Path::new("/pkg/R/a.R"));
+        assert_eq!(a.len(), 1);
+        assert!(a.contains(Path::new("/pkg/R/b.R")));
+    }
+
+    #[test]
+    fn seen_by_is_siblings_plus_outside_sourcers() {
+        let files = [
+            facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg")),
+            facts("/pkg/R/b.R", &["bar"], &[], vec![], Some("/pkg")),
+            facts(
+                "/s/x.R",
+                &[],
+                &["foo"],
+                vec![source_path("/pkg/R/a.R", false)],
+                None,
+            ),
+        ];
+        let scope = build_scope(&files);
+        let seen_by = scope.seen_by(Path::new("/pkg/R/a.R"));
+        assert_eq!(seen_by.len(), 2);
+        assert!(seen_by.contains(Path::new("/pkg/R/b.R")));
+        assert!(seen_by.contains(Path::new("/s/x.R")));
+        assert!(!seen_by.contains(Path::new("/pkg/R/a.R")));
+    }
+
+    /// `package_siblings` is the flat-namespace aliasing relation, so unlike
+    /// `sees` it must not pick up `source()` targets.
+    #[test]
+    fn package_siblings_excludes_self_and_source_targets() {
+        let files = [
+            facts(
+                "/pkg/R/a.R",
+                &[],
+                &[],
+                vec![source_path("/s/c.R", false)],
+                Some("/pkg"),
+            ),
+            facts("/pkg/R/b.R", &["bar"], &[], vec![], Some("/pkg")),
+            facts("/s/c.R", &["baz"], &[], vec![], None),
+        ];
+        let scope = build_scope(&files);
+        let siblings = scope.package_siblings(Path::new("/pkg/R/a.R"));
+        assert_eq!(siblings.len(), 1);
+        assert!(siblings.contains(Path::new("/pkg/R/b.R")));
+        assert!(!siblings.contains(Path::new("/s/c.R")));
+        assert!(!siblings.contains(Path::new("/pkg/R/a.R")));
+        // A non-package file has no siblings at all.
+        assert!(scope.package_siblings(Path::new("/s/c.R")).is_empty());
+    }
+
     #[test]
     fn dynamic_source_marks_scope_incomplete() {
         let files = [facts("/s/a.R", &[], &[], vec![dynamic_edge()], None)];
@@ -1217,6 +1285,229 @@ mod tests {
         assert!(
             !a.resolution_incomplete,
             "a wildcard import is a question for the index, not an unresolvable"
+        );
+    }
+
+    fn routines(entries: &[(&str, &[&str])]) -> HashMap<PathBuf, BTreeSet<String>> {
+        entries
+            .iter()
+            .map(|(root, names)| (PathBuf::from(*root), set(names)))
+            .collect()
+    }
+
+    // The tests below pin the *precedence* rules inside `build`. `visible` and
+    // `read_by_others` are each assembled by several passes, and in both cases a
+    // later pass overrides an earlier one — which pass wins is observable, and
+    // any representation change has to reproduce it exactly.
+
+    /// `importFrom` is folded in *after* a file's own exports are removed, so a
+    /// name that is both is visible. Pins the direction: the own-export removal
+    /// must not outrank the NAMESPACE import.
+    #[test]
+    fn own_export_that_is_also_importfrom_stays_visible() {
+        let files = [facts("/pkg/R/a.R", &["filter"], &[], vec![], Some("/pkg"))];
+        let ns = namespaces(&[("/pkg", "importFrom(dplyr, filter)\n")]);
+        let scope = ProjectScope::build(&files, &ns, &HashMap::new(), &HashMap::new());
+        assert!(scope.for_file(Path::new("/pkg/R/a.R")).resolves("filter"));
+    }
+
+    /// The `useDynLib()` twin of the case above: native routines are injected
+    /// after the own-export removal too.
+    #[test]
+    fn own_export_that_is_also_a_native_routine_stays_visible() {
+        let files = [facts("/pkg/R/a.R", &["c_foo"], &[], vec![], Some("/pkg"))];
+        let native = routines(&[("/pkg", &["c_foo"])]);
+        let scope = ProjectScope::build(&files, &HashMap::new(), &HashMap::new(), &native);
+        assert!(scope.for_file(Path::new("/pkg/R/a.R")).resolves("c_foo"));
+    }
+
+    #[test]
+    fn native_routine_is_visible_to_every_member() {
+        let files = [
+            facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg")),
+            facts("/pkg/R/b.R", &["bar"], &[], vec![], Some("/pkg")),
+        ];
+        let native = routines(&[("/pkg", &["c_foo"])]);
+        let scope = ProjectScope::build(&files, &HashMap::new(), &HashMap::new(), &native);
+        assert!(scope.for_file(Path::new("/pkg/R/a.R")).resolves("c_foo"));
+        assert!(scope.for_file(Path::new("/pkg/R/b.R")).resolves("c_foo"));
+    }
+
+    /// The other direction: the own-export removal runs *after* the `source()`
+    /// closure is folded in, so a file that redefines a name it also sources
+    /// does not see the sourced one. `visible` is strictly cross-file — the own
+    /// binding resolves locally.
+    #[test]
+    fn own_export_shadowing_a_sourced_export_is_not_visible() {
+        let files = [
+            facts("/s/a.R", &["foo"], &[], vec![], None),
+            facts(
+                "/s/b.R",
+                &["foo"],
+                &[],
+                vec![source_path("/s/a.R", false)],
+                None,
+            ),
+        ];
+        let scope = build_scope(&files);
+        assert!(!scope.for_file(Path::new("/s/b.R")).resolves("foo"));
+    }
+
+    #[test]
+    fn own_export_is_never_self_visible() {
+        let files = [facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg"))];
+        let scope = build_scope(&files);
+        assert!(!scope.for_file(Path::new("/pkg/R/a.R")).resolves("foo"));
+    }
+
+    /// Every per-package set is keyed by root; two roots in one analyzed set
+    /// must not bleed into each other.
+    #[test]
+    fn two_roots_do_not_leak() {
+        let files = [
+            facts("/p1/R/a.R", &["one"], &["shared"], vec![], Some("/p1")),
+            facts("/p2/R/a.R", &["two"], &[], vec![], Some("/p2")),
+        ];
+        let ns = namespaces(&[
+            (
+                "/p1",
+                "export(one)\nimportFrom(dplyr, filter)\nimport(rlang)\n",
+            ),
+            ("/p2", "S3method(print, two)\n"),
+        ]);
+        let native = routines(&[("/p1", &["c_one"])]);
+        let scope = ProjectScope::build(&files, &ns, &HashMap::new(), &native);
+        let p2 = scope.for_file(Path::new("/p2/R/a.R"));
+        assert!(!p2.resolves("one"));
+        assert!(!p2.resolves("filter"));
+        assert!(!p2.resolves("c_one"));
+        assert!(!p2.exported_by_namespace("one"));
+        assert!(!p2.read_elsewhere("shared"));
+        assert!(p2.wildcard_import_packages().is_empty());
+        let p1 = scope.for_file(Path::new("/p1/R/a.R"));
+        assert!(!p1.resolves("two"));
+        assert!(!p1.is_s3_method("print.two"));
+    }
+
+    /// A root with no analyzed member contributes nothing — neither loop has a
+    /// member list to fan out over.
+    #[test]
+    fn facts_for_a_root_with_no_members_are_ignored() {
+        let files = [facts("/s/a.R", &[], &["filter"], vec![], None)];
+        let ns = namespaces(&[("/pkg", "importFrom(dplyr, filter)\nexport(foo)\n")]);
+        let native = routines(&[("/pkg", &["c_foo"])]);
+        let scope = ProjectScope::build(&files, &ns, &HashMap::new(), &native);
+        let a = scope.for_file(Path::new("/s/a.R"));
+        assert!(!a.resolves("filter"));
+        assert!(!a.resolves("c_foo"));
+        assert!(!a.exported_by_namespace("foo"));
+    }
+
+    /// The per-`source()`-edge contribution to `read_by_others` runs *after* the
+    /// package clique fold, so it overrides the fold's "only this member reads
+    /// it" exclusion. Pins the one case where the two disagree.
+    #[test]
+    fn sourcer_read_beats_the_solo_reader_exclusion() {
+        let mut a = facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg"));
+        a.qualified_reads = set(&["foo"]);
+        let files = [
+            a,
+            facts("/pkg/R/b.R", &["bar"], &[], vec![], Some("/pkg")),
+            facts(
+                "/s/x.R",
+                &[],
+                &["foo"],
+                vec![source_path("/pkg/R/a.R", false)],
+                None,
+            ),
+        ];
+        let scope = build_scope(&files);
+        assert!(
+            scope
+                .for_file(Path::new("/pkg/R/a.R"))
+                .read_elsewhere("foo")
+        );
+    }
+
+    /// The negative control for the case above: with no sourcer reading the
+    /// name, the clique fold's exclusion stands.
+    #[test]
+    fn sourcer_that_does_not_read_the_name_leaves_it_excluded() {
+        let mut a = facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg"));
+        a.qualified_reads = set(&["foo"]);
+        let files = [
+            a,
+            facts("/pkg/R/b.R", &["bar"], &[], vec![], Some("/pkg")),
+            facts(
+                "/s/x.R",
+                &[],
+                &["other"],
+                vec![source_path("/pkg/R/a.R", false)],
+                None,
+            ),
+        ];
+        let scope = build_scope(&files);
+        assert!(
+            !scope
+                .for_file(Path::new("/pkg/R/a.R"))
+                .read_elsewhere("foo")
+        );
+    }
+
+    /// A file with no package root has no clique fold at all: its "read by
+    /// others" set comes only from the files that `source()` it, and never from
+    /// its own reads.
+    #[test]
+    fn nonpackage_target_gets_reads_only_from_its_sourcers() {
+        let files = [
+            facts("/s/a.R", &["foo"], &["qux"], vec![], None),
+            facts(
+                "/s/x.R",
+                &[],
+                &["foo"],
+                vec![source_path("/s/a.R", false)],
+                None,
+            ),
+        ];
+        let scope = build_scope(&files);
+        let a = scope.for_file(Path::new("/s/a.R"));
+        assert!(a.read_elsewhere("foo"));
+        assert!(!a.read_elsewhere("qux"));
+    }
+
+    /// The `source()` closure walk seeds `visited` with the file itself, so a
+    /// cycle never routes a file's own reads back into its own "used by others"
+    /// set.
+    #[test]
+    fn a_cycle_between_two_package_members_does_not_self_source() {
+        let mut a = facts(
+            "/pkg/R/a.R",
+            &["foo"],
+            &[],
+            vec![source_path("/pkg/R/b.R", false)],
+            Some("/pkg"),
+        );
+        a.qualified_reads = set(&["foo"]);
+        let files = [
+            a,
+            facts(
+                "/pkg/R/b.R",
+                &["bar"],
+                &[],
+                vec![source_path("/pkg/R/a.R", false)],
+                Some("/pkg"),
+            ),
+        ];
+        let scope = build_scope(&files);
+        assert!(
+            !scope
+                .for_file(Path::new("/pkg/R/a.R"))
+                .read_elsewhere("foo")
+        );
+        assert!(
+            scope
+                .for_file(Path::new("/pkg/R/b.R"))
+                .read_elsewhere("foo")
         );
     }
 
