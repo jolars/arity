@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/jolars/arity/compare/arity-formatter-v0.4.0...arity-formatter-v0.4.1) (2026-08-17)
+
+### Bug Fixes
+- **roxygen:** classify Rd block macros by name ([`49f2f40`](https://github.com/jolars/arity/commit/49f2f40771d38496a46af29d6326515c28838dd3)), closes [#106](https://github.com/jolars/arity/issues/106)
+
+### Dependencies
+- updated crates/arity-parser to v0.5.1
+
 ## [0.4.0](https://github.com/jolars/arity/compare/arity-formatter-v0.3.1...arity-formatter-v0.4.0) (2026-08-14)
 
 ### Breaking changes
