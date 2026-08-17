@@ -167,6 +167,36 @@ fn check_source(src: &str) {
     }
 }
 
+/// The single-edit sweep driven through [`reparse_edits`] as a one-element
+/// chain — the shape a keystroke actually takes once the language server stages
+/// its `didChange` range. `check_source` covers the same edits through
+/// `reparse`, so a divergence between the two is a bug in the chain's verify.
+fn check_single_via_edits(src: &str) {
+    let old = parse(src);
+    let old_root = old.cst.clone();
+    for edit in edits_for(src) {
+        let target = edit.apply(src);
+        let full = parse(&target);
+        let edits = [edit.clone()];
+        let Some(reparsed) = reparse_edits(&old_root, src, &old.diagnostics, &edits, &target)
+        else {
+            continue; // fell back to full parse — always correct
+        };
+        assert_eq!(reparsed.kind, ReparseKind::Multi);
+
+        assert_eq!(
+            fingerprint(&SyntaxNode::new_root(reparsed.green.clone())),
+            fingerprint(&full.cst),
+            "reparse_edits tree mismatch for single edit {edit:?} on:\n{src}",
+        );
+        assert_eq!(
+            sorted_diags(reparsed.diagnostics),
+            sorted_diags(full.diagnostics),
+            "reparse_edits diagnostics mismatch for single edit {edit:?} on:\n{src}",
+        );
+    }
+}
+
 const SOURCES: &[&str] = &[
     "x <- 1 + 2\n",
     "foo <- function(a, b) {\n  a + b\n}\n",
@@ -207,6 +237,61 @@ fn reparse_edits_matches_full_parse_on_snippets() {
     for src in SOURCES {
         check_multi(src);
     }
+}
+
+#[test]
+fn reparse_edits_single_edit_matches_full_parse_on_snippets() {
+    for src in SOURCES {
+        check_single_via_edits(src);
+    }
+}
+
+#[test]
+fn reparse_rejects_an_edit_the_text_cannot_take() {
+    // `reparse` takes an `Edit` from its caller, so it answers "no strategy
+    // applies" for a range the text cannot hold rather than panicking deep in a
+    // tree lookup or a slice.
+    let src = "café <- 1\n";
+    let old = parse(src);
+    // End past the text, start past the text, inverted, and splitting the 'é'.
+    for (start, end) in [(0, 900), (900, 900), (5, 2), (3, 4)] {
+        let edit = Edit {
+            range: start..end,
+            insert: "x".to_string(),
+        };
+        assert!(
+            reparse(&old.cst, src, &old.diagnostics, &edit).is_none(),
+            "expected no strategy for {edit:?}",
+        );
+    }
+}
+
+#[test]
+fn reparse_edits_rejects_an_out_of_bounds_edit() {
+    // A staged sequence is caller data: a coalescing gap or a misordered batch
+    // can hand us a range the text cannot hold. That must be a `None` the caller
+    // recovers from via `diff_edit`, never a panic in the language server's lint
+    // thread.
+    let src = "x <- 1\n";
+    let old = parse(src);
+    let edits = vec![Edit {
+        range: 900..900,
+        insert: "y".to_string(),
+    }];
+    assert!(reparse_edits(&old.cst, src, &old.diagnostics, &edits, src).is_none());
+}
+
+#[test]
+fn reparse_edits_rejects_a_mid_character_range() {
+    // Same contract for a range that splits a multibyte char: no such edit can
+    // produce any `&str`, so the answer is `None` rather than a slice panic.
+    let src = "日本語 <- 1\n";
+    let old = parse(src);
+    let edits = vec![Edit {
+        range: 1..2,
+        insert: "q".to_string(),
+    }];
+    assert!(reparse_edits(&old.cst, src, &old.diagnostics, &edits, src).is_none());
 }
 
 #[test]

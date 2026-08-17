@@ -30,6 +30,7 @@
 //! is enforced by `tests/incremental_reparse.rs` (an oracle property test over the
 //! corpus) and a `debug_assert!` here.
 
+use std::borrow::Cow;
 use std::ops::Range;
 
 use rowan::{GreenNode, GreenToken, TextRange, TextSize};
@@ -57,6 +58,11 @@ impl Edit {
     }
 
     /// Apply the edit to `old`, producing the new text.
+    ///
+    /// Panics when `range` is not a slice `old` can take. Callers holding an
+    /// edit they did not compute themselves want [`Edit::produces`] or
+    /// [`edits_produce`] instead, which decide the same question without
+    /// building the result and without panicking.
     pub fn apply(&self, old: &str) -> String {
         let mut out =
             String::with_capacity(old.len().saturating_sub(self.range.len()) + self.insert.len());
@@ -65,18 +71,84 @@ impl Edit {
         out.push_str(&old[self.range.end..]);
         out
     }
+
+    /// Whether `range` is a slice `old` can actually take.
+    fn fits(&self, old: &str) -> bool {
+        self.range.start <= self.range.end
+            && self.range.end <= old.len()
+            && old.is_char_boundary(self.range.start)
+            && old.is_char_boundary(self.range.end)
+    }
+
+    /// [`Edit::apply`] for an untrusted range: `None` wherever `apply` would
+    /// panic.
+    fn apply_checked(&self, old: &str) -> Option<String> {
+        self.fits(old).then(|| self.apply(old))
+    }
+
+    /// Whether applying this edit to `old` yields exactly `target` — decided by
+    /// comparing the three spans in place, so neither the result nor a copy of
+    /// `old` is ever built.
+    ///
+    /// This is the cheap form of `edit.apply(old) == target`: one allocation and
+    /// one whole-document copy less, on a path a keystroke runs. It is also
+    /// *total* where `apply` panics — an out-of-bounds or mid-character range
+    /// answers `false` — which is what lets an untrusted edit be checked before
+    /// it reaches a reparse strategy.
+    fn produces(&self, old: &str, target: &str) -> bool {
+        if !self.fits(old) {
+            return false;
+        }
+        let (start, end) = (self.range.start, self.range.end);
+        let insert = self.insert.as_bytes();
+        let (old, target) = (old.as_bytes(), target.as_bytes());
+
+        // The length is fixed by the edit, so it discriminates before any
+        // comparison touches the document.
+        if target.len() != old.len() - (end - start) + insert.len() {
+            return false;
+        }
+        // `target.len() - tail == old.len() - end`, so both tails are in bounds.
+        let tail = start + insert.len();
+        old[..start] == target[..start]
+            && target[start..tail] == *insert
+            && old[end..] == target[tail..]
+    }
 }
 
 /// Apply `edits` to `old` left-to-right, each expressed against the text its
 /// predecessors produced — the inverse operation to [`map_range_through_edits`].
 ///
-/// Used as an apply-and-verify guard by span-mapping consumers: reconstructing
-/// the current text from an old snapshot plus an accumulated edit slice proves
-/// the slice is the exact transform between them before a range is folded
-/// through it, so a stale or misaligned slice can be rejected in favor of the
-/// whole-text [`diff_edit`] fallback.
+/// Panics on an edit that does not fit the text its predecessors produced. To
+/// *verify* a slice rather than materialize it — the reason a span-mapping
+/// consumer reaches for this — use [`edits_produce`], which is total and skips
+/// the final rebuild.
 pub fn apply_edits(old: &str, edits: &[Edit]) -> String {
     edits.iter().fold(old.to_string(), |t, e| e.apply(&t))
+}
+
+/// Whether applying `edits` to `old` left-to-right yields exactly `target`:
+/// `apply_edits(old, edits) == target` without the final rebuild, and without
+/// the panic on a slice that does not fit.
+///
+/// This is the apply-and-verify guard span-mapping consumers want. Proving an
+/// accumulated slice is the exact transform between an old snapshot and the
+/// current text is what licenses folding a range through it; a stale or
+/// misaligned slice is rejected here in favor of the whole-text [`diff_edit`]
+/// fallback. The last edit is answered by comparison alone, so the common
+/// one-element slice allocates nothing at all.
+pub fn edits_produce(old: &str, edits: &[Edit], target: &str) -> bool {
+    let Some((last, init)) = edits.split_last() else {
+        return old == target;
+    };
+    let mut text = Cow::Borrowed(old);
+    for edit in init {
+        let Some(next) = edit.apply_checked(&text) else {
+            return false;
+        };
+        text = Cow::Owned(next);
+    }
+    last.produces(&text, target)
 }
 
 /// Map a `TextRange` taken against the text *before* `edit` to its position in
@@ -180,7 +252,8 @@ pub fn diff_edit(old: &str, new: &str) -> Edit {
 
 /// Attempt an incremental reparse of `old_root` (parsed from `old_text`, with
 /// `old_diags`) under `edit`. Returns `None` when no incremental strategy applies
-/// — the caller must then do a full parse.
+/// — the caller must then do a full parse. An `edit` whose range `old_text`
+/// cannot take is one such case, not a panic.
 pub fn reparse(
     old_root: &SyntaxNode,
     old_text: &str,
@@ -208,6 +281,14 @@ pub fn reparse_with_options(
     edit: &Edit,
     options: &ParseOptions,
 ) -> Option<Reparsed> {
+    // The strategies below index `old_text` and the tree by the edit's range, so
+    // a range the text cannot take would panic several frames down. An `Edit` is
+    // caller data — a language server's staged `didChange` sequence, say — so
+    // answer "no strategy applies" instead and let the caller fall back.
+    if !edit.fits(old_text) {
+        return None;
+    }
+
     let md = options.roxygen_markdown_default;
     let result = reparse_token(old_root, old_text, old_diags, edit, md)
         .or_else(|| reparse_block(old_root, old_text, old_diags, edit, md))
@@ -237,10 +318,11 @@ pub fn reparse_with_options(
 /// fully-applied text equals `target`. The `== target` check is the Tenet-4
 /// safety net: an edit sequence that does not actually transform `old_text` into
 /// the current buffer (a coalescing gap, an interleaved disk write, a
-/// full-document replacement) is rejected here so the caller falls back to the
-/// always-correct [`diff_edit`] path. A successful result is therefore
-/// byte-identical to a full [`parse`](crate::parser::parse) of `target` — the
-/// composition of correct single-edit reparses over the true edit sequence.
+/// full-document replacement, a range the text cannot even hold) is rejected
+/// here so the caller falls back to the always-correct [`diff_edit`] path. A
+/// successful result is therefore byte-identical to a full
+/// [`parse`](crate::parser::parse) of `target` — the composition of correct
+/// single-edit reparses over the true edit sequence.
 pub fn reparse_edits(
     old_root: &SyntaxNode,
     old_text: &str,
@@ -268,21 +350,34 @@ pub fn reparse_edits_with_options(
     target: &str,
     options: &ParseOptions,
 ) -> Option<Reparsed> {
-    let (first, rest) = edits.split_first()?;
+    // Split the *last* edit off rather than the first: it is the one whose
+    // result is `target`, so it can be verified by comparison instead of by
+    // rebuilding the document. A one-edit chain — a single keystroke, the common
+    // case — therefore allocates nothing here at all.
+    let (last, init) = edits.split_last()?;
 
-    // Step 0 off the caller's tree; each later step off the prior step's tree.
-    let mut reparsed = reparse_with_options(old_root, old_text, old_diags, first, options)?;
-    let mut text = first.apply(old_text);
-    for edit in rest {
-        let root = SyntaxNode::new_root(reparsed.green.clone());
-        reparsed = reparse_with_options(&root, &text, &reparsed.diagnostics, edit, options)?;
-        text = edit.apply(&text);
+    // Each step reparses off the prior step's tree; the first off the caller's.
+    let mut root = old_root.clone();
+    let mut text = Cow::Borrowed(old_text);
+    let mut diags = Cow::Borrowed(old_diags);
+    for edit in init {
+        let reparsed = reparse_with_options(&root, &text, &diags, edit, options)?;
+        // Infallible once the reparse succeeded, which implies the fit.
+        text = Cow::Owned(edit.apply_checked(&text)?);
+        root = SyntaxNode::new_root(reparsed.green);
+        diags = Cow::Owned(reparsed.diagnostics);
     }
 
-    // Tenet-4 guard: the edits must reconstruct the current buffer exactly.
-    if text != target {
+    // Tenet-4 guard, ahead of the work it gates: `init` has already been
+    // applied, so this settles the whole chain, and a stale sequence is rejected
+    // before it can spend a reparse. It also stands in for the bounds the
+    // strategies below assume — an edit that cannot produce `target` never
+    // reaches a slice that would panic on it.
+    if !last.produces(&text, target) {
         return None;
     }
+
+    let mut reparsed = reparse_with_options(&root, &text, &diags, last, options)?;
     reparsed.kind = ReparseKind::Multi;
     Some(reparsed)
 }
@@ -627,6 +722,105 @@ fn shift(d: &ParseDiagnostic, delta: isize) -> ParseDiagnostic {
 
 fn text_range(start: usize, end: usize) -> TextRange {
     TextRange::new(TextSize::new(start as u32), TextSize::new(end as u32))
+}
+
+#[cfg(test)]
+mod verify_tests {
+    use super::*;
+
+    fn edit(start: usize, end: usize, insert: &str) -> Edit {
+        Edit {
+            range: start..end,
+            insert: insert.to_string(),
+        }
+    }
+
+    /// `produces` must agree with `apply` wherever `apply` is defined, and must
+    /// answer `false` — not panic — wherever it is not.
+    fn agrees_with_apply(old: &str, e: &Edit) {
+        if e.fits(old) {
+            let applied = e.apply(old);
+            assert!(
+                e.produces(old, &applied),
+                "produces rejected its own apply: {e:?} on {old:?}",
+            );
+            // Any other target is a different string, so it must be rejected.
+            // Perturb at each end, so neither the length check nor one span
+            // compare can carry the verdict alone.
+            assert!(!e.produces(old, &format!("{applied}~")));
+            assert!(!e.produces(old, &format!("~{applied}")));
+        } else {
+            assert!(!e.produces(old, old), "unfit edit accepted: {e:?}");
+        }
+    }
+
+    #[test]
+    fn produces_agrees_with_apply_across_edit_shapes() {
+        let old = "alpha <- beta\n";
+        for e in [
+            edit(0, 0, "x"),                  // insert at the start
+            edit(old.len(), old.len(), "x"),  // insert at EOF
+            edit(6, 6, ""),                   // empty insert, empty range
+            edit(0, old.len(), "wholly new"), // replace everything
+            edit(0, old.len(), ""),           // delete everything
+            edit(9, 13, ""),                  // delete a token
+            edit(9, 13, "gamma"),             // replace a token, growing
+            edit(9, 13, "g"),                 // replace a token, shrinking
+        ] {
+            agrees_with_apply(old, &e);
+        }
+    }
+
+    #[test]
+    fn produces_is_total_on_ranges_the_text_cannot_take() {
+        let old = "café <- 1\n";
+        for e in [
+            edit(0, 900, "x"),   // end past the text
+            edit(900, 900, "x"), // start past the text
+            edit(5, 2, "x"),     // inverted
+            edit(3, 4, "x"),     // splits the 'é'
+            edit(0, 4, "x"),     // ends inside the 'é'
+        ] {
+            agrees_with_apply(old, &e);
+        }
+    }
+
+    #[test]
+    fn produces_rejects_a_same_length_but_different_target() {
+        // The length check alone would pass here; the span compares are what
+        // decide it.
+        let old = "x <- 1\n";
+        let e = edit(5, 6, "9");
+        assert!(e.produces(old, "x <- 9\n"));
+        assert!(!e.produces(old, "y <- 9\n"));
+        assert!(!e.produces(old, "x <- 8\n"));
+        assert!(!e.produces(old, "x <- 9!"));
+    }
+
+    #[test]
+    fn edits_produce_folds_each_against_prior_text() {
+        // The same sequence `apply_edits` folds, verified without rebuilding it.
+        let old = "cdef";
+        let edits = [edit(0, 0, "ab"), edit(4, 4, "Z")];
+        assert_eq!(apply_edits(old, &edits), "abcdZef");
+        assert!(edits_produce(old, &edits, "abcdZef"));
+        assert!(!edits_produce(old, &edits, "abcdef"));
+    }
+
+    #[test]
+    fn edits_produce_rejects_a_chain_that_stops_fitting() {
+        // The second edit is in bounds against `old` but not against what the
+        // first leaves behind. `apply_edits` would panic on it.
+        let old = "abcdef";
+        let edits = [edit(0, 5, ""), edit(4, 5, "z")];
+        assert!(!edits_produce(old, &edits, "fz"));
+    }
+
+    #[test]
+    fn edits_produce_on_an_empty_slice_is_an_identity_check() {
+        assert!(edits_produce("xyz", &[], "xyz"));
+        assert!(!edits_produce("xyz", &[], "xyw"));
+    }
 }
 
 #[cfg(test)]
