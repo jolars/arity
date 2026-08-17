@@ -896,21 +896,44 @@ measurement to re-run against any change to the driver.
   one block, which is its own plausible trigger (`duplicated-function-definition`
   and friends see 24 of every name).
 
-- [ ] **The rindex is re-deserialized from JSON on every invocation.**
-  `arity lint` on a four-line file costs 12.6 ms where `arity format` costs
-  2.0 ms and jarl 2.1 ms. Profiling the release binary over 60 runs puts 57% of
-  that startup in serde_json over `rindex::schema::ExportEntry` — a large share
-  of it in `IgnoredAny`, i.e. parsing fields it then throws away. A populated
-  `~/.cache/arity/index/v3/` is 14 MB across 45 files, read cold each run;
-  pointing `XDG_CACHE_HOME` at an empty directory gives 13.3 ms -> 3.6 ms with
-  the findings on tidyr unchanged (44 either way).
+- [x] **The rindex was re-deserialized from JSON on every invocation.** Done:
+  the lint CLI's load is lazy (`IndexedProvider::from_cache_lazy`). It reads
+  `meta.json` up front and defers each `{pkg}@{ver}.json` to the first question
+  asked about that package, memoized in a per-package `OnceLock`.
 
-  Two directions, not exclusive: a names-only sidecar (or a non-JSON format)
-  for the export-membership view, which is all the lint path needs, and making
-  the load lazy, since a run that resolves no external symbol never needs it.
-  Note the cost is machine-dependent — it exists only where a local R library
-  has been harvested, so a fresh CI runner does not pay it and the benchmark
-  machine does.
+  The eager load was answering no question at all on most runs. `resolve_origin`,
+  `package_indexed`, and `attach_members` are keyed by package name and consulted
+  only for the packages a file *attaches* — `library()`, a NAMESPACE `import()`,
+  a package's own declared attaches — yet the load deserialized all 44 harvested
+  packages (14 MB) to keep 118 KB of export names. `perf` put ~50% of a four-line
+  `arity lint` in serde_json, and 33.5% of the whole run in `skip_to_escape` +
+  `ignore_str` alone: scanning help bodies and formal defaults character by
+  character to find where to discard them.
+
+  Median `arity lint` (interleaved rounds, quiet machine, pinned to one core
+  except where noted): four-line file 11.7 -> 2.8 ms (-76%, min -76%); a
+  directory attaching five packages 16.5 -> 10.6 ms (-36%); `tidyr/R` (41 files,
+  24 cores, unpinned) 30.7 -> 26.7 ms (-13%). Findings byte-identical on
+  `tidyr/R` and on files attaching dplyr, ggplot2, MASS, tidyverse, and eulerr.
+
+  The cost was machine-dependent — it existed only where a local R library had
+  been harvested, so a fresh CI runner never paid it and the benchmark machine
+  did.
+
+  Left open: a names-only sidecar (or a non-JSON format) for the membership
+  view. Laziness cut the *number* of files parsed, not the cost of one, so a
+  file that does `library(ggplot2)` still parses 2 MB of JSON for ~30 KB of
+  names. Worth doing only if the attaching case measures as a real cost.
+
+- [ ] **`arity lint --fix` costs 61 ms on a four-line file** with an *empty*
+  rindex cache, against 3.9 ms for the same file without `--fix` — a fixed cost
+  15x the file's own lint, and unrelated to the index. A first `perf` pass put
+  80% inclusive under a page-fault frame with unreliable dwarf attribution, so
+  the culprit is not yet named; `BUNDLED_EXPORTS` (518 KB, 40k names, ~4.4 ms to
+  build) is a candidate but nowhere near the whole figure. Note `run_lint` also
+  builds the library index twice on this path (`apply_fixes_to_paths` and then
+  the reporting pass); that is now two `meta.json` reads rather than two full
+  loads, so it is tidiness, not the cost.
 
 - [ ] **`check_paths_with_index` converts little of its CPU into wall time.**
   The largest real-world factor, and the hardest. On `tidyr/R` (41 files, 24

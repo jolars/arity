@@ -258,14 +258,15 @@ fn run_index(paths: Vec<PathBuf>, opts: IndexCliOptions, config_source: &ConfigS
 /// Build the harvested package index for linting, loading it from the cache
 /// when one is configured/available. Installed into salsa as the
 /// HIGH-durability library index; R's default + bundled CRAN lists are static.
-/// Lint resolution only asks export-membership questions, so this is the lean
-/// names-only load — the rich formals/help payload stays on disk.
+/// Lint resolution only asks export-membership questions, and only about the
+/// packages a file attaches, so this is the lazy load: `meta.json` up front and
+/// a package file only once something asks about that package.
 fn lint_index(config: &arity::config::Config) -> IndexedProvider {
     let Ok(cache_root) = resolve_cache_root(None, config.index.cache_dir.as_deref()) else {
         return IndexedProvider::empty();
     };
     let cache = Cache::new(cache_root);
-    IndexedProvider::from_cache_exports(&cache)
+    IndexedProvider::from_cache_lazy(&cache)
 }
 
 fn now_unix_secs() -> u64 {

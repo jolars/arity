@@ -10,13 +10,13 @@
 //!   order, and the last attacher masks.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 
 use smol_str::SmolStr;
 
 use crate::rindex::cache::Cache;
 use crate::rindex::remote::RemoteExports;
-use crate::rindex::schema::{PackageIndex, SymbolEntry};
+use crate::rindex::schema::{PackageExports, PackageIndex, SymbolEntry};
 use crate::semantic::symbols::{
     BundledPackages, LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider,
     meta_package_members, unbacktick,
@@ -159,18 +159,63 @@ pub fn bundled_exports(package: &str) -> Option<impl Iterator<Item = &'static Sm
     bundled.package_exports(package)
 }
 
+/// A package's membership view: everything resolution asks about it.
+#[derive(Debug, Default)]
+struct Membership {
+    /// The package's exported names.
+    exports: HashSet<SmolStr>,
+    /// Its harvested attach set, empty when capture found nothing.
+    attaches: Vec<SmolStr>,
+}
+
+impl From<PackageExports> for Membership {
+    fn from(exp: PackageExports) -> Self {
+        Membership {
+            exports: exp
+                .symbols
+                .into_iter()
+                .filter(|s| s.exported)
+                .map(|s| s.name)
+                .collect(),
+            attaches: exp.attaches,
+        }
+    }
+}
+
+/// One package the index knows of, with its membership either already resolved
+/// (the eager constructors) or filled from disk on first use (the lazy one).
+/// The inner `Option` distinguishes "read and empty" from "file missing or
+/// stale", which must read as *not indexed*.
+#[derive(Debug)]
+struct PackageSlot {
+    /// The version `meta.json` names — the file a lazy fill reads.
+    version: SmolStr,
+    membership: OnceLock<Option<Membership>>,
+}
+
+impl PackageSlot {
+    /// A slot whose membership is already known.
+    fn resolved(membership: Membership) -> Self {
+        let cell = OnceLock::new();
+        let _ = cell.set(Some(membership));
+        PackageSlot {
+            version: SmolStr::default(),
+            membership: cell,
+        }
+    }
+}
+
 /// Resolves names against indexed, attached packages and holds the rich data.
 #[derive(Debug, Default)]
 pub struct IndexedProvider {
-    /// package → set of exported names (for `origin` membership tests).
-    pkg_exports: HashMap<SmolStr, HashSet<SmolStr>>,
-    /// package → full harvested index (for `lookup`).
+    /// package → membership, for `origin`/`package_indexed` tests.
+    packages: HashMap<SmolStr, PackageSlot>,
+    /// package → full harvested index (for `lookup`). Populated only by the
+    /// rich [`from_cache`](IndexedProvider::from_cache) load.
     indices: HashMap<SmolStr, PackageIndex>,
-    /// package → harvested attach set; only non-empty sets are recorded. Kept
-    /// separate from `indices` because the lean exports-only load
-    /// ([`from_cache_exports`](Self::from_cache_exports)) never populates
-    /// `indices` but still needs resolution to see attach sets.
-    attaches: HashMap<SmolStr, Vec<SmolStr>>,
+    /// Where an unfilled slot reads its membership from. `None` once every slot
+    /// is resolved, which is what the eager constructors produce.
+    source: Option<Cache>,
 }
 
 impl IndexedProvider {
@@ -180,26 +225,25 @@ impl IndexedProvider {
 
     /// Build from a set of harvested package indices.
     pub fn from_indices(indices: impl IntoIterator<Item = PackageIndex>) -> Self {
-        let mut pkg_exports: HashMap<SmolStr, HashSet<SmolStr>> = HashMap::new();
+        let mut packages: HashMap<SmolStr, PackageSlot> = HashMap::new();
         let mut map: HashMap<SmolStr, PackageIndex> = HashMap::new();
-        let mut attaches: HashMap<SmolStr, Vec<SmolStr>> = HashMap::new();
         for idx in indices {
-            let names: HashSet<SmolStr> = idx
-                .symbols
-                .iter()
-                .filter(|s| s.exported)
-                .map(|s| s.name.clone())
-                .collect();
-            pkg_exports.insert(idx.package.clone(), names);
-            if !idx.attaches.is_empty() {
-                attaches.insert(idx.package.clone(), idx.attaches.clone());
-            }
+            let membership = Membership {
+                exports: idx
+                    .symbols
+                    .iter()
+                    .filter(|s| s.exported)
+                    .map(|s| s.name.clone())
+                    .collect(),
+                attaches: idx.attaches.clone(),
+            };
+            packages.insert(idx.package.clone(), PackageSlot::resolved(membership));
             map.insert(idx.package.clone(), idx);
         }
         IndexedProvider {
-            pkg_exports,
+            packages,
             indices: map,
-            attaches,
+            source: None,
         }
     }
 
@@ -208,48 +252,74 @@ impl IndexedProvider {
         Self::from_indices(cache.load_all())
     }
 
-    /// Load only export *membership* from the cache: `has_package` and the
-    /// `exports` tests behave exactly as after [`from_cache`], but the rich
-    /// per-symbol data is never deserialized, so [`lookup`](Self::lookup) and
-    /// [`package`](Self::package) return `None`. This is the lint CLI's load:
-    /// resolution (`resolve_origin`/`package_indexed`) only asks membership
-    /// questions, and skipping the formals + help bodies makes loading a large
-    /// harvested cache cheap. Consumers of the rich data (LSP hover and
-    /// completion) must use [`from_cache`].
-    pub fn from_cache_exports(cache: &Cache) -> Self {
-        let mut pkg_exports: HashMap<SmolStr, HashSet<SmolStr>> = HashMap::new();
-        let mut attaches: HashMap<SmolStr, Vec<SmolStr>> = HashMap::new();
-        for exp in cache.load_all_exports() {
-            let names: HashSet<SmolStr> = exp
-                .symbols
-                .into_iter()
-                .filter(|s| s.exported)
-                .map(|s| s.name)
-                .collect();
-            if !exp.attaches.is_empty() {
-                attaches.insert(exp.package.clone(), exp.attaches);
-            }
-            pkg_exports.insert(exp.package, names);
-        }
+    /// Note which packages the cache holds, deferring every package file to the
+    /// first question asked about that package. `has_package` and the `exports`
+    /// tests answer exactly as after [`from_cache`], but the rich per-symbol
+    /// data is never deserialized, so [`lookup`](Self::lookup) and
+    /// [`package`](Self::package) return `None`.
+    ///
+    /// This is the lint CLI's load, and it is lazy because resolution
+    /// (`resolve_origin`/`package_indexed`) only ever asks about the packages a
+    /// file *attaches* — `library()`, a NAMESPACE `import()`, a package's own
+    /// declared attaches. A file that attaches nothing reads `meta.json` and
+    /// nothing else, where the eager load deserialized every harvested package
+    /// (megabytes of formals and help bodies) to answer no question at all.
+    /// Consumers of the rich data (LSP hover and completion) must use
+    /// [`from_cache`].
+    pub fn from_cache_lazy(cache: &Cache) -> Self {
+        let packages = cache
+            .read_meta()
+            .packages
+            .into_iter()
+            .map(|(package, version)| {
+                (
+                    package,
+                    PackageSlot {
+                        version,
+                        membership: OnceLock::new(),
+                    },
+                )
+            })
+            .collect();
         IndexedProvider {
-            pkg_exports,
+            packages,
             indices: HashMap::new(),
-            attaches,
+            source: Some(cache.clone()),
         }
+    }
+
+    /// The membership view of `package`, filling it from the cache on first
+    /// use. `None` when the index has no entry for `package`, or when the entry
+    /// `meta.json` names cannot be read — a missing or foreign-schema file must
+    /// read as *not indexed*, matching the eager load, so that
+    /// `package_indexed` never claims exports it does not have.
+    fn membership(&self, package: &str) -> Option<&Membership> {
+        let slot = self.packages.get(package)?;
+        slot.membership
+            .get_or_init(|| {
+                let exports = self
+                    .source
+                    .as_ref()?
+                    .read_package_exports(package, &slot.version)?;
+                Some(Membership::from(exports))
+            })
+            .as_ref()
     }
 
     /// True if this provider has an index for `package`.
     pub fn has_package(&self, package: &str) -> bool {
-        self.pkg_exports.contains_key(package)
+        self.membership(package).is_some()
     }
 
     /// Iterate every locally harvested package name.
     ///
-    /// Reads `pkg_exports`, not `indices`, so it stays correct under the lean
-    /// [`from_cache_exports`](Self::from_cache_exports) load, which never
-    /// populates the rich map.
+    /// Reads the slot map, not `indices`, so it stays correct under the lean
+    /// [`from_cache_lazy`](Self::from_cache_lazy) load, which never populates
+    /// the rich map. Naming a package here is `meta.json`'s claim and not yet a
+    /// read, so under that load the iterator may include a package whose file
+    /// has since gone away; ask [`has_package`](Self::has_package) to settle it.
     pub fn packages(&self) -> impl Iterator<Item = &SmolStr> {
-        self.pkg_exports.keys()
+        self.packages.keys()
     }
 
     /// The rich entry for `pkg::name`, if indexed.
@@ -271,13 +341,14 @@ impl IndexedProvider {
     /// when the package isn't indexed *or* its capture found nothing — both
     /// mean "fall back to the static table" (see [`attach_members`]).
     pub fn attaches(&self, package: &str) -> Option<&[SmolStr]> {
-        self.attaches.get(package).map(Vec::as_slice)
+        self.membership(package)
+            .map(|m| m.attaches.as_slice())
+            .filter(|a| !a.is_empty())
     }
 
     fn exports(&self, package: &str, name: &str) -> bool {
-        self.pkg_exports
-            .get(package)
-            .is_some_and(|set| set.contains(unbacktick(name)))
+        self.membership(package)
+            .is_some_and(|m| m.exports.contains(unbacktick(name)))
     }
 }
 
@@ -624,14 +695,51 @@ mod tests {
     }
 
     #[test]
-    fn exports_only_load_matches_full_load_membership() {
+    fn lazy_load_defers_package_file_reads() {
+        use crate::rindex::cache::Cache;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().to_path_buf());
+        cache.write_package(&pkg("dplyr", &["across"])).unwrap();
+        cache.write_package(&pkg("tibble", &["tribble"])).unwrap();
+
+        let lazy = IndexedProvider::from_cache_lazy(&cache);
+        // Construction read `meta.json` only. Deleting a package file *after*
+        // construction therefore still changes what the provider can answer —
+        // which an eager load could not do.
+        std::fs::remove_file(cache.index_dir().join("tibble@1.0.json")).unwrap();
+        assert!(lazy.exports("dplyr", "across"));
+        // A package `meta.json` names but whose file cannot be read is not
+        // indexed, exactly as under the eager load: `package_indexed` must not
+        // claim its exports are known.
+        assert!(!lazy.has_package("tibble"));
+        assert!(!lazy.exports("tibble", "tribble"));
+    }
+
+    #[test]
+    fn lazy_load_memoizes_a_package_it_has_read() {
+        use crate::rindex::cache::Cache;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().to_path_buf());
+        cache.write_package(&pkg("dplyr", &["across"])).unwrap();
+
+        let lazy = IndexedProvider::from_cache_lazy(&cache);
+        assert!(lazy.exports("dplyr", "across"));
+        // Once filled, the answer is stable: a second query re-reads nothing.
+        std::fs::remove_file(cache.index_dir().join("dplyr@1.0.json")).unwrap();
+        assert!(lazy.exports("dplyr", "across"));
+        assert!(lazy.has_package("dplyr"));
+    }
+
+    #[test]
+    fn lazy_load_matches_full_load_membership() {
         use crate::rindex::cache::Cache;
         use crate::rindex::schema::{Formal, HelpDoc};
 
         let tmp = tempfile::tempdir().unwrap();
         let cache = Cache::new(tmp.path().to_path_buf());
         let mut idx = pkg("dplyr", &["filter", "across"]);
-        // Rich payload on one symbol, plus an unexported internal.
         idx.symbols[0].formals = Some(vec![Formal {
             name: SmolStr::new(".data"),
             default: None,
@@ -653,33 +761,88 @@ mod tests {
             .unwrap();
 
         let full = IndexedProvider::from_cache(&cache);
-        let lean = IndexedProvider::from_cache_exports(&cache);
+        let lazy = IndexedProvider::from_cache_lazy(&cache);
 
-        // Membership semantics are identical to the full load...
-        assert!(lean.has_package("dplyr"));
         for name in ["filter", "across", "internal_helper", "nope"] {
             assert_eq!(
-                lean.exports("dplyr", name),
+                lazy.exports("dplyr", name),
                 full.exports("dplyr", name),
                 "membership diverged for {name}"
             );
         }
-        // ...and so are the harvested attach sets (the lint CLI's lean load
-        // must not silently fall back to the static table).
-        for pkg in ["tidyverse", "dplyr"] {
+        for pkg in ["tidyverse", "dplyr", "absent"] {
             assert_eq!(
-                lean.attaches(pkg),
+                lazy.has_package(pkg),
+                full.has_package(pkg),
+                "has_package diverged for {pkg}"
+            );
+            // The lint CLI's load must not silently fall back to the static
+            // attach table where a harvested set exists.
+            assert_eq!(
+                lazy.attaches(pkg),
                 full.attaches(pkg),
                 "attaches diverged for {pkg}"
             );
         }
         assert_eq!(
-            full.attaches("tidyverse"),
+            lazy.attaches("tidyverse"),
             Some(&[SmolStr::new("dplyr")][..])
         );
-        // ...but the rich per-symbol data is deliberately not loaded.
-        assert!(lean.lookup("dplyr", "filter").is_none());
-        assert!(lean.package("dplyr").is_none());
+        // The rich per-symbol payload is deliberately never deserialized.
+        assert!(lazy.lookup("dplyr", "filter").is_none());
+        assert!(lazy.package("dplyr").is_none());
+    }
+
+    #[test]
+    fn lazy_load_resolves_through_the_composite_provider() {
+        use crate::rindex::cache::Cache;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().to_path_buf());
+        cache.write_package(&pkg("dplyr", &["across"])).unwrap();
+        cache
+            .write_package(&meta_pkg("metaverse", &[], &["dplyr"]))
+            .unwrap();
+
+        let p = CompositeProvider::with_index(IndexedProvider::from_cache_lazy(&cache));
+        assert!(p.package_indexed("dplyr"));
+        assert_eq!(
+            p.origin("across", &[loaded("dplyr")]),
+            PackageOrigin::Resolved(SmolStr::new("dplyr"))
+        );
+        // The harvested attach set is reachable through the lazy load too.
+        assert_eq!(
+            p.origin("across", &[loaded("metaverse")]),
+            PackageOrigin::Resolved(SmolStr::new("dplyr"))
+        );
+        assert_eq!(
+            p.attached_packages("metaverse"),
+            vec![SmolStr::new("dplyr")]
+        );
+    }
+
+    #[test]
+    fn lazy_load_ignores_a_foreign_schema_version() {
+        use crate::rindex::cache::Cache;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().to_path_buf());
+        let mut future = pkg("dplyr", &["across"]);
+        future.schema_version = SCHEMA_VERSION + 1;
+        cache.write_package(&future).unwrap();
+
+        let lazy = IndexedProvider::from_cache_lazy(&cache);
+        assert!(!lazy.has_package("dplyr"));
+        assert!(!lazy.exports("dplyr", "across"));
+    }
+
+    #[test]
+    fn indexed_provider_is_shareable_across_threads() {
+        // The lazy fill happens behind a shared `&self`; the provider lives in
+        // an `Arc` inside the salsa `LibraryIndex` and is read from rayon
+        // workers, so it must stay `Send + Sync`.
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<IndexedProvider>();
     }
 
     #[test]
