@@ -128,6 +128,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn text_arc_hands_out_the_same_allocation_until_an_edit() {
+        // The whole point of storing text as an `Arc<str>`: everything that
+        // takes the document off a buffer takes the *same* allocation, which is
+        // what lets the staleness guards settle by pointer. An edit replaces it,
+        // which is equally load-bearing — a guard that saw the old pointer after
+        // an edit would serve a stale parse.
+        let mut buf = TextBuffer::from("x <- 1\n");
+        let first = buf.text_arc();
+        assert!(
+            Arc::ptr_eq(&first, &buf.text_arc()),
+            "repeated handles must share one allocation"
+        );
+
+        buf.apply_edit(6..6, "0");
+        assert!(
+            !Arc::ptr_eq(&first, &buf.text_arc()),
+            "an edit must mint a fresh allocation"
+        );
+        assert_eq!(&*buf.text_arc(), "x <- 10\n");
+    }
+
+    #[test]
     fn apply_edit_keeps_text_and_index_in_sync() {
         let mut buf = TextBuffer::from("ab\ncd\nef");
         buf.apply_edit(3..5, "XYZ\nW");

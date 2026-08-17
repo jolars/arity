@@ -233,6 +233,35 @@ fn upsert_of_equal_text_in_a_fresh_allocation_writes_nothing() {
 }
 
 #[test]
+fn the_write_phase_hands_off_the_buffer_allocation_rather_than_a_copy() {
+    // The language server's write phase is `upsert_file(path, buffer.text_arc())`
+    // once per keystroke. It must move a handle, not a document: comparing the
+    // data pointers is the only way to tell a refcount bump from an O(N) copy
+    // that happens to compare equal.
+    //
+    // This is what fails if a `.text().to_string()` is ever reintroduced on the
+    // dispatch path -- the assertion below, not a benchmark, is the tripwire.
+    use arity::text::TextBuffer;
+    use std::path::Path;
+    let mut db = IncrementalDatabase::default();
+    let path = Path::new("/proj/a.R");
+    let buffer = TextBuffer::from("f <- function() 1\n");
+
+    let file = db.upsert_file(path, buffer.text_arc());
+
+    assert!(
+        std::ptr::eq(db.file_text(file).as_ptr(), buffer.text().as_ptr()),
+        "the tracked text must be the buffer's own allocation"
+    );
+    // And the read path's staleness gate settles on that shared handle, which is
+    // what makes hover/completion/signature/format O(1) instead of O(N).
+    assert!(
+        db.snapshot().file_text_is(file, &buffer.text_arc()),
+        "an unedited buffer must match the tracked text"
+    );
+}
+
+#[test]
 fn clone_shares_inputs_and_cached_parse() {
     // A clone is a second handle onto the same storage: it sees the same
     // path→input map and reuses the owner's memoized parse without re-running it.
