@@ -1015,15 +1015,33 @@ rounds, distributions overlapping.
   refcount, so the text survives the `rayon::spawn` drop regardless of when it
   runs.
 
-- [ ] **`arity lint --fix` costs 61 ms on a four-line file** with an *empty*
-  rindex cache, against 3.9 ms for the same file without `--fix` — a fixed cost
-  15x the file's own lint, and unrelated to the index. A first `perf` pass put
-  80% inclusive under a page-fault frame with unreliable dwarf attribution, so
-  the culprit is not yet named; `BUNDLED_EXPORTS` (518 KB, 40k names, ~4.4 ms to
-  build) is a candidate but nowhere near the whole figure. Note `run_lint` also
-  builds the library index twice on this path (`apply_fixes_to_paths` and then
-  the reporting pass); that is now two `meta.json` reads rather than two full
-  loads, so it is tidiness, not the cost.
+- [x] **`arity lint --fix` cost 61 ms on a four-line file.** Attributed, and the
+  waste in it removed: the per-document project seed (`seed_workspace_for`) ran
+  once per *file* and once per *fixpoint iteration*, so `--fix` over a directory
+  re-walked the tree and re-read every sibling for every file it touched —
+  quadratic in the package's file count. `ensure_workspace_for` skips the seed
+  when the active file is already a workspace member, which is the guard the LSP
+  already applied at its own call site and now shares.
+
+  Median `arity lint --no-config --fix` on eulerr's `R/` (23 files, 292 KB, 12
+  interleaved rounds, pinned to one core): 581.3 -> 100.3 ms (-82.7%, min
+  -82.7%). Fixed trees and stdout byte-identical against the old binary under
+  `--fix --unsafe-fixes` on eulerr, SLOPE, caugi, tactile, and qualpalr.
+
+  **The headline framing was wrong: it was never a fixed cost.** On a lone
+  four-line file with no siblings `--fix` adds 0.3 ms (3.1 -> 3.4 ms). The same
+  file inside eulerr's `R/` costs 25.4 ms without `--fix` and 71.3 ms with it,
+  and the 46 ms difference is the enclosing package's scope — reading, parsing,
+  and modeling 23 siblings, serially. That is the price of the project scope
+  `--fix` is required to have (`85d6d1e`), not waste, and it does not move with
+  this change. `BUNDLED_EXPORTS` and the page-fault frame were both red
+  herrings.
+
+  Left open, and the reason the single-file figure is what it is: the reporting
+  pass reads its files with `par_iter` while the seed reads its siblings in a
+  serial loop, and everything the seed pulls in is then modeled on one thread.
+  Worth attacking only together with the "four sequential disk passes" entry
+  above — they are the same walk.
 
 - [ ] **The synthetic tiers are still mildly superlinear in the tail.** Per-65 KB
   unit cost dips to ~16 ms mid-range, then climbs to ~23 ms at 1.6 MB. Confirm

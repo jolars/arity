@@ -669,9 +669,9 @@ pub fn prepare_document_in_project(
 /// Walks disk once to discover siblings and unions them into the existing
 /// file-set; the conditional setter
 /// ([`set_workspace_members`](IncrementalDatabase::set_workspace_members)) makes
-/// a repeat call with an unchanged set a no-op. The LSP calls this lazily (only
-/// when the active file isn't yet a member), so the walk leaves the per-keystroke
-/// path; one-shot callers ([`check_document_in_project`]) call it each time.
+/// a repeat call with an unchanged set a no-op. The walk itself is not free
+/// though — it lists the tree and re-reads every sibling — so callers that
+/// visit document after document go through [`ensure_workspace_for`] instead.
 pub fn seed_workspace_for(
     db: &mut IncrementalDatabase,
     path: &Path,
@@ -700,6 +700,30 @@ pub fn seed_workspace_for(
         }
     }
     db.set_workspace_members(files, roots);
+}
+
+/// [`seed_workspace_for`], skipped when `active` is already a workspace member.
+///
+/// The seed is per *project*, not per document: once one file's scope has been
+/// folded in, every sibling in it is already a member and a second walk finds
+/// nothing new. Repeating it costs a directory listing plus a re-read of every
+/// sibling, which over a whole package is quadratic in the file count — the
+/// shape `arity lint --fix` and the LSP's per-keystroke lint both have.
+/// Resolving the exclude config is itself an ancestor walk and a TOML parse, so
+/// it happens only on the branch that actually seeds.
+///
+/// Refreshing the file-set after a *disk* change is therefore the caller's job:
+/// the LSP re-seeds from watched-file events, and the CLI's fix loop writes its
+/// results back through the same database.
+pub fn ensure_workspace_for(db: &mut IncrementalDatabase, path: &Path, active: SourceFile) {
+    let already_member = db
+        .workspace()
+        .is_some_and(|ws| ws.members(&*db).contains(&active));
+    if already_member {
+        return;
+    }
+    let exclude = resolve_exclude_at(path.parent().unwrap_or(path));
+    seed_workspace_for(db, path, active, &exclude);
 }
 
 /// Resolve the [`ExcludeFilter`] governing files under `anchor`, discovering the
@@ -813,8 +837,7 @@ pub fn check_document_in_project(
     if let Some(rule) = unknown.into_iter().next() {
         return Err(LintError::UnknownRule { rule });
     }
-    let exclude = resolve_exclude_at(path.parent().unwrap_or(path));
-    seed_workspace_for(db, path, active, &exclude);
+    ensure_workspace_for(db, path, active);
     match prepare_document_in_project(db, path, active, Arc::new(rules)) {
         Some(prepared) => {
             let analysis = db.snapshot();

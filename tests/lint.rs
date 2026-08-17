@@ -1367,6 +1367,46 @@ fn project_aware_relint_reuses_unchanged_siblings() {
 }
 
 #[test]
+fn project_scope_is_seeded_once_per_project() {
+    // The sibling walk is per *project*, not per document: once the active
+    // file's project is in the workspace, a second lint reuses that file-set
+    // instead of re-walking disk and re-reading every sibling. Rewriting a
+    // sibling behind the database's back and finding no query re-run is the
+    // observable proof that no second walk happened.
+    //
+    // Refreshing the file-set after a disk change is the caller's job — the
+    // language server does it from watched-file events, and the CLI's `--fix`
+    // loop writes back through the database it is linting against.
+    use arity::incremental::IncrementalDatabase;
+    use arity::linter::check_document_in_project;
+    use arity::rindex::provider::CompositeProvider;
+
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
+    let r_dir = dir.path().join("R");
+    std::fs::create_dir(&r_dir).unwrap();
+    let a = r_dir.join("a.R");
+    std::fs::write(&a, "foo <- function() 1\n").unwrap();
+    let b = r_dir.join("b.R");
+    std::fs::write(&b, "foo()\n").unwrap();
+
+    let mut db = IncrementalDatabase::default();
+    let active = db.upsert_file(&b, std::fs::read_to_string(&b).unwrap());
+    let provider = CompositeProvider::base_only();
+
+    check_document_in_project(&mut db, &b, active, &LintConfig::default(), &provider).unwrap();
+    std::fs::write(&a, "foo <- function() 1\nbar <- function() 2\n").unwrap();
+    db.clear_query_log();
+    check_document_in_project(&mut db, &b, active, &LintConfig::default(), &provider).unwrap();
+
+    assert!(
+        db.query_log().is_empty(),
+        "re-lint re-walked the project and re-read its siblings: {:?}",
+        db.query_log().len()
+    );
+}
+
+#[test]
 fn body_edit_relint_does_not_rebuild_project_scope() {
     // The firewall on the real two-phase path: editing the active file's
     // function *body* re-parses it but must not rebuild the cross-file project

@@ -513,14 +513,7 @@ impl LintWorker {
         // Ensure the active file's project is in the workspace file-set. Lazy:
         // only walks disk when the file isn't already a member (the initialize
         // seed covers the common case), so discovery leaves the keystroke path.
-        let already_member = self
-            .db
-            .workspace()
-            .is_some_and(|ws| ws.members(&self.db).contains(&active));
-        if !already_member {
-            let exclude = crate::linter::check::resolve_exclude_at(&anchor);
-            crate::linter::check::seed_workspace_for(&mut self.db, &req.path, active, &exclude);
-        }
+        crate::linter::check::ensure_workspace_for(&mut self.db, &req.path, active);
         // Resolve the rule set (cached across keystrokes; rebuilt only on a config
         // change). An unknown-rule config error clears stale diagnostics and runs
         // no worker, leaving the slot free.
