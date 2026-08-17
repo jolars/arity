@@ -17,14 +17,15 @@ use crate::file_discovery::{
 };
 use crate::incremental::{
     Analysis, IncrementalDatabase, IncrementalDb, ParseDiagnosticData, SourceFile, control_flow,
-    file_exports, file_free_reads, file_qualified_reads, parsed_tree_root, semantic_model,
-    source_edges, top_level_events,
+    file_exports, file_free_reads, file_qualified_reads, file_roxygen_topics, package_references,
+    parsed_tree_root, semantic_model, source_edges, top_level_events,
 };
 use crate::project::description::DescriptionFacts;
 use crate::project::{
     PackageCollation, PackageDeclarations, PackageUsage, Project, ProjectMember,
-    expected_r_sources, external_resolution, package_facts_for, package_root, package_usage_for,
-    roxygen_topics_for, visible_symbols, workspace_project,
+    expected_r_sources, external_resolution, package_facts_for, package_root, package_usage,
+    package_usage_for, project_graph, project_roxygen_topics, roxygen_topics_for, visible_symbols,
+    workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::SymbolProvider;
@@ -288,21 +289,37 @@ pub fn check_paths_with_index(
 
     // All salsa writes are done; everything below is reads. Warm every member's
     // per-file memos in parallel: the parse, and — for cleanly parsing files —
-    // the firewall projections `project_graph` folds over (each of which forces
-    // `semantic_model`). Without this the first worker to touch the project
-    // graph would compute every member's model *sequentially inside one query*
-    // while the rest block on it. Salsa db handles are `Send` but not `Sync`,
-    // so each rayon worker gets its own clone (the LSP's read pattern); clones
-    // share the memo storage and are all dropped when the parallel call
+    // the firewall projections the project-wide folds below aggregate (each of
+    // which forces `semantic_model`). Without this the first worker to touch a
+    // fold would compute every member's projection *sequentially inside one
+    // query* while the rest block on it. Salsa db handles are `Send` but not
+    // `Sync`, so each rayon worker gets its own clone (the LSP's read pattern);
+    // clones share the memo storage and are all dropped when the parallel call
     // returns, before the owner handle is used again.
+    //
+    // Every per-file query a fold this run will force belongs here. The list is
+    // load-bearing in one direction only: a projection missing from it is not
+    // wrong, just serialized — which is exactly the cost this warm-up exists to
+    // avoid. A projection warmed for a fold that never runs, though, is pure
+    // added work, so the `package_usage` input is gated on pass 3 having
+    // something to lint.
+    let warm_usage = !description_sources.is_empty();
     let warm_file = |worker: &IncrementalDatabase, file: SourceFile| -> usize {
         let count = worker.parse_diagnostics(file).len();
         if count == 0 {
+            // `project_graph` folds these five.
             file_exports(worker, file);
             file_free_reads(worker, file);
             file_qualified_reads(worker, file);
             source_edges(worker, file);
             top_level_events(worker, file);
+            // `project_roxygen_topics` folds this one, and pass 2 asks for the
+            // package's topics for every file regardless of rule selection.
+            file_roxygen_topics(worker, file);
+            if warm_usage {
+                // `package_usage` folds this one, and only pass 3 reads it.
+                package_references(worker, file);
+            }
         }
         count
     };
@@ -320,11 +337,24 @@ pub fn check_paths_with_index(
         })
         .collect::<Vec<()>>();
 
-    // Derive the interned project and its graph once on the owner handle —
-    // with the per-file memos warm this is a fold over cached values — so the
-    // pass-2 workers' re-derives are memo hits rather than a
+    // Derive the interned project and every project-wide fold once on the owner
+    // handle — with the per-file memos warm each is a fold over cached values —
+    // so the pass-2 and pass-3 workers' re-derives are memo hits rather than a
     // first-computation stampede.
-    let _ = workspace_project(&db);
+    //
+    // Forcing them here rather than letting the first worker to arrive compute
+    // them is what keeps the pool busy: salsa's `block_on` parks a rayon worker
+    // without telling rayon, so a fold first-computed inside a parallel pass
+    // costs the *whole* pool, not one thread. Pass 3 is the worst case — it is
+    // often a single `DESCRIPTION`, so `package_usage` would fold every member
+    // on one thread with the other workers already retired.
+    let project = workspace_project(&db);
+
+    project_graph(&db, project);
+    project_roxygen_topics(&db, project);
+    if !description_sources.is_empty() {
+        package_usage(&db, project);
+    }
 
     // The cross-file path resolves undefined symbols through `external_resolution`
     // (which uses the salsa library index), so the provider passed to the rules is
