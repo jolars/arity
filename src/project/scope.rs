@@ -156,27 +156,35 @@ impl<'a> PathSetView<'a> {
 }
 
 /// One file's contribution to cross-file resolution.
+///
+/// Every set here is an `Arc` **handle onto the per-file salsa memo**, not a
+/// copy of it: [`crate::project::project_graph`] assembles one of these per
+/// member, and three of them are retained in the [`ProjectScope`] afterward, so
+/// an owned field would deep-clone the same names twice per file. A handle is
+/// the only sound way to share it — a `&'db` borrow would dangle, because a
+/// memo that backdates is still boxed afresh and the old box is freed on the
+/// next `&mut db`, while the `ProjectScope` holding the borrow survives.
 #[derive(Debug, Clone)]
 pub struct FileFacts {
     pub path: PathBuf,
     /// Top-level binding names this file defines
     /// (see [`crate::project::file_exports`]).
-    pub exports: BTreeSet<String>,
+    pub exports: Arc<BTreeSet<String>>,
     /// Names this file reads but does not bind locally
     /// (see [`crate::project::exports::file_free_reads`]).
-    pub free_reads: BTreeSet<String>,
+    pub free_reads: Arc<BTreeSet<String>>,
     /// Names this file reads via `pkg::name` / `pkg:::name`
     /// (see [`crate::project::exports::file_qualified_reads`]). Folded into a
     /// same-package binding's "used by others" set so `pkg:::helper()` in a
     /// sibling counts as a use, but kept out of `free_reads` so it never feeds
     /// name resolution.
-    pub qualified_reads: BTreeSet<String>,
+    pub qualified_reads: Arc<BTreeSet<String>>,
     /// Top-level `source()` edges this file declares (range-free).
-    pub source_edges: Vec<SourceEdgeKey>,
+    pub source_edges: Arc<Vec<SourceEdgeKey>>,
     /// This file's top-level execution sequence (range-free, order-bearing): the
     /// `define`/`source-edge`/`read` events used to resolve reads through
     /// load order. See [`crate::project::collect_top_level_events`].
-    pub top_level_events: Vec<TopLevelEvent>,
+    pub top_level_events: Arc<Vec<TopLevelEvent>>,
     /// The package root this file belongs to, if any. Files sharing a root
     /// share one namespace.
     pub package_root: Option<PathBuf>,
@@ -224,15 +232,26 @@ pub struct ProjectScope {
     /// rename-all over this package's cohort must refuse. Absent (→ vacuously
     /// complete) for non-package files.
     package_complete: HashMap<PathBuf, bool>,
-    /// Per file: its top-level execution sequence, retained so load-order
-    /// resolution ([`Self::top_level_read_binding`]) can replay it. Span-free.
-    top_level_events: HashMap<PathBuf, Vec<TopLevelEvent>>,
-    /// Per file: its top-level binding names, retained so a sourced closure's
-    /// contribution of a name can be resolved during the order replay.
-    exports: HashMap<PathBuf, BTreeSet<String>>,
-    /// Per file: its range-free `source()` edges, retained so the order replay
-    /// can walk a sourced file's own (transitive, non-local) closure.
-    source_edges: HashMap<PathBuf, Vec<SourceEdgeKey>>,
+    /// Per file: the range-free per-file facts the load-order replay needs,
+    /// held as one entry rather than three parallel maps.
+    retained: HashMap<PathBuf, Retained>,
+}
+
+/// The per-file facts [`ProjectScope`] keeps after `build` returns, for the
+/// load-order replay (`source()` position) that
+/// [`ProjectScope::top_level_read_binding`], [`ProjectScope::final_scope_binding`],
+/// and [`ProjectScope::closure_definers`] run.
+///
+/// Handles onto the per-file memos, never copies of them — see [`FileFacts`].
+/// A handle here can legitimately be a revision behind the live query: a
+/// backdated re-execution installs an equal-but-distinct `Arc`. Contents are
+/// what matter, so never identify one of these sets by `Arc::ptr_eq` against a
+/// fresh `file_exports`/`source_edges`/`top_level_events` result.
+#[derive(Debug)]
+struct Retained {
+    top_level_events: Arc<Vec<TopLevelEvent>>,
+    exports: Arc<BTreeSet<String>>,
+    source_edges: Arc<Vec<SourceEdgeKey>>,
 }
 
 /// Where a file's top-level reads of a name bind under sequential load order —
@@ -460,18 +479,21 @@ impl ProjectScope {
             })
             .collect();
 
-        // Per-file data retained for the load-order replay (`source()` position).
-        let top_level_events: HashMap<PathBuf, Vec<TopLevelEvent>> = files
+        // Per-file data retained for the load-order replay (`source()` position),
+        // as handles: these are the same three memos [`FileFacts`] already
+        // borrows, so a copy here would be the second deep clone of each.
+        let retained: HashMap<PathBuf, Retained> = files
             .iter()
-            .map(|f| (f.path.clone(), f.top_level_events.clone()))
-            .collect();
-        let exports_by_path: HashMap<PathBuf, BTreeSet<String>> = files
-            .iter()
-            .map(|f| (f.path.clone(), f.exports.clone()))
-            .collect();
-        let source_edges_by_path: HashMap<PathBuf, Vec<SourceEdgeKey>> = files
-            .iter()
-            .map(|f| (f.path.clone(), f.source_edges.clone()))
+            .map(|f| {
+                (
+                    f.path.clone(),
+                    Retained {
+                        top_level_events: Arc::clone(&f.top_level_events),
+                        exports: Arc::clone(&f.exports),
+                        source_edges: Arc::clone(&f.source_edges),
+                    },
+                )
+            })
             .collect();
 
         // For each file, the set of *other* files it can see — and, kept apart,
@@ -492,7 +514,7 @@ impl ProjectScope {
             let mut visited: HashSet<&Path> = HashSet::from([f.path.as_path()]);
             let mut queue: Vec<&FileFacts> = vec![f];
             while let Some(cur) = queue.pop() {
-                for edge in &cur.source_edges {
+                for edge in cur.source_edges.iter() {
                     match source_dependency(edge) {
                         Dependency::Skip => {}
                         Dependency::Unresolved => unresolved = true,
@@ -580,10 +602,13 @@ impl ProjectScope {
             let Some(members) = package_members.get(root.as_path()) else {
                 continue;
             };
-            let object_names: Vec<String> = members
+            // Borrowed, not copied: this is every member's every export, and
+            // `parse_namespace` only reads it when the NAMESPACE has an
+            // `exportPattern` — which most packages don't.
+            let object_names: Vec<&str> = members
                 .iter()
                 .filter_map(|m| by_path.get(m))
-                .flat_map(|f| f.exports.iter().map(|n| n.to_string()))
+                .flat_map(|f| f.exports.iter().map(String::as_str))
                 .collect();
             let info = parse_namespace(text, &object_names);
             let root = root.as_path();
@@ -736,9 +761,7 @@ impl ProjectScope {
             sees_extra,
             seen_by_extra,
             package_complete,
-            top_level_events,
-            exports: exports_by_path,
-            source_edges: source_edges_by_path,
+            retained,
         }
     }
 
@@ -820,7 +843,7 @@ impl ProjectScope {
     /// ambiguous. Function-body reads aren't in the sequence (they run against the
     /// final scope), so a file with only those is [`ReadBinding::NoTopLevelRead`].
     pub fn top_level_read_binding(&self, from_file: &Path, name: &str) -> ReadBinding {
-        let Some(events) = self.top_level_events.get(from_file) else {
+        let Some(events) = self.retained.get(from_file).map(|r| &r.top_level_events) else {
             return ReadBinding::NoTopLevelRead;
         };
         let mut live: Option<PathBuf> = None;
@@ -830,7 +853,7 @@ impl ProjectScope {
         let mut resolved: BTreeSet<PathBuf> = BTreeSet::new();
         let mut saw_unresolved = false;
         let mut saw_unknown = false;
-        for event in events {
+        for event in events.iter() {
             match event {
                 TopLevelEvent::Define(n) if n == name => {
                     live = Some(from_file.to_path_buf());
@@ -956,13 +979,13 @@ impl ProjectScope {
     /// stored `top_level_events`), so it backdates across body edits like the
     /// other replays.
     pub fn final_scope_binding(&self, from_file: &Path, name: &str) -> ReadSite {
-        let Some(events) = self.top_level_events.get(from_file) else {
+        let Some(events) = self.retained.get(from_file).map(|r| &r.top_level_events) else {
             return ReadSite::Unbound;
         };
         let mut live: Option<PathBuf> = None;
         let mut name_ambiguous = false;
         let mut poisoned = false;
-        for event in events {
+        for event in events.iter() {
             match event {
                 TopLevelEvent::Define(n) if n == name => {
                     live = Some(from_file.to_path_buf());
@@ -1006,11 +1029,14 @@ impl ProjectScope {
             if !visited.insert(cur.clone()) {
                 continue;
             }
-            if self.exports.get(&cur).is_some_and(|e| e.contains(name)) {
+            let Some(retained) = self.retained.get(&cur) else {
+                continue;
+            };
+            if retained.exports.contains(name) {
                 definers.push(cur.clone());
             }
-            if let Some(edges) = self.source_edges.get(&cur) {
-                for edge in edges {
+            {
+                for edge in retained.source_edges.iter() {
                     if let SourceTarget::Path(target) = &edge.target
                         && !edge.local
                     {
@@ -1106,11 +1132,11 @@ mod tests {
     ) -> FileFacts {
         FileFacts {
             path: PathBuf::from(path),
-            exports: set(exp),
-            free_reads: set(reads),
-            qualified_reads: BTreeSet::new(),
-            source_edges: edges,
-            top_level_events: Vec::new(),
+            exports: Arc::new(set(exp)),
+            free_reads: Arc::new(set(reads)),
+            qualified_reads: Arc::new(BTreeSet::new()),
+            source_edges: Arc::new(edges),
+            top_level_events: Arc::new(Vec::new()),
             package_root: root.map(PathBuf::from),
         }
     }
@@ -1144,11 +1170,11 @@ mod tests {
     ) -> FileFacts {
         FileFacts {
             path: PathBuf::from(path),
-            exports: set(exp),
-            free_reads: BTreeSet::new(),
-            qualified_reads: BTreeSet::new(),
-            source_edges: edges,
-            top_level_events: events,
+            exports: Arc::new(set(exp)),
+            free_reads: Arc::new(BTreeSet::new()),
+            qualified_reads: Arc::new(BTreeSet::new()),
+            source_edges: Arc::new(edges),
+            top_level_events: Arc::new(events),
             package_root: None,
         }
     }
@@ -1193,7 +1219,7 @@ mod tests {
     #[test]
     fn a_members_own_qualified_read_is_not_a_use_by_others() {
         let mut a = facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg"));
-        a.qualified_reads = set(&["foo"]);
+        a.qualified_reads = Arc::new(set(&["foo"]));
         let b = facts("/pkg/R/b.R", &["bar"], &[], vec![], Some("/pkg"));
         let scope = build_scope(&[a.clone(), b.clone()]);
         // Only a references `foo`, and a is a's own file.
@@ -1211,7 +1237,7 @@ mod tests {
 
         // A second referencing member makes it a use for a too.
         let mut c = facts("/pkg/R/c.R", &["baz"], &[], vec![], Some("/pkg"));
-        c.qualified_reads = set(&["foo"]);
+        c.qualified_reads = Arc::new(set(&["foo"]));
         let scope = build_scope(&[a, b, c]);
         assert!(
             scope
@@ -1616,7 +1642,7 @@ mod tests {
     #[test]
     fn sourcer_read_beats_the_solo_reader_exclusion() {
         let mut a = facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg"));
-        a.qualified_reads = set(&["foo"]);
+        a.qualified_reads = Arc::new(set(&["foo"]));
         let files = [
             a,
             facts("/pkg/R/b.R", &["bar"], &[], vec![], Some("/pkg")),
@@ -1641,7 +1667,7 @@ mod tests {
     #[test]
     fn sourcer_that_does_not_read_the_name_leaves_it_excluded() {
         let mut a = facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg"));
-        a.qualified_reads = set(&["foo"]);
+        a.qualified_reads = Arc::new(set(&["foo"]));
         let files = [
             a,
             facts("/pkg/R/b.R", &["bar"], &[], vec![], Some("/pkg")),
@@ -1694,7 +1720,7 @@ mod tests {
             vec![source_path("/pkg/R/b.R", false)],
             Some("/pkg"),
         );
-        a.qualified_reads = set(&["foo"]);
+        a.qualified_reads = Arc::new(set(&["foo"]));
         let files = [
             a,
             facts(

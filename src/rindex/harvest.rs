@@ -282,7 +282,8 @@ fn resolve_package_exports(pkg_dir: &Path, object_names: &[String]) -> Vec<Strin
     let ns_path = pkg_dir.join("NAMESPACE");
     if ns_path.is_file() {
         let namespace = std::fs::read_to_string(&ns_path).unwrap_or_default();
-        resolve_exports(&namespace, object_names)
+        let borrowed: Vec<&str> = object_names.iter().map(String::as_str).collect();
+        resolve_exports(&namespace, &borrowed)
     } else {
         object_names.to_vec()
     }
@@ -446,7 +447,7 @@ impl DynLibFixes {
 /// Parse a NAMESPACE file into the exports and imports it declares, expanding
 /// `exportPattern` directives against `object_names` (the package's top-level
 /// object names).
-pub fn parse_namespace(namespace: &str, object_names: &[String]) -> NamespaceInfo {
+pub fn parse_namespace(namespace: &str, object_names: &[&str]) -> NamespaceInfo {
     let mut info = NamespaceInfo::default();
     let mut patterns: Vec<regex::Regex> = Vec::new();
 
@@ -504,7 +505,7 @@ pub fn parse_namespace(namespace: &str, object_names: &[String]) -> NamespaceInf
     if !patterns.is_empty() {
         for name in object_names {
             if patterns.iter().any(|re| re.is_match(name)) {
-                info.exports.insert(name.clone());
+                info.exports.insert((*name).to_string());
             }
         }
     }
@@ -569,7 +570,7 @@ fn parse_fixes(value: &str) -> DynLibFixes {
 
 /// Resolve the set of exported names from a NAMESPACE file, expanding
 /// `exportPattern` directives against the package's object names.
-pub fn resolve_exports(namespace: &str, object_names: &[String]) -> Vec<String> {
+pub fn resolve_exports(namespace: &str, object_names: &[&str]) -> Vec<String> {
     parse_namespace(namespace, object_names)
         .exports
         .into_iter()
@@ -1037,12 +1038,7 @@ mod tests {
     #[test]
     fn expands_export_pattern_excluding_dotted() {
         let ns = r#"exportPattern("^[^\\.]")"#;
-        let objs = vec![
-            "alpha".to_string(),
-            "beta".to_string(),
-            ".hidden".to_string(),
-            ".__NAMESPACE__.".to_string(),
-        ];
+        let objs = ["alpha", "beta", ".hidden", ".__NAMESPACE__."];
         let exports = resolve_exports(ns, &objs);
         assert_eq!(exports, vec!["alpha".to_string(), "beta".to_string()]);
     }
@@ -1061,7 +1057,7 @@ mod tests {
         // `find_call` must not treat the `export` in `exportPattern` as an
         // `export(...)` directive.
         let ns = r#"exportPattern("^x")"#;
-        let exports = resolve_exports(ns, &["xa".to_string(), "yb".to_string()]);
+        let exports = resolve_exports(ns, &["xa", "yb"]);
         assert_eq!(exports, vec!["xa".to_string()]);
     }
 

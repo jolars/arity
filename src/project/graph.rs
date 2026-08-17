@@ -566,13 +566,16 @@ pub fn project_graph<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> 
     let facts: Vec<FileFacts> = project
         .members(db)
         .iter()
+        // `Arc::clone`, not a deep copy: these five are the per-file memos
+        // themselves, and three of them are retained in the `ProjectScope`
+        // afterward, so an owned `FileFacts` copied every name twice per member.
         .map(|m| FileFacts {
             path: m.path.clone(),
-            exports: file_exports(db, m.file).clone(),
-            free_reads: file_free_reads(db, m.file).clone(),
-            qualified_reads: file_qualified_reads(db, m.file).clone(),
-            source_edges: source_edges(db, m.file).clone(),
-            top_level_events: top_level_events(db, m.file).clone(),
+            exports: Arc::clone(file_exports(db, m.file)),
+            free_reads: Arc::clone(file_free_reads(db, m.file)),
+            qualified_reads: Arc::clone(file_qualified_reads(db, m.file)),
+            source_edges: Arc::clone(source_edges(db, m.file)),
+            top_level_events: Arc::clone(top_level_events(db, m.file)),
             package_root: m.package_root.clone(),
         })
         .collect();
@@ -895,7 +898,7 @@ pub fn project_reads<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> 
     });
     let mut index = ReadIndex::default();
     for member in project.members(db) {
-        for name in file_free_reads(db, member.file) {
+        for name in file_free_reads(db, member.file).iter() {
             index
                 .by_name
                 .entry(name.clone())

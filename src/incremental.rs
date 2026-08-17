@@ -547,36 +547,38 @@ pub fn control_flow(db: &dyn IncrementalDb, file: SourceFile) -> FileControlFlow
 /// body changes [`semantic_model`] but leaves this `BTreeSet` equal, so salsa
 /// backdates and the project graph that depends on it is not rebuilt.
 #[salsa::tracked(returns(ref))]
-pub fn file_exports(db: &dyn IncrementalDb, file: SourceFile) -> BTreeSet<String> {
+pub fn file_exports(db: &dyn IncrementalDb, file: SourceFile) -> Arc<BTreeSet<String>> {
     db.record_query(QueryLogEntry {
         kind: QueryKind::FileExports,
         file: Some(file),
     });
-    crate::project::file_exports(semantic_model(db, file))
+    Arc::new(crate::project::file_exports(semantic_model(db, file)))
 }
 
 /// The names the file reads but does not bind locally
 /// ([`crate::project::file_free_reads`]), as a tracked query. The mirror
 /// firewall to [`file_exports`].
 #[salsa::tracked(returns(ref))]
-pub fn file_free_reads(db: &dyn IncrementalDb, file: SourceFile) -> BTreeSet<String> {
+pub fn file_free_reads(db: &dyn IncrementalDb, file: SourceFile) -> Arc<BTreeSet<String>> {
     db.record_query(QueryLogEntry {
         kind: QueryKind::FileFreeReads,
         file: Some(file),
     });
-    crate::project::file_free_reads(semantic_model(db, file))
+    Arc::new(crate::project::file_free_reads(semantic_model(db, file)))
 }
 
 /// The names the file reads via `pkg::name` / `pkg:::name`
 /// ([`crate::project::file_qualified_reads`]), as a tracked query. A cross-file
 /// *use* signal that, unlike [`file_free_reads`], never feeds name resolution.
 #[salsa::tracked(returns(ref))]
-pub fn file_qualified_reads(db: &dyn IncrementalDb, file: SourceFile) -> BTreeSet<String> {
+pub fn file_qualified_reads(db: &dyn IncrementalDb, file: SourceFile) -> Arc<BTreeSet<String>> {
     db.record_query(QueryLogEntry {
         kind: QueryKind::FileQualifiedReads,
         file: Some(file),
     });
-    crate::project::file_qualified_reads(semantic_model(db, file))
+    Arc::new(crate::project::file_qualified_reads(semantic_model(
+        db, file,
+    )))
 }
 
 /// The file's top-level definitions tagged by [`DefKind`]
@@ -698,14 +700,14 @@ pub fn description_facts(db: &dyn IncrementalDb, file: DescriptionFile) -> Descr
 /// path is an input field set once, so this re-runs only on a text edit and
 /// backdates when the edges are unchanged.
 #[salsa::tracked(returns(ref))]
-pub fn source_edges(db: &dyn IncrementalDb, file: SourceFile) -> Vec<SourceEdgeKey> {
+pub fn source_edges(db: &dyn IncrementalDb, file: SourceFile) -> Arc<Vec<SourceEdgeKey>> {
     db.record_query(QueryLogEntry {
         kind: QueryKind::SourceEdges,
         file: Some(file),
     });
     let root = parsed_tree_root(db, file);
     let base_dir = file.path(db).as_deref().and_then(Path::parent);
-    crate::project::collect_source_edge_keys(&root, base_dir)
+    Arc::new(crate::project::collect_source_edge_keys(&root, base_dir))
 }
 
 /// The file's top-level execution sequence ([`collect_top_level_events`]): the
@@ -716,14 +718,18 @@ pub fn source_edges(db: &dyn IncrementalDb, file: SourceFile) -> Vec<SourceEdgeK
 /// re-extracted value compares equal and the memo (and `project_graph` above it)
 /// is reused.
 #[salsa::tracked(returns(ref))]
-pub fn top_level_events(db: &dyn IncrementalDb, file: SourceFile) -> Vec<TopLevelEvent> {
+pub fn top_level_events(db: &dyn IncrementalDb, file: SourceFile) -> Arc<Vec<TopLevelEvent>> {
     db.record_query(QueryLogEntry {
         kind: QueryKind::TopLevelEvents,
         file: Some(file),
     });
     let root = parsed_tree_root(db, file);
     let base_dir = file.path(db).as_deref().and_then(Path::parent);
-    collect_top_level_events(&root, base_dir, semantic_model(db, file))
+    Arc::new(collect_top_level_events(
+        &root,
+        base_dir,
+        semantic_model(db, file),
+    ))
 }
 
 #[salsa::db]
