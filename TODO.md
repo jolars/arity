@@ -1124,20 +1124,97 @@ measurement to re-run against any change to the driver.
   Findings byte-identical over tidyr, tidyr/R, MASS, and this repo's `tests/`
   at 1, 4, and 24 threads, with `old@1t == old@24t` as the control.
 
-- [ ] **What is left of the lint wall-time gap (~6 ms to jarl on 24 threads).**
-  Nobody has re-run the throwaway `Instant` phase split through the real CLI
-  since the fix above, so the remaining serial region is *not* attributed —
-  don't guess from the numbers above. Measure first.
+- [x] **The lint wall-time gap, attributed and more than halved.** The entry
+  this replaces was right to insist on measuring: `project_graph` was **2.0 ms**,
+  not the 10.4 ms the old table implied, and the two candidates it named were
+  worth 0.5 ms between them. The serial region had moved somewhere nobody had
+  looked.
 
-  Two known, unmeasured candidates: `project_graph` still clones five per-file
-  salsa results into `FileFacts` (`graph.rs:550-560`) where it could borrow, and
-  `ProjectScope` still keeps three per-file `HashMap`s (`top_level_events`,
-  `exports`, `source_edges`) that are straight per-file copies.
+  Phase split of the **real CLI** (not the in-process harness — it passes an
+  empty package index and so under-measures pass 2 by ~5 ms), `arity lint
+  <tidyr>`, median over 40 processes, 24 threads:
 
-  Also left, deliberately: parallelizing the pass-1 reads (~0.4 ms, measured),
-  merging the two warm-up barriers (`warm_scope` is 1 us), and largest-first
-  scheduling (rayon's indexed splitter already reaches single-item leaves at
-  86 items on 24 threads).
+  | phase | before | after |
+  | ------------------- | ------- | ------- |
+  | discover | 0.89 ms | 0.85 ms |
+  | read + upsert | 1.39 ms | 1.35 ms |
+  | scope-only members | 0.57 ms | 0.22 ms |
+  | `set_workspace_members` (disk) | 1.15 ms | 0.73 ms |
+  | `workspace_project` | 0.14 ms | 0.15 ms |
+  | **`project_graph`** | **2.01 ms** | **1.35 ms** |
+  | `project_roxygen_topics` | 0.06 ms | 0.06 ms |
+  | `package_usage` | 0.51 ms | 0.53 ms |
+  | pass 3 | 0.17 ms | 0.19 ms |
+  | render + database teardown | 3.35 ms | 1.25 ms |
+  | **serial total** | **10.24 ms** | **6.49 ms** |
+  | warm-up (parallel) | 5.52 ms | 5.94 ms |
+  | pass 2 (parallel) | 9.23 ms | 9.61 ms |
+
+  Four fixes, in descending order of what they bought:
+
+  1. **The salsa database destructor was 2.4 ms**, serial, at the very end of a
+     batch run about to exit — the single largest serial item, and unnamed by
+     anyone. `rayon::spawn(move || drop(db))`: if the process exits first the
+     drop never runs and the kernel reclaims the address space wholesale.
+  2. **`package_root` walked the filesystem once per file** in both
+     `discover_packages` and `excluded_package_sources`, when it reads only
+     `path.parent()` — 86 walks of one chain for a package whose members share
+     one `R/`. Dedup the parents first.
+  3. **`project_graph` copied every per-file fact twice**: once into `FileFacts`,
+     then three of the five again into `ProjectScope`. The five queries now
+     return `Arc` and the three retained maps collapse into one map of handles.
+     `parse_namespace` also took `&[String]` for a list it reads only under
+     `exportPattern`, so every member's every export was copied to build an
+     argument most packages never look at.
+  4. **`expected_r_sources` read `DESCRIPTION` twice per root** — leftover from
+     the rename in `3340923`, which left the `Collate:` union in both halves.
+
+  Wall time, median and min of 84 interleaved runs per binary per thread count:
+
+  | corpus | threads | before | after | jarl 0.5.0 |
+  | ------------------- | --- | -------- | -------- | -------- |
+  | tidyr (86 members) | 1 | 88.7 ms | 83.8 ms | 130.6 ms |
+  | | 24 | 32.2 ms | **28.3 ms** | 25.4 ms |
+  | MASS | 1 | 90.5 ms | 87.4 ms | 129.7 ms |
+  | | 24 | 29.7 ms | **26.2 ms** | 25.9 ms |
+  | tidyr/R (41 files) | 1 | 41.4 ms | 41.0 ms | 54.1 ms |
+  | | 24 | 21.0 ms | 19.8 ms | 14.8 ms |
+
+  The 24-thread gap on tidyr is **1.11x, down from 1.27x** (6.5 ms → 2.9 ms);
+  on MASS it is 1.01x. Single-threaded arity stays ~1.5x faster than jarl.
+  Findings byte-identical over tidyr, tidyr/R, MASS, and this repo's `tests/`
+  at 1, 4, and 24 threads, with `old@1t == old@24t` as the control.
+
+  **Two things measured and rejected — do not redo them.**
+
+  - **`SmolStr` through the project layer.** `Binding::name` and `IdentRef::name`
+    are already `SmolStr` and the projections threw it away with `.to_string()`
+    per occurrence, so this looked like the biggest remaining lever. Built in
+    full (`file_exports`/`file_free_reads`/`file_qualified_reads`, `FileFacts`,
+    `LayeredSet`, and `build`'s internals; `FileScope`'s accessors need no change
+    because `SmolStr: Borrow<str>`). It moved `project_graph` 1.335 → 1.290 ms
+    and **wall time not at all** (24t 28.34 → 28.03 ms over 84 interleaved runs;
+    1t flat). Fix 3 had already removed the copying it targeted.
+  - **`reads` as `Vec<BTreeSet<&str>>`** instead of an owned `String` per read
+    name per file. Deltas of −25, −9, −47 us on `project_graph` over three
+    interleaved rounds, with overlapping distributions. Noise.
+
+  What is left of the 2.9 ms, ranked and measured:
+
+  - **Render is 1.25 ms** and re-reads from disk (`main.rs`'s `source_for`) every
+    file with a finding, for snippet context — a third read of bytes pass 1
+    already had. 153 findings on tidyr.
+  - **Four sequential disk passes still cost 3.15 ms**: `discover` walks the
+    tree, then `excluded_package_sources` and `discover_packages` each re-list
+    `R/` and re-read `DESCRIPTION`, and pass 1 reads every file. One walk feeding
+    all of them is the structural fix.
+  - `project_graph` 1.35 ms, now dominated by `parse_namespace` and the per-file
+    `LayeredSet` assembly rather than by copying.
+  - `package_usage` 0.53 ms, serial on the owner handle.
+
+  Still deliberately not done: merging the two warm-up barriers (`warm_scope` is
+  1 us) and largest-first scheduling (rayon's indexed splitter already reaches
+  single-item leaves at 86 items on 24 threads).
 
 ## DESCRIPTION and package metadata
 
