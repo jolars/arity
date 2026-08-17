@@ -22,7 +22,6 @@
 //! re-derived here, so the report cannot drift from the behavior it describes.
 
 use arity_formatter::formatter::directive::is_honored_position;
-use rowan::NodeOrToken;
 
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::{Example, Rule, RuleContext};
@@ -93,20 +92,25 @@ statement the author meant."
 
 /// Whether the formatter acts on the directive written on this comment.
 ///
-/// Finds the `COMMENT` token by its recorded range and asks the engine.
+/// Finds the `COMMENT` token by its recorded range and asks the engine. The
+/// range came from a `COMMENT` token on this same tree
+/// (`SuppressionMap::build`), so descending to the offset finds that token
+/// directly — walking the whole tree to look for it would cost this rule
+/// O(directives x tree size), which on a directive-dense file is quadratic.
+/// The kind and range are still checked, so an offset that somehow lands
+/// elsewhere answers exactly as the walk did: not honored.
 fn honored_here(ctx: &RuleContext<'_>, directive: &Directive) -> bool {
+    // A comment is preceded by a token whenever it is not the file's first
+    // byte, so the offset is usually a boundary; the directive's token is the
+    // one *starting* there, never the trivia to its left.
     ctx.root
-        .descendants_with_tokens()
-        .filter_map(|element| match element {
-            NodeOrToken::Token(token)
-                if token.kind() == SyntaxKind::COMMENT
-                    && token.text_range() == directive.comment =>
-            {
-                Some(token)
-            }
-            _ => None,
+        .token_at_offset(directive.comment.start())
+        .right_biased()
+        .is_some_and(|token| {
+            token.kind() == SyntaxKind::COMMENT
+                && token.text_range() == directive.comment
+                && is_honored_position(&token)
         })
-        .any(|token| is_honored_position(&token))
 }
 
 fn report(directive: &Directive, body: &str, suggestion: &str) -> Diagnostic {

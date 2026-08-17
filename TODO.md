@@ -852,6 +852,80 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
   panache's mechanized gate (declared per-case expectations plus a
   corpus-presence check) instead of an eyeballed table.
 
+#### The jarl gap (measured 2026-08-17)
+
+`arity lint` is slower than jarl in `benches/benchmark_results.json` for three
+independent reasons, none of them "the rules are slow". Single-threaded on real
+R code arity is already *ahead* — tidyr+MASS sources concatenated to 460 KB,
+921 KB, and 1.38 MB run 99.9/210.8/341.7 ms against jarl's
+133.4/306.3/518.4 ms. The three entries below are what the published numbers
+actually measure. Re-measure with `taskset -c 2` and `hyperfine -i` (lint exits
+non-zero on findings); the thread-scaling table in the third entry is the
+measurement to re-run against any change to the driver.
+
+- [ ] **`misplaced-suppression` walks the whole tree per directive.**
+  `honored_here` (`src/linter/rules/meta/misplaced_suppression.rs`) calls
+  `ctx.root.descendants_with_tokens()` once per format directive purely to
+  re-find the `COMMENT` token whose `text_range` it was already handed, so the
+  rule costs O(directives x tree size). `root.token_at_offset(...)` answers the
+  same question in O(depth).
+
+  This is what the `large` single-file benchmark measures. `scripts/bench.sh`
+  builds the synthetic tiers by concatenating the *formatter fixtures*, which
+  carry 9 directives per 67 KB block, so repeating the block 24x multiplies
+  both factors and the rule's work goes up 576x. On `corpus_16.R` it profiles
+  at 66.3% inclusive, driving `rowan::cursor::PreorderWithTokens::next` to
+  57.3%. Proof by deletion: stripping the 216 directive comments (0.5% of the
+  bytes) from the 1.6 MB tier takes arity 1341 ms -> 378 ms, against jarl's
+  392 ms on the same input.
+
+  Real R code has no `# arity-format` directives at all (neither tidyr nor MASS
+  has one), so the published 3.4x is mostly an artifact of the corpus. The
+  quadratic is still real, and it is an LSP cliff on a directive-heavy large
+  file.
+
+- [ ] **The rindex is re-deserialized from JSON on every invocation.**
+  `arity lint` on a four-line file costs 12.6 ms where `arity format` costs
+  2.0 ms and jarl 2.1 ms. Profiling the release binary over 60 runs puts 57% of
+  that startup in serde_json over `rindex::schema::ExportEntry` — a large share
+  of it in `IgnoredAny`, i.e. parsing fields it then throws away. A populated
+  `~/.cache/arity/index/v3/` is 14 MB across 45 files, read cold each run;
+  pointing `XDG_CACHE_HOME` at an empty directory gives 13.3 ms -> 3.6 ms with
+  the findings on tidyr unchanged (44 either way).
+
+  Two directions, not exclusive: a names-only sidecar (or a non-JSON format)
+  for the export-membership view, which is all the lint path needs, and making
+  the load lazy, since a run that resolves no external symbol never needs it.
+  Note the cost is machine-dependent — it exists only where a local R library
+  has been harvested, so a fresh CI runner does not pay it and the benchmark
+  machine does.
+
+- [ ] **`check_paths_with_index` converts little of its CPU into wall time.**
+  The largest real-world factor, and the hardest. On `tidyr/R` (41 files, 24
+  cores) arity gets a 1.7x speedup where jarl gets 3.9x, from an equal
+  single-threaded start:
+
+  | threads | arity | jarl |
+  | ------- | ------ | ------ |
+  | 1 | 50.7 ms | 53.2 ms |
+  | 4 | 47.3 ms | 19.4 ms |
+  | 8 | 35.9 ms | 14.6 ms |
+  | 24 | 29.5 ms | 13.6 ms |
+
+  arity's *user* time grows 40.8 -> 61.7 ms as threads are added while jarl's
+  stays flat at ~48 ms through 8 threads, which is contention rather than work.
+  `--mode lint-dir` puts `wait_until_cold` at 92.3% inclusive and `salsa` at
+  54.8%; the rayon workers share one memo store through `db.clone()` handles.
+  Around the fan-out sit three genuinely serial phases: the pass-1
+  read-and-`upsert_file` loop over every file, the HIGH-durability
+  `set_library_index` write (which must precede the warm-up, see the comment
+  there), and the `workspace_project(&db)` fold. Amdahl on the measured 1.7x
+  implies ~56% serial.
+
+  Wants its own investigation before any change: establish whether the cost is
+  salsa memo contention or those serial phases, because the fixes are
+  unrelated. Whatever moves here is guarded by `tests/salsa_incremental.rs`.
+
 ## DESCRIPTION and package metadata
 
 `DESCRIPTION` used to be scraped for four facts and was otherwise invisible to

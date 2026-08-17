@@ -6802,3 +6802,33 @@ fn deprecated_suppression_rewrite_still_suppresses_the_same_finding() {
     let fixed = fixed_output(src, "deprecated-suppression");
     assert!(rule_diags(&fixed, "browser").is_empty(), "after: {fixed}");
 }
+
+#[test]
+fn misplaced_suppression_resolves_the_comment_at_every_token_boundary() {
+    // The rule finds the directive's own `COMMENT` token by offset, so each of
+    // these puts a different token to the *left* of that offset: none at all
+    // (first byte), a newline, and code plus a space on the same line. Picking
+    // the left-hand token instead of the comment would silently change every
+    // answer here.
+    for (src, expected) in [
+        ("# arity-format skip: first byte\nx <- 1\n", 0),
+        ("x <- 1\n# arity-format skip: after newline\ny <- 2\n", 0),
+        ("x <- 1 # arity-format skip: trailing\n", 0),
+        (
+            "f <- function() {\n  # arity-format skip: nested\n  x <- 1\n}\n",
+            0,
+        ),
+        // Not a statement list: the formatter acts on whole statements, so a
+        // directive between two arguments is inert however deeply it nests.
+        (
+            "if (a) {\n  g(\n    b,\n    # arity-format skip: deep\n    c\n  )\n}\n",
+            1,
+        ),
+    ] {
+        assert_eq!(
+            meta_rules(src, "misplaced-suppression").len(),
+            expected,
+            "{src:?}"
+        );
+    }
+}
