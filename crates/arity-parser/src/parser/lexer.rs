@@ -568,7 +568,11 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token<'_>> {
             '%' => {
                 let start = i;
                 i += 1;
-                while i < bytes.len() && (bytes[i] as char) != '%' {
+                // R's `SpecialValue` ungets a newline and errors out, so an
+                // unterminated `%` never reaches past its own line. Stopping at
+                // the same boundary keeps the rest of the file lexed rather than
+                // collapsed into one error token.
+                while i < bytes.len() && !matches!(bytes[i] as char, '%' | '\n' | '\r') {
                     i += 1;
                 }
                 if i < bytes.len() && (bytes[i] as char) == '%' {
@@ -1586,6 +1590,39 @@ mod tests {
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].kind, TokKind::Ident);
         assert_eq!(tokens[0].text, "`oops");
+    }
+
+    /// R's `SpecialValue` ungets the newline and returns an error, so an
+    /// unterminated `%` swallows at most the rest of its line. Keeping the same
+    /// boundary stops one stray `%` from turning the whole file into one error
+    /// token.
+    #[test]
+    fn stops_unterminated_special_operator_at_the_line_end() {
+        let tokens = lex("x <- 1%2\ny <- 2\n");
+        let sig: Vec<_> = tokens
+            .iter()
+            .filter(|t| !matches!(t.kind, TokKind::Whitespace | TokKind::Newline))
+            .collect();
+        assert_eq!(sig[3].kind, TokKind::Unknown);
+        assert_eq!(sig[3].text, "%2");
+        // The next line keeps its structure rather than being eaten.
+        assert_eq!(sig[4].kind, TokKind::Ident);
+        assert_eq!(sig[4].text, "y");
+        assert_eq!(sig[5].kind, TokKind::AssignLeft);
+        assert_eq!(sig[6].kind, TokKind::Int);
+
+        let reconstructed: String = tokens.iter().map(|t| t.text).collect();
+        assert_eq!(reconstructed, "x <- 1%2\ny <- 2\n");
+    }
+
+    /// A CRLF line ending must not leave the `\r` inside the error token.
+    #[test]
+    fn stops_unterminated_special_operator_before_carriage_return() {
+        let tokens = lex("1%2\r\n");
+        assert_eq!(tokens[1].kind, TokKind::Unknown);
+        assert_eq!(tokens[1].text, "%2");
+        let reconstructed: String = tokens.iter().map(|t| t.text).collect();
+        assert_eq!(reconstructed, "1%2\r\n");
     }
 
     #[test]

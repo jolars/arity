@@ -191,6 +191,7 @@ fn fixture_names() -> &'static [&'static str] {
         "comment_only",
         "call_arg_comment_before_unary",
         "user_operator_tokens",
+        "user_operator_unterminated",
         "double_brackets_tokens",
         "assignment_missing_rhs",
         "assignment_missing_rhs_eq",

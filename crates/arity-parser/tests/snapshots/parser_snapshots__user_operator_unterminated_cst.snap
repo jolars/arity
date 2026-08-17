@@ -1,0 +1,37 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..31
+  ASSIGNMENT_EXPR@0..6
+    IDENT@0..1 "x"
+    WHITESPACE@1..2 " "
+    ASSIGN_LEFT@2..4 "<-"
+    WHITESPACE@4..5 " "
+    INT@5..6 "1"
+  ERROR@6..8 "%2"
+  NEWLINE@8..9 "\n"
+  ASSIGNMENT_EXPR@9..15
+    IDENT@9..10 "y"
+    WHITESPACE@10..11 " "
+    ASSIGN_LEFT@11..13 "<-"
+    WHITESPACE@13..14 " "
+    INT@14..15 "2"
+  NEWLINE@15..16 "\n"
+  BINARY_EXPR@16..30
+    IDENT@16..17 "z"
+    WHITESPACE@17..18 " "
+    USER_OP@18..22 "%in%"
+    WHITESPACE@22..23 " "
+    CALL_EXPR@23..30
+      IDENT@23..24 "c"
+      LPAREN@24..25 "("
+      ARG_LIST@25..29
+        ARG@25..26
+          INT@25..26 "1"
+        COMMA@26..27 ","
+        WHITESPACE@27..28 " "
+        ARG@28..29
+          INT@28..29 "2"
+      RPAREN@29..30 ")"
+  NEWLINE@30..31 "\n"
