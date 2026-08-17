@@ -339,8 +339,15 @@ impl ProjectScope {
             .map(|f| (f.path.clone(), f.source_edges.clone()))
             .collect();
 
-        // For each file, the set of *other* files it can see.
+        // For each file, the set of *other* files it can see — and, kept apart,
+        // just the part of it reached through `source()`. The split is what lets
+        // the two derivations below treat a package as a clique: within a
+        // package every member sees every other, so the clique's contribution is
+        // the same for all of them and can be folded once instead of once per
+        // ordered pair. `source()` edges are directional and sparse, so they stay
+        // a per-edge fold.
         let mut sees: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
+        let mut sourced: Vec<Vec<&Path>> = Vec::with_capacity(files.len());
         let mut dynamic: HashSet<PathBuf> = HashSet::new();
         let mut wildcard_imports: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
         for f in files {
@@ -353,6 +360,7 @@ impl ProjectScope {
                 }
             }
 
+            let mut via_source: Vec<&Path> = Vec::new();
             let mut unresolved = false;
             let mut visited: HashSet<&Path> = HashSet::from([f.path.as_path()]);
             let mut queue: Vec<&FileFacts> = vec![f];
@@ -364,6 +372,7 @@ impl ProjectScope {
                         Dependency::Path(p) => match by_path.get(p) {
                             Some(target) if visited.insert(target.path.as_path()) => {
                                 seen.insert(target.path.clone());
+                                via_source.push(target.path.as_path());
                                 queue.push(target);
                             }
                             Some(_) => {}
@@ -379,6 +388,43 @@ impl ProjectScope {
                 dynamic.insert(f.path.clone());
             }
             sees.insert(f.path.clone(), seen);
+            sourced.push(via_source);
+        }
+
+        // A file's reads, normalized once here rather than once per file that
+        // sees it. Backticking is a *spelling*, not a different name: `foo` and
+        // `` `foo` `` are one binding. Reads are recorded as spelled, so
+        // normalize here — the accessors strip the queried name to match. A
+        // `pkg::name` / `pkg:::name` access counts as a use too (e.g.
+        // `pkg:::helper()` in a test): fold in the qualified reads, which resolve
+        // to a same-package sibling's binding.
+        let reads: Vec<BTreeSet<String>> = files
+            .iter()
+            .map(|f| {
+                f.free_reads
+                    .iter()
+                    .chain(f.qualified_reads.iter())
+                    .map(|n| unbacktick(n).to_string())
+                    .collect()
+            })
+            .collect();
+
+        // The two per-package folds the clique relation collapses to: the union
+        // of the members' exports, and per read name how many members read it.
+        let mut package_exports: HashMap<&Path, BTreeSet<String>> = HashMap::new();
+        let mut package_read_counts: HashMap<&Path, HashMap<&str, usize>> = HashMap::new();
+        for (f, reads) in files.iter().zip(&reads) {
+            let Some(root) = f.package_root.as_deref() else {
+                continue;
+            };
+            package_exports
+                .entry(root)
+                .or_default()
+                .extend(f.exports.iter().cloned());
+            let counts = package_read_counts.entry(root).or_default();
+            for name in reads {
+                *counts.entry(name.as_str()).or_default() += 1;
+            }
         }
 
         // Derive the two directions from `sees`.
@@ -389,30 +435,56 @@ impl ProjectScope {
             .collect();
         let mut namespace_exports: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
         let mut s3_methods: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
-        for f in files {
-            let mut defs = BTreeSet::new();
-            for seen in &sees[&f.path] {
-                if let Some(target) = by_path.get(seen.as_path()) {
+        for (i, f) in files.iter().enumerate() {
+            // Starting from the whole package's exports rather than the
+            // siblings' is the same set: the member's own exports are removed
+            // again below, which is also what makes `visible` strictly
+            // cross-file — own bindings resolve locally.
+            let mut defs = match f
+                .package_root
+                .as_deref()
+                .and_then(|r| package_exports.get(r))
+            {
+                Some(union) => union.clone(),
+                None => BTreeSet::new(),
+            };
+            for target in &sourced[i] {
+                if let Some(target) = by_path.get(target) {
                     defs.extend(target.exports.iter().cloned());
                 }
             }
-            // `visible` is strictly cross-file; own bindings resolve locally.
             for name in &f.exports {
                 defs.remove(name);
             }
             visible.insert(f.path.clone(), defs);
+        }
 
-            // Every file `f` sees contributes `f`'s free reads to that file's
-            // "used by others" set. A `pkg::name` / `pkg:::name` access counts as
-            // a use too (e.g. `pkg:::helper()` in a test): fold in `f`'s qualified
-            // reads, which resolve to a same-package sibling's binding.
-            // Backticking is a *spelling*, not a different name: `foo` and
-            // `` `foo` `` are one binding. Reads are recorded as spelled, so
-            // normalize here — the accessors strip the queried name to match.
-            for seen in &sees[&f.path] {
-                if let Some(used) = read_by_others.get_mut(seen) {
-                    used.extend(f.free_reads.iter().map(|n| unbacktick(n).to_string()));
-                    used.extend(f.qualified_reads.iter().map(|n| unbacktick(n).to_string()));
+        // Every file `f` sees contributes `f`'s reads to that file's "used by
+        // others" set. For a package member that is every sibling, so take the
+        // package-wide union and drop only the names *this* member alone reads:
+        // a name with two or more readers survives the exclusion of any single
+        // one, and a name with one reader survives unless that reader is us.
+        for (i, f) in files.iter().enumerate() {
+            let Some(counts) = f
+                .package_root
+                .as_deref()
+                .and_then(|r| package_read_counts.get(r))
+            else {
+                continue;
+            };
+            let used = read_by_others
+                .get_mut(&f.path)
+                .expect("every file is seeded above");
+            for (&name, &count) in counts {
+                if count > 1 || !reads[i].contains(name) {
+                    used.insert(name.to_string());
+                }
+            }
+        }
+        for i in 0..files.len() {
+            for target in &sourced[i] {
+                if let Some(used) = read_by_others.get_mut(*target) {
+                    used.extend(reads[i].iter().cloned());
                 }
             }
         }
@@ -899,6 +971,45 @@ mod tests {
             !scope
                 .for_file(Path::new("/pkg/R/b.R"))
                 .used_elsewhere("bar")
+        );
+    }
+
+    /// A package member's *own* reads must never land in its own
+    /// "used by others" set. `sees` excludes self, and the clique fold that
+    /// replaces the per-pair walk has to reproduce that exclusion: a name only
+    /// one member reads is not read *by others* for that member, but is for
+    /// every other member.
+    ///
+    /// Observable through `qualified_reads` because that is the one way a file
+    /// can reference a name it also defines (`pkg:::foo()` alongside `foo <-`);
+    /// a free read of an own binding resolves locally and never appears.
+    #[test]
+    fn a_members_own_qualified_read_is_not_a_use_by_others() {
+        let mut a = facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg"));
+        a.qualified_reads = set(&["foo"]);
+        let b = facts("/pkg/R/b.R", &["bar"], &[], vec![], Some("/pkg"));
+        let scope = build_scope(&[a.clone(), b.clone()]);
+        // Only a references `foo`, and a is a's own file.
+        assert!(
+            !scope
+                .for_file(Path::new("/pkg/R/a.R"))
+                .used_elsewhere("foo")
+        );
+        // The same name still counts as a use for every *other* member.
+        assert!(
+            scope
+                .for_file(Path::new("/pkg/R/b.R"))
+                .read_elsewhere("foo")
+        );
+
+        // A second referencing member makes it a use for a too.
+        let mut c = facts("/pkg/R/c.R", &["baz"], &[], vec![], Some("/pkg"));
+        c.qualified_reads = set(&["foo"]);
+        let scope = build_scope(&[a, b, c]);
+        assert!(
+            scope
+                .for_file(Path::new("/pkg/R/a.R"))
+                .used_elsewhere("foo")
         );
     }
 
