@@ -18,6 +18,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rowan::TextRange;
 use smol_str::SmolStr;
@@ -151,13 +152,18 @@ pub struct Visibility {
     /// Names this file's package `export()`s (public API). Kept apart from
     /// `read_by_others` so a rule can distinguish "a sibling calls it" from
     /// "it is exported" — see [`FileScope::namespace_export_names`].
-    pub namespace_exports: BTreeSet<String>,
+    ///
+    /// One NAMESPACE's sets are the same for every member of the package, so
+    /// these three are shared handles rather than per-file copies. `Arc`
+    /// equality is by *contents* (the pointer check is only a fast path for
+    /// `true`), so the memo still backdates when a rebuilt set is unchanged.
+    pub namespace_exports: Arc<BTreeSet<String>>,
     /// The subset of `namespace_exports` registered via `S3method()` — reached
     /// by dispatch, so no direct call to the name is expected.
-    pub s3_methods: BTreeSet<String>,
+    pub s3_methods: Arc<BTreeSet<String>>,
     /// Packages this file's NAMESPACE `import()`s wholesale. Range-free and
     /// `Eq`, so this projection still backdates across a body edit.
-    pub wildcard_imports: BTreeSet<String>,
+    pub wildcard_imports: Arc<BTreeSet<String>>,
     /// An unresolved `source()` left cross-file visibility incomplete. A
     /// wildcard import is *not* expressed here — it is an entry in
     /// `wildcard_imports` that the consumer (which holds the library index)
@@ -598,9 +604,9 @@ pub fn visible_symbols<'db>(
     Visibility {
         visible: scope.visible_layer().clone(),
         read_by_others: scope.read_layer().clone(),
-        namespace_exports: scope.namespace_export_names().clone(),
-        s3_methods: scope.s3_method_names().clone(),
-        wildcard_imports: scope.wildcard_import_packages().clone(),
+        namespace_exports: Arc::clone(scope.namespace_exports_handle()),
+        s3_methods: Arc::clone(scope.s3_methods_handle()),
+        wildcard_imports: Arc::clone(scope.wildcard_imports_handle()),
         incomplete: scope.resolution_incomplete,
     }
 }
@@ -1058,9 +1064,9 @@ mod tests {
         let a = Visibility {
             visible: layer(),
             read_by_others: layer(),
-            namespace_exports: names(),
-            s3_methods: BTreeSet::new(),
-            wildcard_imports: BTreeSet::new(),
+            namespace_exports: Arc::new(names()),
+            s3_methods: Arc::default(),
+            wildcard_imports: Arc::default(),
             incomplete: false,
         };
         let b = a.clone();
@@ -1068,9 +1074,9 @@ mod tests {
         let c = Visibility {
             visible: layer(),
             read_by_others: layer(),
-            namespace_exports: names(),
-            s3_methods: BTreeSet::new(),
-            wildcard_imports: BTreeSet::new(),
+            namespace_exports: Arc::new(names()),
+            s3_methods: Arc::default(),
+            wildcard_imports: Arc::default(),
             incomplete: false,
         };
         assert_eq!(a, b);

@@ -40,11 +40,10 @@ use crate::project::source::{SourceEdgeKey, SourceTarget, TopLevelEvent};
 use crate::rindex::harvest::parse_namespace;
 use crate::semantic::symbols::unbacktick;
 
-static EMPTY: BTreeSet<String> = BTreeSet::new();
-// `HashSet::new` and `Arc::new` aren't `const`, so unlike `EMPTY` these need
-// lazy init.
+// Neither `HashSet::new` nor `Arc::new` is `const`, so these need lazy init.
 static EMPTY_PATHS: LazyLock<HashSet<PathBuf>> = LazyLock::new(HashSet::new);
 static EMPTY_LAYER: LazyLock<LayeredSet> = LazyLock::new(LayeredSet::default);
+static EMPTY_NAMES: LazyLock<Arc<BTreeSet<String>>> = LazyLock::new(Arc::default);
 
 /// A name set held as one layer shared by a whole package plus a small
 /// per-file delta, so a package's export union (or read union) is materialized
@@ -195,13 +194,13 @@ pub struct ProjectScope {
     read_by_others: HashMap<PathBuf, LayeredSet>,
     /// Per package file: the names its package's NAMESPACE `export()`s. Both
     /// sets feed [`FileScope::used_elsewhere`]; only this one marks public API.
-    namespace_exports: HashMap<PathBuf, BTreeSet<String>>,
+    namespace_exports: HashMap<PathBuf, Arc<BTreeSet<String>>>,
     /// Per package file: the subset of `namespace_exports` registered as S3
     /// methods (`S3method(...)`). Reached by dispatch, never by a direct call.
-    s3_methods: HashMap<PathBuf, BTreeSet<String>>,
+    s3_methods: HashMap<PathBuf, Arc<BTreeSet<String>>>,
     /// Per file: the packages its NAMESPACE `import()`s wholesale. Recorded
     /// rather than resolved — see [`FileScope::wildcard_import_packages`].
-    wildcard_imports: HashMap<PathBuf, BTreeSet<String>>,
+    wildcard_imports: HashMap<PathBuf, Arc<BTreeSet<String>>>,
     /// Files whose cross-file visibility is incomplete (unresolved `source()`).
     dynamic: HashSet<PathBuf>,
     /// Per package root: its member set, held once and shared by every member.
@@ -278,8 +277,8 @@ pub enum ReadSite {
 pub struct FileScope<'a> {
     visible: &'a LayeredSet,
     read_by_others: &'a LayeredSet,
-    namespace_exports: &'a BTreeSet<String>,
-    s3_methods: &'a BTreeSet<String>,
+    namespace_exports: &'a Arc<BTreeSet<String>>,
+    s3_methods: &'a Arc<BTreeSet<String>>,
     /// Packages this file's NAMESPACE `import()`s wholesale.
     ///
     /// Every export of such a package is in scope here, which for resolution is
@@ -289,7 +288,7 @@ pub struct FileScope<'a> {
     /// verdict is left to the caller, which holds the index. Reintroducing an
     /// index lookup inside `build` would look like a simplification and would
     /// silently break the purity the project-graph memo depends on.
-    wildcard_imports: &'a BTreeSet<String>,
+    wildcard_imports: &'a Arc<BTreeSet<String>>,
     /// Cross-file visibility is incomplete for a reason nothing can resolve: a
     /// dynamic or unanalyzed `source()` could supply any name, so callers must
     /// not flag them. **No longer set by `import(pkg)`** — see
@@ -304,9 +303,9 @@ impl<'a> FileScope<'a> {
     pub fn new(
         visible: &'a LayeredSet,
         read_by_others: &'a LayeredSet,
-        namespace_exports: &'a BTreeSet<String>,
-        s3_methods: &'a BTreeSet<String>,
-        wildcard_imports: &'a BTreeSet<String>,
+        namespace_exports: &'a Arc<BTreeSet<String>>,
+        s3_methods: &'a Arc<BTreeSet<String>>,
+        wildcard_imports: &'a Arc<BTreeSet<String>>,
         resolution_incomplete: bool,
     ) -> Self {
         Self {
@@ -353,6 +352,22 @@ impl<'a> FileScope<'a> {
     /// absence of a direct call to its name means nothing.
     pub fn s3_method_names(&self) -> &BTreeSet<String> {
         self.s3_methods
+    }
+
+    /// The three per-package sets as shared handles, so
+    /// [`Visibility`](crate::project::Visibility) can take a reference count
+    /// instead of copying one NAMESPACE's sets into every member's memo. The
+    /// `*_names` accessors above are the same data, borrowed.
+    pub fn namespace_exports_handle(&self) -> &Arc<BTreeSet<String>> {
+        self.namespace_exports
+    }
+
+    pub fn s3_methods_handle(&self) -> &Arc<BTreeSet<String>> {
+        self.s3_methods
+    }
+
+    pub fn wildcard_imports_handle(&self) -> &Arc<BTreeSet<String>> {
+        self.wildcard_imports
     }
 
     /// True when `name` is bound at top level in a file visible from here.
@@ -470,7 +485,7 @@ impl ProjectScope {
         let mut seen_by_extra: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
         let mut sourced: Vec<Vec<&Path>> = Vec::with_capacity(files.len());
         let mut dynamic: HashSet<PathBuf> = HashSet::new();
-        let mut wildcard_imports: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
+        let mut wildcard_imports: HashMap<PathBuf, Arc<BTreeSet<String>>> = HashMap::new();
         for f in files {
             let mut via_source: Vec<&Path> = Vec::new();
             let mut unresolved = false;
@@ -557,10 +572,10 @@ impl ProjectScope {
         // NAMESPACE declarations, parsed once per root. This runs *before* the
         // two derivations because the imported names belong in `visible`'s
         // shared layer; the per-member fan-out stays below.
-        let mut ns_exported: HashMap<&Path, BTreeSet<String>> = HashMap::new();
-        let mut ns_s3: HashMap<&Path, BTreeSet<String>> = HashMap::new();
+        let mut ns_exported: HashMap<&Path, Arc<BTreeSet<String>>> = HashMap::new();
+        let mut ns_s3: HashMap<&Path, Arc<BTreeSet<String>>> = HashMap::new();
         let mut ns_imported: HashMap<&Path, BTreeSet<String>> = HashMap::new();
-        let mut ns_wildcards: HashMap<&Path, BTreeSet<String>> = HashMap::new();
+        let mut ns_wildcards: HashMap<&Path, Arc<BTreeSet<String>>> = HashMap::new();
         for (root, text) in namespaces {
             let Some(members) = package_members.get(root.as_path()) else {
                 continue;
@@ -572,12 +587,12 @@ impl ProjectScope {
                 .collect();
             let info = parse_namespace(text, &object_names);
             let root = root.as_path();
-            ns_exported.insert(root, info.exports.iter().cloned().collect());
-            ns_s3.insert(root, info.s3_methods.iter().cloned().collect());
+            ns_exported.insert(root, Arc::new(info.exports.iter().cloned().collect()));
+            ns_s3.insert(root, Arc::new(info.s3_methods.iter().cloned().collect()));
             ns_imported.insert(root, info.imported_names.iter().cloned().collect());
             let wildcards: BTreeSet<String> = info.imported_packages.iter().cloned().collect();
             if !wildcards.is_empty() {
-                ns_wildcards.insert(root, wildcards);
+                ns_wildcards.insert(root, Arc::new(wildcards));
             }
         }
 
@@ -692,19 +707,19 @@ impl ProjectScope {
         // package exports. A wholesale `import(pkg)` is *recorded*, not resolved:
         // whether pkg's exports are enumerable needs the library index, which
         // this pure builder does not have.
-        let mut namespace_exports: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
-        let mut s3_methods: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
+        let mut namespace_exports: HashMap<PathBuf, Arc<BTreeSet<String>>> = HashMap::new();
+        let mut s3_methods: HashMap<PathBuf, Arc<BTreeSet<String>>> = HashMap::new();
         for (&root, members) in &package_members {
             for member in members {
                 let path = member.to_path_buf();
                 if let Some(exported) = ns_exported.get(root) {
-                    namespace_exports.insert(path.clone(), exported.clone());
+                    namespace_exports.insert(path.clone(), Arc::clone(exported));
                 }
                 if let Some(s3) = ns_s3.get(root) {
-                    s3_methods.insert(path.clone(), s3.clone());
+                    s3_methods.insert(path.clone(), Arc::clone(s3));
                 }
                 if let Some(wildcards) = ns_wildcards.get(root) {
-                    wildcard_imports.insert(path, wildcards.clone());
+                    wildcard_imports.insert(path, Arc::clone(wildcards));
                 }
             }
         }
@@ -733,9 +748,9 @@ impl ProjectScope {
         FileScope {
             visible: self.visible.get(path).unwrap_or(&EMPTY_LAYER),
             read_by_others: self.read_by_others.get(path).unwrap_or(&EMPTY_LAYER),
-            namespace_exports: self.namespace_exports.get(path).unwrap_or(&EMPTY),
-            s3_methods: self.s3_methods.get(path).unwrap_or(&EMPTY),
-            wildcard_imports: self.wildcard_imports.get(path).unwrap_or(&EMPTY),
+            namespace_exports: self.namespace_exports.get(path).unwrap_or(&EMPTY_NAMES),
+            s3_methods: self.s3_methods.get(path).unwrap_or(&EMPTY_NAMES),
+            wildcard_imports: self.wildcard_imports.get(path).unwrap_or(&EMPTY_NAMES),
             resolution_incomplete: self.dynamic.contains(path),
         }
     }
