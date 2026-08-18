@@ -3203,6 +3203,39 @@ fn duplicated_arguments_still_flags_list_call() {
 }
 
 #[test]
+fn missing_argument_flags_empty_call_slots() {
+    let src = "paste(\"a\", , \"b\")\nf(, x)\ng(a,,b)\n";
+    let findings: Vec<_> = diagnostics(src)
+        .into_iter()
+        .filter(|d| d.rule == "missing-argument")
+        .collect();
+    assert_eq!(findings.len(), 3, "got: {findings:?}");
+    for finding in findings {
+        let start: usize = finding.range.start().into();
+        let end: usize = finding.range.end().into();
+        assert_eq!(&src[start..end], ",");
+        assert!(finding.fix.is_none(), "missing arguments have no safe fix");
+    }
+}
+
+#[test]
+fn missing_argument_ignores_trailing_commas_and_missing_formals() {
+    let call_src = "f(a,)\ng(,)\nh()\n";
+    let findings: Vec<_> = diagnostics(call_src)
+        .into_iter()
+        .filter(|d| d.rule == "missing-argument")
+        .collect();
+    // `g(,)` has a leading missing argument followed by a valid trailing comma.
+    assert_eq!(findings.len(), 1, "got: {findings:?}");
+
+    let formal_findings: Vec<_> = diagnostics("fun <- function(x, y = ) x\n")
+        .into_iter()
+        .filter(|d| d.rule == "missing-argument")
+        .collect();
+    assert!(formal_findings.is_empty(), "got: {formal_findings:?}");
+}
+
+#[test]
 fn redundant_equals_true_drops_comparison() {
     assert_eq!(
         fixed_output("if (x == TRUE) f()\n", "redundant-equals"),
@@ -5378,6 +5411,8 @@ fn fixed_output_is_parseable_and_clean() {
         // duplicated-function-definition (no fix — must not perturb the input)
         "f <- function() 1\nf <- function() 2\nf()\n",
         "g <- function() {\n  h <- function() 1\n  h <- function() 2\n  h()\n}\n",
+        // missing-argument (no fix — must not perturb the input)
+        "paste(\"a\", , \"b\")\n",
         // internal-function (no fix — must not perturb the input)
         "x <- stats:::C_cor\n",
         "utils:::.getHelpFile(path)\n",

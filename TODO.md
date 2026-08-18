@@ -83,10 +83,11 @@ Tier 1—clear correctness bugs, good default-on candidates:
   against `NaN`/`NULL`; recommend `is.nan()`/`is.null()`. Safe fixes require a
   confirmed base helper and semantic equivalence: equality/inequality for both,
   plus only right-hand `NaN` membership; other membership shapes are report-only.
-- [ ] `missing-argument`: report interior empty call arguments such as
+- [x] `missing-argument`: report interior empty call arguments such as
   `paste("a", , "b")`. A trailing comma is valid and common, and missing
   formals such as `function(x, y = )` are intentional R, so scope this to
-  call arguments and do not offer a deletion fix.
+  call arguments and do not offer a deletion fix. Implemented syntactically
+  over empty call `ARG` nodes; reports the following comma with no autofix.
 - [ ] `rep-times-ignored`: flag `rep(x, times = ..., length.out = ...)`, where
   `length.out` normally wins. Report even when a fix is unsafe; any fix must
   account for invalid/`NA` `length.out`, for which `times` can still matter.

@@ -131,6 +131,7 @@ fn correctness_rules() -> Vec<Box<dyn Rule>> {
         Box::new(correctness::EqualsNa),
         Box::new(correctness::EqualsNan),
         Box::new(correctness::EqualsNull),
+        Box::new(correctness::MissingArgument),
         Box::new(correctness::VectorLogic),
         Box::new(correctness::UnreachableCode),
         Box::new(correctness::IsNumeric),

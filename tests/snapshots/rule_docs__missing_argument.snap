@@ -1,0 +1,24 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `missing-argument`
+
+Flag an empty, non-trailing call argument such as `f(a, , b)`. Trailing commas and intentional missing function-formal defaults are excluded.
+
+This rule is **enabled by default**.
+
+The second call argument is missing:
+
+```r
+paste("a", , "b")
+```
+
+```text
+warning: missing-argument
+ --> example.R:1:12
+  |
+1 | paste("a", , "b")
+  |            ^ call contains an empty argument before this comma
+  = help: Supply the intended argument explicitly.
+```

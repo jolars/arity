@@ -26,6 +26,7 @@ so this page never drifts from the rules' actual behavior.
 - [`equals-na`](#equals-na)
 - [`equals-nan`](#equals-nan)
 - [`equals-null`](#equals-null)
+- [`missing-argument`](#missing-argument)
 - [`vector-logic`](#vector-logic)
 - [`unreachable-code`](#unreachable-code)
 - [`is-numeric`](#is-numeric)
@@ -271,6 +272,27 @@ After applying the fix:
 
 ```r
 if (is.null(x)) handle_null()
+```
+
+### `missing-argument`
+
+Flag an empty, non-trailing call argument such as `f(a, , b)`. Trailing commas and intentional missing function-formal defaults are excluded.
+
+This rule is **enabled by default**.
+
+The second call argument is missing:
+
+```r
+paste("a", , "b")
+```
+
+```text
+warning: missing-argument
+ --> example.R:1:12
+  |
+1 | paste("a", , "b")
+  |            ^ call contains an empty argument before this comma
+  = help: Supply the intended argument explicitly.
 ```
 
 ### `vector-logic`
