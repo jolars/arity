@@ -67,6 +67,120 @@
   branch each in `crates/arity-parser/src/directive.rs`, plus `Spelling` and the
   rule itself.
 
+### Rule-candidate audit: lintr and jarl (2026-08-18)
+
+Audited [lintr](https://github.com/r-lib/lintr) at
+`fbe442428833d4897d7e95c4d389f631b8a9057c` and
+[jarl](https://github.com/etiennebacher/jarl) at
+`0e74cdb9840c7adca36d7bbf1b10c6d87da8acd6`. This is a candidate list, not a
+promise to reproduce either catalogue. Before implementing one, confirm its
+semantics against base R/the relevant package, check callee resolution rather
+than matching a bare spelling, and use the normal `add-lint-rule` TDD workflow.
+
+Tier 1—clear correctness bugs, good default-on candidates:
+
+- [ ] `equals-nan` and `equals-null`: flag `==`, `!=`, and `%in%` comparisons
+  against `NaN`/`NULL`; recommend `is.nan()`/`is.null()`. Share the atom-safe
+  comparison matcher with `equals-na`, preserve negation correctly, and only
+  fix when the callee is known to be base.
+- [ ] `missing-argument`: report interior empty call arguments such as
+  `paste("a", , "b")`. A trailing comma is valid and common, and missing
+  formals such as `function(x, y = )` are intentional R, so scope this to
+  call arguments and do not offer a deletion fix.
+- [ ] `rep-times-ignored`: flag `rep(x, times = ..., length.out = ...)`, where
+  `length.out` normally wins. Report even when a fix is unsafe; any fix must
+  account for invalid/`NA` `length.out`, for which `times` can still matter.
+- [ ] `sprintf`: statically validate literal formats—invalid conversions and
+  definitely missing/excess arguments—and report the pointless
+  `sprintf("literal")` case separately within the same rule. Format parsing
+  must handle `%%`, positional fields, `*` width/precision, and recycling
+  before this can claim correctness.
+- [ ] `glue`: for a statically known `glue()` template and delimiters, report
+  unmatched/incomplete interpolation delimiters; also flag a template with no
+  interpolation. Gate on the package/callee and parse the template rather than
+  treating braces with a regexp.
+- [ ] `length-test`: flag the likely-parenthesization error
+  `length(x == n)`/`length(x != n)` and suggest `length(x) == n`. Keep the
+  diagnostic conservative around overloaded calls and non-atomic operands.
+- [ ] `all-equal`: flag truth-testing `all.equal()` directly (conditions,
+  negation, `isFALSE`) because disagreement returns a character vector, not
+  `FALSE`; recommend `isTRUE(all.equal(...))`. Fixes are unsafe because they
+  can deliberately change existing behavior.
+- [ ] `pipe-return`: report `return`/`return()` on the RHS of `%>%`; it does not
+  return from the surrounding function. The native-pipe spelling is already a
+  parse error. This needs the shared pipe-chain abstraction mentioned below.
+- [ ] `function-return-assignment`: report assignments inside `return(...)`.
+  The assigned value is returned, but the side effect/ignored local binding is
+  sufficiently error-prone to diagnose; no automatic rewrite can infer intent.
+
+Tier 2—performance/readability transformations that the formatter cannot do:
+
+- [ ] Add a shared call-rewrite batch for `matrix-apply`
+  (`apply(x, 1/2, sum/mean)` to row/column helpers), `which-grepl`, `rep-len`,
+  `system-file`, `list2df` (R >= 4.0), and `length-levels`. Each requires
+  base-resolution checks, exact named/positional argument matching, trivia-safe
+  fixes, and version gating where applicable.
+- [ ] `boolean-arithmetic`: recognize `length(which(p)) == 0` and
+  `sum(logical) == 0`-style existence tests and prefer `!any(p)` (plus the
+  positive variants). Start with shapes whose NA behavior is provably
+  preserved; lintr's broad family needs an oracle matrix before porting.
+- [ ] `list-comparison`: flag direct comparisons of known list-producing calls
+  such as `lapply(...) > 1`, which rely on awkward coercion; recommend a typed
+  iterator rather than guessing a fix.
+- [ ] `terminal-close`: flag a function whose final action is `close(conn)` and
+  recommend registering cleanup with `on.exit()` near acquisition. Default-off
+  until a corpus pass establishes that ownership-transfer patterns are not
+  noisy.
+- [ ] `routine-registration`: flag string-named `.Call`/`.C`/`.Fortran`/
+  `.External` calls in packages and recommend registered native symbols. Reuse
+  the existing NAMESPACE/native-registration project facts; do not invoke R or
+  inspect the local installation.
+- [ ] `package-hooks`: validate `.onLoad`, `.onAttach`, `.Last.lib`,
+  `.onDetach`, and `.onUnload` signatures and statically forbidden/noisy calls
+  per Writing R Extensions. Package-only, cross-checked against `R CMD check`'s
+  implementation rather than copied blindly from lintr.
+- [ ] `strings-as-factors`: when the R compatibility floor crosses 4.0, flag a
+  `data.frame()` with known character columns and no explicit
+  `stringsAsFactors`. No fix can choose the intended behavior.
+- [ ] Extend the existing Phase 5 package-aware plan with jarl/lintr's remaining
+  testthat rewrites: `expect-not`, `expect-s4-class`, `expect-comparison`,
+  `expect-identical`, `expect-shape`, and yoda argument order. Keep the family
+  default-off initially: these improve test intent/messages rather than program
+  correctness. The already-listed shared matcher should own all of them.
+
+Tier 3—useful but policy-heavy; consider only default-off after corpus evidence:
+
+- [ ] `cyclomatic-complexity`, parameterized by a threshold. This is a
+  maintainability metric, not layout; define the count over arity's CFG instead
+  of depending on R's `cyclocomp` package.
+- [ ] `unused-import`: report an attached package whose symbols are never used.
+  This requires the project resolver to distinguish attachment-provided bare
+  names from `pkg::name`, plus explicit exemptions for packages attached for
+  side effects; do not infer availability from the user's installed library.
+- [ ] `commented-code` and `todo-comment`: potentially useful repository-policy
+  checks, but inherently noisy. If added, keep default-off, ignore roxygen, and
+  require configurable markers/exceptions. Commented-code detection must use
+  the parser and must not evaluate R.
+- [ ] `nonportable-path`: only pursue a narrow, evidence-backed version (for
+  example hard-coded Windows drive paths/backslashes). A blanket warning on
+  string literals containing `/` is wrong for URLs, regexes, archive members,
+  and deliberately POSIX-only code.
+
+Already represented elsewhere in this file: the cohesive `pkg/testthat/`
+matcher and `pkg/dplyr/` rules under **Phase 5—Package-aware rules**. Other jarl
+ideas worth revisiting only after a shared pipe-chain abstraction exists are
+`dplyr-group-by-ungroup`, `nested-pipe`, and `unnecessary-placeholder`.
+
+Deliberately excluded as formatter-owned style: braces, commas, indentation,
+infix spacing, line length, quote choice, semicolons, spaces around/inside
+parentheses, trailing whitespace/blank lines, pipe continuation/layout, object
+name/length conventions, assignment-token preference, and numeric leading-zero
+spelling. The formatter is the sole layout authority; arity must not add lint
+rules for these. Also rejected for now: `missing-package` (depends on the
+current machine rather than project facts), broad `library()` placement
+policy, and bare-name `object-overwrite` (substantially overlaps the more
+semantic `shadowed-builtin` and is prone to noise).
+
 ### `undefined-symbol` false positives (rlang sweep, 2026-08-13)
 
 - [x] **`useDynLib()` binds native routines arity could not enumerate.** They
