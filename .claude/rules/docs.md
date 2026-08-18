@@ -68,14 +68,10 @@ prints a phase split plus inclusive and self-time lists. Unlike `task bench` it
 writes **nothing tracked** — everything lands under `target/profile/`, because a
 profile describes one machine on one day.
 
-Two settings there are load-bearing and easy to lose by hand-rolling a perf
-invocation: `-Cforce-frame-pointers=yes` with `--call-graph fp` (release codegen
-omits frame pointers, and without them every inclusive view silently collapses
-into self time), and `[profile.profiling]` in the root `Cargo.toml`, which adds
-the debug info `release` does not carry. `benches/profile.rs` also sets the
-mimalloc global allocator, as `src/main.rs` does: under glibc's malloc the same
-profile attributes ~4x as much time to allocator symbols, i.e. it profiles a
-program arity does not ship.
+Keep `scripts/profile.sh` as the source of truth for profiling flags and build
+profile. In particular, preserve frame-pointer call graphs (`--call-graph fp`
+with `-Cforce-frame-pointers=yes`) and the dedicated `[profile.profiling]`
+configuration in `Cargo.toml`.
 
 The `perf-investigation` skill carries the workflow and the measured phase
 tables.

@@ -78,9 +78,7 @@ misleading (rename).
 
 - An open document is an `Arc<TextBuffer>`: text next to its `LineIndex`, kept
   in sync by `TextBuffer::apply_edit`, which **splices** the index rather than
-  rebuilding it. `LineIndex::new` is linear in the *document*, not the edit — at
-  1 MB it was 68% of a keystroke's cost, next to the incremental reparse it
-  precedes.
+  rebuilding it. `LineIndex::new` is linear in the *document*, not the edit.
 - **A shared buffer is immutable.** The main loop edits through
   `Arc::make_mut`, so it only ever mutates a uniquely-owned buffer and an
   in-flight read sees exactly the bytes of the version it was dispatched at.
@@ -90,11 +88,7 @@ misleading (rename).
   and `PrevParse`, so the write phase, the reparse base, and every staleness
   gate move a handle rather than a document. **Reintroducing a
   `.text().to_string()` on the dispatch path is the regression to watch for** —
-  use `buffer.text_arc()`. The price is that an edit rebuilds the string instead
-  of splicing in place (`+76%` on the write phase at 1 MB, against a whole
-  keystroke that did not move); `Arc<String>` + `Arc::make_mut` would halve that
-  rebuild and is worth reaching for only if the row stops being dwarfed by the
-  reparse.
+  use `buffer.text_arc()`.
 - **`Arc::ptr_eq` goes in *front of* a content compare, never in place of one**
   (`incremental::text_is`). An edit mints a fresh allocation whatever it did to
   the text, so typing a character and deleting it again leaves equal text at a
@@ -123,15 +117,6 @@ misleading (rename).
   one. Both the full-document and the range path go through it, `DESCRIPTION`
   included, and whatever comes back must reproduce `format` byte for byte —
   that property is what `format.rs`'s tests assert.
-- **The reason is the client's anchors, not our own work.** The `didChange` the
-  client echoes back costs the server the same either way, and this was
-  measured, not assumed: `parsed_document` recovers a spanning `diff_edit` from
-  the old and new text, so a whole-document echo reparses exactly as
-  incrementally as a scoped one, and the staged multi-edit path (Stage B) never
-  fires for format hunks — a whole-line replacement misses the single-edit
-  ladder, and one miss fails the whole sequence. The splice saves ~20 µs on a
-  62 KB file. Do not re-derive a performance argument here; if the reparse
-  ladder later takes line-shaped edits, measure again before claiming one.
 
 ## Paths
 
