@@ -13,14 +13,15 @@ version](https://badge.fury.io/py/arity.svg?icon=si%3Apython)](https://pypi.org/
 version](https://badge.fury.io/js/@arity-cli%2Farity-cli.svg?icon=si%3Anpm)](https://www.npmjs.com/package/arity-cli)
 
 Arity is a language server, formatter, and linter for the R programming
-language, built in Rust on a lossless, incremental parser. It provides a fast,
+language, built on a lossless, incremental parser. It provides a fast,
 deterministic development experience that integrates with popular code editors
 and IDEs.
 
-- **Formatter**: deterministic, rule-based formatting toward the tidyverse style
-  guide, with idempotent output and roxygen support.
-- **Linter**: correctness, readability, and performance rules, many with safe
-  autofixes.
+- **Formatter**: deterministic, rule-based formatting based on the tidyverse
+  style guide, with idempotent output and support for roxygen and `DESCRIPTION`
+  (`.dcf`) files.
+- **Linter**: project-aware linting, with correctness, readability, and
+  performance rules, many with safe autofixes.
 - **Language server**: formatting, diagnostics with quick fixes, hover,
   completion, signature help, go-to-definition and references, rename, document
   and workspace symbols, semantic tokens, folding, and call hierarchy.
@@ -40,12 +41,13 @@ Arity is available from several sources:
 - **Arch Linux**: `pacman -S arity-bin` (or `arity`) (from the AUR:
   [`arity-bin`](https://aur.archlinux.org/packages/arity-bin/),
   [`arity`](https://aur.archlinux.org/packages/arity/))
-- **NixOS**: the `arity` package is available in the Nixpkgs repository
+- **NixOS**: the `arity` package is available in
+  [nixpkgs](https://search.nixos.org/packages?channel=unstable&show=arity&from=0&size=50&sort=relevance&type=packages)
 
-### Install script
+### Install Script
 
-The install scripts are fetched from the latest release and download the Arity
-release asset for your platform, verifying its checksum and installing to a
+The install scripts are fetched from the latest release and download the latest
+Arity release for your system, verifying its checksum and installing to a
 user-local directory by default. If you prefer, download and inspect the script
 before running it.
 
@@ -66,42 +68,44 @@ Set `ARITY_INSTALL_DIR` to change the destination, `ARITY_TAG` to pin a version,
 `ARITY_LIBC` (`gnu` or `musl`) to override the detected libc on Linux, and
 `ARITY_VERIFY_CHECKSUM=false` to skip checksum verification.
 
-## Formatter
+## Usage
 
-To format your code, you can use:
+```sh
+# Format in place
+arity format file.R
 
-- `arity format [file]`
-- `arity format --verify [file]`
-- `arity format --check <path> [<path> ...]`
+# Verify formatting without writing
+arity format --check src/
 
-## Linter
+# Lint a project directory
+arity lint src/
 
-To lint your code, you can use:
-
-- `arity lint <path> [<path> ...]`
+# Fix lint findings in place
+arity lint --fix file.R
+```
 
 `arity lint` reads from stdin when given `-` (or when piped with no paths), and
 exits non-zero when it reports any findings.
 
 ## Configuration
 
-Arity reads an optional `arity.toml`, discovered by walking up from each file's
-directory to the repository root. Run `arity init` to scaffold a commented
-starter file. See the [configuration
+Configure Arity with `arity.toml`, which is discovered by walking up from each
+file's directory to the repository root. Run `arity init` to scaffold a
+commented starter file. See the [configuration
 reference](https://arity.cc/reference/configuration.html) for every key.
 
-## Editor integration
+## Editor Integration
 
 `arity lsp` starts a stdio-based language server offering formatting,
 diagnostics with quick fixes, hover, completion, signature help,
 go-to-definition and references, rename, document and workspace symbols,
 semantic tokens, folding, and call hierarchy.
 
-The **Arity** extension for VS Code/Open VSX (and Positron) bundles the binary
-and starts the server automatically. For Neovim, Helix, and other editors, see
-the [editor setup guide](https://arity.cc/guide/editors.html).
+The Arity extension for VS Code/Open VSX (and Positron) bundles the binary and
+starts the server automatically. For Neovim, Helix, and other editors, see the
+[editor setup guide](https://arity.cc/guide/editors.html).
 
-## Pre-commit hook
+## Pre-Commit Hook
 
 [arity-pre-commit](https://github.com/jolars/arity-pre-commit) provides
 [pre-commit](https://pre-commit.com) hooks for linting and formatting. It
@@ -112,7 +116,7 @@ installation is required:
 repos:
   - repo: https://github.com/jolars/arity-pre-commit
     # arity version
-    rev: v0.13.0
+    rev: v0.18.0
     hooks:
       # Lint .R files
       - id: arity-lint
@@ -122,7 +126,7 @@ repos:
 
 ## GitHub Actions
 
-[arity-action](https://github.com/jolars/arity-action) installs arity and runs
+[arity-action](https://github.com/jolars/arity-action) installs Arity and runs
 format and lint checks in CI:
 
 ```yaml
