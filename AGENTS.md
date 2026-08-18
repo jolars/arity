@@ -10,6 +10,12 @@ here.
 - Path-scoped subsystem rules live in `.claude/rules/*.md`:
   `parser`, `formatter`, `linter`, `lsp`, `semantic`, `rindex`, `roxygen`,
   `config`, `docs`, and `release`.
+- Before inspecting, editing, or reviewing a path in a subsystem, read its
+  corresponding rule file in full. The architecture map below is the routing
+  table for source paths; read `docs.md` or `release.md` whenever work concerns
+  those areas. If work spans multiple subsystems, read every applicable rule
+  file before acting. These are mandatory instructions, not optional
+  references.
 - Keep each rule file terse (target under 200 lines): rule, brief rationale,
   pointer to code/tests.
 - Do not turn rules into issue archaeology or tutorials. Put those in tests,
