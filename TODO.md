@@ -88,9 +88,10 @@ Tier 1—clear correctness bugs, good default-on candidates:
   formals such as `function(x, y = )` are intentional R, so scope this to
   call arguments and do not offer a deletion fix. Implemented syntactically
   over empty call `ARG` nodes; reports the following comma with no autofix.
-- [ ] `rep-times-ignored`: flag `rep(x, times = ..., length.out = ...)`, where
-  `length.out` normally wins. Report even when a fix is unsafe; any fix must
-  account for invalid/`NA` `length.out`, for which `times` can still matter.
+- [x] `rep-times-ignored`: flag base `rep(x, times = ..., length.out = ...)`,
+  where `length.out` normally wins. Implemented as an `ns`-tier, report-only
+  warning: invalid/`NA` `length.out` can make `times` matter, so deletion is not
+  safe for arbitrary static expressions.
 - [ ] `sprintf`: statically validate literal formats—invalid conversions and
   definitely missing/excess arguments—and report the pointless
   `sprintf("literal")` case separately within the same rule. Format parsing

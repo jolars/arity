@@ -27,6 +27,7 @@ so this page never drifts from the rules' actual behavior.
 - [`equals-nan`](#equals-nan)
 - [`equals-null`](#equals-null)
 - [`missing-argument`](#missing-argument)
+- [`rep-times-ignored`](#rep-times-ignored)
 - [`vector-logic`](#vector-logic)
 - [`unreachable-code`](#unreachable-code)
 - [`is-numeric`](#is-numeric)
@@ -293,6 +294,27 @@ warning: missing-argument
 1 | paste("a", , "b")
   |            ^ call contains an empty argument before this comma
   = help: Supply the intended argument explicitly.
+```
+
+### `rep-times-ignored`
+
+Flag a base `rep()` call that supplies both `times` and `length.out`. `length.out` normally determines the result length, making `times` ineffective. There is no autofix because `times` can still matter when `length.out` is invalid or `NA`.
+
+This rule is **enabled by default**.
+
+`length.out` normally overrides `times`:
+
+```r
+rep(x, times = 2, length.out = 10)
+```
+
+```text
+warning: rep-times-ignored
+ --> example.R:1:8
+  |
+1 | rep(x, times = 2, length.out = 10)
+  |        ^^^^^ `times` is normally ignored when `length.out` is supplied
+  = help: Remove `times` after confirming `length.out` is always valid.
 ```
 
 ### `vector-logic`

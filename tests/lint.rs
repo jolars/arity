@@ -3236,6 +3236,32 @@ fn missing_argument_ignores_trailing_commas_and_missing_formals() {
 }
 
 #[test]
+fn rep_times_ignored_flags_both_named_arguments_without_a_fix() {
+    let src = "rep(x, times = 2, length.out = 10)\nrep(x, length.out = n, times = k)\n";
+    let findings: Vec<_> = diagnostics(src)
+        .into_iter()
+        .filter(|d| d.rule == "rep-times-ignored")
+        .collect();
+    assert_eq!(findings.len(), 2, "got: {findings:?}");
+    for finding in findings {
+        let start: usize = finding.range.start().into();
+        let end: usize = finding.range.end().into();
+        assert_eq!(&src[start..end], "times");
+        assert!(finding.fix.is_none(), "the rule must not remove `times`");
+    }
+}
+
+#[test]
+fn rep_times_ignored_requires_base_rep_and_both_named_arguments() {
+    let src = "rep <- function(...) NULL\nrep(x, times = 2, length.out = 10)\nbase::rep(x, times = 2, length.out = 10)\nrep(x, times = 2)\nrep(x, length.out = 10)\n";
+    let findings: Vec<_> = diagnostics(src)
+        .into_iter()
+        .filter(|d| d.rule == "rep-times-ignored")
+        .collect();
+    assert!(findings.is_empty(), "got: {findings:?}");
+}
+
+#[test]
 fn redundant_equals_true_drops_comparison() {
     assert_eq!(
         fixed_output("if (x == TRUE) f()\n", "redundant-equals"),
@@ -5413,6 +5439,8 @@ fn fixed_output_is_parseable_and_clean() {
         "g <- function() {\n  h <- function() 1\n  h <- function() 2\n  h()\n}\n",
         // missing-argument (no fix — must not perturb the input)
         "paste(\"a\", , \"b\")\n",
+        // rep-times-ignored (no fix — `times` can matter for invalid length.out)
+        "rep(x, times = 2, length.out = 10)\n",
         // internal-function (no fix — must not perturb the input)
         "x <- stats:::C_cor\n",
         "utils:::.getHelpFile(path)\n",
