@@ -141,6 +141,36 @@ pub fn binary_parts(expr: &SyntaxNode) -> Option<(SyntaxElement, SyntaxToken, Sy
     BinaryExpr::cast(expr.clone())?.parts()
 }
 
+/// Supported operators for comparisons against a distinguished constant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConstantComparisonOp {
+    Equal,
+    NotEqual,
+    In,
+}
+
+/// A `==`, `!=`, or `%in%` expression with exactly one operand selected by
+/// `is_constant`. The other operand is returned along with whether the constant
+/// was written on the right; `%in%` callers need that direction because it is
+/// not commutative.
+pub fn constant_comparison(
+    expr: &SyntaxNode,
+    is_constant: fn(&SyntaxElement) -> bool,
+) -> Option<(SyntaxElement, ConstantComparisonOp, bool)> {
+    let (lhs, op, rhs) = binary_parts(expr)?;
+    let op = match op.kind() {
+        SyntaxKind::EQUAL2 => ConstantComparisonOp::Equal,
+        SyntaxKind::NOT_EQUAL => ConstantComparisonOp::NotEqual,
+        SyntaxKind::USER_OP if op.text() == "%in%" => ConstantComparisonOp::In,
+        _ => return None,
+    };
+    match (is_constant(&lhs), is_constant(&rhs)) {
+        (true, false) => Some((rhs, op, false)),
+        (false, true) => Some((lhs, op, true)),
+        _ => None,
+    }
+}
+
 // --- literal classifiers ---------------------------------------------------
 //
 // R's special constants (`TRUE`, `NA`, …) are all `IDENT` tokens classified by

@@ -1,0 +1,30 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `equals-nan`
+
+Flag `==`, `!=`, and `%in%` comparisons with `NaN`; use `is.nan()` to test for NaN values.
+
+This rule is **enabled by default**.
+
+Comparing a value with `NaN`:
+
+```r
+if (x == NaN) handle_nan()
+```
+
+```text
+warning: equals-nan
+ --> example.R:1:5
+  |
+1 | if (x == NaN) handle_nan()
+  |     ^^^^^^^^ comparison with `NaN` does not reliably test for NaN values
+  = help: Use `is.nan(x)`.
+```
+
+After applying the fix:
+
+```r
+if (is.nan(x)) handle_nan()
+```

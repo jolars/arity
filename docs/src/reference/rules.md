@@ -24,6 +24,8 @@ so this page never drifts from the rules' actual behavior.
 - [`duplicate-formal`](#duplicate-formal)
 - [`duplicated-arguments`](#duplicated-arguments)
 - [`equals-na`](#equals-na)
+- [`equals-nan`](#equals-nan)
+- [`equals-null`](#equals-null)
 - [`vector-logic`](#vector-logic)
 - [`unreachable-code`](#unreachable-code)
 - [`is-numeric`](#is-numeric)
@@ -215,6 +217,60 @@ After applying the fix:
 
 ```r
 is.na(x)
+```
+
+### `equals-nan`
+
+Flag `==`, `!=`, and `%in%` comparisons with `NaN`; use `is.nan()` to test for NaN values.
+
+This rule is **enabled by default**.
+
+Comparing a value with `NaN`:
+
+```r
+if (x == NaN) handle_nan()
+```
+
+```text
+warning: equals-nan
+ --> example.R:1:5
+  |
+1 | if (x == NaN) handle_nan()
+  |     ^^^^^^^^ comparison with `NaN` does not reliably test for NaN values
+  = help: Use `is.nan(x)`.
+```
+
+After applying the fix:
+
+```r
+if (is.nan(x)) handle_nan()
+```
+
+### `equals-null`
+
+Flag `==`, `!=`, and `%in%` comparisons with `NULL`; use `is.null()` for a scalar null test.
+
+This rule is **enabled by default**.
+
+Comparing a value with `NULL`:
+
+```r
+if (x == NULL) handle_null()
+```
+
+```text
+warning: equals-null
+ --> example.R:1:5
+  |
+1 | if (x == NULL) handle_null()
+  |     ^^^^^^^^^ comparison with `NULL` does not produce a scalar null test
+  = help: Use `is.null(x)`.
+```
+
+After applying the fix:
+
+```r
+if (is.null(x)) handle_null()
 ```
 
 ### `vector-logic`

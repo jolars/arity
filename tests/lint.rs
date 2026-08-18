@@ -3247,6 +3247,82 @@ fn equals_na_rewrites_to_is_na() {
 }
 
 #[test]
+fn equals_nan_reports_comparisons_and_fixes_safe_shapes() {
+    assert_eq!(
+        fixed_output("if (x == NaN) f()\n", "equals-nan"),
+        "if (is.nan(x)) f()\n"
+    );
+    assert_eq!(
+        fixed_output("print(NaN != y)\n", "equals-nan"),
+        "print(!is.nan(y))\n"
+    );
+    assert_eq!(
+        fixed_output("print(x %in% NaN)\n", "equals-nan"),
+        "print(is.nan(x))\n"
+    );
+
+    let reversed = diagnostics("print(NaN %in% x)\n")
+        .into_iter()
+        .find(|d| d.rule == "equals-nan")
+        .expect("expected an equals-nan finding");
+    assert!(
+        reversed.fix.is_none(),
+        "reversed membership is not equivalent"
+    );
+}
+
+#[test]
+fn equals_null_reports_comparisons_but_never_fixes_membership() {
+    assert_eq!(
+        fixed_output("if (x == NULL) f()\n", "equals-null"),
+        "if (is.null(x)) f()\n"
+    );
+    assert_eq!(
+        fixed_output("print(NULL != y)\n", "equals-null"),
+        "print(!is.null(y))\n"
+    );
+
+    for source in ["print(x %in% NULL)\n", "print(NULL %in% x)\n"] {
+        let finding = diagnostics(source)
+            .into_iter()
+            .find(|d| d.rule == "equals-null")
+            .expect("expected an equals-null finding");
+        assert!(finding.fix.is_none(), "NULL membership is not equivalent");
+    }
+}
+
+#[test]
+fn equals_special_constant_withholds_fix_when_helper_is_shadowed() {
+    for (source, rule) in [
+        (
+            "is.nan <- function(x) FALSE\nprint(x == NaN)\n",
+            "equals-nan",
+        ),
+        (
+            "is.null <- function(x) FALSE\nprint(x == NULL)\n",
+            "equals-null",
+        ),
+    ] {
+        let finding = diagnostics(source)
+            .into_iter()
+            .find(|d| d.rule == rule)
+            .expect("expected a special-constant comparison finding");
+        assert!(
+            finding.fix.is_none(),
+            "shadowed helper must not be introduced"
+        );
+    }
+}
+
+#[test]
+fn equals_special_constant_ignores_other_operators_and_double_constants() {
+    let rules =
+        diagnostics("print(x < NaN)\nprint(x + NULL)\nprint(NaN == NaN)\nprint(NULL != NULL)\n");
+    assert!(!rules.iter().any(|d| d.rule == "equals-nan"));
+    assert!(!rules.iter().any(|d| d.rule == "equals-null"));
+}
+
+#[test]
 fn redundant_ifelse_collapses() {
     assert_eq!(
         fixed_output("print(ifelse(cond, TRUE, FALSE))\n", "redundant-ifelse"),
@@ -5308,6 +5384,13 @@ fn fixed_output_is_parseable_and_clean() {
         // equals-na (`== NA` → is.na)
         "print(x == NA)\n",
         "print(NA == g(y))\n",
+        // equals-nan / equals-null (base helper confirmed; membership fixes are
+        // limited to the one equivalent NaN shape)
+        "print(x == NaN)\n",
+        "print(NaN != y)\n",
+        "print(x %in% NaN)\n",
+        "print(x == NULL)\n",
+        "print(NULL != y)\n",
         // redundant-ifelse collapse
         "print(ifelse(cond, TRUE, FALSE))\n",
         "print(ifelse(cond, FALSE, TRUE))\n",

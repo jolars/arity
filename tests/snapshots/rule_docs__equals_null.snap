@@ -1,0 +1,30 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `equals-null`
+
+Flag `==`, `!=`, and `%in%` comparisons with `NULL`; use `is.null()` for a scalar null test.
+
+This rule is **enabled by default**.
+
+Comparing a value with `NULL`:
+
+```r
+if (x == NULL) handle_null()
+```
+
+```text
+warning: equals-null
+ --> example.R:1:5
+  |
+1 | if (x == NULL) handle_null()
+  |     ^^^^^^^^^ comparison with `NULL` does not produce a scalar null test
+  = help: Use `is.null(x)`.
+```
+
+After applying the fix:
+
+```r
+if (is.null(x)) handle_null()
+```

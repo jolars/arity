@@ -79,10 +79,10 @@ than matching a bare spelling, and use the normal `add-lint-rule` TDD workflow.
 
 Tier 1—clear correctness bugs, good default-on candidates:
 
-- [ ] `equals-nan` and `equals-null`: flag `==`, `!=`, and `%in%` comparisons
-  against `NaN`/`NULL`; recommend `is.nan()`/`is.null()`. Share the atom-safe
-  comparison matcher with `equals-na`, preserve negation correctly, and only
-  fix when the callee is known to be base.
+- [x] `equals-nan` and `equals-null`: flag `==`, `!=`, and `%in%` comparisons
+  against `NaN`/`NULL`; recommend `is.nan()`/`is.null()`. Safe fixes require a
+  confirmed base helper and semantic equivalence: equality/inequality for both,
+  plus only right-hand `NaN` membership; other membership shapes are report-only.
 - [ ] `missing-argument`: report interior empty call arguments such as
   `paste("a", , "b")`. A trailing comma is valid and common, and missing
   formals such as `function(x, y = )` are intentional R, so scope this to

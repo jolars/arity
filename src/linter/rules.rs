@@ -129,6 +129,8 @@ fn correctness_rules() -> Vec<Box<dyn Rule>> {
         Box::new(correctness::DuplicateFormal),
         Box::new(correctness::DuplicatedArguments),
         Box::new(correctness::EqualsNa),
+        Box::new(correctness::EqualsNan),
+        Box::new(correctness::EqualsNull),
         Box::new(correctness::VectorLogic),
         Box::new(correctness::UnreachableCode),
         Box::new(correctness::IsNumeric),
@@ -717,6 +719,20 @@ impl RuleContext<'_> {
             return false;
         }
         origin_is_default(self.symbols.origin(name, self.model.loaded_packages()))
+    }
+
+    /// Whether introducing a bare call to `name` is conservatively known to
+    /// reach a default-package function. Unlike [`resolves_to_base`], there is
+    /// no existing call-site read to resolve, so any same-name binding anywhere
+    /// in the file withholds the rewrite rather than guessing its visibility.
+    pub fn introduced_call_resolves_to_base(&self, name: &str) -> bool {
+        self.symbols.is_base(name)
+            && !self
+                .model
+                .bindings()
+                .iter()
+                .any(|binding| binding.name == name)
+            && origin_is_default(self.symbols.origin(name, self.model.loaded_packages()))
     }
 }
 

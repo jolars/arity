@@ -34,24 +34,18 @@ impl Rule for EqualsNa {
         let Some(node) = el.as_node() else {
             return;
         };
-        let Some((lhs, op, rhs)) = matchers::binary_parts(node) else {
+        let Some((other, op, _)) = matchers::constant_comparison(node, matchers::is_na) else {
             return;
         };
-        if op.kind() != SyntaxKind::EQUAL2 {
+        if op != matchers::ConstantComparisonOp::Equal {
             return;
         }
-        // The non-`NA` operand; bail unless exactly one side is `NA`.
-        let other = match (matchers::is_na(&lhs), matchers::is_na(&rhs)) {
-            (true, false) => &rhs,
-            (false, true) => &lhs,
-            _ => return,
-        };
         let r = node.text_range();
         // `is.na(<other>)` parenthesizes the operand, so no precedence guard.
         let fix = Fix::safe(
             usize::from(r.start()),
             usize::from(r.end()),
-            format!("is.na({})", matchers::element_text(other)),
+            format!("is.na({})", matchers::element_text(&other)),
             "Replace `== NA` with `is.na()`",
         );
         sink.push(Diagnostic {
