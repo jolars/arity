@@ -131,7 +131,7 @@ fn roxygen_oracle_report() {
     print!("{report}");
 
     let out_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(".claude/skills/roxygen-parity/ROXYGEN_ORACLE.md");
+        .join(".agents/skills/roxygen-parity/ROXYGEN_ORACLE.md");
     fs::write(&out_path, &report).expect("write ROXYGEN_ORACLE.md");
     eprintln!("roxygen-oracle: wrote {}", out_path.display());
 
@@ -555,7 +555,7 @@ fn roxygen_harvested_report() {
         md.push('\n');
     }
 
-    let out_path = manifest_path(".claude/skills/roxygen-parity/ROXYGEN_HARVEST.md");
+    let out_path = manifest_path(".agents/skills/roxygen-parity/ROXYGEN_HARVEST.md");
     fs::write(&out_path, &md).expect("write ROXYGEN_HARVEST.md");
 
     println!(

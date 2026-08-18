@@ -38,7 +38,7 @@ use arity::config::LintConfig;
 use arity::linter::check_document;
 
 const ALLOWLIST_REL: &str = "tests/oracle/roxygen-lint-allowlist.txt";
-const REPORT_REL: &str = ".claude/skills/roxygen-parity/ROXYGEN_LINT.md";
+const REPORT_REL: &str = ".agents/skills/roxygen-parity/ROXYGEN_LINT.md";
 
 const CLASSES: &[&str] = &[
     "unknown-tag",

@@ -334,7 +334,7 @@ fn write_report(reports: &[Report], allow: &BTreeSet<String>, blocked: &BTreeSet
     write_section_burndown(&mut md, reports, blocked);
     write_backlog(&mut md, reports, blocked);
 
-    let out_path = manifest_path(".claude/skills/roxygen-parity/ROXYGEN_PROJECTOR.md");
+    let out_path = manifest_path(".agents/skills/roxygen-parity/ROXYGEN_PROJECTOR.md");
     let _ = fs::write(&out_path, &md);
 }
 

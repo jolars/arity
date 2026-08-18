@@ -16,6 +16,7 @@ extend-exclude = [
   # mdBook's SUMMARY.md is structural (one chapter per line); prose reflow breaks it.
   "docs/src/SUMMARY.md",
   ".claude/**/*",
+  ".agents/**/*",
   ".github/**/*",
   "npm/platform-template/",
 ]

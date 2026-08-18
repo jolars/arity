@@ -1,55 +1,55 @@
 # Agent Instructions
 
-This file carries global, cross-cutting rules for agents in this repository.
-Subsystem specifics live in `.claude/rules/*.md` and should not be duplicated
-here.
+This file is the complete instruction source for agents in this repository. It
+combines repository-wide and subsystem rules so tools that only discover
+`AGENTS.md` receive the full guidance.
 
-## Where instructions live
+## Project and architecture
 
-- Global rules that must hold before reading any file belong here.
-- Path-scoped subsystem rules live in `.claude/rules/*.md`:
-  `parser`, `formatter`, `linter`, `lsp`, `semantic`, `rindex`, `roxygen`,
-  `config`, `docs`, and `release`.
-- Before inspecting, editing, or reviewing a path in a subsystem, read its
-  corresponding rule file in full. The architecture map below is the routing
-  table for source paths; read `docs.md` or `release.md` whenever work concerns
-  those areas. If work spans multiple subsystems, read every applicable rule
-  file before acting. These are mandatory instructions, not optional
-  references.
-- Keep each rule file terse (target under 200 lines): rule, brief rationale,
-  pointer to code/tests.
-- Do not turn rules into issue archaeology or tutorials. Put those in tests,
-  issues, or `git log`.
+Arity is a Rust CLI for R with formatter, linter, parser, language-server,
+semantic/project, and package-index capabilities.
 
-## Project summary
-
-Arity is a Rust CLI for R with formatter, linter, parser, and language-server
-capabilities.
-
-- Root crate (`arity`) hosts CLI, LSP, lint, semantic/project layers, and
-  rindex.
-- Member crates:
-  - `crates/arity-parser` (R CST parser + `DESCRIPTION` DCF grammar + AST
-    wrappers)
-  - `crates/arity-formatter` (format engine)
-- Distributed surfaces include `editors/code`, `npm/`, `pyproject.toml`, and
+- Root crate (`arity`): CLI, LSP, lint, semantic/project, roxygen projector,
+  and rindex.
+- `crates/arity-parser`: lossless R CST parser, `DESCRIPTION` DCF grammar, and
+  typed AST wrappers.
+- `crates/arity-formatter`: format engine. `src/formatter.rs` is its root-crate
+  filesystem bridge.
+- Other distributed surfaces: `editors/code`, `npm/`, `pyproject.toml`, and
   `docs/`.
 
-## Tenets
+## Repository-wide tenets
 
-1. **Deterministic formatting.** The formatter is the sole layout authority.
-   Autofixes are text rewrites only; pipeline is fix-then-format.
-2. **Incremental parsing is first-class.** Parser/CST changes must preserve the
+1. The formatter is the sole layout authority. Autofixes are textual rewrites;
+   the pipeline is fix-then-format.
+2. Incremental parsing is first-class. Parser/CST changes must preserve the
    reparse path in `src/incremental.rs`.
-3. **Parsing belongs in the parser.** Do not patch parser mistakes downstream in
-   formatter or linter.
-4. **Parser owns losslessness.** `reconstruct(text) == text` byte-for-byte.
-5. **Formatting is idempotent.** `format(format(x)) == format(x)`.
+3. Parsing belongs in the parser. Never patch parser mistakes downstream.
+4. Parser reconstruction is byte-lossless: `reconstruct(text) == text`.
+5. Formatting is idempotent: `format(format(x)) == format(x)`.
+6. Semantics are static. Do not evaluate R or introduce an R runtime into
+   production behavior.
 
-Air compatibility is a soft, one-directional gauge and never a quality gate;
-policy lives in `.claude/rules/formatter.md`.
+Air compatibility is a soft, one-directional formatter gauge, never a quality
+gate. CI workflows in `.github/workflows/` are the quality-gate source of
+truth. Dependency changes must pass `cargo-audit` and `cargo-deny`.
 
-## Commands
+## Working and testing conventions
+
+- Use TDD: reproduce with a failing test first, then fix.
+- Run `cargo test --workspace`; bare `cargo test` covers only the root crate.
+- Fixture suites are hand-registered through `fixture_names()`; merely adding a
+  directory does not run it.
+- Review every `insta` snapshot with `cargo insta review`; never accept an
+  unread snapshot.
+- Preserve losslessness and idempotence. Benchmarks/profiles are opt-in local
+  measurements, not release gates.
+- Recurring workflows use the `add-lint-rule`, `linter-investigation`,
+  `roxygen-parity`, `smoke-test-triage`, and `perf-investigation` skills.
+- Optional untracked oracle/reference checkouts (`air/`, `style/`,
+  `roxygen2-ref/`) may be absent in a fresh clone.
+
+Primary checks:
 
 ```sh
 cargo build
@@ -58,7 +58,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --all -- --check
 ```
 
-Useful checks:
+Useful focused checks:
 
 ```sh
 cat file.R | cargo run -- parse --verify --quiet
@@ -67,53 +67,395 @@ cargo run -- format --verify <file.R>
 cargo run -- lint --fix <path>
 ```
 
-`task <name>` (`Taskfile.yml`) wraps common workflows (`lint`, `format`, `test`,
-`docs-gen`, `air-compat`, `corpus`, `bench`, `profile`, and roxygen oracles).
+`task <name>` wraps common workflows including `lint`, `format`, `test`,
+`docs-gen`, `air-compat`, `corpus`, `bench`, `profile`, and roxygen oracles.
 
-## Architecture map (short)
+## Parser and typed AST
 
-- Parser: `crates/arity-parser/src/` (`.claude/rules/parser.md`)
-- Formatter: `crates/arity-formatter/src/` + bridge `src/formatter.rs`
-  (`.claude/rules/formatter.md`)
-- Linter: `src/linter/` (`.claude/rules/linter.md`)
-- LSP: `src/lsp.rs`, `src/lsp/` (`.claude/rules/lsp.md`)
-- Semantic/project layers: `src/semantic/`, `src/project/`
-  (`.claude/rules/semantic.md`)
-- R index: `src/rindex/` (`.claude/rules/rindex.md`)
-- Roxygen projector: `src/roxygen/` (`.claude/rules/roxygen.md`)
-- Config/discovery: `src/config.rs`, `src/file_discovery.rs`
-  (`.claude/rules/config.md`)
-- Docs/bench/release: `.claude/rules/docs.md`, `.claude/rules/release.md`
+Scope: `crates/arity-parser/**` and the parsing parts of `src/incremental.rs`.
+The root crate re-exports this crate as `arity::{syntax, ast, parser, dcf}`;
+intra-repo users should continue using `crate::parser::…`.
 
-## Invariants and conventions
+### Hard constraints
 
-- CI workflows in `.github/workflows/` are the quality-gate source of truth.
-- Preserve losslessness and idempotence; do not introduce R evaluation.
-- Dependency changes must remain clean under `cargo-audit` and `cargo-deny`.
-- Benchmarks/profiles are opt-in local measurements, not release gates.
+- Preserve every byte: whitespace, comments, `%...%`, brackets, and line
+  endings. Every parser feature needs a losslessness assertion.
+- Errors never abort parsing. Diagnostics are a side channel and a recoverable
+  CST is always produced.
+- Recognize lexical/structural shape only; meaning belongs in semantic code.
+- Keep the parser dependency-thin and salsa-free (`rowan`, `serde`,
+  `smol_str`). Salsa belongs above it in `src/incremental.rs`.
+- Pipeline: lexer tokens → Pratt expression plus recursive structural parsing →
+  events → rowan CST. `SyntaxKind` uses `SCREAMING_SNAKE_CASE`.
+- `parser::expr` and `parser::roxygen` are public but semver-loose; do not grow
+  their low-level surface casually.
 
-## Commits and versioning
+### AST wrappers
 
-- Use Conventional Commits (`type(scope): subject`).
-- Never hand-edit `CHANGELOG.md` or version fields; `versionary` owns them.
-- Keep commits atomic per area (root crate vs member crate vs `editors/`).
+`ast/` is a zero-cost, read-only navigation view, not a re-model. R atomic
+operands are bare tokens, so operand accessors return `SyntaxElement` and
+`Expr::cast` accepts node expressions and token atoms. Prefer `HasArgList` and
+shared predicates in `kinds.rs` over bespoke CST walking. Linter, semantic, and
+LSP consumers navigate through wrappers; the formatter intentionally uses raw
+CST for byte-level layout.
 
-## Testing
+### DCF grammar
 
-- Use TDD: reproduce with a failing test first, then fix.
-- Run `cargo test --workspace` (bare `cargo test` only runs the root crate).
-- Fixture suites are hand-registered (`fixture_names()`); new fixtures must be
-  registered to run.
-- Snapshot workflow uses `cargo insta review`; do not accept unread snapshots.
-- Use suite-local tests:
-  - parser: `crates/arity-parser/tests/`
-  - formatter: `crates/arity-formatter/tests/`
-  - root integrations (lint/LSP/salsa/roxygen/rindex/config): `tests/*.rs`
+`dcf/` independently parses `DESCRIPTION` with the same losslessness and static
+constraints.
 
-Recurring workflows use skills: `add-lint-rule`, `linter-investigation`,
-`roxygen-parity`, `smoke-test-triage`, `perf-investigation`.
+- R and DCF have distinct `SyntaxKind` types; never glob-import both. Outside
+  `dcf/`, use `dcf::Document`, `Field`, and other typed wrappers.
+- Every physical line is one line node, or the first `VALUE_LINE` owned by a
+  `FIELD`. `COMMENT_LINE` may be a field child because R resumes continuations
+  after comments.
+- DCF deliberately has no event or incremental pipeline. Never use
+  `str::lines()`, which destroys CRLF fidelity.
+- Report only lexical facts matching `read.dcf` hard errors. Duplicate/required
+  field policy is lint; indentation style is format.
+- DCF fixtures live under `crates/arity-parser/tests/fixtures/dcf/`, registered
+  in `tests/dcf_snapshots.rs`. Protect CRLF fixtures with `.gitattributes`.
+- `task dcf-oracle` is an ignored differential against `read.dcf`. A new
+  disagreement must be fixed or deliberately normalized in its recorded
+  divergence table, never explained away.
 
-## Optional reference checkouts
+### Incremental parsing
 
-Some local oracle/reference directories are untracked and optional (`air/`,
-`style/`, `roxygen2-ref/`). Their absence in a fresh clone is expected.
+- Preserve the reparse ladder: token → block → top-level statement → full
+  parse (`parser/reparse.rs`).
+- All reparse entry points are total for caller-provided `Edit`: invalid ranges
+  return `None`, never panic. Staged reparsing verifies with `Edit::produces`
+  before parsing and must not allocate the final document via apply-and-compare.
+- Syntax node pointers are position-independent. Store green nodes in salsa,
+  never red `SyntaxNode`s (`SyntaxNode` is not `Send`/`Eq`).
+
+Parser fixtures are under `crates/arity-parser/tests/fixtures/parser/` and are
+registered in `tests/parser_snapshots.rs`. The air parser harness is a hardening
+oracle, not a gate; port useful cases into fixtures. Use `task bench-parse` for
+parser performance.
+
+## Formatter
+
+Scope: `crates/arity-formatter/**`, `src/formatter.rs`, and
+`src/formatter/**`. The engine is `crates/arity-formatter/src/formatter/`.
+
+### Engine constraints
+
+- Output depends only on rules and the single best-fit Wadler/Prettier-style
+  layout engine. Reject construct-specific hard-coded layout escapes.
+- Input line breaks never influence output. Persistent line breaks are a bug.
+- A behavior-preserving refactor means byte-identical output.
+- Never hide a parser defect or reintroduce whole-construct verbatim output.
+  `Ir::verbatim`/`verbatim_forced` is limited to relocated comment text and
+  rendered-flat conditional-group candidates; model constructs in native IR.
+- `roxygen.rs` formats by semantic `TagClass`, never by whether a tag body was
+  originally inline or on the next line.
+- Keep `FormatStyle`'s optional `serde`/`schema` features optional and keep
+  `arity-parser` as the formatter crate's only heavy dependency.
+
+The root bridge owns filesystem concerns: `check.rs` batch discovery,
+`source.rs` grammar selection, and `cache.rs`. The format-check cache is a
+disposable optimization and never an error source. Its key includes CLI version
+and grammar; `--no-cache` overrides it. Roxygen probing is R-only, and declining
+to format a `DESCRIPTION` is not an error.
+
+### Format directives
+
+Directive grammar comes only from `arity_parser::directive`.
+`# arity-format skip`, `off`…`on`, `skip-file` and `# arity` forms are the sole
+layout opt-out.
+
+- Splice skipped spans byte-for-byte at their own column. `Ir::Skipped` clears
+  pending indentation and stays distinct from `Ir::verbatim`.
+- Directives are honored only in the three statement-list sequencers, making
+  regions list-local. Keep `is_honored_position` public because the linter uses
+  it as the behavioral authority.
+- `skip-file` short-circuits `format_node`, preserving even line endings;
+  `format_range` returns `None`.
+
+### DESCRIPTION formatting
+
+`formatter/description/` is a separate first-fit formatter, not the R layout
+engine. `desc` is a style reference, never an oracle, because it drops comments.
+Use `task desc-compat` only as a gauge.
+
+- The field-class table is closed and defaults to `Opaque`, preserving unknown
+  value line structure byte-for-byte.
+- Comments attach forward to the next field, matching the linter's
+  `next_meaningful_dcf_sibling`; do not retarget directives.
+- Refuse formatting when interpretation is unsafe: duplicate fields, multiple
+  records, whitespace before colon, or non-UTF-8 `Encoding`. Refusal is not an
+  error.
+- Continuation indentation is always four spaces, independent of R
+  `indent_width`.
+
+### Compatibility and tests
+
+`task air-compat` runs the ignored fixed-point test
+`air(arity(x)) == arity(x)` and regenerates `AIR_COMPAT.md`. Adopt idiomatic
+rules or record deliberate differences with rationale in
+`tests/air_compat_allowlist.toml`; an unexplained difference is an open question
+but never a build failure.
+
+Formatter cases use `input.R`/`expected.R` directories under
+`crates/arity-formatter/tests/fixtures/formatter/`, registered in
+`tests/formatter.rs`. Keep formatter, range, losslessness, idempotence, and
+`tests/roxygen_format_stability.rs` green.
+
+## Linter
+
+Scope: `src/linter.rs` and `src/linter/**`. Use `add-lint-rule` when adding a
+rule and `linter-investigation` for corpus triage.
+
+### Scope and dispatch
+
+- Lint is semantic. Layout detectable by formatter `--check` belongs there.
+- Parse diagnostics block lint for R and DCF; `check_paths` reports
+  `Clean`, `Findings`, or `ParseDiagnostics`.
+- Inputs include `.R` and package-root `DESCRIPTION`. During walks, exclude
+  nested fake packages; explicitly named descriptions are always linted.
+  Reading is never conditional on selected rules: `syntax-error` is not a rule.
+- Rules never walk independently. Declare `Rule::interests` and join the shared
+  walk; whole-file rules override `check_file` with empty interests.
+- `src/linter/rules.rs::rules_by_category` is the single catalogue for all rule
+  IDs, lists, and docs. DCF rules implement `DcfRule` and register as
+  `AnyRule::Dcf` in that same catalogue. `ResolvedRules::with_config` splits R
+  and DCF dispatch exactly once; never create a second registry.
+- `run_rules` alone owns suppression filtering and the post-pass.
+  `check_suppressions` handles facts known only after filtering. Meta rules read
+  parsed directives from `RuleContext`; `misplaced-suppression` asks the
+  formatter's public predicate rather than recreating its behavior.
+
+### Identity, fixes, and configuration
+
+- IDs are stable user-facing kebab-case and must not equal directive verbs
+  `skip`, `skip-file`, `off`, or `on`. Renaming is breaking.
+- Every rule has a description and executable `examples()`. Package-level
+  examples declare `doc_package` so docs execute in a synthetic package.
+- Fixes are textual and must leave parseable, lossless code without dropped
+  trivia. They do not owe formatting or line width and never invoke formatter.
+  Use tight/atom-guarded spans or withhold the fix for unsafe shapes while still
+  reporting. `Safe` applies with `--fix`; others need `--unsafe-fixes`.
+- `[lint.rules.<id>]` maps to typed structs on `RulesConfig`; unknown keys there
+  are parse errors. Unknown `select`/`ignore` IDs are lint-time errors. Options
+  travel through `ResolvedRules` to `RuleContext::config`, not through
+  `run_rules` parameters.
+- Version rules use resolved R/roxygen2 floors and remain silent if neither
+  config nor `DESCRIPTION` supplies a floor.
+
+### Suppressions
+
+Parse suppression syntax only with `arity_parser::directive`. Deprecated
+`# arity-ignore` aliases behave like skip directives but stay out of docs.
+`Coverage::{File, Range, Nothing}` drives a single suppression predicate. Lint
+regions are byte ranges, so unclosed `off` reaches EOF (unlike formatter
+list-local regions). A blanket directive cannot silence a finding whose span is
+the directive comment itself; an explicitly named meta rule can.
+
+Add tests in `tests/lint.rs` or `tests/lint_description.rs` plus examples; use a
+complete `TEST_DESCRIPTION` for package fixtures. Fixed-output tests must parse,
+and curated width-safe cases remain format-clean. Rules docs are generated by
+`task docs-gen`; never edit them directly.
+
+## Semantic and project layers
+
+Scope: `src/semantic/**`, `src/project/**`, and their incremental queries.
+`semantic` is strictly single-file; cross-file logic belongs in `project`.
+
+- Never evaluate R. Semantic owns scopes, bindings, in-file resolution,
+  `library()` tracking, and per-region CFGs.
+- `StaticBaseR` and `BundledPackages` symbol lists are generated by the scripts
+  and `.github/workflows/cran-symbols.yml`; never hand-edit them.
+- Project owns source dependencies, package shared namespaces, export
+  projections, class inheritance, native registrations, and pure
+  `ProjectScope::build`.
+- Per-file projections and `DescriptionFacts` stay range-free so body/prose
+  edits backdate without rebuilding the graph. `tests/salsa_incremental.rs`
+  guards this.
+- Keep `FileScope` reasons separate: `read_elsewhere`,
+  `exported_by_namespace`, and `is_s3_method`. `used_elsewhere` unions only the
+  first two.
+- Parse all description facts together: package name, dependencies, compat
+  floors, Roxygen, and Collate. `R` names the language and is never a package
+  dependency.
+- Only `Depends` attaches bare names. `Imports` requires `pkg::` or NAMESPACE
+  import declarations.
+- Native registration scanning reads `src/` only for `.registration = TRUE`.
+  Harvest actual routines; never blanket-suppress unresolved names.
+- `ProjectScope::build` remains pure. Record wholesale imports there; resolve
+  them against `LibraryIndex` later in `external_resolution`. Its
+  `resolution_incomplete` flag means only dynamic/unanalyzed `source()`.
+- Salsa models text → CST → semantics above the parser and is single-writer.
+  Store green nodes. `DescriptionFile` tracks text while `description_facts` is
+  its range-free `Eq` projection.
+
+## Language server
+
+Scope: `src/lsp.rs` and `src/lsp/**`. Read the module documentation's full
+threading rationale before changing the main loop. Transport is synchronous
+stdio JSON-RPC via `lsp-server`; salsa cancellation is a synchronous unwind.
+
+### Threading and scheduling
+
+- The main loop owns no salsa DB. The dedicated lint thread owns the persistent
+  DB and is the sole writer.
+- Split lint into cheap mutable `prepare_document_in_project` on the lint thread
+  and expensive immutable `analyze_prepared` on the read pool. Long analysis
+  must not block queued writes/reads.
+- Use purpose-built pools: latency-sensitive reads and a separate single-thread
+  pool for unbounded package indexing. Never put unbounded work on the read
+  pool.
+- Coalesce requests by newest URI version. At most one analysis is in flight; a
+  newer edit cancels analysis of the same URI, but a different URI waits and is
+  never cross-canceled.
+- Salsa cancellation or cache miss falls back to fresh parsing. Reads must stay
+  correct even when not warm.
+
+### R and DESCRIPTION
+
+- Decide `DocumentKind` once at open; filename overrides `languageId`.
+- `r_doc_snapshot` rejects descriptions; `doc_snapshot_any` serves both. Every
+  new handler must deliberately choose one.
+- Existing read methods branch on kind inside `*_via_db`, not by adding
+  `ReadJob` variants. A genuinely new method adds a variant and exhaustive arms
+  in both `run_read` and state drain; no wildcard matches.
+- Full-document formatting serves both grammars; range formatting is R-only.
+- Pathless URIs use `kind.placeholder_file_name()`, never a literal filename.
+- An open description is authoritative: seed it before `upsert_description`
+  (graph refresh reads disk), and emit `RelintAll` only if facts changed.
+
+### Buffers and edits
+
+- Open documents use `Arc<TextBuffer>` containing text and incrementally
+  spliced `LineIndex`. The main loop mutates only via `Arc::make_mut`; version
+  stays outside the Arc.
+- Share one `Arc<str>` among buffer, `SourceFile`, and `PrevParse`. Never add
+  `.text().to_string()` on dispatch; use `text_arc()`.
+- In equality checks, `Arc::ptr_eq` may precede content comparison but never
+  replace it. Equal content in fresh allocations must not invalidate queries.
+- Reads clone Arcs and use the buffer's index; do not rebuild a live-buffer
+  `LineIndex` per request. Salsa independently rebuilds its own index, and both
+  must agree (`apply_edit_matches_rebuild_exhaustively`).
+- Keep public `compute_*(&str)` APIs; hot paths use buffer-taking `*_in` and
+  `*_via_db` forms.
+- Formatting returns line-diff edits to preserve cursor/folds. Only a diff over
+  more than half the span falls back to one replacement. Full/range and R/DCF
+  output must reproduce formatter bytes exactly.
+
+Convert URIs only through `src/lsp/uri.rs::{to_path,from_path}`; tests must not
+assume slash direction. Watch workspace changes for `arity.toml`, DESCRIPTION,
+NAMESPACE, `.R`, and workspace folders. Project facts belong in `arity.toml`;
+machine facts belong in editor settings. Rename supports symbols, files, and
+folders and drops targets leaving workspace scope.
+
+Test behavior in `tests/lsp.rs`, wire protocol in `tests/lsp_protocol.rs`, and
+incremental graph preservation in `tests/salsa_incremental.rs`.
+
+## R package introspection index
+
+Scope: `src/rindex/**` and `tests/rindex.rs`; CLI command `arity index`.
+
+- Never invoke R/Rscript. Read RDS, lazy-load `.rdb`/`.rdx`, and Rd natively.
+- Network fetches require per-user consent through `ARITY_REMOTE_URL`; keep the
+  corresponding config field `#[serde(skip)]`, never project-configurable.
+- Malformed installed files degrade to no symbols, never panic. A stale/missing
+  cache may reduce precision but cannot change correctness.
+- Discovery/library paths feed build/harvest, cache/schema, then
+  `SymbolProvider`. Indexing honors the same `arity.toml` excludes and `[index]`
+  settings as other commands.
+- LSP indexing stays on its isolated one-thread pool.
+- Tests use `tests/fixtures/rindex/`; never assert against packages installed on
+  the current machine.
+
+## Roxygen parser and projector
+
+Parsing belongs in parser roxygen modules, formatting in formatter `roxygen.rs`,
+and `src/roxygen/` contains only the test-time CST→Rd projector. Use the
+`roxygen-parity` skill for parity gaps.
+
+- Roxygen `#'` sub-tokens must tile every input byte. Marker, tag, arguments,
+  prose, Rd macros, and markdown structure live in CST and are never re-lexed
+  downstream.
+- The projector is a faithful diagnostic, not a roxygen2 implementation or a
+  place to fix divergence. It emits parser-owned Rd section subtrees; fix CST
+  or encoding translation, never patch projector output to pass.
+- `tests/roxygen_projector.rs` is the pure-Rust pinned/allowlisted CI gate. When
+  a case starts passing, ratchet it into the allowlist.
+- R-backed oracle tests are ignored and run through `task roxygen-oracle` and
+  `task roxygen-lint-oracle`. They use optional `roxygen2-ref/`, pinned by
+  `tests/oracle/.roxygen2-source`.
+- Formatting depends on `TagClass`, not written layout, and is pinned by
+  `tests/roxygen_format_stability.rs`.
+
+## Configuration and discovery
+
+Scope: `src/config.rs`, `arity.toml`, config tests, and configuration docs.
+Every command honors discovered config; `--config` forces a path and
+`--no-config` ignores config.
+
+- Config structs use `#[serde(deny_unknown_fields, rename_all = "kebab-case")]`.
+  Typos are errors. Place keys according to ownership: shared excludes and
+  project compatibility facts are top-level.
+- Library APIs take a fully resolved `FormatStyle`; CLI, LSP, and index resolve
+  config so all walks honor the same excludes.
+- Secrets/egress choices like remote index URL come from environment and use
+  `#[serde(skip)]`, never committed project config.
+- `LintConfig::compat` is a skipped mirror of top-level parsed compatibility so
+  CLI and LSP share one plumbing path.
+- Schema: top-level `exclude` (replaces defaults), `extend-exclude`, `cache`;
+  `[format]` line/indent width and line endings; `[lint]` selection, ignores,
+  and typed rule tables; `[compat]` R and roxygen2 version floors; `[index]`
+  library paths, cache dir, auto-build, and help.
+- Missing compat floors derive per file from enclosing DESCRIPTION; with no
+  floor, version-aware rules are silent.
+- Schema changes update the dogfood `arity.toml`, hand-written configuration
+  docs, and `tests/config.rs`.
+
+## Documentation, benchmarks, and profiles
+
+`docs/` is mdBook. Never hand-edit generated pages:
+
+| Generated page | Source |
+| --- | --- |
+| `docs/src/reference/cli.md` | `build.rs` from clap |
+| `docs/src/reference/rules.md`, `docs/src/version.md` | `docgen` |
+| benchmark meta/results pages | `src/bench_docs.rs` from tracked JSON |
+
+Regenerate all with `task docs-gen`; pinning-test failures mean regenerate, not
+edit snapshots. Other prose is hand-written and panache-formatted. New pages
+need `SUMMARY.md` entries. Canonical/sitemap examples skip mdBook redirect stubs.
+
+Benchmarks are measured, never asserted. `task bench` compares formatter and
+linter tools at synthetic and real-package scopes and rewrites tracked
+`benches/benchmark_results.json`, the sole published performance source. Report
+ratios, not milliseconds; it measures wall time, not equivalence. Use
+`task air-compat` for output comparison and `task bench-parse` for parser work.
+The renderer is tool-generic.
+
+`task profile` samples `benches/profile.rs` and writes only under
+`target/profile/`. Preserve `scripts/profile.sh` as flag/profile authority,
+including frame-pointer call graphs and `[profile.profiling]`. Use the
+`perf-investigation` workflow for measured performance changes.
+
+## Distribution and releases
+
+Releases derive from Conventional Commits; use `type(scope): subject`.
+Never hand-edit `CHANGELOG.md` or any version field: versionary owns Cargo, npm,
+editor, and other versions. Pre-1.0 breaking changes produce minor bumps.
+
+Release streams are root CLI `v*`, parser `arity-parser-v*`, formatter
+`arity-formatter-v*`, and VS Code following CLI. Editor/member paths are
+excluded from CLI version calculation, so commits spanning root, member crates,
+or `editors/` must be split atomically.
+
+Main pushes run tests/audit/deny and versionary opens a release PR. Merging tags
+and fans out builds/publishing. `publish-cargo.yml` publishes unpublished
+workspace crates in dependency order on CLI tags; only the CLI stream owns
+GitHub assets.
+
+- VS Code is TypeScript/esbuild and biome-gated. Packaging downloads a target
+  server, but runtime supports bundled/environment/path and PATH fallback;
+  bundled must not become mandatory (notably on NixOS).
+- npm CLI selects generated platform packages through optional dependencies.
+- PyPI uses maturin.
+- Any dependency change remains clean under `cargo-audit` and `cargo-deny`.
