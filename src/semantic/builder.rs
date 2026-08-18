@@ -502,10 +502,6 @@ fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) 
         walk_element(ctx, value, scope);
     }
 
-    // 2. Record the binding — unless we're inside quoted code (`quote`,
-    //    `expression`, …), where an assignment is captured unevaluated and binds
-    //    nothing analyzable. The RHS was still walked above (its reads are masked,
-    //    hence harmless), matching how the rest of the quoted body is handled.
     if ctx.quote_depth > 0 {
         return;
     }
@@ -566,10 +562,6 @@ fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) 
 }
 
 fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
-    // Naming a package in a load call *references* it, wherever the call sits —
-    // `requireNamespace()` inside a function body is the conditional-dependency
-    // idiom. Recorded separately from the attach set below, which is
-    // deliberately top-level-only because attachment is the narrower fact.
     if let Some(call) = CallExpr::cast(node.clone())
         && let Some(callee) = call_callee_ident(&call)
         && crate::semantic::symbols::PACKAGE_LOAD_CALLS.contains(&callee.as_str())
@@ -669,11 +661,6 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
         // so an inner `<-` there is not a real local binding, and its unquoting
         // escapes (if it has any) do evaluate. `enter_quote_mask` carries both.
         let quoting = call_quote_kind(node);
-        // The callee is the first read recorded below (it precedes the
-        // `ARG_LIST` among the call's children). Remember which one it is so
-        // `apply_shadow_gate` can retract the mask if it turns out to name the
-        // file's own function. A quoting callee is pinned instead: it evaluates
-        // nothing regardless of what the name resolves to.
         let verb_start = ctx.model.idents.len();
         for el in node.children_with_tokens() {
             // Mask the argument list (bare names there may be data columns);

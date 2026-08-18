@@ -253,13 +253,7 @@ pub(crate) fn syntax_kind_for(kind: &TokKind) -> SyntaxKind {
         TokKind::RoxygenMdListMarker => SyntaxKind::ROXYGEN_MD_LIST_MARKER,
         TokKind::RoxygenMdFence => SyntaxKind::ROXYGEN_MD_FENCE,
         TokKind::RoxygenMdHtml => SyntaxKind::ROXYGEN_MD_HTML,
-        // The HTML-block opener line is verbatim text inside a
-        // `ROXYGEN_MD_HTML_BLOCK`; the block node is built by the grouping phase.
         TokKind::RoxygenMdHtmlBlock => SyntaxKind::ROXYGEN_TEXT,
-        // A table delimiter row is verbatim text — inside a `ROXYGEN_MD_TABLE` when
-        // it forms a table, or ordinary prose when it does not (an unmatched
-        // delimiter row). Either way its content is plain text; the table node is
-        // built by the grouping phase.
         TokKind::RoxygenMdTableDelim => SyntaxKind::ROXYGEN_TEXT,
         // An ATX heading line is verbatim text inside a `ROXYGEN_MD_HEADING` node
         // (the only path the grouper produces). Mapping the bare leaf to

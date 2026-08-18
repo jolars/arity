@@ -68,7 +68,6 @@ const BLOCK_RD_MACROS: &[&str] = &[
     "donttest",
     "dontshow",
     "testonly",
-    // Wrappers that carry any of the above, so they are block wherever they are.
     "if",
     "ifelse",
     "section",
@@ -202,7 +201,6 @@ const RD_MACRO_ARITY: &[(&str, usize)] = &[
     ("dots", 0),
     ("ldots", 0),
     ("R", 0),
-    // R system user macros (see above).
     ("manual", 2),
     ("bibinfo", 3),
     ("sspace", 0),

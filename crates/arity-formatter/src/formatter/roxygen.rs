@@ -97,10 +97,6 @@ fn physical_lines(block: &SyntaxNode) -> Vec<PhysicalLine> {
     let mut cur = PhysicalLine::default();
     for el in elements {
         match el.kind() {
-            // A block macro owns its own marker/newline trivia; it is a self-
-            // contained multi-line unit, so close any pending line and emit it on
-            // its own. (Checked before the marker-less drop below — its opening
-            // marker is *inside* the node, so `cur.marker` is still `None` here.)
             SyntaxKind::ROXYGEN_RD_MACRO if el.as_node().is_some_and(is_block_macro) => {
                 if cur.marker.is_some() || !cur.elements.is_empty() {
                     lines.push(std::mem::take(&mut cur));
@@ -493,29 +489,9 @@ fn collect_logical_elements(
             {
                 collect_logical_elements(&n, out);
             }
-            // A *cross-line* inline node — emphasis/strong or an inline link the
-            // pass resolved across a soft line break — owns its inner `#'` markers
-            // and newlines, so descend into it: its delimiter/bracket leaves and
-            // text become ordinary inline elements that the marker/newline split
-            // below distributes across the physical lines, where prose reflow
-            // handles them (the resolved span is preserved on reparse — flanking
-            // and bracket pairing are invariant under whitespace normalization). A
-            // *single-line* span (no marker) stays atomic, so `*foo*` and a
-            // one-line `[text](url)` each glue as one chunk.
-            //
-            // A cross-line raw-HTML span (`ROXYGEN_MD_HTML` node) or code span
-            // (`ROXYGEN_MD_CODE` node) descends too so the physical lines
-            // re-form — but unlike emphasis the paragraph carrying one bails
-            // reflow entirely ([`line_has_cross_line_verbatim_span`]) instead
-            // of rejoining.
             NodeOrToken::Node(n) if is_cross_line_inline(&n) => {
                 collect_logical_elements(&n, out);
             }
-            // A reflowing tag whose folded value carries a *block* Rd macro: the
-            // tag stays atomic (its header and the prose before the macro are one
-            // unit) but the macro — and the closing line's trailing prose after it
-            // — are re-emitted as block-level elements, so the split below gives
-            // the macro its own line ([`tag_block_macro`]).
             NodeOrToken::Node(n) if tag_block_macro_of(&n).is_some() => {
                 let stop = tag_block_macro_of(&n);
                 out.push(NodeOrToken::Node(n.clone()));
@@ -827,10 +803,6 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
             || section.as_ref().is_some_and(|s| !s.chunks.is_empty())
             || !para.lines.is_empty();
 
-        // Blank separator: a boundary, except inside an open section, where it is
-        // buffered — a *trailing* blank before the next tag must not flip the
-        // section's inline/form-2 decision (Tenet 1), and a blank *followed* by
-        // more prose marks a real paragraph break (handled in the prose branch).
         if line.is_blank() {
             if let Some(s) = section.as_mut() {
                 s.pending_blanks.push(line.clone());
@@ -1069,9 +1041,6 @@ fn flush_tag_unit(unit: &mut Option<TagUnit>, items: &mut Vec<Ir>, line_width: u
 /// is the paragraph's first prose line — for a tag-headed body, the tag *value*
 /// rather than the whole `@tag …` line, so the linkref check reads the right text.
 fn prose_bails_reflow(lines: &[PhysicalLine], first_text: &str, md: bool) -> bool {
-    // A brace-less sticky code/verbatim swallow forbids reflow in either mode: it
-    // makes each physical line a verbatim `RCODE`/`VERB` atom, so joining/splitting
-    // changes the atom count (Tenet 1).
     lines.iter().any(line_has_sticky_swallow)
         || if md {
             text_opens_linkref_def(first_text)
@@ -1175,10 +1144,6 @@ impl SectionUnit {
                 + header.chars().count()
                 + 1
                 + one.chars().count();
-            // A chunk that spans `#'` lines — a soft-wrapped inline Rd macro,
-            // glued whole — cannot sit inline after the header whatever its width:
-            // "fits on the tag line" is not a question one can ask of a body that
-            // is not one line. Form-2 puts the bare tag line above it instead.
             let spans_lines = self.chunks.iter().any(|c| c.contains('\n'));
             if !self.force_form2 && !spans_lines && inline_w <= line_width {
                 push_line(items, format!("{marker} {header} {one}"));
@@ -1308,9 +1273,6 @@ impl ExampleBody {
             .line_width
             .saturating_sub(indent_cols + marker.len() + 1)
             .max(1);
-        // Only the width budget differs; `.lines()` below strips the embedded
-        // output's newlines, so its line ending is immaterial (the outer pass
-        // applies the configured one).
         let body_style = FormatStyle {
             line_width: budget,
             ..style
@@ -1476,21 +1438,9 @@ where
                 }
             }
             NodeOrToken::Token(t) if t.kind() == SyntaxKind::ROXYGEN_MARKER => {}
-            // A cross-line emphasis/strong/link span owns its inner `#'` markers and
-            // newlines: descend so its text chunks across the soft break the same
-            // way a paragraph's does (a single-line span has no marker, so it is
-            // glued whole below).
             NodeOrToken::Node(n) if is_cross_line_inline(&n) => {
                 chunk_into(n.children_with_tokens(), cur, out);
             }
-            // A soft-wrapped inline Rd macro: still one protected atom, but its
-            // internal `#'` break is the author's wrap, not content, so it is
-            // normalized away. That makes the atom identical to the one the same
-            // macro written on a single line produces, which is what keeps the
-            // input's line breaks out of the output (Tenet 1); on reparse the
-            // joined macro is an ordinary single-line span, so it is idempotent.
-            // A line-significant body (`\verb`, and the block macros that never
-            // reach here) renders its break, so it is glued verbatim below.
             NodeOrToken::Node(n) if joins_soft_breaks(&n) => {
                 cur.push_str(&join_soft_breaks(&n.text().to_string()));
             }

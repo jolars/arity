@@ -51,8 +51,6 @@ pub(crate) fn definition_via_db(
         snapshot
             .workspace_def_sites(&name)
             .into_iter()
-            // The current file is handled intra-file above; skip it so a stale
-            // tracked copy never shadows the live buffer's own definition.
             .filter(|(def_path, _)| def_path != path)
             .filter_map(|(def_path, range)| {
                 let file = snapshot.lookup_file(&def_path)?;
@@ -128,9 +126,6 @@ pub(crate) fn references_via_db(
                 range: text_range_to_lsp_range(line_index, *range, encoding),
             }));
         }
-        // Cross-file: a top-level binding can be read from files that can see
-        // this one. Scope to that component; this file's own occurrences were
-        // collected above, so skip it. Nested locals stay intra-file.
         if model.binding_is_file_scope(target.binding) {
             locations.extend(cross_file_reference_locations(
                 snapshot,
@@ -859,11 +854,6 @@ mod tests {
 
     #[test]
     fn rename_cursor_offset_precise_slice_survives_disjoint_edits() {
-        // Prepare a rename of `value`, then two disjoint edits straddle its
-        // `value <- 1` assignment: a comment above and a statement below.
-        // Coalesced into one `diff_edit` they span the node interior and
-        // invalidate the handle; kept disjoint via the accumulated slice, the
-        // node survives and the cursor re-anchors at the shifted `value`.
         let text_a = "value <- 1\nprint(value)\n";
         let mut anchor = compute_prepare_rename(text_a, 0, PositionEncoding::Utf16)
             .expect("offers rename")
@@ -1167,8 +1157,6 @@ mod tests {
 
     #[test]
     fn rename_via_db_refuses_multidef_with_parse_error_sibling() {
-        // c.R is seeded but has a parse error, so `workspace_project` drops it —
-        // the analyzed set no longer covers R/, so the multi-def rename refuses.
         assert!(
             !package_multidef_rename_offered(
                 "Package: testpkg\n",
@@ -1256,10 +1244,6 @@ mod tests {
 
     #[test]
     fn rename_via_db_allows_rename_with_an_unrelated_dynamic_source() {
-        // a.R defines `foo`; b.R sources a.R and reads it (a normal reader). c.R
-        // has a dynamic source() but never reads `foo`, and nothing sources c.R,
-        // so no reader of `foo` is in its reach. The dynamic source is irrelevant
-        // to renaming `foo`: it no longer blocks the rename project-wide.
         let a_src = "foo <- function() 1\n";
         let b_src = "source(\"a.R\")\nbar <- function() foo()\n";
         let c_src = "p <- \"x.R\"\nsource(p)\n";

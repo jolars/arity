@@ -973,9 +973,6 @@ mod tests {
 
     #[test]
     fn masking_verb_defined_after_use_stays_masked() {
-        // A top-level call runs before a definition placed below it, so the call
-        // really is dplyr's `filter`. Resolution is frame-ordered, so this falls
-        // out for free — and errs toward suppression either way.
         let m = model_of("filter(d, a)\nfilter <- function(x, y) x");
         assert!(ident_named(&m, "a").data_masked);
     }

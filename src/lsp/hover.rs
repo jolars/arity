@@ -161,10 +161,6 @@ pub(crate) fn resolve_query<'p>(
         }
         SymbolQuery::Bare { name, range } => {
             let model = SemanticModel::build(root);
-            // The remote sidecar is names-only: a name resolving solely through it
-            // has no rich entry to render, so `indexed.lookup` below would yield
-            // `None` regardless. Resolving against an empty remote here is therefore
-            // observationally identical and keeps hover off the network tier.
             let remote = RemoteExports::new();
             let package = match resolve_origin(indexed, &remote, &name, model.loaded_packages()) {
                 PackageOrigin::Resolved(p) => p,

@@ -167,9 +167,6 @@ pub(super) fn project_block_impl(
     } else {
         intro_paras.get(cursor).inspect(|_| cursor += 1).cloned()
     };
-    // Everything remaining = details, merged with any explicit @details — but
-    // roxygen2 only folds @details in when there *are* leftover intro paragraphs;
-    // otherwise @details stands alone (emitted by the tag loop below).
     let intro_details = &intro_paras[cursor..];
     let merge_details = !intro_details.is_empty();
 
@@ -210,19 +207,12 @@ pub(super) fn project_block_impl(
     }
 
     for (name, body) in &tag_sections {
-        // A folded-in @details was emitted above; skip the standalone section.
         if merge_details && name == "details" {
             continue;
         }
         project_tag_section(name, body, out, md);
     }
 
-    // roxygen2 merges repeated same-type sections *within* one block exactly as
-    // across blocks (`RoxyTopic$add` vector-appends each `rd_section`'s value;
-    // the per-type `format` renders). Runs at the rendered-string level because
-    // markdown processes each tag value *before* the join — a heading in one
-    // value hoists its own `\section` without swallowing the next value. The
-    // returned title inners feed the fallback below.
     let title_inners = collapse_same_head_sections(out, block_start);
 
     // roxygen2's `topics_add_default_description` runs *after* the roclet has
@@ -773,26 +763,9 @@ pub(super) fn emit_section_with_headings(
     md: bool,
     drop_on_incomplete: bool,
 ) {
-    // A level-1 heading nested *inside a list* slices roxygen2's flat Rd string
-    // mid-`\itemize{…}` — a different regime from the top-level outline below.
     if emit_section_with_list_hoist(out, macro_name, body, md, drop_on_incomplete) {
         return;
     }
-    // (A trailing level-1 heading with an empty section body used to crash
-    // roxygen2 7.x's section splicer and abort the whole markdown pass;
-    // 8.0.0 pads `strsplit`'s dropped trailing empties to the title count
-    // (`mdxml_children_to_rd_top`, R/markdown.R), so an empty trailing
-    // section now renders like any other and no raw-text fallback exists.)
-    // Segment the body: the leading run, then one (heading, following-run) per
-    // heading marker in source order. Under `@md`, a setext heading's title first
-    // sheds any leading link-reference definitions — cmark strips them from the
-    // paragraph *before* deciding the setext promotion
-    // (`resolve_reference_link_definitions`), so the definition line never joins
-    // the title (cm-217), and a title left empty demotes the heading entirely:
-    // its underline is ordinary paragraph text in the current flow (cm-218). The
-    // stripped defs join the field-wide map, which — together with every run's
-    // own defs, in document order — seeds each piece's resolution below, so a
-    // reference resolves across headings (cm-216).
     struct Seg {
         head: Option<(usize, Vec<Inline>)>,
         run: Vec<Inline>,
@@ -878,17 +851,6 @@ pub(super) fn emit_section_with_headings(
         stack.push(idx);
     }
 
-    // The enclosing tag section: its leading prose plus any level->=2 children that
-    // hang directly off it (headings before the first level-1 heading), each a
-    // nested `\subsection`. A level-1 child hoists out (below). Omit the enclosing
-    // section entirely when it has no content.
-    //
-    // roxygen2 runs `rdComplete` per level-1 piece ([`heading_piece_complete`]):
-    // an incomplete enclosing piece (a `\subsection{Foo\}` whose title's trailing
-    // backslash escapes the wrapper brace, cm-090) empties — rendered `(\<macro>)`
-    // when it is the field's only piece, omitted entirely when `\section` pieces
-    // follow (engine-probed). Only the `sections = TRUE` tags drop
-    // (`drop_on_incomplete`, all-md by construction here).
     let has_section = frames[0].children.iter().any(|&c| frames[c].level == 1);
     if drop_on_incomplete && !heading_piece_complete(&frames, 0, md, &field_defs) {
         if !has_section {
@@ -1474,15 +1436,6 @@ pub(super) fn section_rd_complete(body: &[Inline], md: bool) -> bool {
 /// output serialization uses.
 fn section_rd_complete_seeded(body: &[Inline], md: bool, seed: &LinkDefs) -> bool {
     if md {
-        // An inline `[text](dest)` link whose cmark destination ends in a
-        // trailing **odd** backslash run makes roxygen2's `\href{dest}{text}`
-        // brace-incomplete (the trailing `\` escapes the closing brace), so the whole
-        // section drops — `[t](foo\)bar)` (cmark's bare destination closes at the
-        // raw `)`, leaving `foo\`) and `[t](<foo\>)` alike. The link node hides the
-        // trailing `\` from the atom scan below; detect it directly on the parsed
-        // destination (see [`md_href_dest_drops`]). A fenced code block's raw
-        // info string is likewise hidden (its atom is a neutralized `\out` VERB)
-        // and checked directly ([`md_fence_info_drops`]).
         if body_has_md_drop(body) {
             return false;
         }

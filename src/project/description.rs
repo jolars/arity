@@ -557,7 +557,6 @@ mod tests {
     fn package_name_from_description() {
         let dir = package("Package: mypkg\nVersion: 1.0\n");
         assert_eq!(package_name(dir.path()).as_deref(), Some("mypkg"));
-        // Walks up from a file, including one nested well below the root.
         assert_eq!(
             package_name_for_file(&dir.path().join("R/a.R")).as_deref(),
             Some("mypkg")

@@ -154,9 +154,6 @@ pub struct HttpTransport {
 
 impl HttpTransport {
     pub fn new() -> Self {
-        // `http_status_as_error(false)` keeps non-2xx responses on the `Ok` path
-        // so a conditional request's `304` still carries its headers; the status
-        // is classified below instead.
         let config = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(15)))
             .http_status_as_error(false)

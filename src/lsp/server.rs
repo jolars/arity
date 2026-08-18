@@ -319,9 +319,6 @@ pub(crate) fn main_loop(
     let (lint_tx, lint_rx) = crossbeam_channel::unbounded::<LintMsg>();
     let (read_tx, read_rx) = crossbeam_channel::unbounded::<ReadJob>();
 
-    // The read pool serves latency-sensitive work (formatting, hover, the analyze
-    // read-phase, code actions). Its `_workers` must outlive both `state` and the
-    // lint thread; the drop order at the end of this function guarantees that.
     let read_pool = TaskPool::new("arity-lsp-read", read_pool_size());
     let lint_handle = spawn_lint_thread(
         lint_rx,

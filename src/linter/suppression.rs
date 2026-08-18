@@ -413,9 +413,6 @@ fn next_meaningful_dcf_sibling(tok: &dcf::SyntaxToken) -> Option<TextRange> {
 /// The range a directive sitting immediately before `node`'s successor covers.
 fn next_dcf_sibling_of(node: &dcf::SyntaxNode) -> Option<TextRange> {
     let next = next_dcf_line(node.siblings(rowan::Direction::Next).skip(1))?;
-    // A comment above the first field sits under ROOT (it opens no record), so
-    // the sibling found there is the whole RECORD. Descend into it rather than
-    // silently widening a next-item directive to the entire file.
     if next.kind() == dcf::SyntaxKind::RECORD {
         return Some(next_dcf_line(next.children())?.text_range());
     }

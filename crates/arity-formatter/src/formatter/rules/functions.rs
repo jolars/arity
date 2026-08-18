@@ -39,9 +39,6 @@ pub(crate) fn ir_call_expr(
 
     let callee = ir_expr_segment(&elements[..lparen_idx], "call callee", indent, ctx)?;
 
-    // Comments are relocated natively (own-line vs trailing) by an always-broken
-    // item-stream layout; the flat/hug optimizations below never apply once a
-    // comment is present.
     if arg_list_needs_comment_layout(&arg_list) {
         return Ok(Ir::concat([
             callee,
@@ -535,16 +532,6 @@ fn build_call_args_ir(slots: &[ArgSlot], force_named_functions: bool) -> Ir {
     let first_non_empty = slots.iter().position(|s| !s.is_empty_hole());
     let no_non_empty = first_non_empty.is_none();
 
-    // A positional trailing function-definition argument or block hugs its
-    // call: the hug applies only when the whole prefix up to the hugged block's
-    // opening `{` fits flat on the line (`callee(leading, function(params) {` or
-    // `callee(leading, {`). When it does not fit, the outer call explodes one
-    // argument per line rather than letting the prefix overflow or the
-    // function's own params break to "rescue" the hug. This makes the hug rule
-    // uniform across blocks and trailing functions: line width wins over the
-    // hug, and the flat-only `group_hug` measurement enforces it. (Tenet 1: no
-    // special-casing of particular callees such as `test_that` to keep an
-    // over-width prefix on one line.)
     let leading_ok = !force_named_functions && slots[..last].iter().all(|s| !s.has_forced_break());
     let trailing_function = leading_ok
         && matches!(&slots[last], ArgSlot::Expr { expr_node: Some(node), .. }
@@ -1168,10 +1155,6 @@ pub(crate) fn ir_function_expr(
     let param_elements = &elements[lparen_idx + 1..rparen_idx];
     let body_elements = &elements[rparen_idx + 1..];
 
-    // Comments are relocated natively: a comment before `(` is hoisted above the
-    // whole definition; comments inside `()` keep the param list broken; a comment
-    // between `)` and the body is lifted into (or braces) the body. With any such
-    // comment the definition stays broken — the bare/flat inline form never applies.
     let leading_fn_comments: Vec<String> = elements[fn_idx + 1..lparen_idx]
         .iter()
         .filter_map(comment_text_of)

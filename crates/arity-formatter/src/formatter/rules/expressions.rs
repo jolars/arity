@@ -81,10 +81,6 @@ pub(crate) fn ir_assignment_expr(
         NodeOrToken::Node(_) => unreachable!(),
     };
     let lhs = ir_expr_segment(&elements[..op_idx], "assignment lhs", indent, ctx)?;
-    // Comments can sit between the operator and the RHS operand (`x <- # note`
-    // then the value on the next line). A comment runs to end of line, so the
-    // operand always breaks below them; see [`ir_operator_leading_comments`] for
-    // how one-vs-many comments are laid out.
     let (rhs_comments, rhs) =
         ir_binary_rhs(&elements[op_idx + 1..], "assignment rhs", indent, ctx)?;
     if rhs_comments.is_empty() {
@@ -670,10 +666,6 @@ pub(crate) fn ir_paren_expr(
     if let Ok(inner) =
         ir_expr_with_optional_comment(inner_elements, "parenthesized expression", indent, ctx)
     {
-        // The inline form appends `)` right after the inner expression, so it
-        // is only available when nothing at the inner expression's tail runs to
-        // end of line. A trailing comment there would swallow the `)` --- the
-        // block form below puts it on its own line instead.
         if !inner.ends_with_line_suffix() {
             return Ok(Ir::concat([Ir::text("("), inner, Ir::text(")")]));
         }

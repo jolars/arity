@@ -281,10 +281,6 @@ pub fn reparse_with_options(
     edit: &Edit,
     options: &ParseOptions,
 ) -> Option<Reparsed> {
-    // The strategies below index `old_text` and the tree by the edit's range, so
-    // a range the text cannot take would panic several frames down. An `Edit` is
-    // caller data — a language server's staged `didChange` sequence, say — so
-    // answer "no strategy applies" instead and let the caller fall back.
     if !edit.fits(old_text) {
         return None;
     }
@@ -368,11 +364,6 @@ pub fn reparse_edits_with_options(
         diags = Cow::Owned(reparsed.diagnostics);
     }
 
-    // Tenet-4 guard, ahead of the work it gates: `init` has already been
-    // applied, so this settles the whole chain, and a stale sequence is rejected
-    // before it can spend a reparse. It also stands in for the bounds the
-    // strategies below assume — an edit that cannot produce `target` never
-    // reaches a slice that would panic on it.
     if !last.produces(&text, target) {
         return None;
     }
@@ -698,11 +689,6 @@ fn parse_block_in_isolation(
         return None;
     }
 
-    // The block must still be properly brace-delimited by its own *direct*
-    // delimiters. If the edit opened an unterminated string/comment or an
-    // unclosed inner `(`/`[` that swallowed the closing `}` (re-parenting it
-    // under a child, or leaking past the old block boundary in a full parse),
-    // the block is no longer self-contained — fall back.
     let first = block.first_child_or_token().map(|e| e.kind());
     let last = block.last_child_or_token().map(|e| e.kind());
     if first != Some(SyntaxKind::LBRACE) || last != Some(SyntaxKind::RBRACE) {

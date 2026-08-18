@@ -145,8 +145,6 @@ pub(super) fn serialize_md_code_block(node: &SyntaxNode) -> Vec<String> {
     // backslash escape is a net no-op here: `double_escape_md` doubles every
     // `\`, and cmark resolves each pair back to a literal `\`.
     let info = decode_html_entities(&info);
-    // A knitr chunk header never reaches the class: pass 1 replaces the whole
-    // fence with its knit result, whose info is the chunk language alone.
     let info = knitr_chunk_language(&info).unwrap_or(info);
     let class = if info.is_empty() {
         "sourceCode".to_string()
@@ -191,8 +189,6 @@ pub(super) fn serialize_md_code_block(node: &SyntaxNode) -> Vec<String> {
 pub(super) fn md_fence_info_drops(node: &SyntaxNode) -> bool {
     let (info, code) = md_code_block_parts(node);
     let info = decode_html_entities(&info);
-    // A knitr chunk's raw header never reaches the rendered class (pass 1
-    // rewrites the fence first), so the drop scan sees the language instead.
     let info = knitr_chunk_language(&info).unwrap_or(info);
     if info.is_empty() {
         return false;
@@ -967,12 +963,6 @@ pub(super) fn md_code_block_parts(node: &SyntaxNode) -> (String, String) {
         .trim_start_matches(fence.chars().next().unwrap_or('`'))
         .trim()
         .to_string();
-    // A fence opening mid-line on a list item's marker line (`- ```` ``` ````,
-    // cm-320/326) has a marker-less first line starting at the fence itself, so
-    // the opener carries none of the item's content-column indent and the
-    // cancellation above breaks: the container strip and the closer window key
-    // off the item's content column instead ([`md_indented_code_extra_strip`] —
-    // zero for the tag-value shape, which has no list-item parent).
     let from_value = node
         .first_token()
         .is_some_and(|t| t.kind() != SyntaxKind::ROXYGEN_MARKER);

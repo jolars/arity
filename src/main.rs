@@ -1092,8 +1092,6 @@ fn run_lint(
             Err(code) => return code,
         };
 
-    // Apply fixes in place first; the reporting pass below then re-reads from
-    // disk and shows whatever findings remain.
     if fix_opts.fix
         && let Some(code) =
             apply_fixes_to_paths(paths, &config, fix_opts.unsafe_fixes, &exclude, out)

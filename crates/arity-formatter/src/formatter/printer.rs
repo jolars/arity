@@ -388,8 +388,6 @@ impl Printer {
     /// This is the Wadler/Prettier "fits the rest of the line" rule and the cure
     /// for break decisions that were previously purely local.
     fn group_fits(&self, start_col: usize, inner: &Ir, rest: &[(usize, Mode, &Ir)]) -> bool {
-        // Phase 1: `inner`, laid flat. A forced break (or an already-expanded
-        // nested group) means it cannot be flat, so the group must break.
         let mut col = start_col;
         let mut stack: Vec<&Ir> = vec![inner];
         while let Some(node) = stack.pop() {
@@ -440,8 +438,6 @@ impl Printer {
                 }
             }
         }
-        // Phase 2: the rest of the line, each command in its decided mode, until
-        // a line break (the line fits) or the width is exceeded (it does not).
         self.rest_fits(col, rest)
     }
 
@@ -517,17 +513,6 @@ impl Printer {
                     work.push((if *expand { Mode::Break } else { mode }, inner));
                 }
                 Ir::ConditionalGroup(cands) | Ir::ConditionalGroupAllLines(cands) => {
-                    // The same rule as `Ir::Group` above, applied to a candidate
-                    // list: in `Break` mode this group is still free to pick a
-                    // broken candidate, so measure the *last* one (the broken
-                    // fallback) — its first break ends the line and accommodates
-                    // the overflow. Measuring the flat-most candidate instead
-                    // would treat the whole conditional group as unbreakable and
-                    // force the group to its left to break in its place (an
-                    // assignment whose subset LHS explodes because its `if`/`else`
-                    // RHS was measured flat rather than braced). In `Flat` mode
-                    // the enclosing group is flat, so the flat-most candidate is
-                    // the right measurement.
                     let candidate = if mode == Mode::Break {
                         cands.last()
                     } else {

@@ -203,9 +203,6 @@ fn render_chart(chart: &Chart) -> String {
 
     let mut out = String::new();
     out.push_str("<div class=\"bench-chart-block\">\n");
-    // The chart and its caption form the <figure>; the caption must be the
-    // figure's first or last child, so the no-JS/table fallback lives as a
-    // sibling below it, not inside the figure.
     out.push_str("<figure class=\"bench-figure\">\n");
     out.push_str("<div class=\"bench-chart\"></div>\n");
     out.push_str("<script type=\"application/json\" class=\"bench-data\">");

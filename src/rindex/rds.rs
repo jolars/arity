@@ -570,7 +570,6 @@ impl<'a> Reader<'a> {
     fn read_bc_lang(&mut self, ty: u8, reps: &mut Vec<Robj>) -> Result<Robj> {
         match ty {
             BCREPREF => {
-                // A back-reference to a previously defined node: one index.
                 let _idx = self.read_i32()?;
                 Ok(Robj::null())
             }

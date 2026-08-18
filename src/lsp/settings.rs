@@ -174,7 +174,6 @@ mod tests {
 
     #[test]
     fn editor_settings_out_of_range_fall_back_to_defaults() {
-        // 0 is below the valid width floor; the whole layer is discarded.
         let settings = EditorSettings {
             line_width: Some(0),
             indent_width: Some(4),

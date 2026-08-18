@@ -1,52 +1,30 @@
 use super::*;
 
-/// The one spelling of the file name, shared with file discovery so the server
-/// and the CLI can never disagree about which grammar a path is.
 use crate::file_discovery::DESCRIPTION_FILE_NAME;
 
-/// Which grammar an open document is written in.
-///
-/// The server serves **two** languages — R and the DCF of a `DESCRIPTION` — and
-/// nearly every request is R-only. Answering an R-grammar request for a
-/// `DESCRIPTION` ranges from useless (folding) to destructive: formatting would
-/// hand the client the DCF reflowed as R and rewrite the file. So the kind is
-/// decided once, at `didOpen`, and every buffer lookup states which grammar it
-/// expects (see [`GlobalState::r_doc_snapshot`]).
+/// Grammar selected for an open document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DocumentKind {
-    /// R source. The default: anything not recognized as another grammar.
+    /// R source.
     R,
-    /// A package `DESCRIPTION`, in DCF.
+    /// Package `DESCRIPTION` DCF.
     Description,
 }
 
 impl DocumentKind {
-    /// Classify from the URI, with the client's `languageId` as a fallback.
-    ///
-    /// **The file name wins.** `editors/code` already registers `NAMESPACE`
-    /// under language `r`, so a client sending `languageId: "r"` for a
-    /// `DESCRIPTION` is entirely plausible — and trusting it would format DCF
-    /// as R. The last path segment is read off the URI rather than a converted
-    /// path because [`uri::to_path`] gives up on non-`file` schemes, and a
-    /// `git:`-scheme diff of a `DESCRIPTION` must not route as R either.
+    /// Classify by filename, falling back to the client's language id.
     pub(crate) fn from_uri(uri: &Uri, language_id: Option<&str>) -> Self {
         let name = uri.path().as_str().rsplit('/').next().unwrap_or_default();
         if name == DESCRIPTION_FILE_NAME {
             return Self::Description;
         }
         match language_id {
-            // DCF is the Debian `control` grammar, so a client may have picked
-            // up any of these ids for the file from another extension.
             Some("r-description" | "dcf" | "debian-control") => Self::Description,
             _ => Self::R,
         }
     }
 
-    /// Classify from a filesystem path, for the read jobs — which carry the
-    /// derived [`PathBuf`], never the URI. Agrees with
-    /// [`from_uri`](Self::from_uri), including for the synthesized path an
-    /// `untitled:` buffer gets (see
-    /// [`placeholder_file_name`](Self::placeholder_file_name)).
+    /// Classify a read job from its filesystem path.
     pub(crate) fn from_path(path: &Path) -> Self {
         if crate::file_discovery::is_description_file(path) {
             return Self::Description;
@@ -54,10 +32,7 @@ impl DocumentKind {
         Self::R
     }
 
-    /// The file name a document of this kind gets when its URI has no path —
-    /// an `untitled:` buffer. Keeps the synthesized path and the kind agreeing,
-    /// so anything downstream that re-derives the grammar from the path reaches
-    /// the same answer.
+    /// Placeholder filename for pathless buffers.
     pub(crate) fn placeholder_file_name(self) -> &'static str {
         match self {
             Self::R => "untitled.R",
@@ -66,18 +41,11 @@ impl DocumentKind {
     }
 }
 
-/// An open document: the live buffer plus the version the client last sent.
-///
-/// The buffer is shared — reads and lints clone the `Arc`, never the text — and
-/// is **immutable once shared**: [`Document::apply_edit`] mutates only a
-/// uniquely-owned buffer, so an in-flight read observes exactly the bytes of
-/// the version it was dispatched at. `version` sits outside the `Arc` because
-/// the staleness gate compares it, not the contents.
+/// A versioned open-document buffer.
 #[derive(Debug, Clone)]
 pub(crate) struct Document {
     buffer: Arc<TextBuffer>,
     version: i32,
-    /// Decided once at `didOpen`: a document's grammar cannot change under it.
     kind: DocumentKind,
 }
 
@@ -90,11 +58,7 @@ impl Document {
         }
     }
 
-    /// Splice `range` -> `insert` into the buffer, patching its line index.
-    ///
-    /// `Arc::make_mut` copies only while the buffer is still shared, so a
-    /// `didChange` batch pays at most one copy: the first change unshares it and
-    /// the rest splice in place (the main loop is the only writer).
+    /// Splice text and update the line index.
     fn apply_edit(&mut self, range: std::ops::Range<usize>, insert: &str) {
         Arc::make_mut(&mut self.buffer).apply_edit(range, insert);
     }
@@ -1534,9 +1498,6 @@ impl GlobalState {
     /// disk). Pull clients are asked to re-request (after invalidating their cached
     /// reports); push clients get a fresh lint per buffer.
     fn request_relint_all(&mut self) {
-        // Inlay hints are shown by push and pull clients alike and have no push
-        // channel of their own, so this sits above the `pull_mode` split: a fresh
-        // index is exactly the change a `DESCRIPTION`'s version hints depend on.
         self.send_inlay_hint_refresh();
         let uris: Vec<Uri> = self.documents.keys().cloned().collect();
         if self.pull_mode {
@@ -2373,8 +2334,6 @@ mod cancellation_gate {
             // The DESCRIPTION case: decline, and spend nothing doing it.
             let (mut state, rig) = test_state();
             state.on_notification(did_open(&uri, "Package: testpkg\nDepends: R\n", "r"));
-            // Drain the lint request the open queued, so the read assertion below
-            // is about this request alone.
             let _ = rig.try_lint_msg();
 
             state.on_request(Request::new(
@@ -2396,9 +2355,6 @@ mod cancellation_gate {
                 "{method} queued read work for a DESCRIPTION"
             );
 
-            // The negative control, without which the assertions above would
-            // pass just as happily for a misspelled method name: the same
-            // request against an R buffer must reach a handler that does work.
             let (mut state, rig) = test_state();
             let r_uri = test_uri();
             let r_params = params_for(&params, &r_uri);

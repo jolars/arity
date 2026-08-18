@@ -205,21 +205,6 @@ pub fn check_paths_with_index(
     let mut db = IncrementalDatabase::default();
     let mut tracked: HashMap<PathBuf, SourceFile> = HashMap::new();
 
-    // Pass 1: track every readable file. Parsing is deferred to the parallel
-    // warm-up below, so this phase is disk reads and salsa input writes only.
-    // Membership is derived from the workspace file-set below; files with parse
-    // diagnostics are tracked but `workspace_project` drops them from the scope.
-    //
-    // The reads run in parallel and the writes serially, because salsa is
-    // strictly single-writer — `upsert_file` takes `&mut db`. Splitting them
-    // that way overlaps the prologue's I/O without touching that rule. The
-    // results stay in `files` order, so which IO error aborts the run, and the
-    // order of `skipped`, are what the serial loop produced.
-    //
-    // A file that isn't valid UTF-8 is skipped-and-recorded rather than aborting
-    // the whole run — one ISO-8859 source shouldn't kill linting of every other
-    // file (mirrors the corpus harness skipping unparseable files). Other IO
-    // errors (permission, vanished mid-walk) remain hard failures.
     let mut skipped: Vec<PathBuf> = Vec::new();
     let mut readable: Vec<PathBuf> = Vec::with_capacity(files.len());
     let contents: Vec<io::Result<String>> = files.par_iter().map(fs::read_to_string).collect();
@@ -261,17 +246,6 @@ pub fn check_paths_with_index(
         }
     }
 
-    // Scope-only members: a package's generated R sources (`cpp11.R`,
-    // `RcppExports.R`, `extendr-wrappers.R`, `import-standalone-*.R`) are in the
-    // default exclude set, so they are never linted — but they *define* the
-    // wrappers that hand-written siblings call. Track them so their top-level
-    // bindings enter the package namespace; without this every caller is a false
-    // `undefined-symbol`. They join the workspace below but are absent from
-    // `files`, so pass 2 never lints them. Mirrors the LSP's exclude-free sibling
-    // discovery in `seed_workspace_for`.
-    //
-    // Read in parallel and upsert serially, as pass 1 above. Unlike pass 1 an
-    // unreadable one is dropped rather than recorded: nobody asked for these.
     let mut scope_only: Vec<SourceFile> = Vec::new();
     let excluded = excluded_package_sources(&files);
     let excluded_contents: Vec<io::Result<String>> =
@@ -282,11 +256,6 @@ pub fn check_paths_with_index(
         }
     }
 
-    // Install the harvested index as the HIGH-durability library singleton;
-    // `external_resolution` reads it in pass 2. This write must precede the
-    // parallel warm-up: a HIGH write bumps every durability's revision, so
-    // doing it after would strip the shallow-verify fast path from all the
-    // freshly warmed memos.
     let manifest = db.set_library_index(indexed);
 
     // Seed the explicit workspace file-set and derive the interned project from
@@ -300,22 +269,6 @@ pub fn check_paths_with_index(
         .collect();
     db.set_workspace_members(members, files.clone());
 
-    // All salsa writes are done; everything below is reads. Warm every member's
-    // per-file memos in parallel: the parse, and — for cleanly parsing files —
-    // the firewall projections the project-wide folds below aggregate (each of
-    // which forces `semantic_model`). Without this the first worker to touch a
-    // fold would compute every member's projection *sequentially inside one
-    // query* while the rest block on it. Salsa db handles are `Send` but not
-    // `Sync`, so each rayon worker gets its own clone (the LSP's read pattern);
-    // clones share the memo storage and are all dropped when the parallel call
-    // returns, before the owner handle is used again.
-    //
-    // Every per-file query a fold this run will force belongs here. The list is
-    // load-bearing in one direction only: a projection missing from it is not
-    // wrong, just serialized — which is exactly the cost this warm-up exists to
-    // avoid. A projection warmed for a fold that never runs, though, is pure
-    // added work, so the `package_usage` input is gated on pass 3 having
-    // something to lint.
     let warm_usage = !description_sources.is_empty();
     let warm_file = |worker: &IncrementalDatabase, file: SourceFile| -> usize {
         let count = worker.parse_diagnostics(file).len();
@@ -326,11 +279,8 @@ pub fn check_paths_with_index(
             file_qualified_reads(worker, file);
             source_edges(worker, file);
             top_level_events(worker, file);
-            // `project_roxygen_topics` folds this one, and pass 2 asks for the
-            // package's topics for every file regardless of rule selection.
             file_roxygen_topics(worker, file);
             if warm_usage {
-                // `package_usage` folds this one, and only pass 3 reads it.
                 package_references(worker, file);
             }
         }
@@ -350,17 +300,6 @@ pub fn check_paths_with_index(
         })
         .collect::<Vec<()>>();
 
-    // Derive the interned project and every project-wide fold once on the owner
-    // handle — with the per-file memos warm each is a fold over cached values —
-    // so the pass-2 and pass-3 workers' re-derives are memo hits rather than a
-    // first-computation stampede.
-    //
-    // Forcing them here rather than letting the first worker to arrive compute
-    // them is what keeps the pool busy: salsa's `block_on` parks a rayon worker
-    // without telling rayon, so a fold first-computed inside a parallel pass
-    // costs the *whole* pool, not one thread. Pass 3 is the worst case — it is
-    // often a single `DESCRIPTION`, so `package_usage` would fold every member
-    // on one thread with the other workers already retired.
     let project = workspace_project(&db);
 
     project_graph(&db, project);
@@ -374,10 +313,6 @@ pub fn check_paths_with_index(
     // only the fallback for rules that read static base-R facts (`is_base`).
     let fallback = default_symbol_provider();
 
-    // Pass 2: lint each cleanly parsed file with its cross-file scope, in
-    // parallel on db clones. `Project<'db>` is lifetime-bound to its handle, so
-    // each worker re-derives it from its own clone (a memo hit after the force
-    // above). The ordered collect keeps reports in `files` order.
     let mut reports: Vec<LintFileReport> = files
         .into_par_iter()
         .map_with(db.clone(), |worker, path| {
@@ -423,10 +358,6 @@ pub fn check_paths_with_index(
         })
         .collect();
 
-    // Pass 3: the `DESCRIPTION`s. Separate from pass 2 because it runs over a
-    // second grammar with no salsa input of its own, and it comes *after*
-    // because the cross-file DESCRIPTION rules read facts the project graph
-    // above derives.
     let description_count = description_sources.len();
     let description_reports: Vec<LintFileReport> = description_sources
         .into_par_iter()
@@ -454,16 +385,6 @@ pub fn check_paths_with_index(
         })
         .sum();
 
-    // Hand the database's teardown to the pool instead of paying for it here.
-    // Freeing a project's worth of memos, green trees, and semantic models is
-    // ~2.4 ms on tidyr — serial, at the very end, and pure latency for a batch
-    // run that is about to exit. `rayon::spawn` is fire-and-forget: if the
-    // process exits first the drop simply never runs (the kernel reclaims the
-    // address space wholesale), and an embedder that keeps linting gets the
-    // memory back promptly on a pool thread rather than on its own.
-    //
-    // Sound because the handle is `Send`, every worker clone was already
-    // dropped when the parallel passes returned, and nothing below reads `db`.
     let checked_files = tracked.len() + description_count;
     rayon::spawn(move || drop(db));
 
@@ -638,12 +559,6 @@ pub fn prepare_document_in_project(
         return None;
     }
 
-    // Membership comes from the explicit `Workspace` file-set (seeded by the
-    // caller — the LSP's lazy seed or `seed_workspace_for`), not a per-call disk
-    // walk. `workspace_project` filters to cleanly-parsing members and reads each
-    // package's NAMESPACE; we snapshot its owned membership for the read-phase,
-    // which re-interns it on a db clone (so the `Project<'db>` never crosses the
-    // thread boundary).
     let project = workspace_project(&*db);
     let members = project.members(&*db).clone();
     let namespaces = project.namespaces(&*db).clone();
@@ -780,12 +695,7 @@ pub fn analyze_prepared(
     prepared: &PreparedProject,
     provider: &dyn SymbolProvider,
 ) -> Vec<Diagnostic> {
-    // One `&dyn IncrementalDb` borrow for the read-phase: a single `'db`
-    // lifetime keeps the interned `Project<'db>` and `visible_symbols` aligned.
     let db = analysis.as_db();
-    // Intern the project here (read-phase): the membership snapshot is plain
-    // owned data in `prepared`, so this is safe on a db clone, and an unchanged
-    // set re-interns to the same id — keeping the project-graph memo warm.
     let project = intern_project(
         db,
         prepared.members.clone(),

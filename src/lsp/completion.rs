@@ -145,8 +145,6 @@ pub fn resolve_completion(mut item: CompletionItem, indexed: &IndexedProvider) -
             .map(|entry| (package.clone(), entry)),
         CompletionData::Bare { name } => base_package_of(name)
             .and_then(|pkg| indexed.lookup(pkg, name).map(|entry| (pkg.clone(), entry))),
-        // A package, not a symbol: its card is built from the package index
-        // itself, so it short-circuits the symbol lookup below.
         CompletionData::Package { name } => {
             if let Some(markdown) = render_package_markdown(name, indexed) {
                 item.documentation = Some(Documentation::MarkupContent(MarkupContent {

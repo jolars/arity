@@ -275,10 +275,6 @@ mod tests {
 
     #[test]
     fn probed_lib_paths_follow_config_and_precede_env() {
-        // The `.libPaths()` probe is the only source that surfaces
-        // launcher-injected directories (Nix `rWrapper`, conda). They must rank
-        // below explicit config but above the ambient `R_LIBS_*` environment,
-        // which on such setups is stale or missing the real paths entirely.
         let probed = [PathBuf::from("/nix/store/abc-r-dplyr/library")];
         let mut env = HashMap::new();
         env.insert("R_LIBS_SITE", "/ambient/site");

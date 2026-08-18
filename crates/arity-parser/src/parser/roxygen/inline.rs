@@ -1013,7 +1013,6 @@ fn match_brackets(tokens: &[Token], run: &[RunItem]) -> Vec<BracketRole> {
                 for role in &mut roles[q..after] {
                     *role = BracketRole::Consumed;
                 }
-                // A link (never an image here) deactivates the openers below it.
                 for e in stack.iter_mut() {
                     e.1 = false;
                 }

@@ -1086,10 +1086,6 @@ pub(super) fn apply_user_linkrefs(
             changed = true;
             continue;
         }
-        // A reference link nested inside emphasis resolves against the same user
-        // definitions (`[foo *bar [baz][ref]*][ref]` — the inner `[baz][ref]`
-        // rewrites to `\href` exactly like a top-level one, cm-535). Defs are
-        // never consumed here (see above).
         if let Inline::MdEmphasis { strong, children } = inl
             && let Some(rewritten) = apply_user_linkrefs(children, urls, false)
         {
@@ -1199,9 +1195,6 @@ pub(super) fn collect_user_linkrefs(
     while i < body.len() {
         if block_start && let Some(end) = scan_linkref_run(body, i, &mut urls, &mut dropped) {
             i = end;
-            // The remainder of this block (if any) is prose, not definitions.
-            // A trimmed `Text` at `end` still feeds the block-start update below
-            // (its leftover carries the original's paragraph break, if any).
             block_start = false;
             continue;
         }

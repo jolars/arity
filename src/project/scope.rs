@@ -496,13 +496,6 @@ impl ProjectScope {
             })
             .collect();
 
-        // For each file, the set of *other* files it can see — and, kept apart,
-        // just the part of it reached through `source()`. The split is what lets
-        // the two derivations below treat a package as a clique: within a
-        // package every member sees every other, so the clique's contribution is
-        // the same for all of them and can be folded once instead of once per
-        // ordered pair. `source()` edges are directional and sparse, so they stay
-        // a per-edge fold.
         let mut sees_extra: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
         let mut seen_by_extra: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
         let mut sourced: Vec<Vec<&Path>> = Vec::with_capacity(files.len());
@@ -591,9 +584,6 @@ impl ProjectScope {
             }
         }
 
-        // NAMESPACE declarations, parsed once per root. This runs *before* the
-        // two derivations because the imported names belong in `visible`'s
-        // shared layer; the per-member fan-out stays below.
         let mut ns_exported: HashMap<&Path, Arc<BTreeSet<String>>> = HashMap::new();
         let mut ns_s3: HashMap<&Path, Arc<BTreeSet<String>>> = HashMap::new();
         let mut ns_imported: HashMap<&Path, BTreeSet<String>> = HashMap::new();
@@ -726,12 +716,6 @@ impl ProjectScope {
             read_by_others.insert(f.path.clone(), LayeredSet::new(shared, added, removed));
         }
 
-        // Fan the parsed NAMESPACE facts out to each root's members. Both
-        // resolution directions are already folded in above — imported names sit
-        // in `visible`'s shared layer — so what is left is the record of what the
-        // package exports. A wholesale `import(pkg)` is *recorded*, not resolved:
-        // whether pkg's exports are enumerable needs the library index, which
-        // this pure builder does not have.
         let mut namespace_exports: HashMap<PathBuf, Arc<BTreeSet<String>>> = HashMap::new();
         let mut s3_methods: HashMap<PathBuf, Arc<BTreeSet<String>>> = HashMap::new();
         for (&root, members) in &package_members {
@@ -1504,9 +1488,6 @@ mod tests {
 
     #[test]
     fn namespace_wholesale_import_is_recorded_not_poisoned() {
-        // `import(pkg)` used to poison the file unconditionally. It now reports
-        // the package instead: whether pkg's exports are enumerable needs the
-        // library index, which this pure builder deliberately does not have.
         let files = [facts("/pkg/R/a.R", &[], &["abort"], vec![], Some("/pkg"))];
         let ns = namespaces(&[("/pkg", "import(rlang)\n")]);
         let scope = ProjectScope::build(&files, &ns, &HashMap::new(), &HashMap::new());
@@ -1527,11 +1508,6 @@ mod tests {
             .map(|(root, names)| (PathBuf::from(*root), set(names)))
             .collect()
     }
-
-    // The tests below pin the *precedence* rules inside `build`. `visible` and
-    // `read_by_others` are each assembled by several passes, and in both cases a
-    // later pass overrides an earlier one — which pass wins is observable, and
-    // any representation change has to reproduce it exactly.
 
     /// `importFrom` is folded in *after* a file's own exports are removed, so a
     /// name that is both is visible. Pins the direction: the own-export removal

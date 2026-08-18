@@ -637,7 +637,6 @@ fn ir_condition_segment(
                     .text()
                     .to_string();
                 if !emitted_expr {
-                    // Leading comment: its own line above the expression.
                     parts.push(Ir::verbatim_forced(text));
                     parts.push(Ir::hard_line());
                 } else if newline_since_prev {

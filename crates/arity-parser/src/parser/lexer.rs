@@ -721,11 +721,6 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token<'_>> {
                         && (bytes[i + 1] as char) == '.'
                         && (bytes[i + 2] as char).is_ascii_digit()
                     {
-                        // `..1` is the dot-dot-i special, but as with `...` above
-                        // it can equally be the start of a longer symbol
-                        // (`..2dge` in Matrix). Consume the digit run and then any
-                        // trailing name characters so the whole symbol is one
-                        // identifier; with none, the text is just `..<digits>`.
                         let start = i;
                         i += 3;
                         while i < bytes.len() && (bytes[i] as char).is_ascii_digit() {
@@ -741,10 +736,6 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token<'_>> {
                         continue;
                     }
 
-                    // Any remaining dot run not immediately followed by a digit is
-                    // an identifier: `.`, `..`, and `..name` are all valid R names
-                    // (the `.()` in bquote, the magrittr `.`, etc.). A dot followed
-                    // by a digit (`.5`) is a numeric literal handled below.
                     if !(i + 1 < bytes.len() && (bytes[i + 1] as char).is_ascii_digit()) {
                         let start = i;
                         i = scan_name_continue(input, i + 1);
@@ -757,11 +748,6 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token<'_>> {
                         continue;
                     }
 
-                    // A dot immediately followed by a digit is a fractional
-                    // numeric literal with no leading zero (`.5`, `.001`,
-                    // `.5e-3`, `.5i`). R has no dot-leading integer, so this is
-                    // always a float (or imaginary). Mirrors the fractional and
-                    // exponent handling in the digit-led number branch below.
                     let start = i;
                     i += 1; // consume the '.'
                     while i < bytes.len() && (bytes[i] as char).is_ascii_digit() {

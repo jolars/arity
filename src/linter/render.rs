@@ -247,8 +247,6 @@ warning: test-rule
 
     #[test]
     fn pretty_renders_findings_on_first_and_last_lines() {
-        // Window clamping at both buffer edges: a finding on line 1 (no line
-        // above) and on the last line (no line below, no trailing newline).
         let source = "first <- 1\nmiddle <- 2\nlast <- 3";
         let out = render(
             source,

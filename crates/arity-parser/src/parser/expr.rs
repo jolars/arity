@@ -34,16 +34,6 @@ fn next_operator<'a>(
     let op_idx = ctx.skip_ws(start);
     let op = ctx.token(op_idx)?;
     if matches!(op.kind, TokKind::Newline | TokKind::Comment) {
-        // Outside brackets, a newline after a complete operand terminates the
-        // expression — R only continues across the newline if the prior line is
-        // incomplete (i.e. ended in an operator). Inside `(`, `[`, `[[` (and
-        // the conditions/sequences of `if`/`while`/`for`), newlines are not
-        // statement separators, so peek past them for a continuation operator.
-        //
-        // A trailing comment before the (possible) newline behaves the same way:
-        // it is trivia, not a terminator, so `(a # note\n || b)` continues just
-        // like `(a\n || b)`. `skip_ws` above stops at the comment, so peek past
-        // comments too (not just newlines) when looking for the operator.
         if !inside_brackets {
             return None;
         }
@@ -326,20 +316,6 @@ fn parse_prefix(
 
     match tok.kind {
         TokKind::Plus | TokKind::Minus | TokKind::Bang | TokKind::Tilde | TokKind::Question => {
-            // Unary `~` (R formula) and unary `?` (help) sit at the same low
-            // precedence tier as their binary counterparts, so `~ x + y` must
-            // parse as `~(x + y)` and `? x + y` as `?(x + y)`. Match the infix
-            // right-binding power so every higher-precedence infix folds into
-            // the operand.
-            //
-            // Unary `!` binds *looser* than the comparison and arithmetic
-            // operators but tighter than `&&`/`||` (R's precedence table): `!a ==
-            // b` is `!(a == b)` and `!a + b` is `!(a + b)`, while `!a & b` is
-            // `(!a) & b`. Its right-binding power sits between the And tier
-            // (60/61) and the Relational tier (80/81) so relational and tighter
-            // infixes fold into the operand and the logical operators do not.
-            // Unary `+`/`-`, by contrast, bind tightly (just below `^`), so they
-            // keep the high right-binding power.
             let rbp = match tok.kind {
                 TokKind::Tilde => 41,
                 TokKind::Question => 1,
@@ -1178,12 +1154,6 @@ fn is_extract_operator(kind: &TokKind) -> bool {
 }
 
 fn infix_binding_power(kind: &TokKind) -> Option<(u8, u8)> {
-    // Binding powers are aligned to AIR's operator precedence tiers:
-    // LogicalOr (5), LogicalAnd (6), Relational (8), Additive (9),
-    // Multiplicative (10), Special (11), Colon (12), Tilde (4), Exponential (14).
-    // Help (`?`) sits below assignment as in R, so `x <- 1 ? 2` parses as
-    // `(x <- 1) ? 2`. Namespace/extract operators (`::`, `:::`, `$`, `@`) bind
-    // tighter than exponentiation and are treated as left-associative.
     match kind {
         TokKind::Question => Some((0, 1)),
         TokKind::Or | TokKind::Or2 => Some((50, 51)),

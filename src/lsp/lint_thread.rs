@@ -437,10 +437,6 @@ impl LintWorker {
                 DispatchAction::Wait => return,
                 DispatchAction::Start(uri) => uri,
                 DispatchAction::SupersedeAndStart(uri) => {
-                    // Explicit cancellation: the write-phase may be a no-op (an
-                    // unchanged `upsert_file` doesn't bump the revision), so we
-                    // can't rely on it to unwind the running analyze. Blocks until
-                    // the old clone drops; safe — this thread holds no clone.
                     self.db.trigger_cancellation();
                     self.inflight = None;
                     uri
@@ -501,14 +497,7 @@ impl LintWorker {
         self.ensure_index(&anchor, &req.index_config);
         self.ensure_remote(&anchor, &req.index_config);
 
-        // Write-phase: push the live buffer + sibling files into the persistent
-        // db. Cheap — the parse/model are lazy salsa queries deferred to analyze.
         let active = self.db.upsert_file(&req.path, req.buffer.text_arc());
-        // Stage the precise per-change edits (Stage B) for the parse this upsert
-        // will force below (via `prepare_document_in_project`). Overwrites any
-        // unconsumed sequence; `parsed_document` verifies they reconstruct the
-        // buffer before use, so a stale/empty sequence simply falls back to
-        // `diff_edit`.
         self.db.stage_edits(active, std::mem::take(&mut req.edits));
         // Ensure the active file's project is in the workspace file-set. Lazy:
         // only walks disk when the file isn't already a member (the initialize
@@ -585,24 +574,10 @@ impl LintWorker {
         }
         let root = root.to_path_buf();
 
-        // Seeding walks the package's `R/` files into the db, which is what lets
-        // `package_usage_for` answer at all (and so what keeps
-        // `unused-dependency` from being silently inert in the editor).
-        //
-        // This MUST happen before the buffer is written below: seeding runs
-        // `refresh_package_graph`, which re-reads every root's `DESCRIPTION`
-        // from disk — and would silently overwrite the live buffer with the
-        // saved bytes.
         if self.db.lookup_description(&root).is_none() {
             self.seed_workspace(vec![root.clone()]);
         }
 
-        // Make the open buffer authoritative in salsa, so an unsaved dependency
-        // already counts for the package's R files. Fan out only when the
-        // *facts* moved: `DescriptionFacts` is the range-free `Eq` firewall, so
-        // typing in `Description:` prose costs one DCF parse while typing in
-        // `Imports:` re-lints the package. The clone is required — the borrow
-        // ends at the `&mut db` write below.
         let before = self
             .db
             .lookup_description(&root)
@@ -613,9 +588,6 @@ impl LintWorker {
             // A `Roxygen` field change can flip the package-wide markdown
             // default, which every roxygen block in `R/` is parsed against.
             self.db.refresh_roxygen_markdown();
-            // Terminates after exactly one extra generation: `request_relint_all`
-            // re-lints this document too, and `upsert_description` short-circuits
-            // on unchanged text, so the second pass finds `before == after`.
             let _ = self.out_tx.send(Outbound::RelintAll);
         }
 
@@ -688,9 +660,6 @@ impl LintWorker {
                     findings: Arc::new(diagnostics),
                 });
             }
-            // The clone MUST drop before we signal `done`: `trigger_cancellation`
-            // / the next write-phase blocks until it's gone, so a premature `done`
-            // could let the lint thread start a write that deadlocks on this clone.
             drop(snapshot);
             let _ = done_tx.send(AnalyzeDone { uri, version });
         });
@@ -742,10 +711,6 @@ impl LintWorker {
             Ok(root) => IndexedProvider::from_cache(&Cache::new(root)),
             Err(_) => IndexedProvider::empty(),
         };
-        // Unlike a background build, this needs no `RelintAll`: it runs in the
-        // write-phase of the first lint for this anchor, so nothing has been
-        // analyzed against the empty index yet. Inlay hints are the exception —
-        // one may already have been answered, and they have no push channel.
         let loaded_any = indexed.packages().next().is_some();
         self.db.set_library_index(indexed);
         self.index_loaded.insert(anchor.to_path_buf());
@@ -944,12 +909,6 @@ pub(crate) fn packages_to_build(
     source: &str,
     declared: &[SmolStr],
 ) -> Vec<SmolStr> {
-    // A referenced meta-package also attaches its members (harvested attach
-    // set, static table fallback), and the undefined-symbol gates require each
-    // member to be indexed — so queue them for harvest too. A member learned
-    // only from a harvested attach set arrives one pass late by construction:
-    // pass 1 harvests the meta, the installed index triggers a re-lint, and
-    // pass 2 sees the meta's attaches (its members weren't marked attempted).
     let mut candidates: Vec<SmolStr> = Vec::new();
     let referenced: Vec<SmolStr> = referenced_in_source(source)
         .into_iter()
@@ -1021,8 +980,6 @@ mod tests {
             "an untracked root may have just become a package"
         );
 
-        // The regression this guards: a deleted DESCRIPTION means the directory
-        // may no longer be a package at all, which only the graph refresh sees.
         std::fs::remove_file(&path).expect("remove");
         assert!(
             !description_edit_is_local(&path, true),
@@ -1139,7 +1096,6 @@ mod tests {
             );
         }
         assert!(first.contains(&SmolStr::new("notarealpkg")));
-        // A second pass returns nothing — every package was already attempted.
         let second = packages_to_build(&mut attempts, &indexed, src, &[]);
         assert!(second.is_empty(), "expected no re-attempt, got {second:?}");
     }
@@ -1209,7 +1165,6 @@ mod tests {
                 "{skip} is offline-covered and must not be fetched, got {first:?}"
             );
         }
-        // Second pass: nothing left to attempt.
         let second = packages_to_fetch(&mut attempts, &indexed, &remote, src, &[]);
         assert!(second.is_empty(), "expected no re-attempt, got {second:?}");
     }

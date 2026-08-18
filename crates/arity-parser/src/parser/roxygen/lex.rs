@@ -536,14 +536,6 @@ fn lex_roxygen_prose<'a>(
         );
         return;
     }
-    // Under `@md`, a line whose whole content is a CommonMark **thematic break**
-    // (`***`/`___`, or a space-separated form like `- - -`) carves off as a
-    // `RoxygenMdThematicBreak` leaf. A contiguous `---`/`===` run was already claimed
-    // by the setext-underline check above (setext takes precedence), so this only
-    // catches the `*`/`_`-based and spaced forms; a bare `---` that heads no paragraph
-    // is promoted to a thematic break at block level. The block builder wraps the line
-    // in a `ROXYGEN_MD_THEMATIC_BREAK`; the leaf implies `@md`, so the builder keys off
-    // the token kind, never re-deriving mode.
     if md && line_start && is_thematic_break(bytes, pos) {
         push(
             out,
@@ -581,15 +573,6 @@ fn lex_roxygen_prose<'a>(
         i = content;
     }
     while i < bytes.len() {
-        // Under `@md`, an inline link `[text](url)`: carve the `[` opener and the
-        // `](url)` closer as neutral `RoxygenMdBracket` leaves and *recursively* lex
-        // the link text in between, so emphasis/code spans inside it resolve. The
-        // inline pass then assembles the matched pair into a `ROXYGEN_MD_LINK`
-        // **node** whose display children are the resolved markdown. Shortcut and
-        // reference links (`[t]`, `[t][r]`) carve onto neutral brackets too (the
-        // `same_line_bracket_opener` arm below); only a `\`-bearing display still
-        // falls to the opaque `scan_md_link` leaf. Here only a *bracket-free* inline
-        // link text is split.
         if md
             && bytes[i] == b'['
             && !bracket_is_escaped(bytes, i)
@@ -618,12 +601,6 @@ fn lex_roxygen_prose<'a>(
             run_start = i;
             continue;
         }
-        // A *cross-line* inline-link opener: a `[` whose bracketed text is not
-        // closed on this line (no same-line `]`, so the same-line link paths
-        // above and `scan_md_link` below do not apply). Carve the `[` as a neutral
-        // bracket opener leaf; the link text continues on following `#'` lines and
-        // the inline pass pairs it with the later `](url)` closer over the
-        // paragraph-granularity run (literal text if it never matches).
         if md
             && bytes[i] == b'['
             && !bracket_is_escaped(bytes, i)
@@ -642,15 +619,6 @@ fn lex_roxygen_prose<'a>(
             run_start = i;
             continue;
         }
-        // A *same-line* bracketed link span: a balanced, bracket-free `[…]` that is
-        // not an inline link (handled above) and not a `[…]{…}` non-link. Carve the
-        // `[` as a neutral bracket opener leaf and let the main loop lex the interior
-        // and the closing `]` (the bare-`]`/`][ref]` carves below). This one carve
-        // covers a shortcut display, a reference display (`[display][ref]`), and a
-        // reference *label* (`[ref]`) alike; the inline pass pairs the brackets into
-        // `ROXYGEN_MD_LINK` nodes and `classify_closer` reads a following neutral
-        // `[ref]` off the arena lookahead. Only `!`/`\` displays stay on the opaque
-        // `scan_md_link` leaf for now (see `same_line_bracket_opener`).
         if md
             && bytes[i] == b'['
             && !bracket_is_escaped(bytes, i)
@@ -669,13 +637,6 @@ fn lex_roxygen_prose<'a>(
             run_start = i;
             continue;
         }
-        // A *nested-bracket* link opener: a `[` whose balanced same-line interior
-        // itself contains brackets, so the conservative same-line/opaque paths
-        // above (which all require a bracket-free interior) do not apply. Carve the
-        // `[` as a neutral opener and let the main loop carve the inner brackets and
-        // the closer; the inline pass resolves the nesting with CommonMark opener
-        // deactivation — the inner links win and this outer bracket stays literal
-        // (`[a [b] c](url)`, `[foo [bar] baz]`, `[[x]](url)`).
         if md
             && bytes[i] == b'['
             && !bracket_is_escaped(bytes, i)
@@ -694,12 +655,6 @@ fn lex_roxygen_prose<'a>(
             run_start = i;
             continue;
         }
-        // A *cross-line* inline-link closer: a `](url)` whose matching `[` opened
-        // on an earlier `#'` line. A same-line `[…](url)` is consumed whole by the
-        // opener path above, so a bare `]` immediately followed by a balanced
-        // `(url)` here has no same-line opener — carve it as a neutral bracket
-        // closer leaf (the inline pass pairs it with the earlier opener, or leaves
-        // it literal when unmatched).
         if md
             && bytes[i] == b']'
             && !bracket_is_escaped(bytes, i)
@@ -772,14 +727,6 @@ fn lex_roxygen_prose<'a>(
             run_start = i;
             continue;
         }
-        // A *cross-line* shortcut-link closer: a lone `]` that closes a `[` opened on
-        // an earlier `#'` line (a `[text]` shortcut spanning lines). Line-locally
-        // *every* `]` is ambiguous — the lexer cannot see an earlier opener — so carve
-        // any lone `]` that is not an inline (`](url)`) or reference (`][ref]`) closer
-        // (handled above) and is not a non-link `]{…}` lookahead as a neutral bracket
-        // leaf. The inline pass pairs it with an earlier cross-line opener (a shortcut
-        // link) or, with no opener, re-emits it as literal text — so a truly stray `]`
-        // is unchanged.
         if md
             && bytes[i] == b']'
             && !bracket_is_escaped(bytes, i)
@@ -3416,11 +3363,6 @@ mod tests {
 
     #[test]
     fn nested_bracket_link_carves_outer_opener() {
-        // A nested-bracket link `[a [b] c](url)` carves *every* bracket as a neutral
-        // leaf (the outer opener via `is_nested_bracket_opener`, the inner `[b]` via
-        // the same-line shortcut path, and the `](url)` inline closer), so the inline
-        // pass can resolve the nesting with opener deactivation. The opaque
-        // `scan_md_link` no longer swallows the whole span.
         assert_eq!(
             prose_texts("#' x [a [b] c](https://o.org) y\n#' @md\n"),
             vec![

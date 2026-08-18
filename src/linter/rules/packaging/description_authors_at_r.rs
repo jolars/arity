@@ -235,8 +235,6 @@ fn creators(persons: &[Person]) -> Option<Vec<&Person>> {
 /// name has no email problem worth raising, and "credited nowhere" is the more
 /// basic reading of the same `person()` call.
 fn check_person(person: &Person, creators: Option<&[&Person]>, sink: &mut Vec<Diagnostic>) {
-    // Every clause below asks what R does with a person it has; a person built
-    // out of computed arguments may be R's zero-length vector instead.
     if !person.is_materialized() {
         return;
     }

@@ -97,10 +97,6 @@ impl Rule for Coalesce {
             return;
         }
 
-        // Inside the definition of `%||%` itself the `if` *is* the operator, so
-        // the advice reduces to "define `%||%` as a call to `%||%`". A local
-        // polyfill is routine while a package's R floor is below 4.4, which is
-        // exactly where the rule's own fix says the operator is unavailable.
         if defines_coalesce_operator(node) {
             return;
         }

@@ -586,9 +586,6 @@ mod tests {
 
     #[test]
     fn remote_wins_over_bundled() {
-        // The remote tier sits above the baked-in bundled list: for a bundled
-        // package, the remote names take precedence (fresher, version-aware).
-        // `fread` is a real bundled `data.table` export; the remote omits it.
         let p = CompositeProvider::base_only().with_remote(remote(&[("data.table", &["new_sym"])]));
         assert_eq!(
             p.origin("new_sym", &[loaded("data.table")]),

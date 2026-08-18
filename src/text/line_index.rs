@@ -441,7 +441,6 @@ mod tests {
 
     #[test]
     fn utf8_multibyte() {
-        // Each non-ASCII char below is 2 bytes in UTF-8, 1 UTF-16 unit, 1 code point.
         let idx = LineIndex::new("\u{00e1}b\nc");
         // offset 2 = after á (2 bytes)
         assert_eq!(idx.byte_to_lc(2), LineCol { line: 1, column: 2 });

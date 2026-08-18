@@ -1,12 +1,7 @@
-//! Salsa-backed incremental layer: file text → parse tree → semantic model.
+//! Salsa-backed incremental queries from source text through semantic analysis.
 //!
-//! The CST is cached as a `rowan::GreenNode` (Arc-backed, `Send + Sync`) rather
-//! than a `SyntaxNode` (which holds non-`Send` cursor state and is neither
-//! `Eq` nor `salsa::SalsaValue`). Callers materialize a fresh cursor via
-//! [`parsed_tree_root`] — a cheap atomic clone — so each consumer gets its own
-//! tree without leaking the salsa cell. The per-file [`semantic_model`] query
-//! builds on the cached tree, so the linter and LSP no longer re-parse and
-//! rebuild the model from text on every run.
+//! Queries cache `rowan::GreenNode`s because red `SyntaxNode`s are neither
+//! thread-safe nor valid salsa values. Consumers create their own red cursors.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -32,45 +27,25 @@ use crate::semantic::{BindingKind, FileControlFlow, ScopeKind, SemanticModel};
 use crate::syntax::{NodePtr, SyntaxNode};
 use crate::text::LineIndex;
 
-/// An opaque, process-local file identity. Decouples a tracked file from any
-/// path: it is allocated once when a file is first seen and never reused, so it
-/// is the stable handle the rest of the system can key on without a path leaking
-/// in. On-disk files carry one alongside their (immutable) path; in-memory files
-/// carry one with no path at all.
+/// An opaque, process-local identity allocated once per tracked file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FileId(pub u32);
 
 #[salsa::input]
 pub struct SourceFile {
-    /// This file's opaque identity, allocated by the [`FileSourceMap`]. Set once
-    /// and never mutated.
+    /// Stable identity allocated by [`FileSourceMap`].
     pub id: FileId,
-    /// The path this file was tracked under, or `None` for an in-memory document.
-    /// Set once at creation and never mutated, so path-reading queries (e.g.
-    /// [`source_edges`], which resolves relative `source()` targets against
-    /// `path.parent()`) don't re-run on a text edit. Equivalent path forms are
-    /// deduplicated *before* a file is created (see [`FileSourceMap`]), so two
-    /// spellings of the same path never mint two inputs.
+    /// Normalized path, or `None` for an in-memory document.
     #[returns(ref)]
     pub path: Option<PathBuf>,
-    /// The document text as a shared immutable handle. The live LSP buffer and
-    /// [`PrevParse`] hold this same allocation, so text changes hands without
-    /// being copied and the staleness guards get an `Arc::ptr_eq` fast path.
+    /// Document text shared with live buffers and [`PrevParse`].
     #[returns(ref)]
     pub text: Arc<str>,
-    /// The package-wide roxygen markdown default resolved for this file (see
-    /// [`crate::project::description`]): a directive-less roxygen block parses
-    /// in markdown mode when it is set. A separate input field so flipping it
-    /// (a `DESCRIPTION` edit) invalidates exactly the parse-and-downstream
-    /// slice, while keystrokes (text writes) never re-resolve it.
+    /// Package-wide default for directive-less roxygen blocks.
     pub roxygen_markdown: bool,
 }
 
-/// Lexically normalize `path` for use as a deduplication key: absolutize it
-/// (against the current directory, without touching the filesystem) and collapse
-/// `.` / `..` segments. Purely textual — no symlink resolution, no existence
-/// check — so it is stable for not-yet-saved buffers and never blocks on I/O.
-/// `a.R`, `./a.R`, and `dir/../a.R` all map to the same key.
+/// Absolutize and lexically normalize a path without filesystem access.
 pub(crate) fn normalize_path(path: &Path) -> PathBuf {
     use std::path::Component;
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
@@ -122,8 +97,6 @@ pub(crate) fn expand_dir_renames<'a>(
     let mut expanded = vec![false; pairs.len()];
     for path in known {
         let path = normalize_path(path);
-        // Strict ancestors only: an exact match is a file rename, which falls
-        // through to the verbatim pass below.
         let claim = pairs
             .iter()
             .enumerate()
@@ -145,9 +118,7 @@ pub(crate) fn expand_dir_renames<'a>(
     map
 }
 
-/// Render a path with forward slashes, the separator R source paths use on every
-/// platform. A lossy `to_string_lossy` is acceptable: a non-UTF-8 path can't have
-/// originated from a `source()` string literal we are rewriting.
+/// Render a source path with R's platform-independent `/` separator.
 fn to_forward_slash(path: &Path) -> String {
     let s = path.to_string_lossy();
     if std::path::MAIN_SEPARATOR == '/' {
@@ -157,11 +128,7 @@ fn to_forward_slash(path: &Path) -> String {
     }
 }
 
-/// The path → input index plus the [`FileId`] allocator. Maps a *normalized*
-/// path to the single [`SourceFile`] tracked for it, so reaching the same file
-/// by an equivalent path spelling reuses one input (and its cached queries)
-/// rather than minting a duplicate. In-memory files get a [`FileId`] but no entry
-/// here (nothing looks them up by path).
+/// Maps normalized paths to inputs and allocates file identities.
 #[derive(Default)]
 struct FileSourceMap {
     by_path: HashMap<PathBuf, SourceFile>,
@@ -1638,11 +1605,6 @@ impl Analysis {
             .cloned()
             .collect();
         let conflict = cohort.len() > 1;
-        // A multi-def cohort is, by construction, all package siblings (the only
-        // multi-member source — `source()`-shadows and disjoint scripts are
-        // filtered out above), so every extra member shares def_file's package
-        // root. Lock that invariant: it is what makes rename-all sound and the
-        // package-completeness gate the right (and only needed) refusal.
         debug_assert!(
             cohort.len() <= 1
                 || cohort.iter().all(|d| d.as_path() == def_file
@@ -1873,7 +1835,6 @@ impl Analysis {
             .iter()
             .filter_map(|&f| self.0.file_path(f).map(Path::to_path_buf))
             .collect();
-        // Normalize each rev key once — the per-edge lookups below probe the map.
         let rev_targets: Vec<(PathBuf, &BTreeSet<PathBuf>)> = rev
             .sourced_by
             .iter()
@@ -1946,8 +1907,6 @@ impl Analysis {
                 } else {
                     to_forward_slash(target_new)
                 };
-                // Guards the `base_new == None` path, where the resolution check
-                // above can't conclude anything.
                 if new_spelling == edge.spelling {
                     continue;
                 }

@@ -1265,12 +1265,6 @@ fn emit_md_list_level_inner(
             i = emit_md_indented_code_mid_line(tokens, i, content_indent + 4, events);
             item_has_content = true;
         } else if let Some(underline) = item_setext_underline_ahead(tokens, i, content_indent) {
-            // The item's first-line prose is promoted by a **setext underline**
-            // at the item's content column (`- Bar` / `  ---`, cm-302's second
-            // item): the paragraph lines and the underline form one heading
-            // node, first line marker-less (the from-value shape). A below-
-            // column `===` stays a lazy fold and a below-column `---` a
-            // section-level thematic break, both unchanged (window-gated).
             i = emit_md_item_setext_heading(tokens, i, underline, events);
             item_has_content = true;
         } else {
@@ -1290,21 +1284,6 @@ fn emit_md_list_level_inner(
         // (an item starting with a blank needs indented content,
         // engine-probed), so no prose continuation folds into it.
         loop {
-            // A block Rd macro (`\itemize{…}`, `\describe{…}`, `\tabular{…}{…}`)
-            // following a list item is **not** a markdown block: to cmark the raw
-            // `\name{…}` is literal text, so it folds into the item as paragraph
-            // content (parse_Rd interprets the macro only afterward). It therefore
-            // obeys CommonMark's *paragraph-continuation* rule, not the
-            // block-interrupt indent gate the fence/table/indented-code arms use: a
-            // no-blank continuation folds at **any** indent (lazy), while a
-            // blank-separated line folds at the content column (below indented-code
-            // territory). A blank-separated *below*-column macro is a section-level
-            // block that ends the list (engine-probed). Placed before every other
-            // arm: a block-macro line matches none of their predicates
-            // (`is_md_item_lazy_continuation` even excludes it), but its multi-line
-            // opener must be consumed whole by `emit_block_macro`, never split by a
-            // prose arm. An empty item folds a content-column macro (its first
-            // block starts on the next line) but not a lazy below-column one.
             if let Some(m) = following_line_marker(tokens, i)
                 && is_block_macro_line(tokens, m)
                 && (item_has_content || list_line_indent(tokens, m) >= content_indent)
@@ -1327,17 +1306,6 @@ fn emit_md_list_level_inner(
                 continue;
             }
 
-            // A GFM table indented to (or past) the item's content column is a
-            // child block inside this item — with or without an intervening
-            // blank line (a table interrupts the item's paragraph at the content
-            // column; a blank only makes the item loose; roxygen2 renders both as
-            // a `\tabular` inside the `\item`, engine-probed). An **unindented**
-            // table header (below the content column) is instead a lazy paragraph
-            // continuation folded as prose (`is_md_item_lazy_continuation` allows
-            // it — a table cannot interrupt a paragraph across the container
-            // boundary). Like the fence, this needs no `item_has_content` gate.
-            // Placed before the lazy-continuation and blank-prose arms, either of
-            // which would otherwise claim a content-column table header as text.
             if let Some(m) = next_content_line(tokens, i)
                 && list_line_indent(tokens, m) >= content_indent
                 && is_md_table_start(tokens, m)
@@ -1349,17 +1317,6 @@ fn emit_md_list_level_inner(
                 continue;
             }
 
-            // A block quote at the item's content column folds into this item —
-            // with or without an intervening blank line (a block quote
-            // interrupts the item's paragraph; a blank only makes the item
-            // loose; roxygen2 flattens the quote to plain text glued onto the
-            // item's prose, engine-probed). Four or more columns past the
-            // content column it is indented code instead (the blank-separated
-            // indented-code arm — the lexer carves the quote leaf indent-blind,
-            // so the window here is what keeps the two apart), and below the
-            // content column it is a section-level block that ends the list. An
-            // **empty** item folds no quote (the list ends instead,
-            // engine-probed, the same gate as indented code).
             if item_has_content
                 && let Some(m) = next_content_line(tokens, i)
                 && (content_indent..content_indent + 4).contains(&list_line_indent(tokens, m))
@@ -1372,16 +1329,6 @@ fn emit_md_list_level_inner(
                 continue;
             }
 
-            // An ATX heading at the item's content column folds into this item —
-            // with or without an intervening blank line (a heading interrupts
-            // the item's paragraph). roxygen2 renders a level >= 2 heading as a
-            // `\subsection` after the item's content and hoists a level-1 one
-            // to a top-level `\section` (engine-probed; the projector's split).
-            // Four or more columns past the content column it is indented code
-            // (the lexer carves the heading leaf indent-blind, so the window
-            // here is what keeps the two apart, as with the block quote), and
-            // below the content column it is a section-level block that ends
-            // the list.
             if item_has_content
                 && let Some(m) = next_content_line(tokens, i)
                 && (content_indent..content_indent + 4).contains(&list_line_indent(tokens, m))
@@ -1450,14 +1397,6 @@ fn emit_md_list_level_inner(
                 continue;
             }
 
-            // A no-blank **over-indented marker line**: a list line indented four
-            // or more columns past the container's content column — but short of
-            // this item's content column, so it neither nests nor stays a
-            // sibling — is would-be indented code, and indented code cannot
-            // interrupt a paragraph, so CommonMark folds it into the item's open
-            // paragraph as lazy text (`- d` then `    - e` renders item text
-            // `d - e`, cm-314). With a blank between, the same line *is*
-            // indented code (the blank-separated arm above claims it first).
             if item_has_content
                 && let Some(m) = following_line_marker(tokens, i)
                 && is_md_list_continuation(tokens, m)
@@ -1474,18 +1413,6 @@ fn emit_md_list_level_inner(
                 continue;
             }
 
-            // A blank-separated indented code block: after a blank line closes
-            // the item's paragraph, a line indented four or more columns past the
-            // item's content column is an indented code block *inside* the item
-            // (CommonMark). The blank is required — an indented code block cannot
-            // interrupt a paragraph, so a no-blank over-indented line is a lazy
-            // continuation (folded above); a line indented to the content column
-            // but fewer than four columns past it is a loose paragraph (folded
-            // below). An **empty** item does not fold indented code (it ends the
-            // list instead, engine-probed), hence the `item_has_content` gate.
-            // Placed before the loose-paragraph arm, which would otherwise claim
-            // the over-indented line as prose. The continuation-line threshold is
-            // the same content-relative gauge, threaded into the emitter.
             if item_has_content
                 && let Some(m) = next_content_line_across_blanks(tokens, i)
                 && is_indent_code_line_min(tokens, m, content_indent + 4)
@@ -1497,12 +1424,6 @@ fn emit_md_list_level_inner(
                 continue;
             }
 
-            // A blank-separated paragraph: after a blank line closes the item's
-            // paragraph, a following prose line indented to (or past) the item's
-            // content column opens a new paragraph *inside the same item* (a
-            // loose item), which Rd rendering flattens into the item text
-            // (`- a` / blank / `  more` → `a more`, engine-probed). A
-            // below-content-column line ends the item instead.
             if item_has_content
                 && let Some(m) = next_prose_line_across_blanks(tokens, i)
                 && list_line_indent(tokens, m) >= content_indent
@@ -1518,14 +1439,6 @@ fn emit_md_list_level_inner(
                 continue;
             }
 
-            // A fenced code block indented to (or past) the item's content
-            // column is a child block inside this item — with or without an
-            // intervening blank line (a fenced code block interrupts the item's
-            // paragraph, and a blank only makes the item loose; roxygen2 renders
-            // both as the code block inside the `\item`, engine-probed). A
-            // below-content-column fence is a section-level block that ends the
-            // list instead. Unlike the prose continuations above this needs no
-            // `item_has_content` gate — a fence folds into an empty item too.
             if let Some(m) = next_content_line(tokens, i)
                 && list_line_indent(tokens, m) >= content_indent
                 && is_md_code_block_start(tokens, m)
@@ -1558,15 +1471,6 @@ fn emit_md_list_level_inner(
         }
         events.push(Event::Finish); // ROXYGEN_MD_LIST_ITEM
 
-        // Sibling: a following list line whose marker falls short of this item's
-        // content column (a deeper one nests, handled above) — while staying at
-        // or past the container's content column and within four columns of it
-        // (four or more is would-be indented code, never a new item) — continues
-        // the list, whatever its exact indent (CommonMark: `- a` / ` - b` /
-        // `  - c` is one flat list, cm-297/312). Anything outside the window
-        // ends the list (the caller resumes). Blank lines do not end the list
-        // either (they only make it loose): a same-type item — with or without
-        // intervening blanks — is a sibling.
         let sibling_window = container_indent..content_indent.min(container_indent + 4);
         let m = if let Some(m) = next_list_line(tokens, i) {
             if !sibling_window.contains(&list_line_indent(tokens, m)) {
@@ -2696,10 +2600,6 @@ fn emit_block_macro_from_opener(
                         tail = rest;
                     }
                 }
-                // A balanced inline span (`\code{x}`, `` `code` ``, `[link]`, or a
-                // resolved markdown emphasis/strong/code leaf): pass the whole token
-                // through; the tree builder expands a macro token. `RoxygenText` is
-                // handled above, so the remaining `Content` kinds are the spans.
                 k if k.roxygen_role() == Some(RoxygenRole::Content) => {
                     events.push(Event::Tok(i));
                     i += 1;

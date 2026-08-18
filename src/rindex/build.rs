@@ -65,13 +65,8 @@ pub fn build_index(
     opts: BuildOptions,
     now: u64,
 ) -> BuildReport {
-    // Phase 1 (parallel): resolve, harvest, and write each package's own
-    // `pkg@ver.json`. These are independent — distinct files, read-only meta
-    // lookups, in-process harvesting (no subprocess) — so they fan out across
-    // rayon cleanly. The shared `meta.json` is *not* touched here; deferring it
-    // to phase 2 is what makes this safe to parallelize (a per-package
-    // read-modify-write of meta would race and lose entries). `par_iter().map()`
-    // preserves input order, so the report stays deterministic.
+    // Package files are independent; defer the shared metadata update until
+    // after the parallel work to avoid lost read-modify-write updates.
     let report: Vec<(SmolStr, PackageOutcome)> = packages
         .par_iter()
         .map(|pkg| {
@@ -107,12 +102,8 @@ pub fn build_index(
         })
         .collect();
 
-    // Phase 1.5 (sequential, opt-in): the `search()`-diff attach probe, for
-    // indexed packages whose heuristic capture found nothing but that do have
-    // an `.onAttach` hook. Deliberately *after* the parallel phase — spawning
-    // R (and executing package attach hooks) stays confined here, keeping
-    // phase 1's no-subprocess property intact. Probe failures are no-ops.
     if opts.attach_probe {
+        // Keep subprocess-based probing out of the parallel harvest.
         for (pkg, outcome) in &report {
             let version = match outcome {
                 PackageOutcome::Indexed { version, .. } | PackageOutcome::UpToDate { version } => {
@@ -146,8 +137,6 @@ pub fn build_index(
         }
     }
 
-    // Phase 2 (sequential, once): fold every newly-indexed version into
-    // `meta.json` in a single read-modify-write.
     let newly: Vec<(SmolStr, SmolStr)> = report
         .iter()
         .filter_map(|(pkg, outcome)| match outcome {

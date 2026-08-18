@@ -66,9 +66,6 @@ impl Rule for AnyDuplicated {
         let Some(call) = matchers::call_named(node, "any") else {
             return;
         };
-        // `any` must carry exactly one positional, value-bearing argument (a
-        // stray comment parses as a value-less `ARG`, so match on value-bearing
-        // args and let the comment-withholding check below handle it)…
         let Some(outer_arg) = matchers::sole_positional(&call) else {
             return;
         };

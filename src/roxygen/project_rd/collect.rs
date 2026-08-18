@@ -63,8 +63,6 @@ pub(super) fn section_body_parts(section: &RoxygenSection) -> Vec<Vec<Inline>> {
             SyntaxKind::ROXYGEN_MD_THEMATIC_BREAK if !cur.is_empty() => {
                 groups.push(std::mem::take(&mut cur));
             }
-            // A section-level `#'` marker is a blank doc-comment line: it ends the
-            // current paragraph (per-line markers live *inside* the nodes above).
             SyntaxKind::ROXYGEN_MARKER if !cur.is_empty() => {
                 groups.push(std::mem::take(&mut cur));
             }

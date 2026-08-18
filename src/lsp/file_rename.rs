@@ -275,8 +275,6 @@ mod tests {
 
     #[test]
     fn apply_file_renames_swaps_membership() {
-        // didRenameFiles refresh: after a move, the new path is a tracked member
-        // and the old path is no longer one.
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
         let old = root.join("a.R");
@@ -396,9 +394,6 @@ mod tests {
 
     #[test]
     fn apply_file_renames_drops_the_old_member_when_the_new_path_is_gone() {
-        // `didRenameFiles` is a statement that the old path no longer exists, so
-        // an unreadable destination must not leave a stale member behind whose
-        // text can never refresh.
         let (_dir, mut db, a) = seeded_package();
         let a_file = db.lookup_file(&a).expect("tracked");
         let new = a.with_file_name("b.R");
@@ -413,11 +408,6 @@ mod tests {
 
     #[test]
     fn apply_file_renames_follows_a_renamed_root() {
-        // A workspace root is not always a folder the user can't touch:
-        // `seed_workspace_for` makes a package root — or a file's parent
-        // directory — a root, and either can be renamed from the explorer.
-        // Roots must follow the move, or every file the root carried would be
-        // judged against a path that no longer exists.
         let dir = tempfile::tempdir().expect("tempdir");
         let proj = dir.path().join("proj");
         std::fs::create_dir(&proj).expect("proj/");

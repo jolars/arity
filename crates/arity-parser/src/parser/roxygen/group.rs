@@ -251,20 +251,8 @@ fn emit_roxygen_block_events(
                         }
                         i = emit_md_heading(tokens, i, events);
                     } else if !para_open && is_md_setext_heading_start(tokens, i) {
-                        // A setext heading: this prose line's paragraph is terminated by a
-                        // `===`/`---` underline. Emit the whole paragraph + underline as a
-                        // `ROXYGEN_MD_HEADING` (a direct section child, like ATX). Detected
-                        // only at a fresh paragraph, so it captures the paragraph's full
-                        // extent — the underline promotes every contiguous prose line above
-                        // it, matching CommonMark.
                         i = emit_md_setext_heading(tokens, i, events);
                     } else if is_md_thematic_break_line(tokens, i) {
-                        // A thematic break (`***`/`---`/`___`) is a direct section child,
-                        // like a block quote: it interrupts an open paragraph (CommonMark).
-                        // A promoting `---` is consumed as a setext heading above, so any
-                        // dash-run reaching here heads nothing. roxygen2 renders a thematic
-                        // break as empty; the projector drops the node so the surrounding
-                        // paragraphs coalesce.
                         if para_open {
                             events.push(Event::Finish); // ROXYGEN_PARAGRAPH
                             para_open = false;

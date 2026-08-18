@@ -349,9 +349,6 @@ fn strip_comments(source: &str) -> String {
             b'#' if at_line_start => {
                 out.push_str(&source[run..i]);
                 while i < bytes.len() && bytes[i] != b'\n' {
-                    // Only a `\`-newline continues the directive; anything else
-                    // after the backslash is scanned normally, which keeps `i`
-                    // on a `char` boundary for the run below.
                     i += 1 + usize::from(bytes[i] == b'\\' && bytes.get(i + 1) == Some(&b'\n'));
                 }
                 out.push(' ');

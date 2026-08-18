@@ -57,9 +57,6 @@ impl Rule for Lengths {
         let Some(call) = matchers::call_named(node, "sapply") else {
             return;
         };
-        // Exactly two positional, value-bearing arguments (a stray comment
-        // parses as a value-less `ARG`, so match on value-bearing args and let
-        // the comment-withholding check below handle it)…
         let valued: Vec<_> = matchers::args(&call)
             .into_iter()
             .filter(|a| a.value.is_some())

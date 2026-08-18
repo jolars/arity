@@ -210,7 +210,6 @@ fn terminator_name(
     let node = stmt.as_node()?;
     for name in ["return", "stop"] {
         if let Some(call) = matchers::call_named(node, name) {
-            // A local redefinition means the call no longer terminates.
             if !ctx.resolves_to_base(&call) {
                 return None;
             }

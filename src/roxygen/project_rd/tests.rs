@@ -2027,9 +2027,6 @@ fn braceless_sticky_swallows_tail_per_line() {
 
 #[test]
 fn braceless_sticky_md_strips_continuation_indent() {
-    // Under `@md`, cmark strips a continuation line's remaining leading
-    // whitespace before the swallow captures it (`#'   cont` → flush `cont`),
-    // unlike non-`@md` (two spaces survive above).
     let src = "#' T\n\
                #' @md\n\
                #' @details a \\code z here\n\
@@ -3526,9 +3523,6 @@ fn blank_separated_content_column_prose_folds_into_item() {
 
 #[test]
 fn blank_then_underindented_prose_ends_the_list() {
-    // A blank-separated continuation below the content column does *not* fold:
-    // it ends the list and becomes sibling section prose (`- a` / blank /
-    // `more` at column 1 → item `a`, then a separate `more`).
     let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'\n#' more\n#' @name spec\nNULL\n";
     assert!(
         project_to_rd(src)
@@ -3540,10 +3534,6 @@ fn blank_then_underindented_prose_ends_the_list() {
 
 #[test]
 fn fence_at_content_column_folds_into_item() {
-    // A fenced code block indented to the item's content column folds into the
-    // item as a child block (the three-atom `\if…\preformatted…\if` sequence
-    // inside the `\itemize`), with a below content-column marker after it a
-    // sibling item — a fenced block interrupts the item's paragraph.
     let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'   ```\n#'   code\n#'   ```\n\
                #' - b\n#' @name spec\nNULL\n";
     assert!(
@@ -3560,11 +3550,6 @@ fn fence_at_content_column_folds_into_item() {
 
 #[test]
 fn block_quote_at_content_column_folds_into_item() {
-    // A block quote indented to the item's content column folds into the
-    // item — a blank only makes the item loose — and roxygen2 flattens the
-    // quote to plain text glued onto the item's prose (`- a` / blank /
-    // `  > q` → item text `aq`, engine-probed). A following below-column
-    // list marker is a sibling item.
     let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'\n#'   > q\n#' - b\n\
                #' @name spec\nNULL\n";
     assert!(
@@ -4005,11 +3990,6 @@ fn tilde_fence_opens_a_code_block() {
 
 #[test]
 fn knitr_chunk_info_renders_as_the_chunk_language() {
-    // roxygen2's pass 1 knits a fence whose info matches `^[{][a-zA-z]+[}, ]`
-    // (`is_markdown_code_node`) and splices the result back before the markdown
-    // render, so the class carries the chunk language, never the raw header; a
-    // silent chunk's body is the echoed source. An info failing the detection
-    // (`{r-lib}`: the char after the letters is `-`) stays raw in the class.
     let src = "#' @md\n#' @title T\n#' @details\n\
                #' ```{r eval = FALSE}\n#' stop(\"never run\")\n#' ```\n\
                #' ```{r-lib}\n#' not a chunk\n#' ```\n\
@@ -4058,9 +4038,6 @@ fn unterminated_fenced_block_keeps_its_last_line() {
 
 #[test]
 fn fence_below_content_column_ends_the_list() {
-    // A fenced code block *below* the item's content column is a section-level
-    // block, not part of the item: the list ends at the `\item` and the code
-    // block is a sibling of the `\itemize`.
     let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#' ```\n#' code\n#' ```\n\
                #' @name spec\nNULL\n";
     assert!(
@@ -4174,10 +4151,6 @@ fn table_without_blank_folds_into_item() {
 
 #[test]
 fn unindented_table_is_lazy_continuation() {
-    // A table header *below* the item's content column cannot interrupt the
-    // item's paragraph across the container boundary, so the whole table folds
-    // in as lazy paragraph-continuation prose (`a | x | y | ...`), not a
-    // `\tabular` — engine-probed.
     let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#' | x | y |\n\
                #' | --- | --- |\n#' | 1 | 2 |\n#' @name spec\nNULL\n";
     let rd = project_to_rd(src);
@@ -4210,10 +4183,6 @@ fn block_macro_at_content_column_folds_into_item() {
 
 #[test]
 fn block_macro_below_content_column_folds_lazily() {
-    // With no intervening blank, a block macro folds as a *lazy* paragraph
-    // continuation regardless of indent (CommonMark paragraph continuation does
-    // not require the content column), so a macro indented *below* the content
-    // column still nests — same shape as the content-column case.
     let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#' \\itemize{\n\
                #'   \\item x\n#' }\n#' - b\n#' @name spec\nNULL\n";
     assert!(
@@ -4228,10 +4197,6 @@ fn block_macro_below_content_column_folds_lazily() {
 
 #[test]
 fn blank_separated_below_column_block_macro_ends_list() {
-    // A blank line closes the item's paragraph; a following block macro *below*
-    // the content column then cannot belong to the item, so it is a
-    // section-level block that ends the list — `- a`, the `\itemize`, and `- b`
-    // become three separate `\itemize`s (engine-probed).
     let src = "#' @md\n#' @title T\n#' @details\n#' - a\n#'\n#' \\itemize{\n\
                #'   \\item x\n#' }\n#' - b\n#' @name spec\nNULL\n";
     assert!(

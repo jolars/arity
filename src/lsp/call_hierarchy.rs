@@ -366,8 +366,6 @@ pub(crate) fn prepare_call_hierarchy_via_db(
         snapshot
             .workspace_def_sites(&name)
             .into_iter()
-            // The current file is handled intra-file above; skip it so a stale
-            // tracked copy never shadows the live buffer.
             .filter(|(def_path, _)| def_path != path)
             .filter_map(|(def_path, _)| function_item(snapshot, &def_path, fn_path, encoding))
             .collect::<Vec<_>>()

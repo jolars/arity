@@ -775,15 +775,6 @@ pub(super) fn serialize_inlines_unexpanded(body: &[Inline], md: bool) -> Vec<Str
 pub(super) fn serialize_macro(node: &SyntaxNode, md: bool) -> String {
     let head_full = macro_head(node);
     let name = head_full.trim_start_matches('\\');
-    // A *verbatim block* body: parse_Rd keeps a `\preformatted` body (always)
-    // and the body of a fully-verbatim macro written in **block form** (`\eqn{`/
-    // `\deqn{`/`\out{` spanning `#'` lines — the node threads inter-line
-    // markers) verbatim — no whitespace collapse, no nested-macro / markdown
-    // parsing — and splits it at newlines into one `(VERB …)` per line. The
-    // run/flush prose model below normalizes whitespace and expands nested
-    // nodes, so these take a dedicated reconstruction arm. (A *single-line*
-    // verbatim macro is a `ROXYGEN_RD_MACRO_VERB` leaf handled by the generic
-    // path — identical output, and the path the existing pins exercise.)
     if name == "preformatted" || (is_verbatim_rd_macro(name) && threads_markers(node)) {
         return serialize_verbatim_block(node, &head_full);
     }

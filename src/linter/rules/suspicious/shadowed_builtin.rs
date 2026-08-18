@@ -78,11 +78,6 @@ impl Rule for ShadowedBuiltin {
             if !ctx.symbols.is_base(&binding.name) {
                 continue;
             }
-            // Only a binding to a *function* can shadow a base function at a call
-            // site. `names <- names(x)` binds a value, and R's call-position
-            // lookup skips it — so exempt it (this is the tidyverse-dominant
-            // idiom). Requiring a function-literal RHS also gives us the defining
-            // assignment we need to bound "later" calls below.
             let Some(assign) = defining_assignment(ctx.root, binding.def_range) else {
                 continue;
             };
