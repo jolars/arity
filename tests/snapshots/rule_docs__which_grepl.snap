@@ -1,0 +1,30 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `which-grepl`
+
+Flag `which(grepl(pattern, x))`, which makes two passes where `grep(pattern, x)` directly returns matching indices. Both calls must resolve to base R.
+
+This rule is **enabled by default**.
+
+Direct matching indices:
+
+```r
+i <- which(grepl("^a", x))
+```
+
+```text
+warning: which-grepl
+ --> example.R:1:6
+  |
+1 | i <- which(grepl("^a", x))
+  |      ^^^^^^^^^^^^^^^^^^^^^ Use `grep(pattern, x)` instead of this indirect base call.
+  = help: Use `grep(pattern, x)`.
+```
+
+After applying the fix:
+
+```r
+i <- grep("^a", x)
+```

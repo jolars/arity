@@ -121,11 +121,15 @@ Tier 1—clear correctness bugs, good default-on candidates:
 
 Tier 2—performance/readability transformations that the formatter cannot do:
 
-- [ ] Add a shared call-rewrite batch for `matrix-apply`
+- [x] Add a shared call-rewrite batch for `matrix-apply`
   (`apply(x, 1/2, sum/mean)` to row/column helpers), `which-grepl`, `rep-len`,
   `system-file`, `list2df` (R >= 4.0), and `length-levels`. Each requires
   base-resolution checks, exact named/positional argument matching, trivia-safe
   fixes, and version gating where applicable.
+  Implemented as six `ns`-tier warnings over exact argument shapes; four fixes
+  are safe, while `matrix-apply` and `list2df` are unsafe because array shape,
+  method dispatch, or recycling can change behavior. All fixes preserve retained
+  trivia, and `list2df` honors the R 4.0 floor.
 - [ ] `boolean-arithmetic`: recognize `length(which(p)) == 0` and
   `sum(logical) == 0`-style existence tests and prefer `!any(p)` (plus the
   positive variants). Start with shapes whose NA behavior is provably

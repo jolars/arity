@@ -186,6 +186,12 @@ fn performance_rules() -> Vec<Box<dyn Rule>> {
         Box::new(performance::ClassEquals),
         Box::new(performance::FixedRegex),
         Box::new(performance::Sort),
+        Box::new(performance::MatrixApply),
+        Box::new(performance::WhichGrepl),
+        Box::new(performance::RepLen),
+        Box::new(performance::SystemFile),
+        Box::new(performance::List2df),
+        Box::new(performance::LengthLevels),
     ]
 }
 

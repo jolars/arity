@@ -4295,6 +4295,96 @@ fn lengths_withholds_fix_for_dropped_comment() {
     assert!(d.fix.is_none(), "dropped comment should withhold the fix");
 }
 
+#[test]
+fn call_rewrite_batch_rewrites_clean_shapes() {
+    let cases = [
+        ("apply(x, 1, sum)\n", "matrix-apply", "rowSums(x)\n"),
+        (
+            "apply(x, 2, mean, na.rm = TRUE)\n",
+            "matrix-apply",
+            "colMeans(x, na.rm = TRUE)\n",
+        ),
+        (
+            "which(grepl(\"^a\", x))\n",
+            "which-grepl",
+            "grep(\"^a\", x)\n",
+        ),
+        ("rep(x, length.out = n)\n", "rep-len", "rep_len(x, n)\n"),
+        (
+            "system.file(file.path(\"a\", \"b\"), package = \"p\")\n",
+            "system-file",
+            "system.file(\"a\", \"b\", package = \"p\")\n",
+        ),
+        (
+            "file.path(system.file(package = \"p\"), \"a\", \"b\")\n",
+            "system-file",
+            "system.file(\"a\", \"b\", package = \"p\")\n",
+        ),
+        ("do.call(cbind.data.frame, x)\n", "list2df", "list2DF(x)\n"),
+        ("length(levels(x))\n", "length-levels", "nlevels(x)\n"),
+    ];
+    for (input, rule, expected) in cases {
+        let output = if matches!(rule, "matrix-apply" | "list2df") {
+            unsafe_fixed_output(input, rule)
+        } else {
+            fixed_output(input, rule)
+        };
+        assert_eq!(output, expected, "{rule}");
+    }
+}
+
+#[test]
+fn call_rewrite_batch_ignores_inexact_or_shadowed_shapes() {
+    let cases = [
+        ("apply(x, 3, sum)\n", "matrix-apply"),
+        (
+            "apply <- function(...) 1\napply(x, 1, sum)\n",
+            "matrix-apply",
+        ),
+        ("which(grepl(\"a\", x) | grepl(\"b\", x))\n", "which-grepl"),
+        ("rep(x, each = 2, length.out = n)\n", "rep-len"),
+        (
+            "system.file(file.path(\"a\", \"b\"), mustWork = TRUE)\n",
+            "system-file",
+        ),
+        ("do.call(cbind.data.frame, x, quote = TRUE)\n", "list2df"),
+        ("length(c(levels(x), levels(y)))\n", "length-levels"),
+        (
+            "levels <- function(x) x\nlength(levels(x))\n",
+            "length-levels",
+        ),
+    ];
+    for (input, rule) in cases {
+        assert!(
+            diagnostics(input).iter().all(|d| d.rule != rule),
+            "{input:?} unexpectedly triggered {rule}"
+        );
+    }
+}
+
+#[test]
+fn list2df_respects_the_r_floor() {
+    assert!(
+        diagnostics_with_compat("do.call(cbind.data.frame, x)\n", Some("3.6"), None)
+            .iter()
+            .all(|d| d.rule != "list2df")
+    );
+    assert!(
+        diagnostics_with_compat("do.call(cbind.data.frame, x)\n", Some("4.0"), None)
+            .iter()
+            .any(|d| d.rule == "list2df")
+    );
+}
+
+#[test]
+fn call_rewrite_batch_withholds_a_lossy_comment_fix() {
+    let d = diagnostics("which(# keep\n  grepl(\"a\", x))\n")
+        .into_iter()
+        .find(|d| d.rule == "which-grepl")
+        .expect("finding");
+    assert!(d.fix.is_none());
+}
+
 /// The (unsafe) fix carried by the single finding of `rule` in `src`, applied.
 fn unsafe_fixed_output(src: &str, rule: &str) -> String {
     let d = diagnostics(src)
@@ -5554,6 +5644,14 @@ fn fixed_output_is_parseable_and_clean() {
         // sprintf (literal-only format collapse; validation findings have no fix)
         "x <- sprintf(\"ready: 100%%\")\n",
         "sprintf(\"%s %d\", x)\n",
+        // namespace-confirmed call rewrites
+        "apply(x, 1, sum)\n",
+        "which(grepl(\"a\", x))\n",
+        "rep(x, length.out = n)\n",
+        "system.file(file.path(\"a\", \"b\"), package = \"p\")\n",
+        "file.path(system.file(package = \"p\"), \"a\")\n",
+        "do.call(cbind.data.frame, x)\n",
+        "length(levels(x))\n",
         // internal-function (no fix — must not perturb the input)
         "x <- stats:::C_cor\n",
         "utils:::.getHelpFile(path)\n",

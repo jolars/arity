@@ -1,0 +1,30 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `rep-len`
+
+Flag the exact `rep(x, length.out = n)` shape, for which `rep_len(x, n)` is the direct base primitive. Calls with `times`, `each`, or other arguments are excluded.
+
+This rule is **enabled by default**.
+
+Direct length-limited repetition:
+
+```r
+y <- rep(x, length.out = n)
+```
+
+```text
+warning: rep-len
+ --> example.R:1:6
+  |
+1 | y <- rep(x, length.out = n)
+  |      ^^^^^^^^^^^^^^^^^^^^^^ Use `rep_len(x, n)` instead of this indirect base call.
+  = help: Use `rep_len(x, n)`.
+```
+
+After applying the fix:
+
+```r
+y <- rep_len(x, n)
+```

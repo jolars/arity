@@ -1,0 +1,24 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `list2df`
+
+Flag `do.call(cbind.data.frame, x)` in favor of `list2DF(x)` on R 4.0 or newer; exact arguments and base resolution avoid changing recycling or dispatch behavior.
+
+This rule is **enabled by default**.
+
+A list converted directly to a data frame:
+
+```r
+df <- do.call(cbind.data.frame, x)
+```
+
+```text
+warning: list2df
+ --> example.R:1:7
+  |
+1 | df <- do.call(cbind.data.frame, x)
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Use `list2DF(x)` instead of this indirect base call.
+  = help: Use `list2DF(x)`.
+```

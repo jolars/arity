@@ -75,6 +75,12 @@ so this page never drifts from the rules' actual behavior.
 - [`class-equals`](#class-equals)
 - [`fixed-regex`](#fixed-regex)
 - [`sort`](#sort)
+- [`matrix-apply`](#matrix-apply)
+- [`which-grepl`](#which-grepl)
+- [`rep-len`](#rep-len)
+- [`system-file`](#system-file)
+- [`list2df`](#list2df)
+- [`length-levels`](#length-levels)
 
 **Documentation**
 
@@ -1432,6 +1438,156 @@ warning: sort
 2 | largest <- sort(x, decreasing = TRUE)[1]
   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `sort(x)[1]` sorts everything to read one extreme — use `max(x)`
   = help: Use `max(x)`.
+```
+
+### `matrix-apply`
+
+Flag `apply(x, 1/2, sum/mean)` when the corresponding `rowSums`, `colSums`, `rowMeans`, or `colMeans` call is clearer and faster. The exact supported argument shape and all relevant base names are verified before rewriting.
+
+This rule is **enabled by default**.
+
+Dedicated matrix row and column helpers:
+
+```r
+totals <- apply(x, 1, sum)
+```
+
+```text
+warning: matrix-apply
+ --> example.R:1:11
+  |
+1 | totals <- apply(x, 1, sum)
+  |           ^^^^^^^^^^^^^^^^ Use `rowSums(x)` instead of this indirect base call.
+  = help: Use `rowSums(x)`.
+```
+
+### `which-grepl`
+
+Flag `which(grepl(pattern, x))`, which makes two passes where `grep(pattern, x)` directly returns matching indices. Both calls must resolve to base R.
+
+This rule is **enabled by default**.
+
+Direct matching indices:
+
+```r
+i <- which(grepl("^a", x))
+```
+
+```text
+warning: which-grepl
+ --> example.R:1:6
+  |
+1 | i <- which(grepl("^a", x))
+  |      ^^^^^^^^^^^^^^^^^^^^^ Use `grep(pattern, x)` instead of this indirect base call.
+  = help: Use `grep(pattern, x)`.
+```
+
+After applying the fix:
+
+```r
+i <- grep("^a", x)
+```
+
+### `rep-len`
+
+Flag the exact `rep(x, length.out = n)` shape, for which `rep_len(x, n)` is the direct base primitive. Calls with `times`, `each`, or other arguments are excluded.
+
+This rule is **enabled by default**.
+
+Direct length-limited repetition:
+
+```r
+y <- rep(x, length.out = n)
+```
+
+```text
+warning: rep-len
+ --> example.R:1:6
+  |
+1 | y <- rep(x, length.out = n)
+  |      ^^^^^^^^^^^^^^^^^^^^^^ Use `rep_len(x, n)` instead of this indirect base call.
+  = help: Use `rep_len(x, n)`.
+```
+
+After applying the fix:
+
+```r
+y <- rep_len(x, n)
+```
+
+### `system-file`
+
+Flag redundant nesting of base `file.path()` and `system.file()`. `system.file()` already accepts path components through `...`, so exact clean shapes can be flattened safely.
+
+This rule is **enabled by default**.
+
+Path components passed directly to `system.file`:
+
+```r
+p <- system.file(file.path("a", "b"), package = "pkg")
+```
+
+```text
+warning: system-file
+ --> example.R:1:6
+  |
+1 | p <- system.file(file.path("a", "b"), package = "pkg")
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Use `system.file(..., package = pkg)` instead of this indirect base call.
+  = help: Use `system.file(..., package = pkg)`.
+```
+
+After applying the fix:
+
+```r
+p <- system.file("a", "b", package = "pkg")
+```
+
+### `list2df`
+
+Flag `do.call(cbind.data.frame, x)` in favor of `list2DF(x)` on R 4.0 or newer; exact arguments and base resolution avoid changing recycling or dispatch behavior.
+
+This rule is **enabled by default**.
+
+A list converted directly to a data frame:
+
+```r
+df <- do.call(cbind.data.frame, x)
+```
+
+```text
+warning: list2df
+ --> example.R:1:7
+  |
+1 | df <- do.call(cbind.data.frame, x)
+  |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Use `list2DF(x)` instead of this indirect base call.
+  = help: Use `list2DF(x)`.
+```
+
+### `length-levels`
+
+Flag `length(levels(x))`, for which base `nlevels(x)` expresses the intent directly. Both nested calls must resolve to base R.
+
+This rule is **enabled by default**.
+
+A factor's number of levels:
+
+```r
+n <- length(levels(x))
+```
+
+```text
+warning: length-levels
+ --> example.R:1:6
+  |
+1 | n <- length(levels(x))
+  |      ^^^^^^^^^^^^^^^^^ Use `nlevels(x)` instead of this indirect base call.
+  = help: Use `nlevels(x)`.
+```
+
+After applying the fix:
+
+```r
+n <- nlevels(x)
 ```
 
 ## Documentation

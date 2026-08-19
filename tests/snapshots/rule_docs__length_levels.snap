@@ -1,0 +1,30 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `length-levels`
+
+Flag `length(levels(x))`, for which base `nlevels(x)` expresses the intent directly. Both nested calls must resolve to base R.
+
+This rule is **enabled by default**.
+
+A factor's number of levels:
+
+```r
+n <- length(levels(x))
+```
+
+```text
+warning: length-levels
+ --> example.R:1:6
+  |
+1 | n <- length(levels(x))
+  |      ^^^^^^^^^^^^^^^^^ Use `nlevels(x)` instead of this indirect base call.
+  = help: Use `nlevels(x)`.
+```
+
+After applying the fix:
+
+```r
+n <- nlevels(x)
+```

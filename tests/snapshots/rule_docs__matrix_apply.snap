@@ -1,0 +1,24 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `matrix-apply`
+
+Flag `apply(x, 1/2, sum/mean)` when the corresponding `rowSums`, `colSums`, `rowMeans`, or `colMeans` call is clearer and faster. The exact supported argument shape and all relevant base names are verified before rewriting.
+
+This rule is **enabled by default**.
+
+Dedicated matrix row and column helpers:
+
+```r
+totals <- apply(x, 1, sum)
+```
+
+```text
+warning: matrix-apply
+ --> example.R:1:11
+  |
+1 | totals <- apply(x, 1, sum)
+  |           ^^^^^^^^^^^^^^^^ Use `rowSums(x)` instead of this indirect base call.
+  = help: Use `rowSums(x)`.
+```

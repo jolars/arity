@@ -1,0 +1,30 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `system-file`
+
+Flag redundant nesting of base `file.path()` and `system.file()`. `system.file()` already accepts path components through `...`, so exact clean shapes can be flattened safely.
+
+This rule is **enabled by default**.
+
+Path components passed directly to `system.file`:
+
+```r
+p <- system.file(file.path("a", "b"), package = "pkg")
+```
+
+```text
+warning: system-file
+ --> example.R:1:6
+  |
+1 | p <- system.file(file.path("a", "b"), package = "pkg")
+  |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ Use `system.file(..., package = pkg)` instead of this indirect base call.
+  = help: Use `system.file(..., package = pkg)`.
+```
+
+After applying the fix:
+
+```r
+p <- system.file("a", "b", package = "pkg")
+```
