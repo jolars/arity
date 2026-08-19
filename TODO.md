@@ -92,11 +92,13 @@ Tier 1—clear correctness bugs, good default-on candidates:
   where `length.out` normally wins. Implemented as an `ns`-tier, report-only
   warning: invalid/`NA` `length.out` can make `times` matter, so deletion is not
   safe for arbitrary static expressions.
-- [ ] `sprintf`: statically validate literal formats—invalid conversions and
+- [x] `sprintf`: statically validate literal formats—invalid conversions and
   definitely missing/excess arguments—and report the pointless
   `sprintf("literal")` case separately within the same rule. Format parsing
   must handle `%%`, positional fields, `*` width/precision, and recycling
-  before this can claim correctness.
+  before this can claim correctness. Implemented as an `ns`-tier warning over
+  scalar and `c()` literal formats; only the literal-only collapse has a safe
+  fix.
 - [ ] `glue`: for a statically known `glue()` template and delimiters, report
   unmatched/incomplete interpolation delimiters; also flag a template with no
   interpolation. Gate on the package/callee and parse the template rather than

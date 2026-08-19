@@ -28,6 +28,7 @@ so this page never drifts from the rules' actual behavior.
 - [`equals-null`](#equals-null)
 - [`missing-argument`](#missing-argument)
 - [`rep-times-ignored`](#rep-times-ignored)
+- [`sprintf`](#sprintf)
 - [`vector-logic`](#vector-logic)
 - [`unreachable-code`](#unreachable-code)
 - [`is-numeric`](#is-numeric)
@@ -315,6 +316,33 @@ warning: rep-times-ignored
 1 | rep(x, times = 2, length.out = 10)
   |        ^^^^^ `times` is normally ignored when `length.out` is supplied
   = help: Remove `times` after confirming `length.out` is always valid.
+```
+
+### `sprintf`
+
+Validate literal formats passed to base `sprintf()`: flag invalid conversions, definitely missing or excess arguments, and a call whose format contains no fields. The literal-only case has a safe autofix.
+
+This rule is **enabled by default**.
+
+A literal format with no fields needs no `sprintf()` call:
+
+```r
+label <- sprintf("ready: 100%%")
+```
+
+```text
+warning: sprintf
+ --> example.R:1:10
+  |
+1 | label <- sprintf("ready: 100%%")
+  |          ^^^^^^^^^^^^^^^^^^^^^^^ `sprintf()` is pointless because the format has no fields
+  = help: Use the string literal directly.
+```
+
+After applying the fix:
+
+```r
+label <- "ready: 100%"
 ```
 
 ### `vector-logic`

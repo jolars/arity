@@ -133,6 +133,7 @@ fn correctness_rules() -> Vec<Box<dyn Rule>> {
         Box::new(correctness::EqualsNull),
         Box::new(correctness::MissingArgument),
         Box::new(correctness::RepTimesIgnored),
+        Box::new(correctness::Sprintf),
         Box::new(correctness::VectorLogic),
         Box::new(correctness::UnreachableCode),
         Box::new(correctness::IsNumeric),

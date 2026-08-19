@@ -3403,6 +3403,70 @@ fn redundant_ifelse_ignores_non_constant_branches() {
 }
 
 #[test]
+fn sprintf_validates_literal_formats() {
+    let findings: Vec<_> = diagnostics(
+        "sprintf(\"%q\", x)\nsprintf(\"%s %d\", x)\nsprintf(\"%2$s\", x)\nsprintf(\"%s\", x, y)\n",
+    )
+    .into_iter()
+    .filter(|d| d.rule == "sprintf")
+    .collect();
+    assert_eq!(findings.len(), 4, "{findings:?}");
+    assert!(findings[0].message.body.contains("conversion"));
+    assert!(findings[1].message.body.contains("missing"));
+    assert!(findings[2].message.body.contains("missing"));
+    assert!(findings[3].message.body.contains("excess"));
+}
+
+#[test]
+fn sprintf_handles_percent_positions_stars_and_recycling() {
+    let rules: Vec<_> = diagnostics(
+        "sprintf(\"%% %2$*1$.*3$f\", 8, x, 2)\nsprintf(c(\"%s\", \"%d\"), x)\nsprintf(\"\\x25s\", x)\n",
+    )
+            .into_iter()
+            .filter(|d| d.rule == "sprintf")
+            .collect();
+    assert!(rules.is_empty(), "{rules:?}");
+}
+
+#[test]
+fn sprintf_counts_star_arguments() {
+    let findings: Vec<_> = diagnostics("sprintf(\"%*.*f\", width, x)\n")
+        .into_iter()
+        .filter(|d| d.rule == "sprintf")
+        .collect();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert!(findings[0].message.body.contains("missing argument 3"));
+}
+
+#[test]
+fn sprintf_collapses_literal_only_call() {
+    assert_eq!(
+        fixed_output("x <- sprintf(\"literal %% text\")\n", "sprintf"),
+        "x <- \"literal % text\"\n"
+    );
+}
+
+#[test]
+fn sprintf_withholds_fix_when_percent_escapes_need_evaluation() {
+    let finding = diagnostics("sprintf(\"\\x25\\x25\")\n")
+        .into_iter()
+        .find(|d| d.rule == "sprintf")
+        .expect("expected a sprintf finding");
+    assert!(finding.fix.is_none());
+}
+
+#[test]
+fn sprintf_ignores_dynamic_and_shadowed_calls() {
+    let rules: Vec<_> = diagnostics(
+        "sprintf <- function(...) NULL\nsprintf(\"%s\")\nbase::sprintf(fmt)\nsprintf(fmt, x)\n",
+    )
+    .into_iter()
+    .filter(|d| d.rule == "sprintf")
+    .collect();
+    assert!(rules.is_empty(), "{rules:?}");
+}
+
+#[test]
 fn if_always_true_keeps_taken_branch() {
     // `TRUE` keeps the `then` branch; `FALSE` keeps the `else` branch.
     assert_eq!(
@@ -5441,6 +5505,9 @@ fn fixed_output_is_parseable_and_clean() {
         "paste(\"a\", , \"b\")\n",
         // rep-times-ignored (no fix — `times` can matter for invalid length.out)
         "rep(x, times = 2, length.out = 10)\n",
+        // sprintf (literal-only format collapse; validation findings have no fix)
+        "x <- sprintf(\"ready: 100%%\")\n",
+        "sprintf(\"%s %d\", x)\n",
         // internal-function (no fix — must not perturb the input)
         "x <- stats:::C_cor\n",
         "utils:::.getHelpFile(path)\n",
