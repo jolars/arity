@@ -54,6 +54,8 @@ use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 #[derive(Clone, Default)]
 struct PhysicalLine {
     marker: Option<SyntaxToken>,
+    /// An ordinary comment that roxygen2 skips inside the surrounding block.
+    ordinary_comment: Option<SyntaxToken>,
     tag: Option<RoxygenTag>,
     elements: Vec<NodeOrToken<SyntaxNode, SyntaxToken>>,
     /// A multi-line block Rd macro (`\itemize{ … }`) occupying this "line": it owns
@@ -76,7 +78,8 @@ impl PhysicalLine {
     /// A blank `#'` line (a paragraph separator): no tag and no prose content
     /// (text or a protected markup span).
     fn is_blank(&self) -> bool {
-        self.tag.is_none()
+        self.ordinary_comment.is_none()
+            && self.tag.is_none()
             && !self
                 .elements
                 .iter()
@@ -131,8 +134,20 @@ fn physical_lines(block: &SyntaxNode) -> Vec<PhysicalLine> {
                 }
                 cur.marker = el.into_token();
             }
+            SyntaxKind::COMMENT => {
+                if cur.marker.is_some()
+                    || cur.ordinary_comment.is_some()
+                    || !cur.elements.is_empty()
+                {
+                    lines.push(std::mem::take(&mut cur));
+                }
+                cur.ordinary_comment = el.into_token();
+            }
             SyntaxKind::NEWLINE => {
-                if cur.marker.is_some() || !cur.elements.is_empty() {
+                if cur.marker.is_some()
+                    || cur.ordinary_comment.is_some()
+                    || !cur.elements.is_empty()
+                {
                     lines.push(std::mem::take(&mut cur));
                 }
             }
@@ -688,6 +703,18 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
     }
 
     for line in physical_lines(node) {
+        // roxygen2 ignores ordinary comments between documentation lines. Keep
+        // their source position and spelling while flushing reflowable content
+        // on either side independently.
+        if let Some(comment) = &line.ordinary_comment {
+            flush_pending!();
+            push_line(
+                &mut items,
+                comment.text().trim_end_matches('\r').to_string(),
+            );
+            continue;
+        }
+
         // A block Rd macro is atomic passthrough: flush pending accumulators, then
         // emit it *flush* without reflowing. Inside an `@examples` body it wraps
         // example R (`\dontrun{}`/`\donttest{}`/…), emitted flush for copy-paste;

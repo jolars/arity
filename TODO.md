@@ -307,7 +307,7 @@ The isolated call, namespace, replacement-function, default-dataset, loop-index,
 and `@param` defects found by the sweep are covered in `tests/lint.rs`. What
 remains needs broader modeling rather than a name-shaped exemption:
 
-- [ ] **Keep one roxygen block across ordinary comments.** roxygen2 skips an
+- [x] **Keep one roxygen block across ordinary comments.** roxygen2 skips an
   intervening `#`, `##`, or `#"` line and continues collecting the surrounding
   `#'` lines, while arity ends the first `ROXYGEN_BLOCK`. That produced 21 false
   `roxygen-param`/`roxygen-title`/`roxygen-return` findings. Minimal case:

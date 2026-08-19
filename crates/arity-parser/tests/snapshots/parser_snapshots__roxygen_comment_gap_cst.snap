@@ -1,0 +1,64 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..160
+  ROXYGEN_BLOCK@0..140
+    ROXYGEN_SECTION@0..67
+      ROXYGEN_PARAGRAPH@0..67
+        ROXYGEN_MARKER@0..2 "#'"
+        WHITESPACE@2..3 " "
+        ROXYGEN_TEXT@3..8 "Title"
+        NEWLINE@8..9 "\n"
+        COMMENT@9..27 "# ordinary comment"
+        NEWLINE@27..28 "\n"
+        ROXYGEN_MARKER@28..30 "#'"
+        WHITESPACE@30..31 " "
+        ROXYGEN_TEXT@31..47 "Continued title."
+        NEWLINE@47..48 "\n"
+        COMMENT@48..66 "## another comment"
+        NEWLINE@66..67 "\n"
+    ROXYGEN_SECTION@67..106
+      ROXYGEN_MARKER@67..69 "#'"
+      WHITESPACE@69..70 " "
+      ROXYGEN_TAG@70..87
+        ROXYGEN_AT@70..71 "@"
+        ROXYGEN_TAG_NAME@71..76 "param"
+        WHITESPACE@76..77 " "
+        ROXYGEN_TAG_ARG@77..78 "x"
+        WHITESPACE@78..79 " "
+        ROXYGEN_TEXT@79..87 "A value."
+      NEWLINE@87..88 "\n"
+      COMMENT@88..105 "#\" quoted comment"
+      NEWLINE@105..106 "\n"
+    ROXYGEN_SECTION@106..130
+      ROXYGEN_MARKER@106..108 "#'"
+      WHITESPACE@108..109 " "
+      ROXYGEN_TAG@109..127
+        ROXYGEN_AT@109..110 "@"
+        ROXYGEN_TAG_NAME@110..116 "return"
+        WHITESPACE@116..117 " "
+        ROXYGEN_TEXT@117..127 "The value."
+      NEWLINE@127..128 "\n"
+      COMMENT@128..129 "#"
+      NEWLINE@129..130 "\n"
+    ROXYGEN_SECTION@130..140
+      ROXYGEN_MARKER@130..132 "#'"
+      WHITESPACE@132..133 " "
+      ROXYGEN_TAG@133..140
+        ROXYGEN_AT@133..134 "@"
+        ROXYGEN_TAG_NAME@134..140 "export"
+  NEWLINE@140..141 "\n"
+  ASSIGNMENT_EXPR@141..159
+    IDENT@141..142 "f"
+    WHITESPACE@142..143 " "
+    ASSIGN_LEFT@143..145 "<-"
+    WHITESPACE@145..146 " "
+    FUNCTION_EXPR@146..159
+      FUNCTION_KW@146..154 "function"
+      LPAREN@154..155 "("
+      IDENT@155..156 "x"
+      RPAREN@156..157 ")"
+      WHITESPACE@157..158 " "
+      IDENT@158..159 "x"
+  NEWLINE@159..160 "\n"

@@ -53,11 +53,12 @@ pub(crate) fn is_roxygen_comment(text: &str) -> bool {
 /// line turns it off (the last one in the block wins, matching roxygen2's
 /// block-level toggle).
 ///
-/// A block is a maximal run of roxygen-comment lines; a continuation line may
-/// carry leading indentation before its `#'` (mirroring the parser's block
-/// grouping). The returned end offset lets the caller cache one resolution per
-/// block: every line of the block starts before it, and the next block's first
-/// line starts at or after it.
+/// A block is a maximal run of roxygen-comment lines, allowing ordinary comment
+/// lines between them because roxygen2 discards those lines while tokenizing the
+/// surrounding block. A continuation line may carry leading indentation before
+/// its comment marker (mirroring the parser's block grouping). The returned end
+/// offset lets the caller cache one resolution per block: every line of the block
+/// starts before it, and the next block's first line starts at or after it.
 pub(crate) fn resolve_roxygen_block(input: &str, start: usize, md_default: bool) -> (bool, usize) {
     let bytes = input.as_bytes();
     let mut md = md_default;
@@ -72,22 +73,29 @@ pub(crate) fn resolve_roxygen_block(input: &str, start: usize, md_default: bool)
         if let Some(on) = roxygen_md_directive(&input[pos..content_end]) {
             md = on;
         }
-        // A continuation line: skip the `\n`, then optional indentation, and check
-        // for another roxygen marker. Anything else ends the block at `line_end`.
+        // A continuation line may be separated by ordinary comments, which
+        // roxygen2's block tokenizer ignores. Blank and code lines remain block
+        // boundaries here.
         if line_end >= bytes.len() {
             return (md, line_end);
         }
         let mut next = line_end + 1;
-        while next < bytes.len() && matches!(bytes[next], b' ' | b'\t') {
-            next += 1;
-        }
-        if next < bytes.len()
-            && bytes[next] == b'#'
-            && is_roxygen_comment(&input[next..line_run_end(bytes, next)])
-        {
-            pos = next;
-        } else {
-            return (md, line_end);
+        loop {
+            while next < bytes.len() && matches!(bytes[next], b' ' | b'\t') {
+                next += 1;
+            }
+            if next >= bytes.len() || bytes[next] != b'#' {
+                return (md, line_end);
+            }
+            let next_end = line_run_end(bytes, next);
+            if is_roxygen_comment(&input[next..next_end]) {
+                pos = next;
+                break;
+            }
+            if next_end >= bytes.len() {
+                return (md, line_end);
+            }
+            next = next_end + 1;
         }
     }
 }

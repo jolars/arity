@@ -16,7 +16,7 @@ reads this first.
 
 **Oracle = roxygen2 8.0.0** (pin bumped 2026-08-07; `tests/oracle/.roxygen2-source`,
 `roxygen2-ref` checkout at `v8.0.0`). **Backlog closed at the new oracle.**
-Projector gate **1030 matching (all allowlisted), 0 divergent, 12 blocked**.
+Projector gate **1031 matching (all allowlisted), 0 divergent, 12 blocked**.
 The **whole CommonMark spec (655/655)** matches; the harvested corpus is fully
 closed. Curated fixed-point **236/236** preserving (verified against 8.0.0).
 The measured backlog is **exhausted** — no divergence currently drives parser
@@ -317,58 +317,35 @@ WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance mo
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
 
-## Latest session (2026-08-07n) — brace-less system Rd user macros are sticky
+## Latest session (2026-08-19) — ordinary comments inside roxygen blocks
 
-Closed the item 2026-08-07m teed up, exactly as it predicted. An
-argument-taking **system user macro** written brace-less (`\doi b`) is sticky:
-parse_Rd consumes its groups *before* expanding it
-(`is_argument_taking_rd_macro`, landed 2026-08-07m), so the "expecting `{`"
-recovery fires with the lexer already switched to argument mode and swallows the
-rest of the section per-line — `Before \doi b after.` →
-`(TEXT "Before") (VERB " b after.\n")`, crossing paragraph breaks just like a
-built-in `\code`/`\verb`.
+Closed the `futureverse/future` sweep item: roxygen2 discards ordinary `#`,
+`##`, and `#"` comment lines while collecting the surrounding `#'` lines into
+one block, whereas arity ended the block at each comment. The parser now crosses
+one or more ordinary comment lines, retains every comment byte as `COMMENT`
+trivia inside the lossless `ROXYGEN_BLOCK`, and resolves block-wide markdown
+directives across the same span. The projector faithfully drops that trivia,
+and the formatter preserves each ordinary comment at its source position while
+reflowing documentation on either side.
 
-**Probed all 18 names against R 4.6 before coding, and the answer is uniform:
-every argument-taking one is `VERB`, never `RCODE`** — no per-definition mode
-decision was needed after all (the RECAP had left that open). The two
-zero-arity ones (`\sspace`, `\LaTeX`) are *not* sticky: with no group to
-demand, they just expand on their name and the prose continues. That contrast
-is what keeps the gate keyed on "takes arguments", not "is a system macro".
-
-A pure **projector-behavior** fix with **zero** CST change — the parser already
-left these names literal prose, and the swallow machinery
-(`split_sticky_braceless_swallow`) was already written and tested for built-ins.
-So no parser fixture: the change is three classification functions in the parser
-crate that only the projector reads. New `is_sticky_braceless_rd_macro` folds
-the system names into `STICKY_BRACELESS_RD_MACROS` (rather than repeating 16
-names in two places), `sticky_braceless_code_mode` grew a fall-through arm, and
-`is_rd_braceless_drop_macro` widened its gate from `is_known_rd_macro` to
-`is_argument_taking_rd_macro`. That last one is a **semantic clarification, not
-a behavior change**: since every argument-taking system macro is now sticky, the
-drop set is bit-identical either way — but the predicate now says what it means.
-
-Curated +1 (`braceless_system_macro`, 2 blocks: one-argument `\doi`, the bare-
-`#1` `\I`, two-argument `\manual`, a soft-wrapped `\CRANpkg` tail, the
-zero-arity `\sspace` and unknown `\zzz` contrasts, and under `@md` the
-`\proglang` swallow plus a brace-full `\doi{10.1/x}` that still binds). The
-pin also re-confirms the mode-keyed continuation indent — non-`@md` keeps two
-spaces (`"  and a continued line.\n"`), `@md` is flush — which
-`sticky_swallow_lines` already models. Five unit tests: two projector shape
-(swallow, zero-arity non-swallow) and three parser classification, one of which
-asserts the sticky/drop split is a **partition** over every known and system
-name, so a future name cannot land in both or neither. Baseline +1 key
-(reviewed: **zero** existing lines changed; formatter output byte-identical to
-input). Projector 1029→**1030** matching (all allowlisted), 0 divergent, 12
-blocked. Fixed-point 235→**236/236**. Full workspace suite + clippy + fmt green.
-
-**Corrected a stale note:** the RECAP's second-ranked target ("the still-literal
-built-in sticky names `\code`/`\verb`/…") came from an out-of-date doc comment
-on `is_rd_braceless_drop_macro`; those have projected their swallow since the
-`split_sticky_braceless_swallow` work (`rd_braceless_sticky.rdtree` pins it).
-The comment is fixed, and the real residual — the *withheld* tail shapes — is
-now recorded in Status with probe evidence.
+Curated +1 (`ordinary_comment_gap`), parser fixture `roxygen_comment_gap`, one
+intentional update to the older `roxygen_mixed_run` snapshot, linter coverage
+for the former `roxygen-title`/`roxygen-param`/`roxygen-return` false positives,
+and an incremental-reparse corpus case. The formatter fixture and stability
+baseline pin comment preservation and idempotence. Projector 1030→**1031**
+matching (all allowlisted), 0 divergent, 12 blocked. The focused parser,
+incremental, linter, formatter, and projector gates are green, as are the full
+workspace suite, clippy, and rustfmt. The optional R-backed fixed-point run
+reported the existing `verbatim_block_macro` case red even though its formatter
+baseline is byte-identical before and after this session; it is unrelated to the
+new case, which preserves.
 
 ## Earlier sessions (condensed)
+
+### 2026-08-07n — brace-less system Rd user macros are sticky
+
+Argument-taking system user macros use the existing brace-less sticky swallow;
+curated `braceless_system_macro` moved the projector from 1029 to 1030 matches.
 
 ### 2026-08-07m — UNKNOWN Rd macros never consume a group
 

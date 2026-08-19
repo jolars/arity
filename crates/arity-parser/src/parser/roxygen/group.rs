@@ -82,15 +82,9 @@ fn block_md(tokens: &[Token], start: usize, md_default: bool) -> bool {
         if let Some(on) = super::lex::roxygen_md_directive(&line) {
             md = on;
         }
-        // Continuation: `Newline`, optional continuation `Whitespace`, then a marker.
-        if tokens.get(j).map(|t| &t.kind) != Some(&TokKind::Newline) {
-            break;
-        }
-        let mut m = j + 1;
-        while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
-            m += 1;
-        }
-        if tokens.get(m).map(|t| &t.kind) == Some(&TokKind::RoxygenMarker) {
+        // Ordinary comments between roxygen lines are part of the same block but
+        // carry no documentation content, matching roxygen2's tokenizer.
+        if let Some(m) = next_roxygen_marker(tokens, j) {
             i = m;
         } else {
             break;
@@ -270,22 +264,15 @@ fn emit_roxygen_block_events(
         }
 
         // `i` is at the line's trailing `Newline` (or a non-roxygen token / EOF).
-        // A continuation — one `Newline`, optional leading `Whitespace`, then
-        // another `RoxygenMarker` — folds that separator into the block at the
-        // currently open level (so a newline between two prose lines lands inside
-        // the open paragraph). Otherwise the trailing `Newline` is the caller's.
-        if tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Newline) {
-            let mut m = i + 1;
-            while tokens.get(m).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
-                m += 1;
+        // Fold the separator into the open logical level. Ordinary comments are
+        // retained as trivia but contribute no prose, just as roxygen2 skips them
+        // while collecting the surrounding documentation lines.
+        if let Some(m) = next_roxygen_marker(tokens, i) {
+            for idx in i..m {
+                events.push(Event::Tok(idx));
             }
-            if tokens.get(m).map(|t| &t.kind) == Some(&TokKind::RoxygenMarker) {
-                for idx in i..m {
-                    events.push(Event::Tok(idx));
-                }
-                i = m;
-                continue;
-            }
+            i = m;
+            continue;
         }
         break;
     }
@@ -298,6 +285,32 @@ fn emit_roxygen_block_events(
     }
     events.push(Event::Finish); // ROXYGEN_BLOCK
     i
+}
+
+/// Find the next roxygen marker after `newline`, crossing zero or more ordinary
+/// comment lines. Return `None` at a blank line, code, EOF, or a non-newline
+/// starting token. The caller emits the skipped tokens losslessly only after a
+/// following marker proves that they are internal to the block.
+fn next_roxygen_marker(tokens: &[Token], newline: usize) -> Option<usize> {
+    if tokens.get(newline).map(|t| &t.kind) != Some(&TokKind::Newline) {
+        return None;
+    }
+
+    let mut i = newline + 1;
+    loop {
+        while tokens.get(i).map(|t| &t.kind) == Some(&TokKind::Whitespace) {
+            i += 1;
+        }
+        match tokens.get(i).map(|t| &t.kind) {
+            Some(TokKind::RoxygenMarker) => return Some(i),
+            Some(TokKind::Comment)
+                if tokens.get(i + 1).map(|t| &t.kind) == Some(&TokKind::Newline) =>
+            {
+                i += 2;
+            }
+            _ => return None,
+        }
+    }
 }
 
 /// The logical kind of a roxygen line, decided from the first content token

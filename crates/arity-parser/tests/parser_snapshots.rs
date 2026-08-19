@@ -346,6 +346,7 @@ fn fixture_names() -> &'static [&'static str] {
         "air_ok_semicolons_semicolons",
         "roxygen_simple",
         "roxygen_block",
+        "roxygen_comment_gap",
         "roxygen_blank_line",
         "roxygen_tag_param",
         "roxygen_tag_separator_ws",

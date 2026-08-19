@@ -859,6 +859,7 @@ md_url_reference_multiline
 md_url_reference_section
 md_url_reference_trailing_macro
 multiline_macro_arg
+ordinary_comment_gap
 param_prose
 preformatted
 rawrd

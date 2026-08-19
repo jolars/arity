@@ -6003,6 +6003,23 @@ fn roxygen_title_negatives() {
 }
 
 #[test]
+fn roxygen_coverage_spans_ordinary_comments() {
+    let src = "#' Add one\n\
+               #' @param x A number.\n\
+               ## This line is not documentation.\n\
+               #' @return The result.\n\
+               #\" Nor is this one.\n\
+               #' @export\n\
+               f <- function(x) x\n";
+    let rules = ["roxygen-title", "roxygen-param", "roxygen-return"];
+    let findings: Vec<_> = diagnostics(src)
+        .into_iter()
+        .filter(|d| rules.contains(&d.rule))
+        .collect();
+    assert!(findings.is_empty(), "unexpected findings: {findings:?}");
+}
+
+#[test]
 fn roxygen_return_flags_exported_function_without_return() {
     let src = "#' Add one\n#' @param x A number.\n#' @export\nadd_one <- function(x) x + 1\n";
     let d = diagnostics(src)

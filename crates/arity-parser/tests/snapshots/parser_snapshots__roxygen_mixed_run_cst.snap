@@ -1,20 +1,17 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/arity-parser/tests/parser_snapshots.rs
 expression: tree
 ---
 ROOT@0..67
-  ROXYGEN_BLOCK@0..14
-    ROXYGEN_SECTION@0..14
-      ROXYGEN_PARAGRAPH@0..14
+  ROXYGEN_BLOCK@0..59
+    ROXYGEN_SECTION@0..59
+      ROXYGEN_PARAGRAPH@0..59
         ROXYGEN_MARKER@0..2 "#'"
         WHITESPACE@2..3 " "
         ROXYGEN_TEXT@3..14 "first block"
-  NEWLINE@14..15 "\n"
-  COMMENT@15..43 "# interrupting plain  ..."
-  NEWLINE@43..44 "\n"
-  ROXYGEN_BLOCK@44..59
-    ROXYGEN_SECTION@44..59
-      ROXYGEN_PARAGRAPH@44..59
+        NEWLINE@14..15 "\n"
+        COMMENT@15..43 "# interrupting plain  ..."
+        NEWLINE@43..44 "\n"
         ROXYGEN_MARKER@44..46 "#'"
         WHITESPACE@46..47 " "
         ROXYGEN_TEXT@47..59 "second block"

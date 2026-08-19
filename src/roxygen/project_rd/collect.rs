@@ -140,6 +140,10 @@ pub(super) fn push_inline(
     el: NodeOrToken<SyntaxNode, crate::syntax::SyntaxToken>,
 ) {
     match el {
+        // roxygen2's block tokenizer discards ordinary comment lines between
+        // `#'` lines. The parser retains their bytes inside the lossless block,
+        // so projection must omit the corresponding trivia token.
+        NodeOrToken::Token(t) if t.kind() == SyntaxKind::COMMENT => {}
         NodeOrToken::Node(n) if n.kind() == SyntaxKind::ROXYGEN_RD_MACRO => {
             out.push(Inline::Macro(n));
         }
