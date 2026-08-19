@@ -663,12 +663,11 @@ pub(crate) fn ir_paren_expr(
     }
 
     let inner_elements = &elements[open_idx + 1..close_idx];
-    if let Ok(inner) =
-        ir_expr_with_optional_comment(inner_elements, "parenthesized expression", indent, ctx)
-    {
-        if !inner.ends_with_line_suffix() {
+    match ir_expr_with_optional_comment(inner_elements, "parenthesized expression", indent, ctx) {
+        Ok(inner) if !inner.ends_with_line_suffix() => {
             return Ok(Ir::concat([Ir::text("("), inner, Ir::text(")")]));
         }
+        _ => {}
     }
 
     // Multi-statement / empty parens: lay out like a block body.
