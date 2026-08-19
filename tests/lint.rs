@@ -3458,6 +3458,19 @@ fn pipe_return_requires_a_direct_base_return_on_a_magrittr_stage() {
 }
 
 #[test]
+fn native_pipe_return_is_a_syntax_error() {
+    let findings = diagnostics("f <- function(x) x |> return()\n");
+    assert_eq!(findings.len(), 1, "got: {findings:?}");
+    assert_eq!(findings[0].rule, "syntax-error");
+    assert!(
+        findings[0]
+            .message
+            .body
+            .contains("function 'return' not supported in RHS call of a pipe")
+    );
+}
+
+#[test]
 fn function_return_assignment_flags_direct_assignments_without_a_fix() {
     let source = "f <- function() {\n  return(x <- value())\n}\ng <- function() {\n  return(value() -> x)\n}\n";
     let findings: Vec<_> = diagnostics(source)
