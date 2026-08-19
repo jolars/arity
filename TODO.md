@@ -114,9 +114,10 @@ Tier 1—clear correctness bugs, good default-on candidates:
 - [ ] `pipe-return`: report `return`/`return()` on the RHS of `%>%`; it does not
   return from the surrounding function. The native-pipe spelling is already a
   parse error. This needs the shared pipe-chain abstraction mentioned below.
-- [ ] `function-return-assignment`: report assignments inside `return(...)`.
-  The assigned value is returned, but the side effect/ignored local binding is
-  sufficiently error-prone to diagnose; no automatic rewrite can infer intent.
+- [x] `function-return-assignment`: report assignments inside `return(...)`.
+  Implemented as an `ns`-tier, report-only warning for direct assignment
+  arguments to namespace-confirmed base `return()`; no automatic rewrite can
+  infer whether the binding or the returned value was intended.
 
 Tier 2—performance/readability transformations that the formatter cannot do:
 

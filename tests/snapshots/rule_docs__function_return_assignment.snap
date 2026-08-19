@@ -1,0 +1,24 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `function-return-assignment`
+
+Flag an assignment passed directly to base `return()`. The assigned value is returned, but the binding remains as a side effect. Move the assignment before `return()` or return the value directly. No fix is offered because the intended behavior cannot be inferred.
+
+This rule is **enabled by default**.
+
+Assigning while returning a value:
+
+```r
+f <- function() return(result <- compute())
+```
+
+```text
+warning: function-return-assignment
+ --> example.R:1:24
+  |
+1 | f <- function() return(result <- compute())
+  |                        ^^^^^^^^^^^^^^^^^^^ assignment inside `return()` has a side effect
+  = help: Move the assignment before `return()` or return the value directly.
+```

@@ -47,6 +47,7 @@ so this page never drifts from the rules' actual behavior.
 - [`redundant-equals`](#redundant-equals)
 - [`redundant-ifelse`](#redundant-ifelse)
 - [`all-equal`](#all-equal)
+- [`function-return-assignment`](#function-return-assignment)
 - [`repeat`](#repeat)
 - [`undesirable-function`](#undesirable-function)
 - [`for-loop-index`](#for-loop-index)
@@ -768,6 +769,27 @@ warning: all-equal
 1 | if (all.equal(actual, expected)) pass()
   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^ `all.equal()` does not return `FALSE` for unequal objects
   = help: Use `isTRUE(all.equal(...))` to test equality.
+```
+
+### `function-return-assignment`
+
+Flag an assignment passed directly to base `return()`. The assigned value is returned, but the binding remains as a side effect. Move the assignment before `return()` or return the value directly. No fix is offered because the intended behavior cannot be inferred.
+
+This rule is **enabled by default**.
+
+Assigning while returning a value:
+
+```r
+f <- function() return(result <- compute())
+```
+
+```text
+warning: function-return-assignment
+ --> example.R:1:24
+  |
+1 | f <- function() return(result <- compute())
+  |                        ^^^^^^^^^^^^^^^^^^^ assignment inside `return()` has a side effect
+  = help: Move the assignment before `return()` or return the value directly.
 ```
 
 ### `repeat`

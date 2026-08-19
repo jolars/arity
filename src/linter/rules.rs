@@ -154,6 +154,7 @@ fn suspicious_rules() -> Vec<Box<dyn Rule>> {
         Box::new(suspicious::RedundantEquals),
         Box::new(suspicious::RedundantIfelse),
         Box::new(suspicious::AllEqual),
+        Box::new(suspicious::FunctionReturnAssignment),
         Box::new(suspicious::Repeat),
         Box::new(suspicious::UndesirableFunction),
         Box::new(suspicious::ForLoopIndex),

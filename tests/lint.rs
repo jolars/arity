@@ -3428,6 +3428,27 @@ fn all_equal_requires_base_callees_and_direct_truth_testing() {
 }
 
 #[test]
+fn function_return_assignment_flags_direct_assignments_without_a_fix() {
+    let source = "f <- function() {\n  return(x <- value())\n}\ng <- function() {\n  return(value() -> x)\n}\n";
+    let findings: Vec<_> = diagnostics(source)
+        .into_iter()
+        .filter(|d| d.rule == "function-return-assignment")
+        .collect();
+    assert_eq!(findings.len(), 2, "got: {findings:?}");
+    assert!(findings.iter().all(|finding| finding.fix.is_none()));
+}
+
+#[test]
+fn function_return_assignment_requires_base_return_and_a_direct_assignment() {
+    let source = "return <- function(x) x\nreturn(x <- 1)\nbase::return(y <- 2)\nreturn(f(z <- 3))\nreturn(value = 4)\n";
+    let findings: Vec<_> = diagnostics(source)
+        .into_iter()
+        .filter(|d| d.rule == "function-return-assignment")
+        .collect();
+    assert!(findings.is_empty(), "got: {findings:?}");
+}
+
+#[test]
 fn sprintf_validates_literal_formats() {
     let findings: Vec<_> = diagnostics(
         "sprintf(\"%q\", x)\nsprintf(\"%s %d\", x)\nsprintf(\"%2$s\", x)\nsprintf(\"%s\", x, y)\n",
@@ -5553,6 +5574,8 @@ fn fixed_output_is_parseable_and_clean() {
         "if (all.equal(x, y)) f()\n",
         "!all.equal(x, y)\n",
         "isFALSE(all.equal(x, y))\n",
+        // function-return-assignment (report only)
+        "f <- function() return(x <- value())\nf()\n",
         // true-false-symbol (`T`/`F` → `TRUE`/`FALSE`)
         "x <- T\n",
         "if (F) g()\n",
