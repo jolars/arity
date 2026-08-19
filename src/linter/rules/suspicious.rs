@@ -1,6 +1,7 @@
 //! Suspicious-pattern rules — code that's almost always a mistake but not
 //! a syntax error.
 
+mod all_equal;
 mod assignment_in_condition;
 mod browser;
 mod duplicated_function_definition;
@@ -14,6 +15,7 @@ mod shadowed_builtin;
 mod undesirable_function;
 mod unused_function;
 
+pub use all_equal::AllEqual;
 pub use assignment_in_condition::AssignmentInCondition;
 pub use browser::Browser;
 pub use duplicated_function_definition::DuplicatedFunctionDefinition;

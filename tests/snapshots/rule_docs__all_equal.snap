@@ -1,0 +1,24 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `all-equal`
+
+Flag `all.equal()` used directly as a condition, negated, or passed to `isFALSE()`. A disagreement returns a character vector rather than `FALSE`, so these forms do not reliably test equality. Use `isTRUE(all.equal(...))` instead. Only base-R callees are flagged. The fix is unsafe because it deliberately changes existing behavior.
+
+This rule is **enabled by default**.
+
+Testing the return value of `all.equal()` directly:
+
+```r
+if (all.equal(actual, expected)) pass()
+```
+
+```text
+warning: all-equal
+ --> example.R:1:5
+  |
+1 | if (all.equal(actual, expected)) pass()
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^ `all.equal()` does not return `FALSE` for unequal objects
+  = help: Use `isTRUE(all.equal(...))` to test equality.
+```

@@ -3403,6 +3403,31 @@ fn redundant_ifelse_ignores_non_constant_branches() {
 }
 
 #[test]
+fn all_equal_flags_direct_truth_tests_with_unsafe_fixes() {
+    let source = "if (all.equal(x, y)) f()\nwhile (all.equal(x, y)) g()\n!all.equal(x, y)\nisFALSE(all.equal(x, y))\n";
+    let findings: Vec<_> = diagnostics(source)
+        .into_iter()
+        .filter(|d| d.rule == "all-equal")
+        .collect();
+    assert_eq!(findings.len(), 4, "got: {findings:?}");
+    for finding in findings {
+        let fix = finding.fix.expect("truth tests should have a rewrite");
+        assert_eq!(fix.applicability, Applicability::Unsafe);
+        assert!(fix.content.contains("isTRUE(all.equal(x, y))"));
+    }
+}
+
+#[test]
+fn all_equal_requires_base_callees_and_direct_truth_testing() {
+    let source = "all.equal <- function(x, y) TRUE\nif (all.equal(x, y)) f()\nbase::all.equal(x, y)\nprint(all.equal(x, y))\nisFALSE <- function(x) x\nisFALSE(base::all.equal(x, y))\n";
+    let findings: Vec<_> = diagnostics(source)
+        .into_iter()
+        .filter(|d| d.rule == "all-equal")
+        .collect();
+    assert!(findings.is_empty(), "got: {findings:?}");
+}
+
+#[test]
 fn sprintf_validates_literal_formats() {
     let findings: Vec<_> = diagnostics(
         "sprintf(\"%q\", x)\nsprintf(\"%s %d\", x)\nsprintf(\"%2$s\", x)\nsprintf(\"%s\", x, y)\n",
@@ -5524,6 +5549,10 @@ fn fixed_output_is_parseable_and_clean() {
         // redundant-ifelse collapse
         "print(ifelse(cond, TRUE, FALSE))\n",
         "print(ifelse(cond, FALSE, TRUE))\n",
+        // all-equal (unsafe truth-test rewrites)
+        "if (all.equal(x, y)) f()\n",
+        "!all.equal(x, y)\n",
+        "isFALSE(all.equal(x, y))\n",
         // true-false-symbol (`T`/`F` → `TRUE`/`FALSE`)
         "x <- T\n",
         "if (F) g()\n",

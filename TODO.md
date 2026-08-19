@@ -106,10 +106,11 @@ Tier 1—clear correctness bugs, good default-on candidates:
 - [ ] `length-test`: flag the likely-parenthesization error
   `length(x == n)`/`length(x != n)` and suggest `length(x) == n`. Keep the
   diagnostic conservative around overloaded calls and non-atomic operands.
-- [ ] `all-equal`: flag truth-testing `all.equal()` directly (conditions,
+- [x] `all-equal`: flag truth-testing `all.equal()` directly (conditions,
   negation, `isFALSE`) because disagreement returns a character vector, not
   `FALSE`; recommend `isTRUE(all.equal(...))`. Fixes are unsafe because they
-  can deliberately change existing behavior.
+  can deliberately change existing behavior. Implemented as an `ns`-tier
+  warning with namespace-confirmed callees and unsafe fixes.
 - [ ] `pipe-return`: report `return`/`return()` on the RHS of `%>%`; it does not
   return from the surrounding function. The native-pipe spelling is already a
   parse error. This needs the shared pipe-chain abstraction mentioned below.

@@ -46,6 +46,7 @@ so this page never drifts from the rules' actual behavior.
 - [`shadowed-builtin`](#shadowed-builtin)
 - [`redundant-equals`](#redundant-equals)
 - [`redundant-ifelse`](#redundant-ifelse)
+- [`all-equal`](#all-equal)
 - [`repeat`](#repeat)
 - [`undesirable-function`](#undesirable-function)
 - [`for-loop-index`](#for-loop-index)
@@ -746,6 +747,27 @@ After applying the fix:
 
 ```r
 flag <- cond
+```
+
+### `all-equal`
+
+Flag `all.equal()` used directly as a condition, negated, or passed to `isFALSE()`. A disagreement returns a character vector rather than `FALSE`, so these forms do not reliably test equality. Use `isTRUE(all.equal(...))` instead. Only base-R callees are flagged. The fix is unsafe because it deliberately changes existing behavior.
+
+This rule is **enabled by default**.
+
+Testing the return value of `all.equal()` directly:
+
+```r
+if (all.equal(actual, expected)) pass()
+```
+
+```text
+warning: all-equal
+ --> example.R:1:5
+  |
+1 | if (all.equal(actual, expected)) pass()
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^ `all.equal()` does not return `FALSE` for unequal objects
+  = help: Use `isTRUE(all.equal(...))` to test equality.
 ```
 
 ### `repeat`
