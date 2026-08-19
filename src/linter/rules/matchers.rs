@@ -141,6 +141,87 @@ pub fn binary_parts(expr: &SyntaxNode) -> Option<(SyntaxElement, SyntaxToken, Sy
     BinaryExpr::cast(expr.clone())?.parts()
 }
 
+/// One of R's two ordinary forward-pipe operators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipeOperator {
+    /// Base R's native pipe, `|>`.
+    Native,
+    /// The magrittr pipe, `%>%`.
+    Magrittr,
+}
+
+/// One continuation in a left-associative pipe chain.
+pub struct PipeStage {
+    pub operator: PipeOperator,
+    pub operator_token: SyntaxToken,
+    pub rhs: SyntaxElement,
+}
+
+/// A maximal pipe chain, flattened into its head and ordered stages.
+pub struct PipeChain {
+    pub head: SyntaxElement,
+    pub stages: Vec<PipeStage>,
+}
+
+/// Flatten a maximal `%>%`/`|>` chain into its head and ordered stages.
+///
+/// The parser represents `x %>% f() |> g()` as a left-nested binary spine. In
+/// the linter's shared walk, every nesting level is dispatched independently;
+/// returning a chain only for its outermost node prevents consumers from
+/// reporting an inner stage twice. A parenthesized or RHS-nested pipe starts a
+/// separate chain, as it does structurally in the CST.
+pub fn pipe_chain(expr: &SyntaxNode) -> Option<PipeChain> {
+    let (_, op, _) = binary_parts(expr)?;
+    pipe_operator(&op)?;
+
+    if is_lhs_of_parent_pipe(expr) {
+        return None;
+    }
+
+    let mut node = expr.clone();
+    let mut stages = Vec::new();
+    let head = loop {
+        let (lhs, operator_token, rhs) = binary_parts(&node)?;
+        let operator = pipe_operator(&operator_token)?;
+        stages.push(PipeStage {
+            operator,
+            operator_token,
+            rhs,
+        });
+
+        let Some(lhs_node) = lhs.as_node() else {
+            break lhs;
+        };
+        let Some((_, lhs_operator, _)) = binary_parts(lhs_node) else {
+            break lhs;
+        };
+        if pipe_operator(&lhs_operator).is_none() {
+            break lhs;
+        }
+        node = lhs_node.clone();
+    };
+    stages.reverse();
+    Some(PipeChain { head, stages })
+}
+
+fn pipe_operator(token: &SyntaxToken) -> Option<PipeOperator> {
+    match token.kind() {
+        SyntaxKind::PIPE => Some(PipeOperator::Native),
+        SyntaxKind::USER_OP if token.text() == "%>%" => Some(PipeOperator::Magrittr),
+        _ => None,
+    }
+}
+
+fn is_lhs_of_parent_pipe(expr: &SyntaxNode) -> bool {
+    let Some(parent) = expr.parent() else {
+        return false;
+    };
+    let Some((lhs, op, _)) = binary_parts(&parent) else {
+        return false;
+    };
+    pipe_operator(&op).is_some() && lhs.as_node().is_some_and(|lhs| lhs == expr)
+}
+
 /// Supported operators for comparisons against a distinguished constant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConstantComparisonOp {
@@ -525,6 +606,26 @@ mod tests {
         assert_eq!(element_text(&lhs), "x");
         assert_eq!(op.kind(), SyntaxKind::EQUAL2);
         assert!(is_true(&rhs));
+    }
+
+    #[test]
+    fn pipe_chain_flattens_mixed_stages_once() {
+        let outer = first_binary("x %>% f() |> g()");
+        let chain = pipe_chain(&outer).expect("an outer pipe chain");
+        assert_eq!(element_text(&chain.head), "x");
+        assert_eq!(chain.stages.len(), 2);
+        assert_eq!(chain.stages[0].operator, PipeOperator::Magrittr);
+        assert_eq!(chain.stages[0].operator_token.text(), "%>%");
+        assert_eq!(element_text(&chain.stages[0].rhs), "f()");
+        assert_eq!(chain.stages[1].operator, PipeOperator::Native);
+        assert_eq!(chain.stages[1].operator_token.text(), "|>");
+        assert_eq!(element_text(&chain.stages[1].rhs), "g()");
+
+        let inner = outer
+            .children()
+            .find(|node| node.kind() == SyntaxKind::BINARY_EXPR)
+            .expect("the nested left spine");
+        assert!(pipe_chain(&inner).is_none());
     }
 
     #[test]

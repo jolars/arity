@@ -47,6 +47,7 @@ so this page never drifts from the rules' actual behavior.
 - [`redundant-equals`](#redundant-equals)
 - [`redundant-ifelse`](#redundant-ifelse)
 - [`all-equal`](#all-equal)
+- [`pipe-return`](#pipe-return)
 - [`function-return-assignment`](#function-return-assignment)
 - [`repeat`](#repeat)
 - [`undesirable-function`](#undesirable-function)
@@ -775,6 +776,30 @@ warning: all-equal
 1 | if (all.equal(actual, expected)) pass()
   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^ `all.equal()` does not return `FALSE` for unequal objects
   = help: Use `isTRUE(all.equal(...))` to test equality.
+```
+
+### `pipe-return`
+
+Flag base `return` used directly on the right-hand side of the magrittr pipe `%>%`, whether written as `return()` or a bare name. It returns from the pipe stage rather than from the surrounding function, so the apparent early return is misleading. Wrap the whole pipeline in `return()`, or assign its result and return that value. No fix is offered because the intended control flow cannot be inferred. A locally redefined `%>%` is left alone.
+
+This rule is **enabled by default**.
+
+A `return()` stage does not exit the surrounding function:
+
+```r
+f <- function(x) {
+  x %>% sum() %>% return()
+  FALSE
+}
+```
+
+```text
+warning: pipe-return
+ --> example.R:2:19
+  |
+2 |   x %>% sum() %>% return()
+  |                   ^^^^^^^^ `return` after `%>%` does not exit the surrounding function
+  = help: Wrap the pipeline in `return()`, or assign and return its result.
 ```
 
 ### `function-return-assignment`

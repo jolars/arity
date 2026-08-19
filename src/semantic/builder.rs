@@ -1110,6 +1110,22 @@ fn sole_inner_expr(node: &SyntaxNode) -> Option<SyntaxElement> {
 }
 
 fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
+    // Transparent built-in/common operators still read a same-named local
+    // function. Record that read without a mask so resolution-sensitive
+    // consumers can distinguish the conventional operator from a local
+    // redefinition; opaque operators are recorded inside their masked branch
+    // below.
+    let transparent_user_op = node.children_with_tokens().any(|el| {
+        matches!(
+            el,
+            NodeOrToken::Token(t)
+                if t.kind() == SyntaxKind::USER_OP && is_transparent_infix(t.text())
+        )
+    });
+    if transparent_user_op {
+        record_user_op_read(ctx, node, scope);
+    }
+
     // Detect namespace / member access patterns and opaque custom operators.
     let mut operator_kind: Option<SyntaxKind> = None;
     for el in node.children_with_tokens() {

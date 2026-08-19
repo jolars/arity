@@ -111,9 +111,11 @@ Tier 1—clear correctness bugs, good default-on candidates:
   `FALSE`; recommend `isTRUE(all.equal(...))`. Fixes are unsafe because they
   can deliberately change existing behavior. Implemented as an `ns`-tier
   warning with namespace-confirmed callees and unsafe fixes.
-- [ ] `pipe-return`: report `return`/`return()` on the RHS of `%>%`; it does not
+- [x] `pipe-return`: report `return`/`return()` on the RHS of `%>%`; it does not
   return from the surrounding function. The native-pipe spelling is already a
-  parse error. This needs the shared pipe-chain abstraction mentioned below.
+  parse error. Implemented as a default-on `ns`-tier warning for direct,
+  base-resolved RHS stages, with a shared `%>%`/`|>` chain matcher and no fix
+  because the intended control flow cannot be inferred.
 - [x] `function-return-assignment`: report assignments inside `return(...)`.
   Implemented as an `ns`-tier, report-only warning for direct assignment
   arguments to namespace-confirmed base `return()`; no automatic rewrite can

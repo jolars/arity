@@ -112,14 +112,18 @@ fn super_assignment_is_not_unused() {
 }
 
 #[test]
-fn infix_operator_use_is_not_unused() {
-    // A user-defined `%op%` used as an infix operator (`a %||% b`) reads its
-    // definition, so the `` `%||%` `` binding must not flag as unused.
+fn infix_operator_uses_are_not_unused() {
+    // User-defined opaque and normally-transparent infix operators both read
+    // their definitions, so neither binding may flag as unused.
     let dir = tempdir().expect("failed to create temp dir");
     let path = dir.path().join("op.R");
     std::fs::write(
         &path,
-        "`%||%` <- function(x, y) if (is.null(x)) y else x\nz <- a %||% b\nprint(z)\n",
+        "`%||%` <- function(x, y) if (is.null(x)) y else x\n\
+         `%>%` <- function(x, f) f(x)\n\
+         z <- 1 %||% 2\n\
+         w <- 1 %>% abs\n\
+         print(z + w)\n",
     )
     .expect("failed to write file");
 
@@ -3428,6 +3432,32 @@ fn all_equal_requires_base_callees_and_direct_truth_testing() {
 }
 
 #[test]
+fn pipe_return_flags_direct_call_and_bare_name_stages_without_a_fix() {
+    let source = "f <- function(x, y) {\n  x %>% sum() %>% return()\n  x %>% return(y)\n  x %>% return\n  FALSE\n}\n";
+    let findings: Vec<_> = diagnostics(source)
+        .into_iter()
+        .filter(|d| d.rule == "pipe-return")
+        .collect();
+    assert_eq!(findings.len(), 3, "got: {findings:?}");
+    let spans: Vec<_> = findings
+        .iter()
+        .map(|d| &source[usize::from(d.range.start())..usize::from(d.range.end())])
+        .collect();
+    assert_eq!(spans, ["return()", "return(y)", "return"]);
+    assert!(findings.iter().all(|finding| finding.fix.is_none()));
+}
+
+#[test]
+fn pipe_return_requires_a_direct_base_return_on_a_magrittr_stage() {
+    let source = "f <- function(x) {\n  return(x %>% sum())\n  x %>% wrapper(return())\n  x %T>% return()\n}\ng <- function(x) {\n  return <- function(value) value\n  x %>% return()\n}\nh <- function(x) {\n  `%>%` <- function(lhs, rhs) rhs\n  x %>% return()\n}\nbase::return(x %>% sum())\n";
+    let findings: Vec<_> = diagnostics(source)
+        .into_iter()
+        .filter(|d| d.rule == "pipe-return")
+        .collect();
+    assert!(findings.is_empty(), "got: {findings:?}");
+}
+
+#[test]
 fn function_return_assignment_flags_direct_assignments_without_a_fix() {
     let source = "f <- function() {\n  return(x <- value())\n}\ng <- function() {\n  return(value() -> x)\n}\n";
     let findings: Vec<_> = diagnostics(source)
@@ -5672,6 +5702,8 @@ fn fixed_output_is_parseable_and_clean() {
         "if (all.equal(x, y)) f()\n",
         "!all.equal(x, y)\n",
         "isFALSE(all.equal(x, y))\n",
+        // pipe-return (report only)
+        "f <- function(x) {\n  x %>% return()\n  FALSE\n}\n",
         // function-return-assignment (report only)
         "f <- function() return(x <- value())\nf()\n",
         // true-false-symbol (`T`/`F` → `TRUE`/`FALSE`)
