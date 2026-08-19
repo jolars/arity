@@ -232,6 +232,19 @@ fn parse_expr_with_mode(
             return Some(error_expr_to_line_end(tokens, lhs.start, rhs_start));
         };
 
+        if op.kind == TokKind::Pipe
+            && let Some(callee_idx) = direct_call_callee(&rhs)
+            && let Some(callee) = tokens.get(callee_idx)
+            && callee.kind == TokKind::Ident
+            && ident_denotes_return(callee.text)
+        {
+            push_token_diagnostic(
+                diagnostics,
+                "function 'return' not supported in RHS call of a pipe",
+                callee,
+            );
+        }
+
         if matches!(op.kind, TokKind::Colon2 | TokKind::Colon3)
             && lhs
                 .events
@@ -693,6 +706,96 @@ fn expr_root_kind(expr: &ExprParse) -> Option<SyntaxKind> {
         Event::Start(kind) => Some(*kind),
         _ => None,
     })
+}
+
+/// The token index of a call's direct, atomic callee.
+///
+/// A simple `return()` call starts with `CALL_EXPR, Tok(return)`. Compound
+/// callees start with another node (`base::return()`, `(return)()`), and R's
+/// native-pipe restriction deliberately does not apply to those forms.
+fn direct_call_callee(expr: &ExprParse) -> Option<usize> {
+    let mut events = expr.events.iter();
+    if !matches!(events.next(), Some(Event::Start(SyntaxKind::CALL_EXPR))) {
+        return None;
+    }
+    match events.next()? {
+        Event::Tok(idx) => Some(*idx),
+        Event::Start(_) | Event::Leaf(_, _) | Event::Finish => None,
+    }
+}
+
+/// Whether an identifier denotes R's syntactically special `return` symbol.
+///
+/// R decodes hexadecimal and octal escapes inside backticked names before it
+/// checks native-pipe call heads. Decode only those escapes here; the other R
+/// escapes cannot produce a byte in `return`.
+fn ident_denotes_return(text: &str) -> bool {
+    if text == "return" {
+        return true;
+    }
+    let Some(body) = text
+        .strip_prefix('`')
+        .and_then(|body| body.strip_suffix('`'))
+    else {
+        return false;
+    };
+
+    let expected = b"return";
+    let bytes = body.as_bytes();
+    let mut input = 0;
+    let mut output = 0;
+    while input < bytes.len() {
+        let decoded = if bytes[input] != b'\\' {
+            let byte = bytes[input];
+            input += 1;
+            byte
+        } else {
+            input += 1;
+            let Some(&escape) = bytes.get(input) else {
+                return false;
+            };
+            if escape == b'x' {
+                input += 1;
+                let Some((byte, end)) = decode_ascii_escape(bytes, input, 16, 2) else {
+                    return false;
+                };
+                input = end;
+                byte
+            } else if matches!(escape, b'0'..=b'7') {
+                let Some((byte, end)) = decode_ascii_escape(bytes, input, 8, 3) else {
+                    return false;
+                };
+                input = end;
+                byte
+            } else {
+                return false;
+            }
+        };
+
+        if expected.get(output) != Some(&decoded) {
+            return false;
+        }
+        output += 1;
+    }
+    output == expected.len()
+}
+
+fn decode_ascii_escape(
+    bytes: &[u8],
+    start: usize,
+    radix: u32,
+    max_digits: usize,
+) -> Option<(u8, usize)> {
+    let mut value = 0_u8;
+    let mut end = start;
+    while end < bytes.len() && end - start < max_digits {
+        let Some(digit) = (bytes[end] as char).to_digit(radix) else {
+            break;
+        };
+        value = value.checked_mul(radix as u8)?.checked_add(digit as u8)?;
+        end += 1;
+    }
+    (end > start).then_some((value, end))
 }
 
 pub fn ident_is_special_constant(text: &str) -> bool {

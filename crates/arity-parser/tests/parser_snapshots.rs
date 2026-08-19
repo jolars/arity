@@ -86,6 +86,47 @@ fn separated_statements_are_not_diagnosed() {
     }
 }
 
+/// R rejects a syntactically special function as the direct call head on a
+/// native pipe's RHS. Pin the `return` case separately from the broader
+/// call-shape validation because it is easy to accept as an ordinary call while
+/// still building a lossless CST.
+#[test]
+fn native_pipe_rejects_direct_return_calls() {
+    for (src, span) in [
+        ("x |> return()\n", "return"),
+        ("x |> return(value)\n", "return"),
+        ("x |> `return`()\n", "`return`"),
+        ("x |> `ret\\x75rn`()\n", "`ret\\x75rn`"),
+        ("x |> `ret\\165rn`()\n", "`ret\\165rn`"),
+    ] {
+        let output = parse(src);
+        let diagnostic = output
+            .diagnostics
+            .iter()
+            .find(|d| d.message.contains("not supported in RHS call of a pipe"))
+            .unwrap_or_else(|| panic!("expected a native-pipe diagnostic for {src:?}"));
+        assert_eq!(&src[diagnostic.start..diagnostic.end], span);
+        assert_eq!(reconstruct(src), src);
+    }
+}
+
+#[test]
+fn native_pipe_accepts_indirect_return_calls() {
+    for src in [
+        "x |> base::return()\n",
+        "x |> (return)()\n",
+        "x |> identity()\n",
+    ] {
+        let output = parse(src);
+        assert!(
+            output.diagnostics.is_empty(),
+            "expected no diagnostics for {src:?}, got {:?}",
+            output.diagnostics
+        );
+        assert_eq!(reconstruct(src), src);
+    }
+}
+
 /// R's `formlist` production admits only `SYMBOL` and `SYMBOL = expr` slots,
 /// so the forms a call's argument list tolerates — an empty slot, a string
 /// name — are syntax errors in a parameter list (issue #109).
@@ -203,6 +244,7 @@ fn fixture_names() -> &'static [&'static str] {
         "assignment_chain_right_assoc",
         "pipe_simple",
         "pipe_precedence",
+        "pipe_unsupported_return",
         "expr_logical_relational",
         "expr_additive_multiplicative_colon",
         "expr_tilde_userop",

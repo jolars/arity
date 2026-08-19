@@ -1,0 +1,31 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+expression: "format!(\"{:#?}\", output.diagnostics)"
+---
+[
+    ParseDiagnostic {
+        message: "function 'return' not supported in RHS call of a pipe",
+        start: 5,
+        end: 11,
+    },
+    ParseDiagnostic {
+        message: "function 'return' not supported in RHS call of a pipe",
+        start: 19,
+        end: 25,
+    },
+    ParseDiagnostic {
+        message: "function 'return' not supported in RHS call of a pipe",
+        start: 38,
+        end: 46,
+    },
+    ParseDiagnostic {
+        message: "function 'return' not supported in RHS call of a pipe",
+        start: 54,
+        end: 65,
+    },
+    ParseDiagnostic {
+        message: "function 'return' not supported in RHS call of a pipe",
+        start: 73,
+        end: 84,
+    },
+]

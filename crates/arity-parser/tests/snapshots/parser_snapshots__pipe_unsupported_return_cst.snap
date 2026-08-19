@@ -1,0 +1,101 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..139
+  BINARY_EXPR@0..13
+    IDENT@0..1 "x"
+    WHITESPACE@1..2 " "
+    PIPE@2..4 "|>"
+    WHITESPACE@4..5 " "
+    CALL_EXPR@5..13
+      IDENT@5..11 "return"
+      LPAREN@11..12 "("
+      ARG_LIST@12..12
+      RPAREN@12..13 ")"
+  NEWLINE@13..14 "\n"
+  BINARY_EXPR@14..32
+    IDENT@14..15 "x"
+    WHITESPACE@15..16 " "
+    PIPE@16..18 "|>"
+    WHITESPACE@18..19 " "
+    CALL_EXPR@19..32
+      IDENT@19..25 "return"
+      LPAREN@25..26 "("
+      ARG_LIST@26..31
+        ARG@26..31
+          IDENT@26..31 "value"
+      RPAREN@31..32 ")"
+  NEWLINE@32..33 "\n"
+  BINARY_EXPR@33..48
+    IDENT@33..34 "x"
+    WHITESPACE@34..35 " "
+    PIPE@35..37 "|>"
+    WHITESPACE@37..38 " "
+    CALL_EXPR@38..48
+      IDENT@38..46 "`return`"
+      LPAREN@46..47 "("
+      ARG_LIST@47..47
+      RPAREN@47..48 ")"
+  NEWLINE@48..49 "\n"
+  BINARY_EXPR@49..67
+    IDENT@49..50 "x"
+    WHITESPACE@50..51 " "
+    PIPE@51..53 "|>"
+    WHITESPACE@53..54 " "
+    CALL_EXPR@54..67
+      IDENT@54..65 "`ret\\x75rn`"
+      LPAREN@65..66 "("
+      ARG_LIST@66..66
+      RPAREN@66..67 ")"
+  NEWLINE@67..68 "\n"
+  BINARY_EXPR@68..86
+    IDENT@68..69 "x"
+    WHITESPACE@69..70 " "
+    PIPE@70..72 "|>"
+    WHITESPACE@72..73 " "
+    CALL_EXPR@73..86
+      IDENT@73..84 "`ret\\165rn`"
+      LPAREN@84..85 "("
+      ARG_LIST@85..85
+      RPAREN@85..86 ")"
+  NEWLINE@86..87 "\n"
+  BINARY_EXPR@87..106
+    IDENT@87..88 "x"
+    WHITESPACE@88..89 " "
+    PIPE@89..91 "|>"
+    WHITESPACE@91..92 " "
+    CALL_EXPR@92..106
+      BINARY_EXPR@92..104
+        IDENT@92..96 "base"
+        COLON2@96..98 "::"
+        IDENT@98..104 "return"
+      LPAREN@104..105 "("
+      ARG_LIST@105..105
+      RPAREN@105..106 ")"
+  NEWLINE@106..107 "\n"
+  BINARY_EXPR@107..122
+    IDENT@107..108 "x"
+    WHITESPACE@108..109 " "
+    PIPE@109..111 "|>"
+    WHITESPACE@111..112 " "
+    CALL_EXPR@112..122
+      PAREN_EXPR@112..120
+        LPAREN@112..113 "("
+        IDENT@113..119 "return"
+        RPAREN@119..120 ")"
+      LPAREN@120..121 "("
+      ARG_LIST@121..121
+      RPAREN@121..122 ")"
+  NEWLINE@122..123 "\n"
+  BINARY_EXPR@123..138
+    IDENT@123..124 "x"
+    WHITESPACE@124..125 " "
+    PIPE@125..127 "|>"
+    WHITESPACE@127..128 " "
+    CALL_EXPR@128..138
+      IDENT@128..136 "identity"
+      LPAREN@136..137 "("
+      ARG_LIST@137..137
+      RPAREN@137..138 ")"
+  NEWLINE@138..139 "\n"

@@ -1,0 +1,8 @@
+x |> return()
+x |> return(value)
+x |> `return`()
+x |> `ret\x75rn`()
+x |> `ret\165rn`()
+x |> base::return()
+x |> (return)()
+x |> identity()

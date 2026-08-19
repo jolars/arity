@@ -207,6 +207,7 @@ const SOURCES: &[&str] = &[
     "nested <- {\n  a <- {\n    b + c\n  }\n  a\n}\n",
     "df[[\"col\"]] <- xs[idx]\n",
     "pkg::fn(arg) |> transform()\n",
+    "f <- function(x) x |> return()\n",
     "#' Title\n#' @param x A number.\n#' @examples\n#' f(1)\nf <- function(x) x\n",
     "g <- function() {\n  #' inner doc\n  #' @param y z\n  h <- 1\n  h\n}\n",
     "#' Use `x + y` and \\code{f} per [docs](u).\nf <- function(x) x\n",
