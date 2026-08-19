@@ -34,6 +34,12 @@ Air compatibility is a soft, one-directional formatter gauge, never a quality
 gate. CI workflows in `.github/workflows/` are the quality-gate source of
 truth. Dependency changes must pass `cargo-audit` and `cargo-deny`.
 
+The stdin contract is a stable integration surface. `-` as the only path makes
+`format`, `lint`, and `parse` read one buffer from stdin; `format -` writes only
+the formatted buffer to stdout, the working directory anchors config discovery,
+and a pathless buffer is R unless `--stdin-filename` says otherwise. Changing
+any of those is a breaking change.
+
 ## Working and testing conventions
 
 - Use TDD: reproduce with a failing test first, then fix.

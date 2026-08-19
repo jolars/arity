@@ -202,6 +202,25 @@ ID in `select`/`ignore` is data and so an unknown one is reported when linting
 runs, whereas a rule ID under `[lint.rules]` is schema and an unknown one fails
 at parse time. Rules read their table off `RuleContext::config`.
 
+## The stdin contract
+
+`-` as the only path makes `format`, `lint`, and `parse` read one buffer from
+stdin. Editors, pre-commit hooks, and embedding consoles integrate through it,
+so parts of its shape are API rather than implementation detail:
+
+- `format -` writes only the formatted buffer to stdout, errors to stderr, and
+  exits non-zero to mean "do not use this output". `lint` differs by design:
+  exit 1 means findings remain, `--fix` still writes the fixed source, and JSON
+  findings go to stdout while human ones go to stderr.
+- A buffer has no path to walk up from, so `cwd_anchor()` in
+  [`src/main.rs`](src/main.rs) anchors config discovery, and a caller selects
+  the applicable project config through its cwd.
+- A pathless buffer is R unless `--stdin-filename` says otherwise. `DESCRIPTION`
+  is already carved out of that default, so it is load-bearing.
+
+Changing any of these is a breaking change and belongs in a `!` commit; a caller
+cannot detect it, since `--version` is usually all it checks.
+
 ## Design tenets to keep in mind
 
 These are the load-bearing invariants; see [`AGENTS.md`](AGENTS.md) for the full
