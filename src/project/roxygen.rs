@@ -263,7 +263,18 @@ pub fn param_doc(section: &RoxygenSection) -> Option<ParamDoc> {
     }
     if tag.arg().is_some() {
         return Some(ParamDoc::Named {
-            names: tag.arg_names(),
+            names: tag
+                .arg_names()
+                .into_iter()
+                .map(|(name, range)| {
+                    let name = if name == "\\ldots" {
+                        SmolStr::new("...")
+                    } else {
+                        name
+                    };
+                    (name, range)
+                })
+                .collect(),
             has_description: section.has_prose(),
         });
     }

@@ -16,7 +16,7 @@ use crate::ast::AssignmentExpr;
 use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
 use crate::linter::rules::matchers::is_callee;
 use crate::linter::rules::{Example, Rule, RuleContext};
-use crate::semantic::BindingKind;
+use crate::semantic::{BindingKind, PackageOrigin};
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
 /// The enclosing `ASSIGNMENT_EXPR` that defines the binding at `def_range`, if
@@ -76,6 +76,15 @@ impl Rule for ShadowedBuiltin {
                 continue;
             }
             if !ctx.symbols.is_base(&binding.name) {
+                continue;
+            }
+            // `datasets` exports data objects, not callable builtins. A local
+            // helper named `sleep`, for example, cannot shadow the data frame
+            // in function position.
+            if matches!(
+                ctx.symbols.origin(&binding.name, &[]),
+                PackageOrigin::Resolved(pkg) if pkg == "datasets"
+            ) {
                 continue;
             }
             let Some(assign) = defining_assignment(ctx.root, binding.def_range) else {

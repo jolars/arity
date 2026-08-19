@@ -87,6 +87,9 @@ impl Rule for ForLoopIndex {
             ident.name == name
                 && clause.sequence.contains_range(ident.range)
                 && !in_nested_function(node, ident.range)
+                // Function-position lookup has a separate namespace in R: a
+                // non-function loop index does not hide `class()` or `names()`.
+                && !matchers::is_callee(ctx.root, ident.range)
         });
         if !reused {
             return;

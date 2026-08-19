@@ -62,6 +62,7 @@ impl Rule for UndefinedSymbol {
                     // undefined symbol — never flag it (see the builder).
                     .filter(|ident| !ident.data_masked)
                     .filter(|ident| ctx.model.resolve_local(ident).is_none())
+                    .filter(|ident| ident.name != ".packageName" || !ctx.is_package_r_source())
                     .filter(|ident| resolution.unresolved.contains(ident.name.as_str()))
                     .map(|ident| undefined(&ident.name, ident.range)),
             ),
@@ -128,6 +129,11 @@ impl UndefinedSymbol {
             // A data-masked read may be a data-frame column, not an undefined
             // symbol — never flag it (see the builder's `mask_depth`).
             if ident.data_masked {
+                continue;
+            }
+            // R injects this binding into every package namespace while its
+            // sources are loaded; it is not present in the source text.
+            if ident.name == ".packageName" && ctx.is_package_r_source() {
                 continue;
             }
             // Skip if it resolves to a local binding.

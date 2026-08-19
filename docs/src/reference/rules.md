@@ -705,7 +705,7 @@ warning: shadowed-builtin
 
 ### `redundant-equals`
 
-Flag comparison to a logical literal: `x == TRUE` is just `x`, and `x == FALSE` is `!x`.
+Flag comparison to a logical literal: `x == TRUE` can usually be written as `x`, and `x == FALSE` as `!x`. The fix is unsafe because equality coerces non-logical operands while the direct form does not.
 
 This rule is **enabled by default**.
 
@@ -722,12 +722,6 @@ warning: redundant-equals
 1 | if (ready == TRUE) go()
   |     ^^^^^^^^^^^^^ comparison with a logical literal is redundant
   = help: Use the expression directly, or negate it.
-```
-
-After applying the fix:
-
-```r
-if (ready) go()
 ```
 
 ### `redundant-ifelse`

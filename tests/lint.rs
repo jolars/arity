@@ -136,6 +136,31 @@ fn infix_operator_uses_are_not_unused() {
 }
 
 #[test]
+fn replacement_function_calls_use_the_replacement_binding() {
+    let src = "`foo<-` <- function(x, value) value\n\
+               x <- 0\n\
+               foo(x) <- 42\n\
+               print(x)\n";
+    let findings = diagnostics(src);
+    assert!(
+        findings
+            .iter()
+            .all(|d| d.rule != "unused-binding" && d.rule != "undefined-symbol"),
+        "got: {findings:?}"
+    );
+}
+
+#[test]
+fn require_namespace_reads_a_variable_argument() {
+    let src = "pkg <- \"stats\"\nrequireNamespace(pkg, quietly = TRUE)\n";
+    let findings = diagnostics(src);
+    assert!(
+        findings.iter().all(|d| d.rule != "unused-binding"),
+        "got: {findings:?}"
+    );
+}
+
+#[test]
 fn walrus_outside_a_subscript_binds_nothing() {
     // R parses `a := b` as a call to `` `:=` ``, a function base R does not
     // define — it never binds. rlang's dynamic-dots name injection
@@ -439,6 +464,19 @@ fn package_resolves_bindings_across_files() {
 }
 
 #[test]
+fn package_sources_resolve_the_implicit_package_name() {
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
+    let r_dir = dir.path().join("R");
+    std::fs::create_dir(&r_dir).unwrap();
+    std::fs::write(r_dir.join("a.R"), "print(.packageName)\n").unwrap();
+
+    let result =
+        check_paths(std::slice::from_ref(&dir.path().to_path_buf())).expect("lint should succeed");
+    assert_eq!(result.total_findings, 0, "reports: {:?}", result.reports);
+}
+
+#[test]
 fn excluded_generated_file_still_contributes_bindings() {
     // `cpp11.R` is in the default exclude set, so it is never linted. But it
     // defines the R wrappers (`native_fn`) that hand-written siblings call, so
@@ -653,6 +691,15 @@ fn shadowed_builtin_ignores_value_binding_shadow() {
         !rules_for(&result, "valbind.R").contains(&"shadowed-builtin"),
         "value binding should not trigger shadowed-builtin: {:?}",
         rules_for(&result, "valbind.R")
+    );
+}
+
+#[test]
+fn shadowed_builtin_ignores_default_package_datasets() {
+    let findings = diagnostics("sleep <- function(n) n\nsleep(1)\n");
+    assert!(
+        findings.iter().all(|d| d.rule != "shadowed-builtin"),
+        "got: {findings:?}"
     );
 }
 
@@ -2879,6 +2926,14 @@ fn for_loop_index_ignores_a_distinct_sequence() {
 }
 
 #[test]
+fn for_loop_index_ignores_base_function_lookup() {
+    let src = "strategy <- 1\n\
+               for (class in class(strategy)) print(class)\n\
+               print(class(strategy))\n";
+    assert!(rule_diags(src, "for-loop-index").is_empty());
+}
+
+#[test]
 fn for_loop_index_ignores_non_read_name_positions() {
     // `$`/`@` field names and named-argument names are not symbol reads, so the
     // index is not actually re-used. (jarl flags the `list(x = 1)` shape; the
@@ -3240,6 +3295,16 @@ fn missing_argument_ignores_trailing_commas_and_missing_formals() {
 }
 
 #[test]
+fn missing_argument_ignores_empty_subscripts() {
+    let src = "x[, 1]\nx[1, , drop = FALSE]\nx[[, 1]]\n";
+    let findings: Vec<_> = diagnostics(src)
+        .into_iter()
+        .filter(|d| d.rule == "missing-argument")
+        .collect();
+    assert!(findings.is_empty(), "got: {findings:?}");
+}
+
+#[test]
 fn rep_times_ignored_flags_both_named_arguments_without_a_fix() {
     let src = "rep(x, times = 2, length.out = 10)\nrep(x, length.out = n, times = k)\n";
     let findings: Vec<_> = diagnostics(src)
@@ -3268,12 +3333,12 @@ fn rep_times_ignored_requires_base_rep_and_both_named_arguments() {
 #[test]
 fn redundant_equals_true_drops_comparison() {
     assert_eq!(
-        fixed_output("if (x == TRUE) f()\n", "redundant-equals"),
+        unsafe_fixed_output("if (x == TRUE) f()\n", "redundant-equals"),
         "if (x) f()\n"
     );
     // Literal on either side.
     assert_eq!(
-        fixed_output("print(TRUE == x)\n", "redundant-equals"),
+        unsafe_fixed_output("print(TRUE == x)\n", "redundant-equals"),
         "print(x)\n"
     );
 }
@@ -3281,9 +3346,30 @@ fn redundant_equals_true_drops_comparison() {
 #[test]
 fn redundant_equals_false_negates() {
     assert_eq!(
-        fixed_output("print(x == FALSE)\n", "redundant-equals"),
+        unsafe_fixed_output("print(x == FALSE)\n", "redundant-equals"),
         "print(!x)\n"
     );
+}
+
+#[test]
+fn redundant_equals_fix_is_unsafe() {
+    let d = diagnostics("stopifnot(v == TRUE)\n")
+        .into_iter()
+        .find(|d| d.rule == "redundant-equals")
+        .expect("expected a redundant-equals finding");
+    assert_eq!(
+        d.fix.as_ref().expect("should carry a fix").applicability,
+        Applicability::Unsafe
+    );
+}
+
+#[test]
+fn redundant_equals_withholds_fix_for_dropped_comment() {
+    let d = diagnostics("stopifnot((v # keep me\n  == TRUE))\n")
+        .into_iter()
+        .find(|d| d.rule == "redundant-equals")
+        .expect("expected a redundant-equals finding");
+    assert!(d.fix.is_none(), "dropped comment should withhold the fix");
 }
 
 #[test]
@@ -6023,6 +6109,12 @@ fn roxygen_param_negatives() {
         "#' Add\n#' @param a,b Both.\nf <- function(a, b) a\n",
         // `...` is documented like any formal.
         "#' Add\n#' @param ... Extra.\nf <- function(...) 1\n",
+        // roxygen2 accepts the Rd spelling for the ellipsis formal.
+        "#' Add\n#' @param \\ldots Extra.\nf <- function(...) 1\n",
+        // Markdown tokenization may nest the description under inline nodes.
+        "#' Add\n#' @md\n#' @param x     A *value*.\nf <- function(x) x\n",
+        // Import-only blocks feed NAMESPACE without generating an Rd topic.
+        "#' @importFrom stats median\nf <- function(x) x\n",
         // The name may sit on a continuation line (roxygen2 splits the folded
         // value on whitespace).
         "#' Add\n#' @param\n#' x The x value.\nf <- function(x) x\n",

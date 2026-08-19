@@ -8,8 +8,8 @@
 //! - Record a binding (`ASSIGNMENT_EXPR` target, `FUNCTION_EXPR` params,
 //!   `FOR_EXPR` loop var — the last two in the enclosing frame).
 //! - Record an identifier read site for any `IDENT` token in a read position.
-//! - Detect a `library()`/`require()`/`requireNamespace()` call at the *file*
-//!   level (not nested inside a function), and record it as a `LoadedPackage`.
+//! - Detect a `library()`/`require()` call at the *file* level (not nested
+//!   inside a function), and record it as a `LoadedPackage`.
 //!
 //! Definition order: the LHS of `<-`/`=`/`:=` is bound *after* recursing into
 //! the RHS, so an RHS read sees the pre-assignment scope. For `->`/`->>` the
@@ -556,9 +556,39 @@ fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) 
         }
         push_binding(ctx.model, target_scope, name, kind, range, ctx.loop_range);
     } else if let Some(NodeOrToken::Node(target_node)) = target {
-        // Complex LHS (e.g. `dim(x) <- ...`): treat contents as reads.
-        walk_node(ctx, &target_node, scope);
+        // `foo(x) <- value` dispatches to `` `foo<-` ``; recording `foo` as an
+        // ordinary callee both misses the replacement binding and invents an
+        // undefined read. Other complex targets retain the generic walk.
+        if !walk_replacement_target(ctx, &target_node, scope) {
+            walk_node(ctx, &target_node, scope);
+        }
     }
+}
+
+fn walk_replacement_target(ctx: &mut BuildCtx<'_>, target: &SyntaxNode, scope: ScopeId) -> bool {
+    let Some(call) = CallExpr::cast(target.clone()) else {
+        return false;
+    };
+    let Some(SyntaxElement::Token(callee)) = call.base() else {
+        return false;
+    };
+    let Some(name) = call.callee_name() else {
+        return false;
+    };
+    push_ident(
+        ctx,
+        IdentRef {
+            name: SmolStr::new(format!("`{name}<-`")),
+            range: callee.text_range(),
+            scope,
+            data_masked: ctx.mask_depth > 0,
+            deferred: ctx.deferred,
+        },
+    );
+    if let Some(args) = call.arg_list() {
+        walk_node(ctx, args.syntax(), scope);
+    }
+    true
 }
 
 fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
@@ -570,11 +600,11 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
         ctx.model.referenced_packages.push(pkg_name);
     }
 
-    // Detect a top-level `library(pkg)` / `require(pkg)` / `requireNamespace("pkg")`.
+    // Detect a top-level `library(pkg)` / `require(pkg)` attachment.
     if ctx.function_depth == 0
         && let Some(call) = CallExpr::cast(node.clone())
         && let Some(callee) = call_callee_ident(&call)
-        && matches!(callee.as_str(), "library" | "require" | "requireNamespace")
+        && matches!(callee.as_str(), "library" | "require")
         && let Some((pkg_name, pkg_range)) = first_string_or_ident_arg(&call)
     {
         ctx.model.loaded_packages.push(LoadedPackage {
@@ -583,7 +613,7 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
         });
         // Don't record the bare package name (e.g. `dplyr` in `library(dplyr)`)
         // as an undefined read. A string arg has no IDENT, so this is a no-op
-        // for `requireNamespace("pkg")`.
+        // for the quoted `library("pkg")` spelling.
         let prev = ctx.suppress_read.replace(pkg_range);
         walk_generic(ctx, node, scope);
         ctx.suppress_read = prev;

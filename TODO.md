@@ -299,6 +299,70 @@ no pin or allowlist entry moved. What remains:
   both `#[allow(clippy::too_many_arguments)]`s are gone. `run_dcf_rules` is
   untouched — six parameters, a different set of inputs.
 
+### `futureverse/future` linter sweep (2026-08-19)
+
+Audited `futureverse/future` at
+`f4847e564a983af2e75ded57b924e5cb4e6ace52` against R 4.6.1 and roxygen2 8.0.0.
+The isolated call, namespace, replacement-function, default-dataset, loop-index,
+and `@param` defects found by the sweep are covered in `tests/lint.rs`. What
+remains needs broader modeling rather than a name-shaped exemption:
+
+- [ ] **Keep one roxygen block across ordinary comments.** roxygen2 skips an
+  intervening `#`, `##`, or `#"` line and continues collecting the surrounding
+  `#'` lines, while arity ends the first `ROXYGEN_BLOCK`. That produced 21 false
+  `roxygen-param`/`roxygen-title`/`roxygen-return` findings. Minimal case:
+
+  ```r
+  #' Title
+  #' @param x Value.
+  #' @return Value.
+  # comment
+  #' @export
+  f <- function(x) x
+  ```
+
+  `roxygen2:::parse_text()` returns one block with
+  `title,param,return,export`; the parser fix must preserve the ordinary comment
+  byte-for-byte and keep full and incremental parses equivalent.
+- [ ] **Resolve manual roxygen aliases and usage across blocks.** A block with
+  `@usage g(x)`, `@param x`, `@return`, and `@aliases g` can document a later
+  export-only `g <- function(x) x`; roxygen2 generates the shared topic, while
+  arity reports missing title, parameters, and return on `g`. Future's
+  `%packages%`, `mandelbrot_tiles`, `as.raster.Mandelbrot`, `plot.Mandelbrot`,
+  and `as.FutureGlobals` expose this. Extend the range-free topic projection;
+  do not bolt aliases onto individual rules.
+- [ ] **Do not let one inherited topic member suppress owner coverage.** The
+  current topic-wide "any member inherits parameters" gate misses the genuinely
+  undocumented `hooks` formal on `FutureBackend()`, which
+  `tools::checkDocFiles()` reports. Preserve the unknown surface only for the
+  member whose formals inheritance actually obscures.
+- [ ] **Model dynamic local reads without blanket-marking every binding used.**
+  Future has legitimate locals reached through captured expressions and
+  `eval()`/`get()` (`data` in `R/backend_api-Future-class.R` and `d` in
+  `inst/testme/test-globals,toolarge.R`). R evaluates both successfully, while
+  `unused-binding` reports them. Start with literal `get("name")`; expression
+  provenance through `eval()` needs a conservative, range-free fact.
+- [ ] **Model dynamic assignment/injection escape hatches.** Future's `%<-%`
+  assignment creates `opt1`/`opt2`, and `attachLocally()` plus
+  `future(..., globals = ...)` supply `sumtwo`; R resolves all 14 reads, while
+  `undefined-symbol` cannot see the runtime-created bindings. Any suppression
+  must be tied to the affected expression/environment rather than disabling the
+  whole rule for a file.
+- [ ] **Recognize `detach(package:name)` as NSE package syntax.** The `package`
+  token is not a scope read: R accepts
+  `detach(package:datasets)`, but arity reports `package` undefined. Mask only
+  the first argument's exact `package:<name>` shape; ordinary `:` expressions
+  still contain real reads.
+- [ ] **Track `.Random.seed` after a known RNG initializer.** `set.seed(1); x <-
+  .Random.seed` is valid and produces an integer vector, accounting for two
+  false `undefined-symbol` findings. A blanket exemption is wrong because a
+  fresh-session read of `.Random.seed` errors before any RNG call.
+
+Deliberately unchanged: 225 `roxygen-unknown-tag` findings on `inst/testme/`
+all name the custom test-runner marker `@tags`. roxygen2 also reports it as
+unknown, the spans are exact, and the rule already documents suppression for
+custom tag systems.
+
 ### More DESCRIPTION rules (follow-ups to stage 3)
 
 Stage 3 shipped three `description-*` rules; R's own checks define a much larger

@@ -133,6 +133,11 @@ impl Rule for RoxygenParam {
         if block.has_tag("noRd") {
             return;
         }
+        // Import directives feed NAMESPACE but do not create an Rd topic, so
+        // the following function has no argument documentation to complete.
+        if is_import_only(&block) {
+            return;
+        }
         let function = documented_function(&block);
         let topic = topic_params(&block, ctx);
         let judge_coverage = function.is_some() && topic.is_some();
@@ -227,6 +232,17 @@ impl Rule for RoxygenParam {
             }
         }
     }
+}
+
+fn is_import_only(block: &RoxygenBlock) -> bool {
+    let mut tags = block.tags().peekable();
+    tags.peek().is_some()
+        && tags.all(|tag| {
+            matches!(
+                tag.name().as_deref(),
+                Some("import" | "importFrom" | "importClassesFrom" | "importMethodsFrom")
+            )
+        })
 }
 
 fn diagnostic(range: TextRange, body: String, suggestion: &str) -> Diagnostic {

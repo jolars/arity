@@ -41,6 +41,21 @@ impl Rule for MissingArgument {
         if arg.name().is_some() || arg.value().is_some() {
             return;
         }
+        // Missing dimensions are the standard spelling for selecting every
+        // row or column, so they are intentional rather than omitted calls.
+        let in_subset = arg
+            .syntax()
+            .parent()
+            .and_then(|arg_list| arg_list.parent())
+            .is_some_and(|parent| {
+                matches!(
+                    parent.kind(),
+                    SyntaxKind::SUBSET_EXPR | SyntaxKind::SUBSET2_EXPR
+                )
+            });
+        if in_subset {
+            return;
+        }
         let Some(comma) = arg
             .syntax()
             .next_sibling_or_token()

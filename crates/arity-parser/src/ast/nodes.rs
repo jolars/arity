@@ -99,7 +99,11 @@ impl RoxygenSection {
     /// Whether the section carries any prose beyond the tag head: text folded
     /// onto the tag line (`@param x A number.`) or a continuation paragraph.
     pub fn has_prose(&self) -> bool {
-        self.tag().is_some_and(|tag| tag.text().is_some()) || self.paragraphs().next().is_some()
+        self.tag().is_some_and(|tag| tag.value_text().is_some())
+            || self
+                .0
+                .children()
+                .any(|child| child.kind() != SyntaxKind::ROXYGEN_TAG)
     }
 }
 
