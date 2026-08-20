@@ -71,6 +71,14 @@ jobs:
       - name: Generate sitemap
         run: cargo run --quiet --example sitemap -- docs/book https://arity.cc/
 
+      - name: Publish installers
+        run: |
+          install -m 0644 scripts/arity-installer.sh docs/book/install
+          install -m 0644 scripts/arity-installer.ps1 docs/book/install.ps1
+          cmp scripts/arity-installer.sh docs/book/install
+          cmp scripts/arity-installer.ps1 docs/book/install.ps1
+          sh -n docs/book/install
+
       - name: Setup Pages
         uses: actions/configure-pages@v6
 

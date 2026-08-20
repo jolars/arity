@@ -46,22 +46,21 @@ Arity is available from several sources:
 
 ### Install Script
 
-The install scripts are fetched from the latest release and download the latest
-Arity release for your system, verifying its checksum and installing to a
-user-local directory by default. If you prefer, download and inspect the script
-before running it.
+The installer scripts pick the right release artifact for your platform and
+install to a user-local directory by default. They download the matching Arity
+CLI release asset and verify its checksum. If you prefer, download and inspect
+the script before running it.
 
 For macOS and Linux:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf \
-    https://github.com/jolars/arity/releases/latest/download/arity-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -sSf https://arity.cc/install | sh
 ```
 
 For Windows PowerShell:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://github.com/jolars/arity/releases/latest/download/arity-installer.ps1 | iex"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://arity.cc/install.ps1 | iex"
 ```
 
 Set `ARITY_INSTALL_DIR` to change the destination, `ARITY_TAG` to pin a version,
