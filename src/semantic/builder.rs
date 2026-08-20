@@ -29,7 +29,7 @@ use crate::ast::{Arg, AssignmentExpr, AstToken as _, CallExpr, FunctionExpr, Ide
 use crate::semantic::binding::{Binding, BindingId, BindingKind};
 use crate::semantic::scope::{Scope, ScopeId, ScopeKind};
 use crate::semantic::symbols::LoadedPackage;
-use crate::semantic::{IdentRef, SemanticModel};
+use crate::semantic::{IdentRef, SemanticModel, UseOnlyRead};
 use crate::syntax::{RLanguage, SyntaxElement, SyntaxKind, SyntaxNode};
 
 /// Build a fresh semantic model from a root CST node.
@@ -56,6 +56,7 @@ pub fn build(root: &SyntaxNode) -> SemanticModel {
         ctx.ident_gates
     };
     resolve_reads(&mut model);
+    resolve_use_only_reads(&mut model);
     apply_shadow_gate(&mut model, &ident_gates);
     model
 }
@@ -592,6 +593,20 @@ fn walk_replacement_target(ctx: &mut BuildCtx<'_>, target: &SyntaxNode, scope: S
 }
 
 fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
+    if let Some(call) = CallExpr::cast(node.clone()) {
+        ctx.model.use_only_reads.extend(
+            crate::semantic::interpolation::use_only_reads(&call)
+                .into_iter()
+                .map(|candidate| UseOnlyRead {
+                    name: candidate.name,
+                    range: candidate.range,
+                    scope,
+                    deferred: ctx.deferred,
+                    gate: candidate.gate,
+                }),
+        );
+    }
+
     if let Some(call) = CallExpr::cast(node.clone())
         && let Some(callee) = call_callee_ident(&call)
         && crate::semantic::symbols::PACKAGE_LOAD_CALLS.contains(&callee.as_str())
@@ -1577,6 +1592,26 @@ fn resolve_reads(model: &mut SemanticModel) {
     }
 }
 
+/// Mark bindings reached only through runtime syntax. These reads intentionally
+/// do not enter either def-use index; their sole purpose is to keep
+/// `unused-binding` from reporting a binding that runtime evaluation consumes.
+fn resolve_use_only_reads(model: &mut SemanticModel) {
+    for read in model.use_only_reads.clone() {
+        if read.gate.as_ref().is_some_and(|(name, range)| {
+            !reads_reached_parts(model, name, *range, read.scope, read.deferred).is_empty()
+        }) {
+            continue;
+        }
+        let reached = reads_reached_parts(model, &read.name, read.range, read.scope, read.deferred);
+        if reached.is_empty() {
+            model.free_use_only_reads.push(read.name.clone());
+        }
+        for id in reached {
+            model.bindings[id.0 as usize].read = true;
+        }
+    }
+}
+
 /// The binding(s) a single identifier read marks as `read`, found by walking
 /// from the read's own scope outward.
 ///
@@ -1599,7 +1634,17 @@ fn resolve_reads(model: &mut SemanticModel) {
 /// reassignment looking unread, even when it is the one the closure actually
 /// sees.
 fn reads_reached(model: &SemanticModel, ident: &IdentRef) -> Vec<BindingId> {
-    let mut current = Some(ident.scope);
+    reads_reached_parts(model, &ident.name, ident.range, ident.scope, ident.deferred)
+}
+
+fn reads_reached_parts(
+    model: &SemanticModel,
+    name: &SmolStr,
+    range: TextRange,
+    scope: ScopeId,
+    deferred: bool,
+) -> Vec<BindingId> {
+    let mut current = Some(scope);
     // Whether the scope under inspection still belongs to the read's own frame.
     // It does until we step *past* the first `function`/file scope (a closure
     // boundary).
@@ -1608,12 +1653,12 @@ fn reads_reached(model: &SemanticModel, ident: &IdentRef) -> Vec<BindingId> {
         let scope_ref = &model.scopes[scope_id.0 as usize];
         // Only this scope's same-name bindings, via the name index; their
         // order is `scope_ref.bindings` order by construction.
-        let named = model.scope_bindings_named(scope_id, &ident.name);
+        let named = model.scope_bindings_named(scope_id, name);
         let matches = || {
             named
                 .iter()
                 .copied()
-                .filter(|id| model.bindings[id.0 as usize].def_range != ident.range)
+                .filter(|id| model.bindings[id.0 as usize].def_range != range)
         };
 
         if in_frame {
@@ -1624,14 +1669,14 @@ fn reads_reached(model: &SemanticModel, ident: &IdentRef) -> Vec<BindingId> {
             let preceding: Vec<BindingId> = matches()
                 .filter(|id| {
                     let b = &model.bindings[id.0 as usize];
-                    b.def_range.start() < ident.range.start()
+                    b.def_range.start() < range.start()
                         || b.loop_range
-                            .is_some_and(|lr| lr.contains_range(ident.range))
+                            .is_some_and(|lr| lr.contains_range(range))
                         // A deferred (promise) read carries no textual ordering
                         // within its frame: the default / `on.exit` / `NextMethod`
                         // expression runs after body statements may have assigned a
                         // same-name local, so an assignment *after* the read counts.
-                        || ident.deferred
+                        || deferred
                 })
                 .collect();
             if !preceding.is_empty() {

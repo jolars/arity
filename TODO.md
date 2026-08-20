@@ -100,9 +100,12 @@ Tier 1—clear correctness bugs, good default-on candidates:
   scalar and `c()` literal formats; only the literal-only collapse has a safe
   fix.
 - [ ] `glue`: for a statically known `glue()` template and delimiters, report
-  unmatched/incomplete interpolation delimiters; also flag a template with no
-  interpolation. Gate on the package/callee and parse the template rather than
-  treating braces with a regexp.
+  unmatched/incomplete interpolation delimiters. Gate on the package/callee and
+  parse the template rather than treating braces with a regexp. Reuse the
+  semantic interpolation analyzer that supplies use-only reads for
+  `unused-binding`. A template with no interpolation is at most an opt-in
+  readability rule: `glue()` also provides trimming, concatenation, and a
+  distinct result class, so a default warning would be noisy.
 - [ ] `length-test`: flag the likely-parenthesization error
   `length(x == n)`/`length(x != n)` and suggest `length(x) == n`. Keep the
   diagnostic conservative around overloaded calls and non-atomic operands.
@@ -336,12 +339,17 @@ remains needs broader modeling rather than a name-shaped exemption:
   undocumented `hooks` formal on `FutureBackend()`, which
   `tools::checkDocFiles()` reports. Preserve the unknown surface only for the
   member whose formals inheritance actually obscures.
-- [ ] **Model dynamic local reads without blanket-marking every binding used.**
-  Future has legitimate locals reached through captured expressions and
-  `eval()`/`get()` (`data` in `R/backend_api-Future-class.R` and `d` in
-  `inst/testme/test-globals,toolarge.R`). R evaluates both successfully, while
-  `unused-binding` reports them. Start with literal `get("name")`; expression
-  provenance through `eval()` needs a conservative, range-free fact.
+- [x] **Model statically recoverable dynamic local reads without blanket-marking
+  every binding used.** Literal `get("name")` and statically parsed glue/cli
+  interpolation now emit scoped use-only reads. They share ordinary binding
+  ordering and closure resolution, but stay out of `undefined-symbol`, rename,
+  and reference spans; a separate range-free projection marks package siblings
+  used without feeding name resolution.
+- [ ] **Propagate captured-expression provenance through `eval()`.** Future's
+  `data` in `R/backend_api-Future-class.R` and `d` in
+  `inst/testme/test-globals,toolarge.R` are reached through expressions whose
+  names cannot be recovered at the `eval()` call alone. Carry a conservative,
+  range-free expression fact rather than gating the whole file.
 - [ ] **Model dynamic assignment/injection escape hatches.** Future's `%<-%`
   assignment creates `opt1`/`opt2`, and `attachLocally()` plus
   `future(..., globals = ...)` supply `sumtwo`; R resolves all 14 reads, while

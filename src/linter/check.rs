@@ -277,6 +277,7 @@ pub fn check_paths_with_index(
             file_exports(worker, file);
             file_free_reads(worker, file);
             file_qualified_reads(worker, file);
+            crate::incremental::file_use_only_reads(worker, file);
             source_edges(worker, file);
             top_level_events(worker, file);
             file_roxygen_topics(worker, file);

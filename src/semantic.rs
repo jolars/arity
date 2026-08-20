@@ -8,6 +8,7 @@
 pub mod binding;
 pub mod builder;
 pub mod cfg;
+mod interpolation;
 pub mod scope;
 pub mod symbols;
 
@@ -50,6 +51,24 @@ pub struct IdentRef {
     pub deferred: bool,
 }
 
+/// A name read through runtime syntax rather than an identifier token.
+///
+/// Glue interpolation and literal `get("name")` calls can read a binding even
+/// though the source contains no ordinary identifier at the read site. These
+/// reads participate in `unused-binding` resolution, but deliberately have no
+/// def-use edge: rename, references, and `undefined-symbol` must not treat text
+/// inside a string as an ordinary R identifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UseOnlyRead {
+    pub(crate) name: SmolStr,
+    pub(crate) range: TextRange,
+    pub(crate) scope: ScopeId,
+    pub(crate) deferred: bool,
+    /// A bare callee whose local binding would make this runtime interpretation
+    /// inapplicable. Qualified calls have no gate.
+    pub(crate) gate: Option<(SmolStr, TextRange)>,
+}
+
 /// Per-file semantic information derived from the CST.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct SemanticModel {
@@ -57,6 +76,9 @@ pub struct SemanticModel {
     bindings: Vec<Binding>,
     /// Identifier *read* sites. Definition sites are recorded as `Binding`s.
     idents: Vec<IdentRef>,
+    use_only_reads: Vec<UseOnlyRead>,
+    /// Use-only names that resolve to no binding in this file.
+    free_use_only_reads: Vec<SmolStr>,
     loaded_packages: Vec<LoadedPackage>,
     /// Packages this file *names*: the left of every `::` / `:::`, and the
     /// package argument of every
@@ -135,6 +157,10 @@ impl SemanticModel {
 
     pub fn idents(&self) -> &[IdentRef] {
         &self.idents
+    }
+
+    pub(crate) fn free_use_only_reads(&self) -> &[SmolStr] {
+        &self.free_use_only_reads
     }
 
     /// The identifier read sites bound to `id`, in [`idents`](Self::idents)
@@ -290,7 +316,7 @@ impl SemanticModel {
             .filter(move |id| {
                 let binding = self.binding(*id);
                 matches!(binding.kind, BindingKind::Local)
-                    && self.read_sites(*id).next().is_none()
+                    && !binding.read
                     && !binding.name.starts_with('.')
             })
     }
@@ -681,6 +707,116 @@ mod tests {
             .map(|id| m.binding(id).name.as_str())
             .collect();
         assert_eq!(unused, vec!["x"]);
+    }
+
+    #[test]
+    fn glue_interpolation_marks_local_binding_used() {
+        let m = model_of(
+            "missing <- \"WT-KO\"\n\
+             glue::glue(\"Missing entries: {missing}\")\n",
+        );
+        assert!(!unused_names(&m).contains("missing"));
+        let missing = m
+            .bindings()
+            .iter()
+            .position(|binding| binding.name == "missing")
+            .map(BindingId::from_index)
+            .expect("missing binding");
+        assert!(
+            m.read_sites(missing).next().is_none(),
+            "string interpolation must not become a rename/reference site"
+        );
+    }
+
+    #[test]
+    fn cli_interpolation_marks_local_binding_used() {
+        let m = model_of(
+            "missing <- \"WT-KO\"\n\
+             cli::cli_inform(c(\"Missing entries: {missing}\"))\n",
+        );
+        assert!(!unused_names(&m).contains("missing"));
+    }
+
+    #[test]
+    fn literal_get_marks_local_binding_used() {
+        for src in [
+            "name <- 1\nget(\"name\")\n",
+            "name <- 1\nget(mode = \"any\", x = \"name\")\n",
+        ] {
+            let m = model_of(src);
+            assert!(!unused_names(&m).contains("name"), "source: {src}");
+        }
+    }
+
+    #[test]
+    fn prose_braces_and_non_interpolating_cli_stay_unused() {
+        for src in [
+            "name <- 1\npaste(\"{name}\")\n",
+            "name <- 1\nglue::glue(\"{{name}}\")\n",
+            "name <- 1\ncli::cli_verbatim(\"{name}\")\n",
+        ] {
+            let m = model_of(src);
+            assert!(unused_names(&m).contains("name"), "source: {src}");
+        }
+    }
+
+    #[test]
+    fn locally_shadowed_interpolation_callee_stays_unused() {
+        for src in [
+            "glue <- function(text) text\nname <- 1\nglue(\"{name}\")\n",
+            "get <- function(text) text\nname <- 1\nget(\"name\")\n",
+        ] {
+            let m = model_of(src);
+            assert!(unused_names(&m).contains("name"), "source: {src}");
+        }
+    }
+
+    #[test]
+    fn interpolation_handles_expressions_cli_markup_and_static_delimiters() {
+        for src in [
+            "name <- 1\nglue::glue(\"{name + 1}\")\n",
+            "name <- 1\nglue::glue(\"<<name>>\", .open = \"<<\", .close = \">>\")\n",
+            "name <- 1\ncli::cli_inform(\"{.emph {name}}\")\n",
+            "name <- 1\nglue::glue(r\"({name})\")\n",
+            "name <- 1\nglue::glue(\"{paste(\\\"x\\\", name)}\")\n",
+            "name <- 1\nglue::glue(\"{get(\\\"name\\\")}\")\n",
+            "name <- 1\nglue::glue_sql(\"SELECT * FROM x WHERE id IN ({name*})\", .con = con)\n",
+            "name <- 1\nglue::glue_col(\"{blue value: {name}}\")\n",
+            "name <- 1\nglue::glue_col(\"{blue it's {name}}\", .literal = TRUE)\n",
+            "name <- 1\ncli::cli_progress_bar(\"Downloading {name}\")\n",
+            "name <- 1\ncli::cli_progress_along(1:2, \"Downloading {name}\")\n",
+            "name <- 1\ncli::cli_status_update(\"id\", \"Status: {name}\")\n",
+            "name <- 1\ncli::cli_process_start(\"Starting {name}\")\n",
+            "name <- 1\ncli::cli_process_done(\"id\", \"Finished {name}\")\n",
+            "name <- 1\ncli::cli_process_failed(\"id\", \"Failed {name}\")\n",
+        ] {
+            let m = model_of(src);
+            assert!(!unused_names(&m).contains("name"), "source: {src}");
+        }
+    }
+
+    #[test]
+    fn glue_safe_treats_the_interpolation_body_as_a_lookup_name() {
+        let m = model_of("\"1 + 1\" <- 5\nglue::glue_safe(\"{1 + 1}\")\n");
+        assert!(!unused_names(&m).contains("1 + 1"));
+    }
+
+    #[test]
+    fn redirected_or_temporary_interpolation_names_stay_unused() {
+        for src in [
+            "name <- 1\nglue::glue(\"{name}\", name = 2)\n",
+            "name <- 1\nglue::glue(\"{name}\", .envir = emptyenv())\n",
+            "name <- 1\nget(\"name\", envir = emptyenv())\n",
+            "name <- 1\nget(mode = \"any\", x = \"name\", envir = emptyenv())\n",
+            "get(\"name\")\nname <- 1\n",
+            "name <- 1\nglue::glue(\"{name}\", .transformer = identity)\n",
+            "name <- 1\ncli::cli_status_update(id = \"{name}\", msg = \"ok\")\n",
+            "name <- 1\ncli::cli_process_done(\"{name}\")\n",
+            "name <- 1\ncli::cli_progress_along(\"{name}\")\n",
+        ] {
+            let m = model_of(src);
+            assert!(unused_names(&m).contains("name"), "source: {src}");
+        }
     }
 
     /// A closure body's read carries no ordering relative to the enclosing

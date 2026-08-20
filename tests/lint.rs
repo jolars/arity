@@ -91,6 +91,49 @@ fn lint_flags_unused_binding() {
 }
 
 #[test]
+fn interpolation_and_literal_get_count_as_binding_reads() {
+    let findings = diagnostics(
+        "missing <- \"WT-KO\"\n\
+         glue::glue(\"Missing entries: {missing}\")\n\
+         detail <- \"extra\"\n\
+         cli::cli_inform(c(\"Detail: {detail}\"))\n\
+         indirect <- 1\n\
+         get(\"indirect\")\n",
+    );
+    assert!(
+        findings.iter().all(|d| d.rule != "unused-binding"),
+        "got: {findings:?}"
+    );
+}
+
+#[test]
+fn interpolation_candidates_never_become_undefined_symbols() {
+    let findings = diagnostics("glue::glue(\"Value: {not_in_scope}\")\n");
+    assert!(
+        findings.iter().all(|d| d.rule != "undefined-symbol"),
+        "got: {findings:?}"
+    );
+}
+
+#[test]
+fn interpolation_marks_a_package_sibling_binding_used() {
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
+    let r_dir = dir.path().join("R");
+    std::fs::create_dir(&r_dir).unwrap();
+    std::fs::write(r_dir.join("a.R"), "label <- \"value\"\n").unwrap();
+    std::fs::write(r_dir.join("b.R"), "glue::glue(\"Label: {label}\")\n").unwrap();
+
+    let result =
+        check_paths(std::slice::from_ref(&dir.path().to_path_buf())).expect("lint should succeed");
+    assert!(
+        !rules_for(&result, "a.R").contains(&"unused-binding"),
+        "reports: {:?}",
+        result.reports
+    );
+}
+
+#[test]
 fn super_assignment_is_not_unused() {
     // `done <<- TRUE` mutates the enclosing `done` (read via `if (done)`), so it
     // is a stateful write, not a dead local. A super-assignment must never flag

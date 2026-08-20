@@ -26,8 +26,8 @@ use smol_str::SmolStr;
 use crate::incremental::{
     Descriptions, IncrementalDb, LibraryIndex, PackageGraph, QueryKind, QueryLogEntry, SourceFile,
     Workspace, description_facts, file_class_defs, file_def_sites, file_exports, file_free_reads,
-    file_qualified_reads, file_roxygen_topics, loaded_names, package_references, parse_diagnostics,
-    source_edges, top_level_events,
+    file_qualified_reads, file_roxygen_topics, file_use_only_reads, loaded_names,
+    package_references, parse_diagnostics, source_edges, top_level_events,
 };
 use crate::project::classes::ClassSystem;
 use crate::project::description::DescriptionFacts;
@@ -574,6 +574,7 @@ pub fn project_graph<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> 
             exports: Arc::clone(file_exports(db, m.file)),
             free_reads: Arc::clone(file_free_reads(db, m.file)),
             qualified_reads: Arc::clone(file_qualified_reads(db, m.file)),
+            use_only_reads: Arc::clone(file_use_only_reads(db, m.file)),
             source_edges: Arc::clone(source_edges(db, m.file)),
             top_level_events: Arc::clone(top_level_events(db, m.file)),
             package_root: m.package_root.clone(),

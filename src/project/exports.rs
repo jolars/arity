@@ -53,6 +53,16 @@ pub fn file_qualified_reads(model: &SemanticModel) -> BTreeSet<String> {
         .collect()
 }
 
+/// Names read through runtime syntax that do not resolve in this file. This is
+/// a cross-file use signal only and never feeds `undefined-symbol`.
+pub(crate) fn file_use_only_reads(model: &SemanticModel) -> BTreeSet<String> {
+    model
+        .free_use_only_reads()
+        .iter()
+        .map(ToString::to_string)
+        .collect()
+}
+
 /// How a top-level binding was defined: a function (`f <- function(...)` or a
 /// lambda) versus any other value. Stable across body edits — the classification
 /// turns on the *shape* of the right-hand side, not its contents — so it keeps

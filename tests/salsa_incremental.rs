@@ -8,8 +8,8 @@ use arity::incremental::{
 use arity::parser::Edit;
 use arity::project::{
     DefKind, Project, ProjectMember, external_resolution, package_facts_for, package_usage,
-    project_classes, project_defs, project_reads, project_roxygen_topics, reverse_source_edges,
-    visible_symbols, workspace_project,
+    project_classes, project_defs, project_graph, project_reads, project_roxygen_topics,
+    reverse_source_edges, visible_symbols, workspace_project,
 };
 use arity::rindex::provider::IndexedProvider;
 use arity::rindex::remote::RemoteExports;
@@ -1104,6 +1104,45 @@ fn project_reads_aggregates_free_reads_by_name() {
         !foo.contains(&PathBuf::from("/pkg/R/a.R")),
         "a.R binds foo, so it is not a free read there"
     );
+}
+
+#[test]
+fn unchanged_use_only_names_spare_the_project_graph() {
+    let (mut db, a, b) = package_ab("label <- \"value\"\n", "glue::glue(\"Label: {label}\")\n");
+    {
+        let project = project_ab(&db, a, b);
+        let _ = project_graph(&db, project);
+    }
+
+    db.clear_query_log();
+    db.set_file_text(b, "glue::glue(\"Longer label: {label}\")\n");
+    let project = project_ab(&db, a, b);
+    let _ = project_graph(&db, project);
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(counts.get(&QueryKind::FileUseOnlyReads), Some(&1));
+    assert_eq!(
+        counts.get(&QueryKind::ProjectGraph),
+        None,
+        "the range-free use-only set must backdate and spare the project graph"
+    );
+}
+
+#[test]
+fn changed_use_only_name_rebuilds_the_project_graph() {
+    let (mut db, a, b) = package_ab("label <- \"value\"\n", "glue::glue(\"{label}\")\n");
+    {
+        let project = project_ab(&db, a, b);
+        let _ = project_graph(&db, project);
+    }
+
+    db.clear_query_log();
+    db.set_file_text(b, "glue::glue(\"{other}\")\n");
+    let project = project_ab(&db, a, b);
+    let _ = project_graph(&db, project);
+
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(counts.get(&QueryKind::ProjectGraph), Some(&1));
 }
 
 #[test]

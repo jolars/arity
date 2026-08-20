@@ -266,6 +266,7 @@ pub enum QueryKind {
     FileExports,
     FileFreeReads,
     FileQualifiedReads,
+    FileUseOnlyReads,
     FileDefSites,
     FileClassDefs,
     FileRoxygenTopics,
@@ -546,6 +547,22 @@ pub fn file_qualified_reads(db: &dyn IncrementalDb, file: SourceFile) -> Arc<BTr
     Arc::new(crate::project::file_qualified_reads(semantic_model(
         db, file,
     )))
+}
+
+/// Names read through runtime syntax such as interpolation or literal `get()`.
+/// Range-free and used only to mark cross-file definitions live.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn file_use_only_reads(
+    db: &dyn IncrementalDb,
+    file: SourceFile,
+) -> Arc<BTreeSet<String>> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::FileUseOnlyReads,
+        file: Some(file),
+    });
+    Arc::new(crate::project::exports::file_use_only_reads(
+        semantic_model(db, file),
+    ))
 }
 
 /// The file's top-level definitions tagged by [`DefKind`]

@@ -179,6 +179,9 @@ pub struct FileFacts {
     /// sibling counts as a use, but kept out of `free_reads` so it never feeds
     /// name resolution.
     pub qualified_reads: Arc<BTreeSet<String>>,
+    /// Names read through runtime syntax. These mark definitions used but do
+    /// not participate in name resolution.
+    pub use_only_reads: Arc<BTreeSet<String>>,
     /// Top-level `source()` edges this file declares (range-free).
     pub source_edges: Arc<Vec<SourceEdgeKey>>,
     /// This file's top-level execution sequence (range-free, order-bearing): the
@@ -561,6 +564,7 @@ impl ProjectScope {
                 f.free_reads
                     .iter()
                     .chain(f.qualified_reads.iter())
+                    .chain(f.use_only_reads.iter())
                     .map(|n| unbacktick(n).to_string())
                     .collect()
             })
@@ -1119,6 +1123,7 @@ mod tests {
             exports: Arc::new(set(exp)),
             free_reads: Arc::new(set(reads)),
             qualified_reads: Arc::new(BTreeSet::new()),
+            use_only_reads: Arc::new(BTreeSet::new()),
             source_edges: Arc::new(edges),
             top_level_events: Arc::new(Vec::new()),
             package_root: root.map(PathBuf::from),
@@ -1157,6 +1162,7 @@ mod tests {
             exports: Arc::new(set(exp)),
             free_reads: Arc::new(BTreeSet::new()),
             qualified_reads: Arc::new(BTreeSet::new()),
+            use_only_reads: Arc::new(BTreeSet::new()),
             source_edges: Arc::new(edges),
             top_level_events: Arc::new(events),
             package_root: None,
