@@ -9,8 +9,8 @@ combines repository-wide and subsystem rules so tools that only discover
 Arity is a Rust CLI for R with formatter, linter, parser, language-server,
 semantic/project, and package-index capabilities.
 
-- Root crate (`arity`): CLI, LSP, lint, semantic/project, roxygen projector,
-  and rindex.
+- Root crate (`arity`): CLI, LSP, lint, semantic/project, roxygen projector, and
+  rindex.
 - `crates/arity-parser`: lossless R CST parser, `DESCRIPTION` DCF grammar, and
   typed AST wrappers.
 - `crates/arity-formatter`: format engine. `src/formatter.rs` is its root-crate
@@ -31,8 +31,8 @@ semantic/project, and package-index capabilities.
    production behavior.
 
 Air compatibility is a soft, one-directional formatter gauge, never a quality
-gate. CI workflows in `.github/workflows/` are the quality-gate source of
-truth. Dependency changes must pass `cargo-audit` and `cargo-deny`.
+gate. CI workflows in `.github/workflows/` are the quality-gate source of truth.
+Dependency changes must pass `cargo-audit` and `cargo-deny`.
 
 The stdin contract is a stable integration surface. `-` as the only path makes
 `format`, `lint`, and `parse` read one buffer from stdin; `format -` writes only
@@ -89,8 +89,8 @@ intra-repo users should continue using `crate::parser::…`.
 - Errors never abort parsing. Diagnostics are a side channel and a recoverable
   CST is always produced.
 - Recognize lexical/structural shape only; meaning belongs in semantic code.
-- Keep the parser dependency-thin and salsa-free (`rowan`, `serde`,
-  `smol_str`). Salsa belongs above it in `src/incremental.rs`.
+- Keep the parser dependency-thin and salsa-free (`rowan`, `serde`, `smol_str`).
+  Salsa belongs above it in `src/incremental.rs`.
 - Pipeline: lexer tokens → Pratt expression plus recursive structural parsing →
   events → rowan CST. `SyntaxKind` uses `SCREAMING_SNAKE_CASE`.
 - `parser::expr` and `parser::roxygen` are public but semver-loose; do not grow
@@ -127,8 +127,8 @@ constraints.
 
 ### Incremental parsing
 
-- Preserve the reparse ladder: token → block → top-level statement → full
-  parse (`parser/reparse.rs`).
+- Preserve the reparse ladder: token → block → top-level statement → full parse
+  (`parser/reparse.rs`).
 - All reparse entry points are total for caller-provided `Edit`: invalid ranges
   return `None`, never panic. Staged reparsing verifies with `Edit::produces`
   before parsing and must not allocate the final document via apply-and-compare.
@@ -140,10 +140,18 @@ registered in `tests/parser_snapshots.rs`. The air parser harness is a hardening
 oracle, not a gate; port useful cases into fixtures. Use `task bench-parse` for
 parser performance.
 
+## Linter
+
+### Principles
+
+- Lint is semantic. Layout detectable by formatter `--check` belongs there.
+- Low tolerance for false positives. Make rules precise and conservative or
+  opt-in.
+
 ## Formatter
 
-Scope: `crates/arity-formatter/**`, `src/formatter.rs`, and
-`src/formatter/**`. The engine is `crates/arity-formatter/src/formatter/`.
+Scope: `crates/arity-formatter/**`, `src/formatter.rs`, and `src/formatter/**`.
+The engine is `crates/arity-formatter/src/formatter/`.
 
 ### Engine constraints
 
@@ -197,11 +205,10 @@ Use `task desc-compat` only as a gauge.
 
 ### Compatibility and tests
 
-`task air-compat` runs the ignored fixed-point test
-`air(arity(x)) == arity(x)` and regenerates `AIR_COMPAT.md`. Adopt idiomatic
-rules or record deliberate differences with rationale in
-`tests/air_compat_allowlist.toml`; an unexplained difference is an open question
-but never a build failure.
+`task air-compat` runs the ignored fixed-point test `air(arity(x)) == arity(x)`
+and regenerates `AIR_COMPAT.md`. Adopt idiomatic rules or record deliberate
+differences with rationale in `tests/air_compat_allowlist.toml`; an unexplained
+difference is an open question but never a build failure.
 
 Formatter cases use `input.R`/`expected.R` directories under
 `crates/arity-formatter/tests/fixtures/formatter/`, registered in
@@ -216,11 +223,11 @@ rule and `linter-investigation` for corpus triage.
 ### Scope and dispatch
 
 - Lint is semantic. Layout detectable by formatter `--check` belongs there.
-- Parse diagnostics block lint for R and DCF; `check_paths` reports
-  `Clean`, `Findings`, or `ParseDiagnostics`.
+- Parse diagnostics block lint for R and DCF; `check_paths` reports `Clean`,
+  `Findings`, or `ParseDiagnostics`.
 - Inputs include `.R` and package-root `DESCRIPTION`. During walks, exclude
-  nested fake packages; explicitly named descriptions are always linted.
-  Reading is never conditional on selected rules: `syntax-error` is not a rule.
+  nested fake packages; explicitly named descriptions are always linted. Reading
+  is never conditional on selected rules: `syntax-error` is not a rule.
 - Rules never walk independently. Declare `Rule::interests` and join the shared
   walk; whole-file rules override `check_file` with empty interests.
 - `src/linter/rules.rs::rules_by_category` is the single catalogue for all rule
@@ -278,9 +285,8 @@ Scope: `src/semantic/**`, `src/project/**`, and their incremental queries.
 - Per-file projections and `DescriptionFacts` stay range-free so body/prose
   edits backdate without rebuilding the graph. `tests/salsa_incremental.rs`
   guards this.
-- Keep `FileScope` reasons separate: `read_elsewhere`,
-  `exported_by_namespace`, and `is_s3_method`. `used_elsewhere` unions only the
-  first two.
+- Keep `FileScope` reasons separate: `read_elsewhere`, `exported_by_namespace`,
+  and `is_s3_method`. `used_elsewhere` unions only the first two.
 - Parse all description facts together: package name, dependencies, compat
   floors, Roxygen, and Collate. `R` names the language and is never a package
   dependency.
@@ -332,9 +338,9 @@ stdio JSON-RPC via `lsp-server`; salsa cancellation is a synchronous unwind.
 
 ### Buffers and edits
 
-- Open documents use `Arc<TextBuffer>` containing text and incrementally
-  spliced `LineIndex`. The main loop mutates only via `Arc::make_mut`; version
-  stays outside the Arc.
+- Open documents use `Arc<TextBuffer>` containing text and incrementally spliced
+  `LineIndex`. The main loop mutates only via `Arc::make_mut`; version stays
+  outside the Arc.
 - Share one `Arc<str>` among buffer, `SourceFile`, and `PrevParse`. Never add
   `.text().to_string()` on dispatch; use `text_arc()`.
 - In equality checks, `Arc::ptr_eq` may precede content comparison but never
@@ -383,8 +389,8 @@ and `src/roxygen/` contains only the test-time CST→Rd projector. Use the
   prose, Rd macros, and markdown structure live in CST and are never re-lexed
   downstream.
 - The projector is a faithful diagnostic, not a roxygen2 implementation or a
-  place to fix divergence. It emits parser-owned Rd section subtrees; fix CST
-  or encoding translation, never patch projector output to pass.
+  place to fix divergence. It emits parser-owned Rd section subtrees; fix CST or
+  encoding translation, never patch projector output to pass.
 - `tests/roxygen_projector.rs` is the pure-Rust pinned/allowlisted CI gate. When
   a case starts passing, ratchet it into the allowlist.
 - R-backed oracle tests are ignored and run through `task roxygen-oracle` and
@@ -421,15 +427,16 @@ Every command honors discovered config; `--config` forces a path and
 
 `docs/` is mdBook. Never hand-edit generated pages:
 
-| Generated page | Source |
-| --- | --- |
-| `docs/src/reference/cli.md` | `build.rs` from clap |
-| `docs/src/reference/rules.md`, `docs/src/version.md` | `docgen` |
-| benchmark meta/results pages | `src/bench_docs.rs` from tracked JSON |
+  | Generated page                                       | Source                                |
+  | ---------------------------------------------------- | ------------------------------------- |
+  | `docs/src/reference/cli.md`                          | `build.rs` from clap                  |
+  | `docs/src/reference/rules.md`, `docs/src/version.md` | `docgen`                              |
+  | benchmark meta/results pages                         | `src/bench_docs.rs` from tracked JSON |
 
 Regenerate all with `task docs-gen`; pinning-test failures mean regenerate, not
 edit snapshots. Other prose is hand-written and panache-formatted. New pages
-need `SUMMARY.md` entries. Canonical/sitemap examples skip mdBook redirect stubs.
+need `SUMMARY.md` entries. Canonical/sitemap examples skip mdBook redirect
+stubs.
 
 Benchmarks are measured, never asserted. `task bench` compares formatter and
 linter tools at synthetic and real-package scopes and rewrites tracked
@@ -445,8 +452,8 @@ including frame-pointer call graphs and `[profile.profiling]`. Use the
 
 ## Distribution and releases
 
-Releases derive from Conventional Commits; use `type(scope): subject`.
-Never hand-edit `CHANGELOG.md` or any version field: versionary owns Cargo, npm,
+Releases derive from Conventional Commits; use `type(scope): subject`. Never
+hand-edit `CHANGELOG.md` or any version field: versionary owns Cargo, npm,
 editor, and other versions. Pre-1.0 breaking changes produce minor bumps.
 
 Release streams are root CLI `v*`, parser `arity-parser-v*`, formatter
