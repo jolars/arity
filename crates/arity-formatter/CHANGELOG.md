@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/jolars/arity/compare/arity-formatter-v0.4.1...arity-formatter-v0.5.0) (2026-08-21)
+
+### Features
+- **lint:** flag unknown DESCRIPTION fields ([`1f52925`](https://github.com/jolars/arity/commit/1f5292522a89c028fa5a320c6227b788061a648e))
+
+### Bug Fixes
+- **parser:** match read.dcf duplicate lookup ([`55f7b68`](https://github.com/jolars/arity/commit/55f7b6881fa5111c05307cb6250e99e65b5d7a37))
+- **parser:** match read.dcf empty-line folding ([`7ce1789`](https://github.com/jolars/arity/commit/7ce17894fc73e6b5b2c7e5f7075180f331494d44))
+- **parser:** span ordinary roxygen comments ([`592a5fe`](https://github.com/jolars/arity/commit/592a5fe17db1756fd6a8dde0d70236d102fa1cff))
+
+### Dependencies
+- updated crates/arity-parser to v0.5.2
+
 ## [0.4.1](https://github.com/jolars/arity/compare/arity-formatter-v0.4.0...arity-formatter-v0.4.1) (2026-08-17)
 
 ### Bug Fixes

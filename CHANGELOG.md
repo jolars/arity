@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.20.0](https://github.com/jolars/arity/compare/v0.19.1...v0.20.0) (2026-08-21)
+
+### Features
+- **lint:** add description encoding rule ([`f4f0ba3`](https://github.com/jolars/arity/commit/f4f0ba39327a572ba3f2a795826abb99ec5e4638))
+- **lint:** flag unknown DESCRIPTION fields ([`1f52925`](https://github.com/jolars/arity/commit/1f5292522a89c028fa5a320c6227b788061a648e))
+- **roxygen:** honor projector markdown default ([`533fc49`](https://github.com/jolars/arity/commit/533fc496f54cae49697ad8d8a5c1ee692a934367))
+- **lint:** add pipe-return rule ([`18ab02a`](https://github.com/jolars/arity/commit/18ab02abe0eb0f2f6581b0cd4d6a09ea80682313))
+- **lint:** add base call rewrites ([`a04dd36`](https://github.com/jolars/arity/commit/a04dd3624509780de2aa6152cb0e6d69983221ce))
+- **lint:** flag assignments in return ([`72f7a77`](https://github.com/jolars/arity/commit/72f7a770f558530b85e1a4cecfff6223845970d0))
+- **lint:** add all-equal rule ([`eebc4f7`](https://github.com/jolars/arity/commit/eebc4f73506f0f043ff341ce6365025d51a3c649))
+- **lint:** add sprintf rule ([`a04b37c`](https://github.com/jolars/arity/commit/a04b37c2148dd4c973cbb38277ff4bfdcb311fa7))
+- **lint:** add rep-times-ignored rule ([`efcf3ca`](https://github.com/jolars/arity/commit/efcf3ca9f2805bbec571046ac309b1559c0e27f3))
+- **lint:** add missing-argument rule ([`594d564`](https://github.com/jolars/arity/commit/594d56474c2bafc13d3a609f43acb9a311ca5fa5))
+- **lint:** detect NaN and NULL comparisons ([`88da964`](https://github.com/jolars/arity/commit/88da9641af33fe1e82131286533d3f4bdd5eddff))
+
+### Bug Fixes
+- **lsp:** skip discovery on unchanged membership reseed ([`9c92a00`](https://github.com/jolars/arity/commit/9c92a000a6612344d4a249b0ade525c989ed45b9))
+- **lsp:** complete dependency names without faulting index in ([`b31b7db`](https://github.com/jolars/arity/commit/b31b7dbf235c488586604a1fc805353c33459dc0))
+- **lsp:** reload package index on cache root or meta change ([`79a86c3`](https://github.com/jolars/arity/commit/79a86c3a5eb976f2a375b7fa6f14bc8291091936))
+- **rindex:** derive package views from a single read ([`92608d5`](https://github.com/jolars/arity/commit/92608d5d97ce3a742e96c1ede8b6cc203585ddfb))
+- **lsp:** stop leaking project snapshots per metadata change ([`8cf322f`](https://github.com/jolars/arity/commit/8cf322fc027b4d2376bbe745004d34e7a23b3194)), fixes [#116](https://github.com/jolars/arity/issues/116)
+- **lsp:** record query log only during observation ([`9959129`](https://github.com/jolars/arity/commit/995912972850d056e71fbfa1964f0abb144ef68f))
+- **parser:** match read.dcf duplicate lookup ([`55f7b68`](https://github.com/jolars/arity/commit/55f7b6881fa5111c05307cb6250e99e65b5d7a37))
+- **parser:** match read.dcf empty-line folding ([`7ce1789`](https://github.com/jolars/arity/commit/7ce17894fc73e6b5b2c7e5f7075180f331494d44))
+- **lint:** recognize string-based reads ([`b2b7a23`](https://github.com/jolars/arity/commit/b2b7a238d40b9e8194c1533b8847fd8da25689a1)), closes [#115](https://github.com/jolars/arity/issues/115)
+- **parser:** span ordinary roxygen comments ([`592a5fe`](https://github.com/jolars/arity/commit/592a5fe17db1756fd6a8dde0d70236d102fa1cff))
+- **lint:** address future corpus false positives ([`5615b43`](https://github.com/jolars/arity/commit/5615b436a38e72c5148463cc98552026847a0261))
+
+### Performance Improvements
+- **lsp:** load package index lazily, once per cache root ([`de39edf`](https://github.com/jolars/arity/commit/de39edf9a291c7482a66171cea24982976721807))
+- **format:** bound formatting line diffs ([`c3f9bc5`](https://github.com/jolars/arity/commit/c3f9bc5ec0353d5e4f43cfb11fd19f82f0cb5593))
+
+### Dependencies
+- updated crates/arity-formatter to v0.5.0
+- updated crates/arity-parser to v0.5.2
+
 ## [0.19.1](https://github.com/jolars/arity/compare/v0.19.0...v0.19.1) (2026-08-17)
 
 ### Bug Fixes
