@@ -585,6 +585,16 @@ fn package_ab(a_src: &str, b_src: &str) -> (IncrementalDatabase, SourceFile, Sou
     (db, a, b)
 }
 
+/// A single loose script at `/proj/a.R`, seeded as the whole workspace. Seeding
+/// happens once, here: re-seeding an unchanged membership before each query is
+/// a no-op (see `reseeding_identical_membership_skips_write`).
+fn script_one(src: &str) -> (IncrementalDatabase, SourceFile) {
+    let mut db = IncrementalDatabase::default();
+    let file = db.upsert_file(Path::new("/proj/a.R"), src.to_string());
+    db.set_workspace_members(vec![file], Vec::new());
+    (db, file)
+}
+
 /// A two-script project where `a.R` sources `b.R`. No package root, so the only
 /// cross-file relation is the `source()` edge.
 fn scripts_ab(a_src: &str, b_src: &str) -> (IncrementalDatabase, SourceFile, SourceFile) {
@@ -1233,7 +1243,7 @@ fn body_edit_does_not_rebuild_project_scope() {
     // Edit b's body only: still defines `bar`, still reads `foo`.
     db.set_file_text(b, "bar <- function() {\n  foo()\n  2\n}\n");
 
-    // Re-lint: re-intern the (unchanged) membership, as production does.
+    // Re-lint: requery, as production does after each edit.
     let _ = visible_symbols(&db, a);
     let _ = visible_symbols(&db, b);
 
@@ -1340,16 +1350,24 @@ fn reordering_top_level_statements_rebuilds_project_graph() {
 }
 
 #[test]
-fn requerying_same_membership_reuses_graph_memo() {
-    // Re-asking with an unchanged membership must reuse the graph memo — this
-    // is what keeps the scope warm across lints over the same set of files.
-    let (db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() foo()\n");
+fn reseeding_membership_preserves_seeded_metadata_and_graph_memo() {
+    // Re-seeding an unchanged membership — what a lint does before querying —
+    // must skip disk discovery entirely: discovery over the synthetic `/pkg`
+    // root (which exists only in salsa) finds nothing and would replace the
+    // seeded package metadata with an empty graph, silently unlinking a from
+    // b. The graph memo must also survive, keeping the scope warm across
+    // lints over the same set of files.
+    let (mut db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() foo()\n");
     let _ = visible_symbols(&db, a);
-    let _ = visible_symbols(&db, b);
+    assert!(visible_symbols(&db, b).visible.contains("foo"));
 
     db.clear_query_log();
+    db.set_workspace_members(vec![a, b], vec![PathBuf::from("/pkg")]);
 
-    let _ = visible_symbols(&db, b);
+    assert!(
+        visible_symbols(&db, b).visible.contains("foo"),
+        "the seeded package metadata must survive an unchanged re-seed"
+    );
     assert_eq!(
         count_by_kind(&db.query_log()).get(&QueryKind::ProjectGraph),
         None,
@@ -1387,16 +1405,10 @@ fn body_edit_does_not_rerun_external_resolution() {
     // the free-read / loaded-package sets, so `external_resolution` — whose only
     // other dependency is the HIGH-durability library index — must backdate
     // rather than re-run. This is the "keystroke skips the library subgraph" win.
-    let mut db = IncrementalDatabase::default();
-    let path = "/proj/a.R";
-    let file = db.upsert_file(
-        Path::new(path),
-        "foo <- function() {\n  bar(1)\n}\n".to_string(),
-    );
+    let (mut db, file) = script_one("foo <- function() {\n  bar(1)\n}\n");
     let manifest = db.set_library_index(IndexedProvider::empty());
 
     {
-        db.set_workspace_members(vec![file], Vec::new());
         let res = external_resolution(&db, manifest, file);
         assert!(
             res.unresolved.contains("bar"),
@@ -1411,7 +1423,6 @@ fn body_edit_does_not_rerun_external_resolution() {
     // packages ({}) are unchanged.
     db.set_file_text(file, "foo <- function() {\n  bar(1)\n  2\n}\n");
 
-    db.set_workspace_members(vec![file], Vec::new());
     let _ = external_resolution(&db, manifest, file);
 
     let counts = count_by_kind(&db.query_log());
@@ -1430,18 +1441,12 @@ fn body_edit_does_not_rerun_external_resolution() {
 fn swapping_library_index_invalidates_resolution() {
     // The complement: replacing the library index re-runs resolution (it is a
     // real dependency) without touching the text-derived queries (parse/model).
-    let mut db = IncrementalDatabase::default();
-    let path = "/proj/a.R";
-    let file = db.upsert_file(
-        Path::new(path),
-        "library(somepkg)\nfoo <- function() across()\n".to_string(),
-    );
+    let (mut db, file) = script_one("library(somepkg)\nfoo <- function() across()\n");
 
     // somepkg is indexed (so the rule's gate passes) but does not yet export
     // `across`, so `across` is unresolved.
     let manifest = db.set_library_index(IndexedProvider::from_indices([index_pkg("somepkg", &[])]));
     {
-        db.set_workspace_members(vec![file], Vec::new());
         let res = external_resolution(&db, manifest, file);
         assert!(
             res.unresolved.contains("across"),
@@ -1458,7 +1463,6 @@ fn swapping_library_index_invalidates_resolution() {
         &["across"],
     )]));
 
-    db.set_workspace_members(vec![file], Vec::new());
     let res = external_resolution(&db, manifest, file);
     assert!(
         !res.unresolved.contains("across"),
@@ -1490,15 +1494,9 @@ fn unindexed_attached_package_suppresses_resolution() {
     // Conservative gate: when an attached package's exports are unknown (not
     // base, not indexed, not bundled), it could define any unresolved name, so
     // resolution yields nothing for the whole file.
-    let mut db = IncrementalDatabase::default();
-    let path = "/proj/a.R";
-    let file = db.upsert_file(
-        Path::new(path),
-        "library(mysterypkgxyz)\nfoo <- function() across()\n".to_string(),
-    );
+    let (mut db, file) = script_one("library(mysterypkgxyz)\nfoo <- function() across()\n");
     let manifest = db.set_library_index(IndexedProvider::empty());
 
-    db.set_workspace_members(vec![file], Vec::new());
     let res = external_resolution(&db, manifest, file);
     assert!(
         res.unresolved.is_empty(),
@@ -1512,12 +1510,8 @@ fn harvested_attach_sets_gate_and_resolve_external_resolution() {
     // A harvested meta-package (not in the static curated table) carries its
     // attach set in the library index; resolution and the conservative gate
     // must both honor it.
-    let mut db = IncrementalDatabase::default();
-    let path = "/proj/a.R";
-    let file = db.upsert_file(
-        Path::new(path),
-        "library(metaverse)\nfoo <- function() {\n  helper_fn()\n  bogus()\n}\n".to_string(),
-    );
+    let (mut db, file) =
+        script_one("library(metaverse)\nfoo <- function() {\n  helper_fn()\n  bogus()\n}\n");
 
     // Attached member indexed: its exports resolve, a genuine typo does not.
     let mut meta = index_pkg("metaverse", &[]);
@@ -1527,7 +1521,6 @@ fn harvested_attach_sets_gate_and_resolve_external_resolution() {
         index_pkg("helperpkg", &["helper_fn"]),
     ]));
     {
-        db.set_workspace_members(vec![file], Vec::new());
         let res = external_resolution(&db, manifest, file);
         assert!(
             !res.unresolved.contains("helper_fn"),
@@ -1546,7 +1539,6 @@ fn harvested_attach_sets_gate_and_resolve_external_resolution() {
     let mut meta = index_pkg("metaverse", &[]);
     meta.attaches = vec!["ghost_pkg_xyz".into()];
     let manifest = db.set_library_index(IndexedProvider::from_indices([meta]));
-    db.set_workspace_members(vec![file], Vec::new());
     let res = external_resolution(&db, manifest, file);
     assert!(
         res.unresolved.is_empty(),
@@ -1569,17 +1561,12 @@ fn remote_sidecar_resolves_uninstalled_package() {
     // `unindexed_attached_package_suppresses_resolution`: an attached package the
     // sidecar knows is fully resolvable, so a real export resolves while a genuine
     // non-export is reported undefined.
-    let mut db = IncrementalDatabase::default();
-    let path = "/proj/a.R";
-    let file = db.upsert_file(
-        Path::new(path),
-        "library(tinytable)\nfoo <- function() {\n  tt()\n  bogus()\n}\n".to_string(),
-    );
+    let (mut db, file) =
+        script_one("library(tinytable)\nfoo <- function() {\n  tt()\n  bogus()\n}\n");
 
     // Without the sidecar, tinytable is neither indexed nor bundled: suppressed.
     let manifest = db.set_library_index(IndexedProvider::empty());
     {
-        db.set_workspace_members(vec![file], Vec::new());
         let res = external_resolution(&db, manifest, file);
         assert!(
             res.unresolved.is_empty(),
@@ -1590,7 +1577,6 @@ fn remote_sidecar_resolves_uninstalled_package() {
 
     // Install the sidecar: tinytable exports `tt` (but not `bogus`).
     let manifest = db.set_remote_exports(remote_exports(&[("tinytable", &["tt"])]));
-    db.set_workspace_members(vec![file], Vec::new());
     let res = external_resolution(&db, manifest, file);
     assert!(
         !res.unresolved.contains("tt"),
@@ -1609,16 +1595,10 @@ fn body_edit_does_not_rerun_resolution_with_remote_installed() {
     // The sidecar lives in the `remote` field of the HIGH-durability library
     // index, so — exactly like the harvested `data` field — a keystroke (a LOW
     // body edit) skips the resolution subgraph even when the sidecar is in play.
-    let mut db = IncrementalDatabase::default();
-    let path = "/proj/a.R";
-    let file = db.upsert_file(
-        Path::new(path),
-        "library(tinytable)\nfoo <- function() {\n  tt(1)\n}\n".to_string(),
-    );
+    let (mut db, file) = script_one("library(tinytable)\nfoo <- function() {\n  tt(1)\n}\n");
     db.set_library_index(IndexedProvider::empty());
     let manifest = db.set_remote_exports(remote_exports(&[("tinytable", &["tt"])]));
     {
-        db.set_workspace_members(vec![file], Vec::new());
         let res = external_resolution(&db, manifest, file);
         assert!(
             !res.unresolved.contains("tt"),
@@ -1634,7 +1614,6 @@ fn body_edit_does_not_rerun_resolution_with_remote_installed() {
         file,
         "library(tinytable)\nfoo <- function() {\n  tt(1)\n  2\n}\n",
     );
-    db.set_workspace_members(vec![file], Vec::new());
     let _ = external_resolution(&db, manifest, file);
 
     let counts = count_by_kind(&db.query_log());
@@ -2256,14 +2235,8 @@ fn wildcard_import_clears_once_the_package_is_indexed() {
 fn dynamic_source_still_suppresses() {
     // The control for the poison lift: `resolution_incomplete` keeps its one
     // remaining meaning, and a dynamic `source()` still suppresses the file.
-    let mut db = IncrementalDatabase::default();
-    let path = "/proj/a.R";
-    let file = db.upsert_file(
-        Path::new(path),
-        "source(paste0(dir, '/x.R'))\nfoo <- function() mystery(1)\n".to_string(),
-    );
+    let (mut db, file) = script_one("source(paste0(dir, '/x.R'))\nfoo <- function() mystery(1)\n");
     let manifest = db.set_library_index(IndexedProvider::empty());
-    db.set_workspace_members(vec![file], Vec::new());
     let res = external_resolution(&db, manifest, file);
     assert!(
         res.unresolved.is_empty(),

@@ -43,7 +43,7 @@ use crate::semantic::symbols::{LoadedPackage, PackageOrigin};
 /// One member of a project: its tracked input, on-disk path, and enclosing
 /// package root (if any). Disk-derived — assembled in the lint write-phase and
 /// folded into the [`Project`] snapshot, so the graph queries stay pure.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ProjectMember {
     pub file: SourceFile,
     pub path: PathBuf,
@@ -130,7 +130,7 @@ pub struct PackageDeclarations {
 /// firewall (a body edit re-derives an equal snapshot and downstream memos
 /// survive) with exactly one retained generation. Producers must sort every
 /// field so equal memberships compare equal.
-#[derive(Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub struct Project {
     pub members: Vec<ProjectMember>,
     pub namespaces: Vec<(PathBuf, String)>,

@@ -31,7 +31,9 @@ use crate::text::LineIndex;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FileId(pub u32);
 
-#[salsa::input]
+// `debug` so aggregates holding the handle (e.g. `project::ProjectMember`) can
+// derive `Debug`; without a database attached it prints just the handle.
+#[salsa::input(debug)]
 pub struct SourceFile {
     /// Stable identity allocated by [`FileSourceMap`].
     pub id: FileId,
@@ -952,17 +954,21 @@ impl IncrementalDatabase {
     ) -> Workspace {
         members.sort_by_key(|file| file.id(self));
         members.dedup();
+        let mut changed = true;
         let ws = match Workspace::try_get(self) {
             Some(ws) => {
+                changed = false;
                 if ws.members(self) != &members {
                     ws.set_members(self)
                         .with_durability(Durability::MEDIUM)
                         .to(members);
+                    changed = true;
                 }
                 if ws.roots(self) != &roots {
                     ws.set_roots(self)
                         .with_durability(Durability::MEDIUM)
                         .to(roots);
+                    changed = true;
                 }
                 ws
             }
@@ -981,8 +987,14 @@ impl IncrementalDatabase {
         };
         // Keep the disk-derived package metadata in lockstep with membership, so
         // `workspace_project` always sees a `PackageGraph` consistent with the
-        // members it derives from (no stale-root window).
-        self.refresh_package_graph();
+        // members it derives from (no stale-root window). Skipped when nothing
+        // changed: the graph already matches this membership, and re-running
+        // discovery would also clobber metadata a test seeded through
+        // [`set_package_metadata`](Self::set_package_metadata) for synthetic
+        // roots that exist only in salsa.
+        if changed {
+            self.refresh_package_graph();
+        }
         ws
     }
 
@@ -1082,6 +1094,15 @@ impl IncrementalDatabase {
     /// discovery — how a test seeds a synthetic package root that exists only
     /// in salsa. Production callers use
     /// [`refresh_package_graph`](Self::refresh_package_graph), the disk reader.
+    ///
+    /// Ordering contract: call this *after*
+    /// [`set_workspace_members`](Self::set_workspace_members). A membership
+    /// *change* re-runs disk discovery, which finds nothing at a synthetic
+    /// root and would replace this metadata with an empty graph. (A re-seed of
+    /// an unchanged membership skips discovery and leaves it intact.) This
+    /// also bypasses [`refresh_descriptions`](Self::refresh_descriptions), so
+    /// a test needing `DescriptionFacts` seeds them separately via
+    /// [`upsert_description`](Self::upsert_description).
     pub fn set_package_metadata(&mut self, packages: Vec<PackageInfo>) {
         let graph = match PackageGraph::try_get(self) {
             Some(graph) => graph,
@@ -2034,9 +2055,9 @@ impl Analysis {
     }
 
     /// Borrow the underlying db as the salsa query trait, for read-phase free
-    /// functions (`intern_project`, `visible_symbols`). A shared borrow can't
-    /// mutate, so this preserves the read-only guarantee; crate-private so read
-    /// jobs go through the methods above and never reach the trait.
+    /// functions (`visible_symbols`, `external_resolution`). A shared borrow
+    /// can't mutate, so this preserves the read-only guarantee; crate-private
+    /// so read jobs go through the methods above and never reach the trait.
     pub(crate) fn as_db(&self) -> &dyn IncrementalDb {
         &self.0
     }
