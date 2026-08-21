@@ -3,17 +3,14 @@
 //! R's `read.dcf` *is* the definition of what a `DESCRIPTION` means, so the
 //! facts arity's parser encodes about it should be checked, not asserted in a
 //! comment. This harness runs both over the same inputs and fails on any
-//! disagreement outside the two divergences arity keeps on purpose.
+//! disagreement outside the divergences arity keeps on purpose.
 //!
-//! **The two permitted divergences** (see `TODO.md`; both are pinned by unit
-//! tests in `dcf/parser.rs` as well):
+//! **The permitted divergences** (see `TODO.md`; both are pinned by unit tests
+//! in `dcf/parser.rs` as well):
 //!
-//! 1. A field whose own line is empty folds with a leading `\n` in arity
-//!    (`Collate:\n a.R` -> `"\na.R"`); R drops the empty leading segment.
-//!    Normalized here by stripping one leading `\n` from arity's value.
-//! 2. A duplicate field resolves to the **first** occurrence in arity; R takes
+//! 1. A duplicate field resolves to the **first** occurrence in arity; R takes
 //!    the last. Normalized here by comparing a last-wins map.
-//! 3. `read.dcf` does **not** trim a field name, so `Package : p` declares a
+//! 2. `read.dcf` does **not** trim a field name, so `Package : p` declares a
 //!    field literally named `"Package "` and R therefore sees no `Package` at
 //!    all. arity trims, which is the lenient direction: it reads a typo'd
 //!    header the way it was obviously meant, and the CST still keeps the
@@ -117,8 +114,8 @@ fn compare(input: &str, oracle: &Oracle) -> Result<(), String> {
                     let mut fields = BTreeMap::new();
                     for field in record.fields() {
                         // Inserting in document order makes the *last*
-                        // duplicate win, which is divergence 2's normalization.
-                        fields.insert(field.name().to_string(), normalize(&field.folded_value()));
+                        // duplicate win, which is divergence 1's normalization.
+                        fields.insert(field.name().to_string(), field.folded_value());
                     }
                     fields
                 })
@@ -141,13 +138,6 @@ fn compare(input: &str, oracle: &Oracle) -> Result<(), String> {
             Ok(())
         }
     }
-}
-
-/// Divergence 1: drop the empty leading segment a field with an empty own line
-/// folds in. Exactly one `\n`, never more — a value legitimately starting with
-/// a blank continuation is not a thing DCF can express.
-fn normalize(value: &str) -> String {
-    value.strip_prefix('\n').unwrap_or(value).to_string()
 }
 
 /// The formatter's output must mean the same thing to R as its input did.
@@ -359,8 +349,7 @@ fn formatted_authors_at_r_reads_identically() {
 fn authors_field(text: &str) -> Option<String> {
     let parsed = dcf::parse(text);
     let field = parsed.document().field("Authors@R")?;
-    let folded = field.folded_value();
-    Some(folded.strip_prefix('\n').unwrap_or(&folded).to_string())
+    Some(field.folded_value())
 }
 
 fn run_authors(rscript: &Path, driver: &Path, value: &str) -> Option<String> {

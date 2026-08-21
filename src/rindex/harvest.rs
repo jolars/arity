@@ -982,8 +982,7 @@ mod tests {
     }
 
     /// Harvest reads its metadata through folded field values, so it keeps
-    /// pinning the folding itself — including the leading `\n` a field whose
-    /// own line is empty produces. The tree-level guarantees live in
+    /// pinning the folding itself. The tree-level guarantees live in
     /// `arity_parser::dcf`.
     #[test]
     fn dcf_folds_continuation_lines() {
@@ -992,7 +991,7 @@ mod tests {
             document: crate::dcf::parse(text).document(),
         };
         assert_eq!(desc.field("Package").as_deref(), Some("testpkg"));
-        assert_eq!(desc.field("Collate").as_deref(), Some("\na.R\nb.R"));
+        assert_eq!(desc.field("Collate").as_deref(), Some("a.R\nb.R"));
         assert_eq!(desc.field("Version").as_deref(), Some("1.0"));
     }
 

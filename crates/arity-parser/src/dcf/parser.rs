@@ -380,17 +380,16 @@ mod tests {
         assert_eq!(folded("Package: p\n", "Package").as_deref(), Some("p"));
         assert_eq!(
             folded("Depends:\n    a,\n    b\n", "Depends").as_deref(),
-            Some("\na,\nb")
+            Some("a,\nb")
         );
     }
 
-    /// A field whose own line is empty folds with a leading `\n`. R's
-    /// `read.dcf` yields `"a.R\nb.R"` here; arity keeps the empty leading
-    /// segment because every caller predating this parser did.
+    /// A field whose own line is empty folds without a leading `\n`, matching
+    /// R's `read.dcf`.
     #[test]
-    fn folded_value_keeps_leading_newline_artifact() {
+    fn folded_value_drops_empty_first_line() {
         let text = "Package: testpkg\nCollate:\n    a.R\n    b.R\nVersion: 1.0\n";
-        assert_eq!(folded(text, "Collate").as_deref(), Some("\na.R\nb.R"));
+        assert_eq!(folded(text, "Collate").as_deref(), Some("a.R\nb.R"));
         assert_eq!(folded(text, "Package").as_deref(), Some("testpkg"));
         assert_eq!(folded(text, "Version").as_deref(), Some("1.0"));
     }
@@ -441,7 +440,7 @@ mod tests {
     #[test]
     fn comment_between_continuations_keeps_the_field() {
         let text = "Collate:\n a.R\n# skip me\n b.R\n";
-        assert_eq!(folded(text, "Collate").as_deref(), Some("\na.R\nb.R"));
+        assert_eq!(folded(text, "Collate").as_deref(), Some("a.R\nb.R"));
         assert_eq!(doc(text).document().fields().count(), 1);
     }
 

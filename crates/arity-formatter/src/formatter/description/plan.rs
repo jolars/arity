@@ -256,7 +256,7 @@ fn field_body(field: &dcf::Field, name: &str) -> Result<(FieldBody, Vec<String>)
 
 fn classify(field: &dcf::Field, name: &str) -> FieldBody {
     let folded = field.folded_value();
-    let value = folded.strip_prefix('\n').unwrap_or(&folded);
+    let value = folded.as_str();
 
     if COMMA_LIST.contains(&name) {
         if let Some(entries) = comma_list_entries(field, value, name) {

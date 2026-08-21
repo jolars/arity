@@ -1266,11 +1266,6 @@ rounds, distributions overlapping.
   `crates/arity-formatter/src/formatter/description/order.rs`; do not maintain
   a second ordered list in the LSP.
 
-- [ ] **Match `read.dcf` when folding an empty first value line.**
-  `Collate:\n a.R\n b.R` should fold to `"a.R\nb.R"`, without arity's
-  current leading newline. Remove the corresponding normalization from
-  `tests/dcf_oracle.rs` when fixing it.
-
 - [ ] **Match `read.dcf` when looking up duplicate fields.** Resolve a
   duplicate name to its last occurrence rather than its first. Keep
   `description-duplicate-field` reporting the duplicate, and remove the

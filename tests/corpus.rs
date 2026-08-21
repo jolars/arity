@@ -369,9 +369,8 @@ fn project_meaning(text: &str) -> Vec<Vec<(String, String)>> {
                 .fields()
                 .map(|field| {
                     let name = field.name().to_string();
-                    let folded = field.folded_value();
-                    let value = folded.strip_prefix('\n').unwrap_or(&folded);
-                    (name.clone(), normalize_value(&name, value))
+                    let value = field.folded_value();
+                    (name.clone(), normalize_value(&name, &value))
                 })
                 .collect();
             fields.sort();

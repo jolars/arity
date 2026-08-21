@@ -187,27 +187,17 @@ fn field_meaning(field: &dcf::Field) -> FieldMeaning {
     }
 
     if R_CODE.contains(&name.as_str()) {
-        let source = strip_leading_newline(&folded);
-        return FieldMeaning::RCode(match format_with_style(source, FormatStyle::default()) {
+        return FieldMeaning::RCode(match format_with_style(&folded, FormatStyle::default()) {
             Ok(formatted) => RCodeMeaning::Formatted(formatted),
-            Err(_) => RCodeMeaning::Unparseable(source.to_string()),
+            Err(_) => RCodeMeaning::Unparseable(folded),
         });
     }
 
     if PROSE.contains(&name.as_str()) {
-        return FieldMeaning::Prose(collapse_ws(strip_leading_newline(&folded)));
+        return FieldMeaning::Prose(collapse_ws(&folded));
     }
 
     FieldMeaning::Verbatim(folded)
-}
-
-/// `read.dcf` drops the empty leading segment a field with an empty own line
-/// folds to; arity keeps it (a recorded divergence, normalized the same way in
-/// `tests/dcf_oracle.rs`). The canonical style puts *every* dependency field
-/// into that shape, so comparing without this would report a meaning change on
-/// every formatted file.
-fn strip_leading_newline(value: &str) -> &str {
-    value.strip_prefix('\n').unwrap_or(value)
 }
 
 fn collapse_ws(value: &str) -> String {

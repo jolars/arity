@@ -249,10 +249,10 @@ fn split_top_level(text: &str, base: usize) -> Vec<Span> {
 /// A field's folded value next to a map from folded offsets back to source
 /// offsets.
 ///
-/// The fold is exactly [`Field::folded_value`]'s — each value line's content
-/// run, joined by `\n` — which is what makes the map trivial: a `VALUE_TEXT`
-/// token is already the trimmed run, so each segment is a verbatim slice of the
-/// source and offsets inside it shift by a constant.
+/// The fold is exactly [`Field::folded_value`]'s — each nonempty value line's
+/// content run, joined by `\n` — which is what makes the map trivial: a
+/// `VALUE_TEXT` token is already the trimmed run, so each segment is a verbatim
+/// slice of the source and offsets inside it shift by a constant.
 struct Folded {
     text: String,
     /// `(folded start, source start, byte length)` per contributing line.
@@ -265,15 +265,16 @@ impl Folded {
         let mut segments = Vec::new();
         let mut first = true;
         for line in field.value_lines() {
+            let Some(tok) = line.content().filter(|tok| !tok.text().is_empty()) else {
+                continue;
+            };
             if !first {
                 text.push('\n');
             }
             first = false;
-            if let Some(tok) = line.content() {
-                let content = tok.text();
-                segments.push((text.len(), tok.text_range().start(), content.len()));
-                text.push_str(content);
-            }
+            let content = tok.text();
+            segments.push((text.len(), tok.text_range().start(), content.len()));
+            text.push_str(content);
         }
         Folded { text, segments }
     }
@@ -474,7 +475,7 @@ mod tests {
     #[test]
     fn the_fold_matches_the_ast_wrapper() {
         // `Folded` must reproduce `Field::folded_value` byte for byte, or every
-        // range it hands out is off. Includes the leading-`\n` divergence case.
+        // range it hands out is off. Includes an empty field-header value.
         for text in [
             "Imports: a, b\n",
             "Imports:\n    a,\n    b\n",

@@ -147,18 +147,13 @@ impl Field {
         self.0.children().filter_map(CommentLine::cast)
     }
 
-    /// The field's **logical** value: each value line trimmed, joined with
-    /// `\n`. This is what a caller wanting `Depends` or `Roxygen` reads.
-    ///
-    /// Because the field's own line is itself a value line, a field whose own
-    /// line is empty folds with a leading `\n`:
-    /// `Collate:\n a.R\n b.R` yields `"\na.R\nb.R"`. R's `read.dcf` drops that
-    /// empty leading segment and yields `"a.R\nb.R"`. arity keeps it because
-    /// every caller predating this module did; changing it belongs in its own
-    /// commit, not here.
+    /// The field's **logical** value: each nonempty value line trimmed, joined
+    /// with `\n`. This is what a caller wanting `Depends` or `Roxygen` reads.
+    /// Empty value lines contribute no segment, matching R's `read.dcf`.
     pub fn folded_value(&self) -> String {
         self.value_lines()
             .map(|line| line.trimmed_text())
+            .filter(|line| !line.is_empty())
             .collect::<Vec<_>>()
             .join("\n")
     }

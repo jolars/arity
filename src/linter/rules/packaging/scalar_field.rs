@@ -53,10 +53,8 @@ impl Folded {
 /// The field's logical value and the source range spanning it, whitespace
 /// excluded on both ends. `None` when the field carries no value at all.
 ///
-/// The fold is `read.dcf`'s rather than [`dcf::Field::folded_value`]'s: an empty
-/// value line contributes nothing, so `Package:\n  mypkg` reads as `mypkg` here
-/// and in R, instead of arity's leading-`\n` spelling. A value that really does
-/// wrap still folds with the `\n` R rejects it for.
+/// The fold matches [`dcf::Field::folded_value`]: empty value lines contribute
+/// nothing, while nonempty continuation lines are joined with `\n`.
 pub fn value(field: &dcf::Field) -> Option<(String, TextRange)> {
     let folded = folded(field)?;
     Some((folded.text, folded.range))
