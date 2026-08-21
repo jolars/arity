@@ -33,8 +33,73 @@ const FIRST: [&str; 20] = [
     "Remotes",
 ];
 
+/// Standard fields without a fixed position, in deterministic collation order.
+///
+/// The set comes from R's `tools:::.get_standard_DESCRIPTION_fields()` (R
+/// 4.6.1), plus `RoxygenNote`, which is ubiquitous package metadata. `Remotes`
+/// is likewise included in [`FIRST`]. This is also the candidate set for
+/// consumers that need to recognize a likely misspelling. `Config/*` and other
+/// extension fields remain legal; the list says what is standard, not what is
+/// allowed.
+const MIDDLE: [&str; 49] = [
+    "Acknowledgements",
+    "Acknowledgments",
+    "Additional_repositories",
+    "Archs",
+    "Biarch",
+    "biocViews",
+    "BuildKeepEmpty",
+    "BuildManual",
+    "BuildResaveData",
+    "BuildVignettes",
+    "Built",
+    "ByteCompile",
+    "Classification/ACM",
+    "Classification/ACM-2012",
+    "Classification/JEL",
+    "Classification/MSC",
+    "Classification/MSC-2010",
+    "Contact",
+    "Copyright",
+    "Date/Publication",
+    "Encoding",
+    "KeepSource",
+    "Language",
+    "LastChangedDate",
+    "LastChangedRevision",
+    "LazyData",
+    "LazyDataCompression",
+    "LazyLoad",
+    "License_is_FOSS",
+    "License_restricts_use",
+    "MailingList",
+    "MD5sum",
+    "NeedsCompilation",
+    "Note",
+    "OS_type",
+    "Packaged",
+    "Path",
+    "Priority",
+    "RcmdrModels",
+    "RcppModules",
+    "Repository",
+    "Revision",
+    "Roxygen",
+    "RoxygenNote",
+    "StagedInstall",
+    "SysDataCompression",
+    "SystemRequirements",
+    "UseLTO",
+    "ZipData",
+];
+
 /// Fields pinned to the end, in that order.
 const LAST: [&str; 3] = ["Collate", "Collate.windows", "Collate.unix"];
+
+/// Standard `DESCRIPTION` field names in canonical formatter order.
+pub fn field_names() -> impl Iterator<Item = &'static str> + Clone {
+    FIRST.into_iter().chain(MIDDLE).chain(LAST)
+}
 
 /// The bucket a field sorts into, and its index within a positional bucket.
 /// Bucket 1 is "everything else", which sorts by [`collate`] instead.
@@ -121,5 +186,15 @@ mod tests {
         assert_eq!(collate("Rcpp", "stats"), Ordering::Less);
         // Ties fall back to byte order so the sort is total.
         assert_eq!(collate("abc", "ABC"), Ordering::Greater);
+    }
+
+    #[test]
+    fn exported_field_names_are_in_canonical_order() {
+        let names: Vec<_> = field_names().collect();
+        assert!(
+            names
+                .windows(2)
+                .all(|pair| { compare_fields(pair[0], pair[1]) == Ordering::Less })
+        );
     }
 }

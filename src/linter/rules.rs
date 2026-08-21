@@ -214,6 +214,7 @@ fn packaging_rules() -> Vec<AnyRule> {
         AnyRule::R(Box::new(packaging::UndeclaredDependency)),
         AnyRule::Dcf(Box::new(packaging::DescriptionMissingField)),
         AnyRule::Dcf(Box::new(packaging::DescriptionDuplicateField)),
+        AnyRule::Dcf(Box::new(packaging::DescriptionUnknownField)),
         AnyRule::Dcf(Box::new(packaging::DescriptionVersionConstraint)),
         AnyRule::Dcf(Box::new(packaging::DescriptionPackageInMultipleFields)),
         AnyRule::Dcf(Box::new(packaging::DescriptionMalformedName)),

@@ -97,6 +97,7 @@ so this page never drifts from the rules' actual behavior.
 - [`undeclared-dependency`](#undeclared-dependency)
 - [`description-missing-field`](#description-missing-field)
 - [`description-duplicate-field`](#description-duplicate-field)
+- [`description-unknown-field`](#description-unknown-field)
 - [`description-version-constraint`](#description-version-constraint)
 - [`description-package-in-multiple-fields`](#description-package-in-multiple-fields)
 - [`description-malformed-name`](#description-malformed-name)
@@ -1863,6 +1864,33 @@ warning: description-duplicate-field
 4 | Version: 0.2.0
   | ^^^^^^^ `Version` is already declared on line 2; this later occurrence silently replaces its value
   = help: Keep one `Version` field and delete the other.
+```
+
+### `description-unknown-field`
+
+Flag a likely misspelling of a standard `DESCRIPTION` field.
+
+This is deliberately a near-miss check rather than a whitelist: arbitrary fields, including `Config/*`, are legal. A name is reported only when it is one edit from a standard field, or when whitespace separates an otherwise standard name from its colon. R treats that whitespace as part of the name, so `Package : mypkg` declares `Package ` rather than `Package` and is silently ignored.
+
+There is no autofix: renaming a field changes the metadata R reads, so the author should confirm the intended spelling.
+
+This rule is **enabled by default**.
+
+A misspelled field that R silently ignores:
+
+```text
+Package: mypkg
+Version: 0.1.0
+Suggest: testthat
+```
+
+```text
+warning: description-unknown-field
+ --> DESCRIPTION:3:1
+  |
+3 | Suggest: testthat
+  | ^^^^^^^ `Suggest` is not a standard DESCRIPTION field; did you mean `Suggests`?
+  = help: Rename the field to `Suggests`.
 ```
 
 ### `description-version-constraint`

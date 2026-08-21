@@ -223,6 +223,62 @@ fn messages(description: &str, rule: &str) -> Vec<String> {
     .collect()
 }
 
+// ---------------------------------------------------------------------------
+// description-unknown-field
+// ---------------------------------------------------------------------------
+
+#[test]
+fn whitespace_before_a_field_colon_is_flagged() {
+    let text = COMPLETE_DESCRIPTION.replacen("Package:", "Package :", 1);
+    let diagnostics =
+        check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+            .expect("linting should not error");
+    let finding = diagnostics
+        .iter()
+        .find(|d| d.rule == "description-unknown-field")
+        .expect("a whitespace-before-colon finding");
+    let start: usize = finding.range.start().into();
+    let end: usize = finding.range.end().into();
+    assert_eq!(&text[start..end], "Package ");
+    assert_eq!(
+        finding.message.body,
+        "`Package ` is not a standard DESCRIPTION field; did you mean `Package`?"
+    );
+    assert!(finding.fix.is_none());
+}
+
+#[test]
+fn one_edit_field_name_typos_are_flagged() {
+    for (written, expected) in [
+        ("Suggest", "Suggests"),
+        ("Depend", "Depends"),
+        ("Mantainer", "Maintainer"),
+    ] {
+        let text = format!("{COMPLETE_DESCRIPTION}{written}: value\n");
+        assert_eq!(
+            messages(&text, "description-unknown-field"),
+            vec![format!(
+                "`{written}` is not a standard DESCRIPTION field; did you mean `{expected}`?"
+            )]
+        );
+    }
+}
+
+#[test]
+fn custom_and_standard_extension_fields_are_not_flagged() {
+    let text = format!(
+        "{COMPLETE_DESCRIPTION}\
+Config/Needs/website: tidyverse/tidytemplate\n\
+Remotes: r-lib/pkgload\n\
+RoxygenNote: 7.3.2\n\
+X-Custom-Metadata: value\n"
+    );
+    assert!(
+        !ids(&text).contains(&"description-unknown-field"),
+        "unknown fields that are not near misses must remain legal"
+    );
+}
+
 #[test]
 fn duplicate_field_is_flagged_once_per_repeat() {
     let text = format!("{COMPLETE_DESCRIPTION}Version: 0.2.0\n");

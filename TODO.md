@@ -599,11 +599,11 @@ Tier 2—needs a small bundled table or the project layer:
   the file set comes from the project layer. A file missing from `Collate` is
   real breakage, not style. A fix means editing a list, so it belongs to
   stage 5.
-- [ ] `description-unknown-field`. **Not** a whitelist—`Config/*`, `Remotes`,
-  and `RoxygenNote` are legal and everywhere—but a *near-miss* check: edit
-  distance 1 from a standard field name. `Suggest:`, `Depend:`, and
-  `Mantainer:` are silently ignored by R today. The trimmed-field-name
-  divergence under stage 1 wants a home too, and this is it.
+- [x] `description-unknown-field` (packaging; syn; no fix, default on). Done as
+  a *near-miss* check, not a whitelist: it reports a unique edit-distance-1
+  match against the formatter-owned standard field list, plus whitespace
+  between a standard name and its colon. `Config/*` and unrelated custom fields
+  remain legal; renaming metadata is left to the author.
 
 Tier 3—argued for default-off, or against:
 
@@ -1255,9 +1255,9 @@ rounds, distributions overlapping.
   `crates/arity-formatter/src/formatter/description/order.rs`; do not maintain
   a second ordered list in the LSP.
 
-- [ ] **Diagnose whitespace before a DESCRIPTION field colon.** Preserve the
-  current lossless CST, but report headers such as `Package : p` through the
-  planned near-miss `description-unknown-field` lint. R treats the field name
-  as `"Package "`; arity's semantic lookup remains deliberately lenient.
+- [x] **Diagnose whitespace before a DESCRIPTION field colon.** Done through
+  `description-unknown-field`: the CST remains lossless, the diagnostic spans
+  `Package `, and arity's semantic lookup remains deliberately lenient even
+  though R treats that field name as `"Package "`.
 
 ## Misc
