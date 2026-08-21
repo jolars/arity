@@ -7,7 +7,7 @@ use arity::cli::{Cli, ColorChoice, Commands, LintOutput};
 use arity::config::{Config, ConfigError, LintConfig};
 use arity::file_discovery::{ExcludeFilter, collect_r_files};
 use arity::formatter::{
-    ChangedFile, FormatCache, FormatStyle, Formatted, check_paths_with_style_cached,
+    FormatCache, FormatStyle, Formatted, check_paths_with_style_cached,
     format_description_with_style, format_file, format_with_options,
 };
 use arity::incremental::IncrementalDatabase;
@@ -22,7 +22,6 @@ use arity::rindex::discover::{referenced_packages, with_default_packages};
 use arity::rindex::libpaths::LibrarySearch;
 use arity::rindex::provider::{CompositeProvider, IndexedProvider};
 use clap::Parser;
-use similar::{ChangeTag, TextDiff};
 use std::io::IsTerminal;
 
 /// Parsing, formatting, and the parallel lint passes are allocation-heavy;
@@ -818,7 +817,8 @@ fn run_format_check(
                     if idx > 0 {
                         println!();
                     }
-                    print_diff(file, use_color);
+                    file.write_diff(&mut io::stdout().lock(), use_color)
+                        .expect("failed to write formatting diff");
                 }
             }
             // Reported *after* the diff, so a file that could not be checked
@@ -855,43 +855,6 @@ fn report_unchecked(failed: &[arity::formatter::FailedFile], skipped: &[PathBuf]
             "warning: skipped {}: stream did not contain valid UTF-8",
             path.display()
         );
-    }
-}
-
-/// Print a unified-style, per-file diff of the formatting change (rustfmt-like:
-/// a `Diff in <path>:<line>:` header followed by context-grouped hunks).
-fn print_diff(file: &ChangedFile, use_color: bool) {
-    const RED: &str = "\x1b[31m";
-    const GREEN: &str = "\x1b[32m";
-    const RESET: &str = "\x1b[0m";
-
-    let diff = TextDiff::from_lines(&file.original, &file.formatted);
-    for (idx, group) in diff.grouped_ops(3).iter().enumerate() {
-        if idx > 0 {
-            println!("---");
-        }
-        let start = group[0].old_range().start + 1;
-        println!("Diff in {}:{}:", file.path.display(), start);
-        for op in group {
-            for change in diff.iter_changes(op) {
-                let (sign, color) = match change.tag() {
-                    ChangeTag::Delete => ("-", RED),
-                    ChangeTag::Insert => ("+", GREEN),
-                    ChangeTag::Equal => (" ", ""),
-                };
-                let value = change.value();
-                let newline = value.ends_with('\n');
-                let line = value.strip_suffix('\n').unwrap_or(value);
-                if use_color && !color.is_empty() {
-                    print!("{color}{sign}{line}{RESET}");
-                } else {
-                    print!("{sign}{line}");
-                }
-                if newline {
-                    println!();
-                }
-            }
-        }
     }
 }
 

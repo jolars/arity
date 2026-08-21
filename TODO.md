@@ -21,6 +21,25 @@
 
 - [ ] Tribbles
 
+- [x] Share one **bounded, indexed line-diff core** between `format --check` and
+  LSP formatting. The CLI already defers `TextDiff::from_lines` until
+  `print_diff`, so `--quiet` correctly pays no diff cost; preserve that. The
+  remaining duplication is `src/main.rs::print_diff` versus
+  `src/lsp/format.rs::line_diff_edits`, both of which independently run the
+  default Myers diff. The LSP's greater-than-half replacement policy is
+  applied only after that diff completes, so it limits edit payload, not
+  computation.
+
+  Use a shared operation model carrying old and new line ranges. The CLI should
+  project it into its existing context-grouped, line-numbered display, while the
+  LSP projects the same operations into precise `TextEdit` ranges and keeps its
+  coverage fallback. Bound unanchored work deterministically and represent an
+  over-budget gap as one replacement; do not use a clock timeout. Add
+  reconstruction tests for both inputs, a repetitive all-changed stress case,
+  and LSP tests proving the edits reproduce formatter output. Re-measure the
+  algorithm and work bound on R before copying Fatou's constants: an earlier
+  probe favored Patience for Arity, but `similar` and the corpus may have moved.
+
 - [ ] Report an **outdated `# arity-format` directive** — one whose marked span
   the formatter would not have changed anyway. It is a `format --check` fact,
   not a semantic one, so it belongs to the formatter, not to

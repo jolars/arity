@@ -5,8 +5,9 @@
 //! and rebuild everything anchored to the old text — the cursor, the selection,
 //! folds, and diagnostic markers — even when a single line changed. The server
 //! now line-diffs the formatted output against the buffer and sends a hunk per
-//! changed run (`src/lsp/format.rs`), falling back to the whole-document
-//! replacement when the diff covers more than half the file.
+//! changed run, falling back to the whole-document replacement when the diff
+//! covers more than half the file. The same bounded line diff drives the CLI's
+//! `format --check` display.
 //!
 //! **This buys the client's anchors, not server time.** The `didChange` the
 //! client echoes back was measured both ways on the corpus below: the parse
@@ -22,34 +23,36 @@
 //! edits' `new_text` as a share of the document, so 100% is what the old
 //! whole-document replacement always sent.
 //!
-//! Measured on 2026-08-13 (release, otherwise-idle machine). Absolute times
+//! Measured on 2026-08-21 (release). Absolute times
 //! drift with CPU frequency across rows, so **the comparison that means
 //! something is `format` against `+diff` within a row**:
 //!
 //! ```text
-//! === formatter fixtures, concatenated (62 KB, 4076 lines) ===
+//! === formatter fixtures, concatenated (65 KB, 4163 lines) ===
 //!                                   format        +diff   edits    payload
-//! already formatted                7.51 ms      7.45 ms       0      0.0 %
-//! one line dirtied                 7.46 ms      8.27 ms       1      0.0 %
-//! five lines dirtied               7.60 ms      7.95 ms       5      0.2 %
-//! fifty lines dirtied              7.45 ms      8.27 ms      43      2.6 %
-//! every assignment dirtied         7.50 ms      8.23 ms     129      5.6 %
-//! CRLF, line ending forced LF      7.57 ms      8.32 ms       1     94.1 %
+//! already formatted                5.60 ms      5.66 ms       0      0.0 %
+//! one line dirtied                 5.66 ms      5.77 ms       1      0.0 %
+//! five lines dirtied               5.62 ms      5.86 ms       5      0.2 %
+//! fifty lines dirtied              5.62 ms      6.03 ms      36      2.0 %
+//! every assignment dirtied         5.63 ms      5.97 ms      36      2.0 %
+//! repetitive all changed           0.66 ms      0.71 ms       1    140.0 %
+//! CRLF, line ending forced LF      5.67 ms      6.11 ms       1     94.1 %
 //! ```
 //!
-//! The diff costs about 10% of the format it follows, which is the price of
-//! turning a 62 KB payload into a few hundred bytes. It is charged only when
+//! The diff costs about 2–8% of the format it follows, which is the price of
+//! turning a 65 KB payload into a few hundred bytes. It is charged only when
 //! the document actually changed: an already-formatted document short-circuits
 //! on the string comparison before any diffing, which is the first row's ~0%.
 //!
-//! The last row is the one the fallback exists for. Forcing a line-ending
-//! conversion changes every line, so there is nothing to scope: the diff
-//! collapses to one edit rather than shipping a hunk per line. (Its payload is
-//! under 100% only because the CRLF source is longer than the LF output it is
-//! measured against.) Real R in the wild is closer to the middle rows — even a
-//! file nobody has run through arity comes back as scattered small hunks, so
-//! the fallback is for genuine wholesale changes, not for ordinary first
-//! contact.
+//! The repetitive row crosses the deterministic unanchored-work bound and
+//! returns one replacement without an unbounded search. The last row is
+//! another wholesale case: forcing a line-ending conversion changes every
+//! line, so there is nothing useful to scope and the result is one edit rather
+//! than a hunk per line. (Its payload is under 100% only because the CRLF source
+//! is longer than the LF output it is measured against.) Real R in the wild is
+//! closer to the middle rows—even a file nobody has run through arity comes
+//! back as scattered small hunks, so the fallback is for genuine wholesale
+//! changes, not for ordinary first contact.
 //!
 //! Plain `main` (`harness = false`) rather than criterion: the numbers that
 //! matter here are a ratio and a payload share, not a distribution.
@@ -79,7 +82,16 @@ fn corpus() -> String {
     let mut files: Vec<PathBuf> = fs::read_dir(&root)
         .expect("formatter fixtures")
         .filter_map(|entry| {
-            let path = entry.expect("fixture dir entry").path().join("expected.R");
+            let dir = entry.expect("fixture dir entry").path();
+            // A skip-file directive applies to the concatenated benchmark as a
+            // whole, even though it belongs to only one source fixture.
+            if dir
+                .file_name()
+                .is_some_and(|name| name == "directive_skip_file")
+            {
+                return None;
+            }
+            let path = dir.join("expected.R");
             path.is_file().then_some(path)
         })
         .collect();
@@ -119,7 +131,7 @@ fn dirty(text: &str, n: usize) -> String {
         .collect()
 }
 
-fn row(label: &str, text: &str, style: FormatStyle, iters: usize) {
+fn row(label: &str, text: &str, style: FormatStyle, iters: usize, expect_edits: bool) {
     let options = ParseOptions::default();
     let format = time(iters, || {
         format_with_options(black_box(text), style, &options)
@@ -128,6 +140,11 @@ fn row(label: &str, text: &str, style: FormatStyle, iters: usize) {
         compute_format_edits(black_box(text), style, UTF16, &options)
     });
     let edits = compute_format_edits(text, style, UTF16, &options).expect("formats");
+    assert_eq!(
+        !edits.is_empty(),
+        expect_edits,
+        "benchmark case `{label}` no longer exercises the intended diff path"
+    );
     let payload: usize = edits.iter().map(|edit| edit.new_text.len()).sum();
     println!(
         "{label:<30}{:>7.2} ms{:>10.2} ms{:>8}{:>9.1} %",
@@ -156,17 +173,29 @@ fn main() {
         "", "format", "+diff", "edits", "payload"
     );
 
-    let iters = 30;
-    row("already formatted", &clean, style, iters);
-    row("one line dirtied", &dirty(&clean, 1), style, iters);
-    row("five lines dirtied", &dirty(&clean, 5), style, iters);
-    row("fifty lines dirtied", &dirty(&clean, 50), style, iters);
+    let iters = 100;
+    row("already formatted", &clean, style, iters, false);
+    row("one line dirtied", &dirty(&clean, 1), style, iters, true);
+    row("five lines dirtied", &dirty(&clean, 5), style, iters, true);
+    row(
+        "fifty lines dirtied",
+        &dirty(&clean, 50),
+        style,
+        iters,
+        true,
+    );
     row(
         "every assignment dirtied",
         &dirty(&clean, usize::MAX),
         style,
         iters,
+        true,
     );
+
+    // No common line can anchor this formatter-wide rewrite. At 1001 lines,
+    // the old/new line-pair product is just over the deterministic work bound.
+    let repetitive = "x<-1\n".repeat(1001);
+    row("repetitive all changed", &repetitive, style, iters, true);
 
     // The wholesale case the fallback exists for: every line differs, so hunks
     // would be a hunk per line and the single replacement is what comes back.
@@ -175,6 +204,6 @@ fn main() {
         line_ending: LineEnding::Lf,
         ..style
     };
-    row("CRLF, line ending forced LF", &crlf, force_lf, iters);
+    row("CRLF, line ending forced LF", &crlf, force_lf, iters, true);
     println!();
 }

@@ -1,6 +1,7 @@
-use similar::{DiffTag, TextDiff};
+use similar::DiffTag;
 
 use super::*;
+use crate::text::line_diff::bounded_line_diff;
 
 /// The [`ParseOptions`] for re-parsing `path`'s buffer outside the db: the
 /// tracked flag when the file is known to `snapshot`, else resolved from disk
@@ -274,12 +275,7 @@ fn line_diff_edits(
     new: &str,
     encoding: PositionEncoding,
 ) -> Option<Vec<TextEdit>> {
-    let diff = TextDiff::from_lines(old, new);
-    // Byte offset of each line start on either side, so a line-index range from
-    // the diff becomes a byte range. Built from the diff's own slices, which
-    // cannot disagree with the indices its ops carry.
-    let old_offsets = line_offsets(diff.iter_old_slices());
-    let new_offsets = line_offsets(diff.iter_new_slices());
+    let diff = bounded_line_diff(old, new);
 
     let mut hunks: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)> = Vec::new();
     for op in diff.ops() {
@@ -303,7 +299,7 @@ fn line_diff_edits(
 
     let covered: usize = hunks
         .iter()
-        .map(|(old_lines, _)| old_offsets[old_lines.end] - old_offsets[old_lines.start])
+        .map(|(old_lines, _)| diff.old_byte_range(old_lines.clone()).len())
         .sum();
     if hunks.len() > 1 && covered as f64 > old.len() as f64 * MAX_DIFF_COVERAGE {
         return None;
@@ -314,27 +310,17 @@ fn line_diff_edits(
             .into_iter()
             .map(|(old_lines, new_lines)| TextEdit {
                 range: Range {
-                    start: line_index
-                        .byte_to_position(base + old_offsets[old_lines.start], encoding),
-                    end: line_index.byte_to_position(base + old_offsets[old_lines.end], encoding),
+                    start: line_index.byte_to_position(
+                        base + diff.old_byte_range(old_lines.clone()).start,
+                        encoding,
+                    ),
+                    end: line_index
+                        .byte_to_position(base + diff.old_byte_range(old_lines).end, encoding),
                 },
-                new_text: new[new_offsets[new_lines.start]..new_offsets[new_lines.end]].to_string(),
+                new_text: new[diff.new_byte_range(new_lines)].to_string(),
             })
             .collect(),
     )
-}
-
-/// Byte offset of the start of each line, indexed the way the diff's line
-/// indices are, with the total length appended so `offsets[line_count]` closes
-/// the last line.
-fn line_offsets<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<usize> {
-    let mut offsets = vec![0];
-    let mut at = 0;
-    for line in lines {
-        at += line.len();
-        offsets.push(at);
-    }
-    offsets
 }
 
 pub(crate) fn to_lsp_diagnostic(
@@ -618,6 +604,25 @@ mod tests {
                     "edits must reproduce the formatted text for {text:?} ({encoding:?})"
                 );
             }
+        }
+    }
+
+    /// A repetitive rewrite beyond the diff work bound still produces valid
+    /// LSP edits rather than making formatting latency depend on diff search.
+    #[test]
+    fn bounded_repetitive_edits_reproduce_the_formatted_document() {
+        let style = FormatStyle::default();
+        let text = "x<-1\n".repeat(crate::text::line_diff::MAX_UNANCHORED_LINE_PAIRS.isqrt() + 1);
+        let formatted =
+            format_with_options(&text, style, &Default::default()).expect("fixture must format");
+
+        for encoding in [PositionEncoding::Utf8, PositionEncoding::Utf16] {
+            let edits = format_edits(&text, encoding);
+            assert_eq!(
+                apply(&text, &edits, encoding),
+                formatted,
+                "bounded edits must reproduce the formatter output ({encoding:?})"
+            );
         }
     }
 

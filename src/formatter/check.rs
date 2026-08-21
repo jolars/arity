@@ -3,6 +3,8 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+use similar::{DiffTag, group_diff_ops};
+
 use super::FormatStyle;
 use super::source::{Formatted, cache_key, format_file, merge};
 use crate::file_discovery::{
@@ -10,6 +12,7 @@ use crate::file_discovery::{
 };
 use crate::formatter::cache::FormatCache;
 use crate::project::description::MarkdownDefaultResolver;
+use crate::text::line_diff::bounded_line_diff;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckResult {
@@ -49,6 +52,66 @@ pub struct ChangedFile {
     pub path: PathBuf,
     pub original: String,
     pub formatted: String,
+}
+
+impl ChangedFile {
+    /// Write the context-grouped, line-numbered diff used by `format --check`.
+    /// Diff construction stays deferred until this method is called, so quiet
+    /// checks pay no diff cost.
+    pub fn write_diff(&self, out: &mut impl io::Write, use_color: bool) -> io::Result<()> {
+        const RED: &str = "\x1b[31m";
+        const GREEN: &str = "\x1b[32m";
+        let diff = bounded_line_diff(&self.original, &self.formatted);
+        for (group_index, group) in group_diff_ops(diff.ops().to_vec(), 3).iter().enumerate() {
+            if group_index > 0 {
+                writeln!(out, "---")?;
+            }
+            let start = group[0].old_range().start + 1;
+            writeln!(out, "Diff in {}:{}:", self.path.display(), start)?;
+            for op in group {
+                let (tag, old_lines, new_lines) = op.as_tag_tuple();
+                match tag {
+                    DiffTag::Equal => {
+                        write_diff_lines(out, &diff.old_lines()[old_lines], ' ', "", use_color)?;
+                    }
+                    DiffTag::Delete => {
+                        write_diff_lines(out, &diff.old_lines()[old_lines], '-', RED, use_color)?;
+                    }
+                    DiffTag::Insert => {
+                        write_diff_lines(out, &diff.new_lines()[new_lines], '+', GREEN, use_color)?;
+                    }
+                    DiffTag::Replace => {
+                        write_diff_lines(out, &diff.old_lines()[old_lines], '-', RED, use_color)?;
+                        write_diff_lines(out, &diff.new_lines()[new_lines], '+', GREEN, use_color)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn write_diff_lines(
+    out: &mut impl io::Write,
+    lines: &[&str],
+    sign: char,
+    color: &str,
+    use_color: bool,
+) -> io::Result<()> {
+    const RESET: &str = "\x1b[0m";
+    for value in lines {
+        let newline = value.ends_with('\n');
+        let line = value.strip_suffix('\n').unwrap_or(value);
+        if use_color && !color.is_empty() {
+            write!(out, "{color}{sign}{line}{RESET}")?;
+        } else {
+            write!(out, "{sign}{line}")?;
+        }
+        if newline {
+            writeln!(out)?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -232,4 +295,41 @@ pub fn check_paths_with_style_cached(
         failed_files,
         skipped,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn changed_file_writes_context_grouped_diff() {
+        let file = ChangedFile {
+            path: PathBuf::from("example.R"),
+            original: "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk".to_string(),
+            formatted: "a\nB\nc\nd\ne\nf\ng\nh\ni\nJ\nk".to_string(),
+        };
+        let mut out = Vec::new();
+        file.write_diff(&mut out, false).expect("write diff");
+
+        assert_eq!(
+            String::from_utf8(out).expect("utf-8"),
+            "Diff in example.R:1:\n a\n-b\n+B\n c\n d\n e\n---\nDiff in example.R:7:\n g\n h\n i\n-j\n+J\n k"
+        );
+    }
+
+    #[test]
+    fn changed_file_colors_only_changed_lines() {
+        let file = ChangedFile {
+            path: PathBuf::from("example.R"),
+            original: "a\nb\n".to_string(),
+            formatted: "a\nB\n".to_string(),
+        };
+        let mut out = Vec::new();
+        file.write_diff(&mut out, true).expect("write diff");
+
+        assert_eq!(
+            String::from_utf8(out).expect("utf-8"),
+            "Diff in example.R:1:\n a\n\x1b[31m-b\x1b[0m\n\x1b[32m+B\x1b[0m\n"
+        );
+    }
 }

@@ -1,6 +1,7 @@
 //! Shared text utilities for the linter, LSP, and CLI.
 
 pub mod buffer;
+pub(crate) mod line_diff;
 pub mod line_index;
 
 pub use buffer::TextBuffer;
