@@ -159,14 +159,18 @@ pub(crate) fn guard(label: &str, f: impl FnOnce()) -> bool {
 
 pub(crate) struct LintWorker {
     db: IncrementalDatabase,
-    /// Workspace anchors whose index cache has already been loaded into the salsa
-    /// [`LibraryIndex`] singleton.
+    /// Cache roots whose index has already been loaded into the salsa
+    /// [`LibraryIndex`] singleton. Keyed by the *resolved cache root* rather
+    /// than the document's directory: every directory a file is opened from
+    /// used to re-load (and re-install) the whole cache, churning an
+    /// allocation that scales with everything ever harvested (issue #116).
     index_loaded: HashSet<PathBuf>,
     /// Packages a background harvest has already been scheduled for this session
     /// — never retried, so a not-installed package doesn't loop.
     index_attempts: HashSet<SmolStr>,
-    /// Workspace anchors whose remote-sidecar disk cache has already been warmed
-    /// into the salsa [`LibraryIndex`]'s `remote` field.
+    /// Cache roots whose remote-sidecar disk cache has already been warmed
+    /// into the salsa [`LibraryIndex`]'s `remote` field. Keyed like
+    /// [`index_loaded`](Self::index_loaded).
     remote_loaded: HashSet<PathBuf>,
     /// Packages a remote-sidecar fetch has already been attempted for this session
     /// — never retried, so a package absent from the sidecar doesn't loop.
@@ -494,8 +498,8 @@ impl LintWorker {
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("."));
 
-        self.ensure_index(&anchor, &req.index_config);
-        self.ensure_remote(&anchor, &req.index_config);
+        self.ensure_index(&req.index_config);
+        self.ensure_remote(&req.index_config);
 
         let active = self.db.upsert_file(&req.path, req.buffer.text_arc());
         self.db.stage_edits(active, std::mem::take(&mut req.edits));
@@ -591,8 +595,8 @@ impl LintWorker {
             let _ = self.out_tx.send(Outbound::RelintAll);
         }
 
-        self.ensure_index(&root, &req.index_config);
-        self.ensure_remote(&root, &req.index_config);
+        self.ensure_index(&req.index_config);
+        self.ensure_remote(&req.index_config);
         // A `DESCRIPTION` names exactly the packages its author is entitled to
         // use, so opening one warms the harvest for them — no R source needed.
         let declared = self.declared_packages_for(&req.path);
@@ -699,21 +703,24 @@ impl LintWorker {
         });
     }
 
-    /// Load the index cache for `anchor` into the salsa [`LibraryIndex`] the
-    /// first time we see that workspace. Idempotent per anchor. Runs on the lint
-    /// thread (sole writer); the HIGH-durability set means subsequent keystrokes
-    /// don't revalidate the library subgraph.
-    fn ensure_index(&mut self, anchor: &Path, cfg: &IndexConfig) {
-        if self.index_loaded.contains(anchor) {
+    /// Load the index cache into the salsa [`LibraryIndex`] the first time we
+    /// see its resolved cache root. Idempotent per cache root, and a *lazy*
+    /// load: construction reads `meta.json` only, and each package's membership
+    /// and rich data are read on first use — so holding the provider for a
+    /// long-lived session costs memory proportional to the packages actually
+    /// asked about, not to everything ever harvested (issue #116). Runs on the
+    /// lint thread (sole writer); the HIGH-durability set means subsequent
+    /// keystrokes don't revalidate the library subgraph.
+    fn ensure_index(&mut self, cfg: &IndexConfig) {
+        let Ok(root) = resolve_cache_root(None, cfg.cache_dir.as_deref()) else {
+            return;
+        };
+        if !self.index_loaded.insert(root.clone()) {
             return;
         }
-        let indexed = match resolve_cache_root(None, cfg.cache_dir.as_deref()) {
-            Ok(root) => IndexedProvider::from_cache(&Cache::new(root)),
-            Err(_) => IndexedProvider::empty(),
-        };
+        let indexed = IndexedProvider::from_cache_lazy(&Cache::new(root));
         let loaded_any = indexed.packages().next().is_some();
         self.db.set_library_index(indexed);
-        self.index_loaded.insert(anchor.to_path_buf());
         if loaded_any {
             let _ = self.out_tx.send(Outbound::RefreshInlayHints);
         }
@@ -785,27 +792,31 @@ impl LintWorker {
             );
             let newly = report.newly_indexed().count();
             if newly > 0 {
-                let _ = build_tx.send(IndexedProvider::from_cache(&cache));
+                // Lazy, like `ensure_index`: the install swaps in a provider
+                // that has read only `meta.json`; rich data fills per package
+                // on demand instead of re-deserializing the whole cache.
+                let _ = build_tx.send(IndexedProvider::from_cache_lazy(&cache));
             }
             reporter.end(Some(format!("Indexed {}", package_count(newly))));
         });
     }
 
     /// Warm the remote sidecar's disk cache into the salsa [`LibraryIndex`]'s
-    /// `remote` field the first time we see a workspace, when a sidecar URL is
-    /// configured. Idempotent per anchor, network-free (disk only). Runs on the
-    /// lint thread (sole writer); HIGH durability means later keystrokes don't
-    /// revalidate resolution.
-    fn ensure_remote(&mut self, anchor: &Path, cfg: &IndexConfig) {
+    /// `remote` field the first time we see its resolved cache root, when a
+    /// sidecar URL is configured. Idempotent per cache root (like
+    /// [`ensure_index`](Self::ensure_index)), network-free (disk only). Runs on
+    /// the lint thread (sole writer); HIGH durability means later keystrokes
+    /// don't revalidate resolution.
+    fn ensure_remote(&mut self, cfg: &IndexConfig) {
         let Some(url) = cfg.remote_url.as_deref() else {
             return;
         };
-        if !self.remote_loaded.insert(anchor.to_path_buf()) {
-            return;
-        }
         let Ok(root) = resolve_cache_root(None, cfg.cache_dir.as_deref()) else {
             return;
         };
+        if !self.remote_loaded.insert(root.clone()) {
+            return;
+        }
         let cached = Sidecar::http(url, &root).load_cached();
         if !cached.is_empty() {
             self.db.set_remote_exports(cached);

@@ -182,25 +182,33 @@ impl From<PackageExports> for Membership {
     }
 }
 
-/// One package the index knows of, with its membership either already resolved
-/// (the eager constructors) or filled from disk on first use (the lazy one).
-/// The inner `Option` distinguishes "read and empty" from "file missing or
-/// stale", which must read as *not indexed*.
+/// One package the index knows of, with its membership and rich index either
+/// already resolved (the eager constructors) or filled from disk on first use
+/// (the lazy one). The inner `Option`s distinguish "read and empty" from "file
+/// missing or stale", which must read as *not indexed*.
 #[derive(Debug)]
 struct PackageSlot {
     /// The version `meta.json` names — the file a lazy fill reads.
     version: SmolStr,
     membership: OnceLock<Option<Membership>>,
+    /// The full harvested index (formals + help bodies), filled per package on
+    /// the first rich question. Keeping this per-slot is what lets the language
+    /// server hold the lazy load: resident rich data scales with the packages a
+    /// session actually asks about, not with everything ever harvested.
+    index: OnceLock<Option<PackageIndex>>,
 }
 
 impl PackageSlot {
-    /// A slot whose membership is already known.
-    fn resolved(membership: Membership) -> Self {
-        let cell = OnceLock::new();
-        let _ = cell.set(Some(membership));
+    /// A slot whose membership and rich index are already known.
+    fn resolved(membership: Membership, index: PackageIndex) -> Self {
+        let membership_cell = OnceLock::new();
+        let _ = membership_cell.set(Some(membership));
+        let index_cell = OnceLock::new();
+        let _ = index_cell.set(Some(index));
         PackageSlot {
             version: SmolStr::default(),
-            membership: cell,
+            membership: membership_cell,
+            index: index_cell,
         }
     }
 }
@@ -208,13 +216,10 @@ impl PackageSlot {
 /// Resolves names against indexed, attached packages and holds the rich data.
 #[derive(Debug, Default)]
 pub struct IndexedProvider {
-    /// package → membership, for `origin`/`package_indexed` tests.
+    /// package → membership + rich index, resolved eagerly or filled on use.
     packages: HashMap<SmolStr, PackageSlot>,
-    /// package → full harvested index (for `lookup`). Populated only by the
-    /// rich [`from_cache`](IndexedProvider::from_cache) load.
-    indices: HashMap<SmolStr, PackageIndex>,
-    /// Where an unfilled slot reads its membership from. `None` once every slot
-    /// is resolved, which is what the eager constructors produce.
+    /// Where an unfilled slot reads from. `None` once every slot is resolved,
+    /// which is what the eager constructors produce.
     source: Option<Cache>,
 }
 
@@ -226,7 +231,6 @@ impl IndexedProvider {
     /// Build from a set of harvested package indices.
     pub fn from_indices(indices: impl IntoIterator<Item = PackageIndex>) -> Self {
         let mut packages: HashMap<SmolStr, PackageSlot> = HashMap::new();
-        let mut map: HashMap<SmolStr, PackageIndex> = HashMap::new();
         for idx in indices {
             let membership = Membership {
                 exports: idx
@@ -237,12 +241,10 @@ impl IndexedProvider {
                     .collect(),
                 attaches: idx.attaches.clone(),
             };
-            packages.insert(idx.package.clone(), PackageSlot::resolved(membership));
-            map.insert(idx.package.clone(), idx);
+            packages.insert(idx.package.clone(), PackageSlot::resolved(membership, idx));
         }
         IndexedProvider {
             packages,
-            indices: map,
             source: None,
         }
     }
@@ -277,13 +279,13 @@ impl IndexedProvider {
                     PackageSlot {
                         version,
                         membership: OnceLock::new(),
+                        index: OnceLock::new(),
                     },
                 )
             })
             .collect();
         IndexedProvider {
             packages,
-            indices: HashMap::new(),
             source: Some(cache.clone()),
         }
     }
@@ -322,19 +324,26 @@ impl IndexedProvider {
         self.packages.keys()
     }
 
-    /// The rich entry for `pkg::name`, if indexed.
+    /// The rich entry for `pkg::name`, if indexed. Under the lazy load the
+    /// package file is read on the first rich question about that package.
     pub fn lookup(&self, package: &str, name: &str) -> Option<&SymbolEntry> {
         let name = unbacktick(name);
-        self.indices
-            .get(package)?
+        self.package(package)?
             .symbols
             .iter()
             .find(|s| s.name == name)
     }
 
-    /// The full harvested index for a package, if present.
+    /// The full harvested index for a package, filling it from the cache on
+    /// first use. `None` when the index has no entry for `package` or the file
+    /// `meta.json` names cannot be read — mirroring
+    /// [`membership`](Self::membership), a missing or foreign-schema file must
+    /// read as *no rich data*, never an invented empty index.
     pub fn package(&self, package: &str) -> Option<&PackageIndex> {
-        self.indices.get(package)
+        let slot = self.packages.get(package)?;
+        slot.index
+            .get_or_init(|| self.source.as_ref()?.read_package(package, &slot.version))
+            .as_ref()
     }
 
     /// The harvested attach set for `package`, if one was captured. `None`
@@ -785,9 +794,55 @@ mod tests {
             lazy.attaches("tidyverse"),
             Some(&[SmolStr::new("dplyr")][..])
         );
-        // The rich per-symbol payload is deliberately never deserialized.
-        assert!(lazy.lookup("dplyr", "filter").is_none());
-        assert!(lazy.package("dplyr").is_none());
+        // The rich per-symbol payload is served on demand and matches the
+        // eager load exactly (see `lazy_load_serves_rich_data_on_demand` for
+        // the deferral itself).
+        assert_eq!(
+            lazy.lookup("dplyr", "filter"),
+            full.lookup("dplyr", "filter")
+        );
+        assert_eq!(lazy.package("dplyr"), full.package("dplyr"));
+    }
+
+    #[test]
+    fn lazy_load_serves_rich_data_on_demand() {
+        use crate::rindex::cache::Cache;
+        use crate::rindex::schema::HelpDoc;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().to_path_buf());
+        let mut idx = pkg("dplyr", &["filter"]);
+        idx.symbols[0].help = Some(HelpDoc {
+            title: Some("Keep rows".to_string()),
+            ..Default::default()
+        });
+        cache.write_package(&idx).unwrap();
+        cache.write_package(&pkg("tibble", &["tribble"])).unwrap();
+
+        // The language server holds this provider for days over caches that
+        // eagerly total gigabytes (issue #116); the rich payload must load per
+        // package on first use, not wholesale at construction.
+        let lazy = IndexedProvider::from_cache_lazy(&cache);
+        // Deleting tibble's file after construction proves construction read
+        // `meta.json` only; dplyr's rich data is still served on demand.
+        std::fs::remove_file(cache.index_dir().join("tibble@1.0.json")).unwrap();
+        let entry = lazy.lookup("dplyr", "filter").expect("rich entry");
+        assert_eq!(
+            entry.help.as_ref().and_then(|h| h.title.as_deref()),
+            Some("Keep rows")
+        );
+        assert_eq!(
+            lazy.package("dplyr").map(|p| p.package.as_str()),
+            Some("dplyr")
+        );
+        // A named-but-unreadable package has no rich data, and answering that
+        // must not panic or invent an empty index.
+        assert!(lazy.package("tibble").is_none());
+        assert!(lazy.lookup("tibble", "tribble").is_none());
+
+        // Once filled, the payload is stable: a second query re-reads nothing.
+        std::fs::remove_file(cache.index_dir().join("dplyr@1.0.json")).unwrap();
+        assert!(lazy.lookup("dplyr", "filter").is_some());
     }
 
     #[test]
