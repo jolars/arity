@@ -10,17 +10,6 @@
   already handles most cases.) The **format** half of this is closed: the
   formatter acts on statement lists only, and `misplaced-suppression` reports a
   format directive that lands anywhere else.
-- [ ] Give the test-only Rd projector (`src/roxygen/project_rd/section.rs`
-  `block_md`) a package-wide markdown default, so oracle cases from
-  markdown-first packages become representable without a per-block `@md`. The
-  rest of that wiring landed: `ParseOptions.roxygen_markdown_default`
-  (issue #94), static discovery from `DESCRIPTION`'s `Roxygen` field and
-  `man/roxygen/meta.R` (`src/project/description.rs`; note roxygen2 7.3.3 has
-  no `Config/roxygen2/markdown` field, contrary to the issue), and the format
-  CLI and cache, linter, salsa layer (`SourceFile.roxygen_markdown` input), and
-  LSP all resolve it. Known static limit: a `meta.R` that *computes* its list
-  is unresolvable and defers to the `DESCRIPTION` field.
-
 ## AST wrappers
 
 - [ ] *Optional polish:* migrate the remaining individual lint rules to call the

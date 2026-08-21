@@ -16,9 +16,11 @@ reads this first.
 
 **Oracle = roxygen2 8.0.0** (pin bumped 2026-08-07; `tests/oracle/.roxygen2-source`,
 `roxygen2-ref` checkout at `v8.0.0`). **Backlog closed at the new oracle.**
-Projector gate **1031 matching (all allowlisted), 0 divergent, 12 blocked**.
+Projector gate **1032 matching (all allowlisted), 0 divergent, 12 blocked**.
 The **whole CommonMark spec (655/655)** matches; the harvested corpus is fully
-closed. Curated fixed-point **236/236** preserving (verified against 8.0.0).
+closed. The latest curated fixed-point run is **237/238** preserving; the sole
+red case is the pre-existing `verbatim_block_macro` divergence, while the new
+package-markdown-default case preserves.
 The measured backlog is **exhausted** — no divergence currently drives parser
 growth.
 
@@ -150,6 +152,10 @@ tail cannot be reconstructed from the inline run.
 - **Format-stability baseline** (`roxygen-format-baseline.jsonl`,
   `roxygen_format_stability.rs`): any intended formatter change re-blesses with
   `BLESS_ROXYGEN_FORMAT=1` **and review**. A new curated case adds one key.
+- **Package-mode oracle cases carry options beside the source.** A curated
+  `<stem>.options.json` or JSONL `roxygen_markdown_default` field drives the
+  parser, formatter, projector, and R oracle together; absent metadata remains
+  Rd-first. Never add a synthetic per-block `@md` to stand in for package state.
 - **The md `rdComplete` scan sees roxygen2's markdown output, NOT parse_Rd's.** Anything
   parse_Rd does *later* (today: system-Rd-macro expansion, `usermacro.rs`) must stay off
   the `group = false` path — `serialize_prose` routes it to
@@ -317,7 +323,30 @@ WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance mo
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
 
-## Latest session (2026-08-19) — ordinary comments inside roxygen blocks
+## Latest session (2026-08-21) — package markdown default in the Rd projector
+
+Closed the remaining issue-#94 follow-up. The projector now exposes
+`project_to_rd_with_options(text, &ParseOptions)` while the existing
+`project_to_rd(text)` remains the Rd-first compatibility entry point. Projection
+parses with those options and seeds its `block_md` mirror from the same
+`roxygen_markdown_default`; block-local `@md`/`@noMd` directives still override
+it, with the last directive winning. This is a **projector/test-infrastructure
+gap**, not a parser or formatter behavior change.
+
+Oracle cases can now declare package state without altering the roxygen block:
+curated cases use an optional `<stem>.options.json`, and JSONL cases may carry
+`roxygen_markdown_default`. The projector gate, formatter stability harness,
+R-backed fixed-point harness, R pin driver, and refresh task all consume the
+same value. Curated +1 (`markdown_default`: directive-less emphasis/code/list,
+plus an `@noMd` override), baseline +1 reviewed entry. Projector
+1031→**1032** matching (all allowlisted), 0 divergent, 12 blocked. The new case
+is Rd-preserving; the full R-backed run is 237/238 because the pre-existing
+`verbatim_block_macro` case remains red. The full workspace suite, clippy with
+warnings denied, rustfmt, projector gate, and format-stability gate are green.
+
+## Earlier sessions (condensed)
+
+### 2026-08-19 — ordinary comments inside roxygen blocks
 
 Closed the `futureverse/future` sweep item: roxygen2 discards ordinary `#`,
 `##`, and `#"` comment lines while collecting the surrounding `#'` lines into
@@ -339,8 +368,6 @@ workspace suite, clippy, and rustfmt. The optional R-backed fixed-point run
 reported the existing `verbatim_block_macro` case red even though its formatter
 baseline is byte-identical before and after this session; it is unrelated to the
 new case, which preserves.
-
-## Earlier sessions (condensed)
 
 ### 2026-08-07n — brace-less system Rd user macros are sticky
 

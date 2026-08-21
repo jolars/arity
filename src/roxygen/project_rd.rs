@@ -39,13 +39,13 @@ use std::borrow::Cow;
 use rowan::NodeOrToken;
 
 use crate::ast::{AstNode, RoxygenBlock, RoxygenParagraph, RoxygenSection, RoxygenTag};
-use crate::parser::parse;
 use crate::parser::roxygen::{
     MdArgPiece, advance_md_col, is_fragile_for_md, is_known_rd_macro, is_multi_arg_rd_macro,
     is_rd_braceless_drop_macro, is_verbatim_rd_macro, md_fence_run_closes, md_ws_gauge,
     rd_macro_arity, resolve_md_inline, resolve_md_inline_pieces, resolve_rd_inline,
     split_table_row_cells, sticky_braceless_code_mode,
 };
+use crate::parser::{ParseOptions, parse_with_options};
 use crate::roxygen::entities;
 use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
@@ -94,7 +94,16 @@ use self::usermacro::*;
 /// not statically resolve an object's default topic, and distinct objects get
 /// distinct files anyway), so the common single-block path is untouched.
 pub fn project_to_rd(text: &str) -> String {
-    let cst = parse(text).cst;
+    project_to_rd_with_options(text, &ParseOptions::default())
+}
+
+/// [`project_to_rd`] with caller-supplied parser options.
+///
+/// A package-wide roxygen markdown setting changes the CST itself, so the
+/// projector must parse and interpret plain prose under the same default. A
+/// block-local `@md` or `@noMd` directive still wins over this value.
+pub fn project_to_rd_with_options(text: &str, options: &ParseOptions) -> String {
+    let cst = parse_with_options(text, options).cst;
     let scan_end = roxygen_scan_end(&cst);
     // Group blocks by topic name, preserving first-seen document order. A named
     // topic accumulates every block that shares its name; an unnamed block is its
@@ -120,8 +129,8 @@ pub fn project_to_rd(text: &str) -> String {
     let mut sections: Vec<String> = Vec::new();
     for group in &groups {
         match group.as_slice() {
-            [block] => project_block(block, &mut sections),
-            blocks => project_merged_topic(blocks, &mut sections),
+            [block] => project_block(block, &mut sections, options.roxygen_markdown_default),
+            blocks => project_merged_topic(blocks, &mut sections, options.roxygen_markdown_default),
         }
     }
     sections.sort();

@@ -9,11 +9,13 @@
 # records the case as skipped, never a hard failure).
 #
 # Operations (argv[1]):
-#   block-to-tree   stdin = R source (roxygen blocks + code)
+#   block-to-tree   stdin = R source (roxygen blocks + code); optional argv[2]
+#                   is `true` or a projector-options JSON path
 #                   stdout = canonical Rd-tree S-expression, one line per topic
 #   block-to-rd     stdin = R source; stdout = raw Rd text per topic (debugging)
 #   rd-to-tree      stdin = Rd text; stdout = canonical Rd-tree S-expression
-#   block-to-sections  stdin = R source; stdout = the *parser-owned* section
+#   block-to-sections  stdin = R source; optional argv[2] is `true` or a
+#                   projector-options JSON path; stdout = the *parser-owned* section
 #                   subtrees, one canonical S-expression per line, sorted. Drops
 #                   roclet-*generated* macros (\name, \alias, \usage, the
 #                   \arguments wrapper, \docType, …) that arity's parser neither
@@ -24,10 +26,12 @@
 #                   is roxygen2's emission order (not document order), which the
 #                   projector deliberately does not replicate; the gate compares a
 #                   set of section subtrees.
-#   sections-batch  stdin = JSON array of R-source strings; stdout = one group per
+#   sections-batch  stdin = JSON array of R-source strings or records with `input`
+#                   and `roxygen_markdown_default`; stdout = one group per
 #                   element (`@@@<i>` then that element's block-to-sections lines,
 #                   or `!ERROR`). The block-to-sections analog of trees-batch.
-#   trees-batch     stdin = JSON array of R-source strings; stdout = one group per
+#   trees-batch     stdin = JSON array of R-source strings or records with `input`
+#                   and `roxygen_markdown_default`; stdout = one group per
 #                   element, each `@@@<i>` followed by that element's block-to-tree
 #                   lines (or `@@@<i>` then `!ERROR` if roxygen2 could not process
 #                   it). Loads roxygen2 once for the whole batch (the harvested
@@ -55,6 +59,15 @@ suppressWarnings(suppressMessages({
 
 args <- commandArgs(trailingOnly = TRUE)
 op <- if (length(args) >= 1) args[[1]] else "block-to-tree"
+single_markdown_default <- FALSE
+if (length(args) >= 2) {
+  if (file.exists(args[[2]])) {
+    opts <- jsonlite::fromJSON(args[[2]], simplifyVector = TRUE)
+    single_markdown_default <- isTRUE(opts$roxygen_markdown_default)
+  } else {
+    single_markdown_default <- identical(tolower(args[[2]]), "true")
+  }
+}
 
 read_stdin <- function() {
   con <- file("stdin", "r")
@@ -186,7 +199,8 @@ rd_to_canonical <- function(rd_text) {
 
 # --- roxygen2 block -> Rd --------------------------------------------------
 
-block_to_topics <- function(src) {
+block_to_topics <- function(src, markdown_default = FALSE) {
+  roxygen2:::roxy_meta_set("markdown", isTRUE(markdown_default))
   topics <- roc_proc_text(rd_roclet(), src)
   if (length(topics) == 0) {
     stop("roxygen2 produced no topics (block not attached to an object?)")
@@ -197,10 +211,10 @@ block_to_topics <- function(src) {
 
 # Canonical tree text for one block's topics, sorted by topic name, joined into a
 # single string (one `name\t(Rd ...)` line per topic). Returns NULL on error.
-block_trees <- function(src) {
+block_trees <- function(src, markdown_default = FALSE) {
   tryCatch(
     {
-      topics <- block_to_topics(src)
+      topics <- block_to_topics(src, markdown_default)
       lines <- vapply(
         names(topics),
         function(nm) paste0(nm, "\t", rd_to_canonical(format(topics[[nm]]))),
@@ -255,10 +269,10 @@ topic_sections <- function(rd_text) {
 
 # All parser-owned sections across a block's topics, sorted, one per line.
 # Returns NULL on error (so the harness records the case as skipped).
-block_sections <- function(src) {
+block_sections <- function(src, markdown_default = FALSE) {
   tryCatch(
     {
-      topics <- block_to_topics(src)
+      topics <- block_to_topics(src, markdown_default)
       secs <- unlist(lapply(
         names(topics),
         function(nm) topic_sections(format(topics[[nm]]))
@@ -295,13 +309,13 @@ OUT_OF_SCOPE_TAG_RE <- paste0(
 # unrenderable, or it errors (e.g. inline `r` code evaluation --- also a feature
 # the projector does not reproduce). The whole evaluation is guarded so one bad
 # case can never abort a batch.
-projector_eligible <- function(src) {
+projector_eligible <- function(src, markdown_default = FALSE) {
   if (grepl(OUT_OF_SCOPE_TAG_RE, src, perl = TRUE)) {
     return(NULL)
   }
   tryCatch(
     {
-      topics <- block_to_topics(src)
+      topics <- block_to_topics(src, markdown_default)
       if (length(topics) != 1L) {
         NULL
       } else {
@@ -393,7 +407,10 @@ main <- function() {
       # processing a block; capture and discard it so only our JSONL reaches the
       # pins file.
       secs <- NULL
-      invisible(utils::capture.output(secs <- projector_eligible(obj$input)))
+      markdown_default <- isTRUE(obj$roxygen_markdown_default)
+      invisible(utils::capture.output(
+        secs <- projector_eligible(obj$input, markdown_default)
+      ))
       if (is.null(secs)) {
         next
       }
@@ -411,11 +428,19 @@ main <- function() {
 
   if (identical(op, "sections-batch")) {
     src <- read_stdin()
-    inputs <- jsonlite::fromJSON(src, simplifyVector = TRUE)
+    inputs <- jsonlite::fromJSON(src, simplifyVector = FALSE)
     out <- character(0)
     for (i in seq_along(inputs)) {
       out <- c(out, paste0("@@@", i - 1L))
-      secs <- block_sections(inputs[[i]])
+      input <- inputs[[i]]
+      if (is.list(input)) {
+        secs <- block_sections(
+          input$input,
+          isTRUE(input$roxygen_markdown_default)
+        )
+      } else {
+        secs <- block_sections(input)
+      }
       out <- c(out, if (is.null(secs)) "!ERROR" else secs)
     }
     cat(paste(out, collapse = "\n"), "\n", sep = "")
@@ -424,11 +449,19 @@ main <- function() {
 
   if (identical(op, "trees-batch")) {
     src <- read_stdin()
-    inputs <- jsonlite::fromJSON(src, simplifyVector = TRUE)
+    inputs <- jsonlite::fromJSON(src, simplifyVector = FALSE)
     out <- character(0)
     for (i in seq_along(inputs)) {
       out <- c(out, paste0("@@@", i - 1L))
-      trees <- block_trees(inputs[[i]])
+      input <- inputs[[i]]
+      if (is.list(input)) {
+        trees <- block_trees(
+          input$input,
+          isTRUE(input$roxygen_markdown_default)
+        )
+      } else {
+        trees <- block_trees(input)
+      }
       out <- c(out, if (is.null(trees)) "!ERROR" else trees)
     }
     cat(paste(out, collapse = "\n"), "\n", sep = "")
@@ -443,7 +476,7 @@ main <- function() {
   }
 
   if (identical(op, "block-to-sections")) {
-    secs <- block_sections(src)
+    secs <- block_sections(src, single_markdown_default)
     if (is.null(secs)) {
       stop("roxygen2 could not process the block")
     }
@@ -451,7 +484,7 @@ main <- function() {
     return(invisible())
   }
 
-  topics <- block_to_topics(src)
+  topics <- block_to_topics(src, single_markdown_default)
   for (nm in names(topics)) {
     rd <- format(topics[[nm]])
     if (identical(op, "block-to-rd")) {

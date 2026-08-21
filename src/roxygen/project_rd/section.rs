@@ -9,12 +9,12 @@ use super::*;
 /// tag's own inline prose followed by its paragraphs (continuation and
 /// paragraph-break both collapse to a single space under `norm_ws`).
 /// The block's resolved markdown mode, mirroring the lexer's
-/// `resolve_roxygen_block`: a standalone `@md` directive turns it on, `@noMd` off,
-/// the last one in the block winning; off by default (Rd-first). A directive is a
-/// tag named `md`/`noMd` with no argument or prose value (roxygen2 errors on a
-/// directive line carrying other content).
-fn block_md(block: &RoxygenBlock) -> bool {
-    let mut md = false;
+/// `resolve_roxygen_block`: start from the caller's package-wide default, then
+/// let a standalone `@md` turn it on or `@noMd` turn it off, with the last
+/// directive winning. A directive is a tag named `md`/`noMd` with no argument
+/// or prose value (roxygen2 errors on a directive line carrying other content).
+fn block_md(block: &RoxygenBlock, md_default: bool) -> bool {
+    let mut md = md_default;
     for section in block.sections() {
         if let Some(tag) = section.tag()
             && tag.arg().is_none()
@@ -30,8 +30,8 @@ fn block_md(block: &RoxygenBlock) -> bool {
     md
 }
 
-pub(super) fn project_block(block: &RoxygenBlock, out: &mut Vec<String>) {
-    project_block_impl(block, out, true);
+pub(super) fn project_block(block: &RoxygenBlock, out: &mut Vec<String>, md_default: bool) {
+    project_block_impl(block, out, true, md_default);
 }
 
 /// Project a single block's sections into `out`. `apply_title_fallback` gates
@@ -43,13 +43,15 @@ pub(super) fn project_block_impl(
     block: &RoxygenBlock,
     out: &mut Vec<String>,
     apply_title_fallback: bool,
+    md_default: bool,
 ) {
     // Resolve the block's markdown mode the way the lexer's `resolve_roxygen_block`
-    // does (a standalone `@md`/`@noMd` directive line, last one wins, default off).
+    // does (start from the caller's default; a standalone `@md`/`@noMd`
+    // directive line wins, with the last one taking precedence).
     // Plain prose text leaves carry no mode (their kind is identical in both modes),
     // so the projector re-derives it here: it keys whether prose is literal Rd
     // (where an unescaped `%` is a comment) or escaped markdown (where it survives).
-    let md = block_md(block);
+    let md = block_md(block, md_default);
     // The section strings this block contributes; a `@md` block's `TEXT` leaves get
     // their escaped braces (`\{`/`\}`) resolved to bare braces once every section
     // (and its `rdComplete` drop decision) is built (see `resolve_md_text_braces`).
@@ -355,13 +357,17 @@ fn collapse_same_head_sections(out: &mut Vec<String>, block_start: usize) -> Vec
 /// with adjacent `(TEXT …)` runs coalesced as `parse_Rd` + the driver would), and
 /// any other head keeps each distinct section. Finally the fallback runs once on
 /// the *merged* title values: with no description, the topic's title(s) supply one.
-pub(super) fn project_merged_topic(blocks: &[RoxygenBlock], out: &mut Vec<String>) {
+pub(super) fn project_merged_topic(
+    blocks: &[RoxygenBlock],
+    out: &mut Vec<String>,
+    md_default: bool,
+) {
     // Project each member block, deferring the fallback to the merged topic.
     let per_block: Vec<Vec<String>> = blocks
         .iter()
         .map(|b| {
             let mut v = Vec::new();
-            project_block_impl(b, &mut v, false);
+            project_block_impl(b, &mut v, false, md_default);
             v
         })
         .collect();

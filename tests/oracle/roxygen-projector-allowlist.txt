@@ -675,6 +675,7 @@ eqn_two_arg
 examples
 examples_merge
 itemize_enumerate
+markdown_default
 markdown_html_block
 markdown_inline
 markdown_list

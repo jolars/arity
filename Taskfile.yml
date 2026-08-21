@@ -52,7 +52,11 @@ tasks:
       - |
         for r in tests/oracle/corpus/roxygen/*.R; do
           pin="${r%.R}.rdtree"
-          Rscript tests/oracle/roxygen_oracle.R block-to-sections < "$r" > "$pin" \
+          options="${r%.R}.options.json"
+          if [ ! -f "$options" ]; then
+            options=""
+          fi
+          Rscript tests/oracle/roxygen_oracle.R block-to-sections "$options" < "$r" > "$pin" \
             && echo "minted $pin" || echo "SKIP $r (roxygen2 could not process)"
         done
       - task: roxygen-projector-pins

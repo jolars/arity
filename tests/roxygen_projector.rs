@@ -42,7 +42,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use arity::roxygen::project_rd::project_to_rd;
+use arity::parser::ParseOptions;
+use arity::roxygen::project_rd::project_to_rd_with_options;
 
 const ALLOWLIST_REL: &str = "tests/oracle/roxygen-projector-allowlist.txt";
 /// Cases we deliberately do **not** target (a dialect divergence where roxygen2's
@@ -68,10 +69,20 @@ const SPEC_PINS_REL: &str = "tests/oracle/corpus/commonmark-spec-sections.jsonl"
 struct HarvestInput {
     slug: String,
     input: String,
+    /// Package-wide markdown mode for blocks without `@md`/`@noMd`.
+    #[serde(default)]
+    roxygen_markdown_default: bool,
     /// The spec section this example came from, for per-section grouping in the
     /// report. Absent for the harvested corpus (grouped under a default label).
     #[serde(default)]
     section: Option<String>,
+}
+
+#[derive(Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CuratedOptions {
+    #[serde(default)]
+    roxygen_markdown_default: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -102,8 +113,8 @@ fn manifest_path(rel: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
 }
 
-/// `(stem, .R path, optional .rdtree pin path)` for every curated corpus case.
-fn collect_corpus() -> Vec<(String, PathBuf, PathBuf)> {
+/// `(stem, .R path, .rdtree pin path, options)` for every curated corpus case.
+fn collect_corpus() -> Vec<(String, PathBuf, PathBuf, CuratedOptions)> {
     let dir = manifest_path("tests/oracle/corpus/roxygen");
     let mut out = Vec::new();
     if let Ok(entries) = fs::read_dir(&dir) {
@@ -116,11 +127,20 @@ fn collect_corpus() -> Vec<(String, PathBuf, PathBuf)> {
                     .to_string_lossy()
                     .into_owned();
                 let pin = path.with_extension("rdtree");
-                out.push((stem, path, pin));
+                let options_path = path.with_extension("options.json");
+                let options = if options_path.is_file() {
+                    serde_json::from_str(
+                        &fs::read_to_string(&options_path).expect("read curated options"),
+                    )
+                    .expect("parse curated options")
+                } else {
+                    CuratedOptions::default()
+                };
+                out.push((stem, path, pin, options));
             }
         }
     }
-    out.sort();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
     out
 }
 
@@ -160,9 +180,11 @@ fn load_jsonl<T: serde::de::DeserializeOwned>(rel: &str) -> Vec<T> {
 fn evaluate_curated() -> Vec<Report> {
     collect_corpus()
         .into_iter()
-        .map(|(key, r_path, pin_path)| {
+        .map(|(key, r_path, pin_path, case_options)| {
             let src = fs::read_to_string(&r_path).unwrap_or_default();
-            let projected = project_to_rd(&src);
+            let options = ParseOptions::default()
+                .with_roxygen_markdown_default(case_options.roxygen_markdown_default);
+            let projected = project_to_rd_with_options(&src, &options);
             let outcome = match fs::read_to_string(&pin_path) {
                 // The .rdtree pin carries a trailing newline from the R driver;
                 // the projector emits none. Compare trimmed.
@@ -194,7 +216,9 @@ fn evaluate_jsonl_corpus(corpus_rel: &str, pins_rel: &str, default_group: &str) 
         .into_iter()
         .filter_map(|pin| {
             let input = inputs.get(&pin.slug)?;
-            let outcome = if project_to_rd(&input.input) == pin.sections {
+            let options = ParseOptions::default()
+                .with_roxygen_markdown_default(input.roxygen_markdown_default);
+            let outcome = if project_to_rd_with_options(&input.input, &options) == pin.sections {
                 Outcome::Match
             } else {
                 Outcome::Divergent

@@ -1,0 +1,6 @@
+(\description (TEXT "Local opt out"))
+(\description (TEXT "Package markdown"))
+(\details (TEXT "*literal* and `code`."))
+(\details (\emph (TEXT "emphasis")) (TEXT "and") (\code (RCODE "code")) (TEXT ".") (\itemize (\item) (TEXT "first") (\item) (TEXT "second")))
+(\title (TEXT "Local opt out"))
+(\title (TEXT "Package markdown"))

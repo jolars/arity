@@ -42,7 +42,15 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use arity::formatter::format;
+use arity::formatter::{FormatStyle, format_with_options};
+use arity::parser::ParseOptions;
+
+#[derive(Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CuratedOptions {
+    #[serde(default)]
+    roxygen_markdown_default: bool,
+}
 
 /// One corpus file's outcome.
 enum Outcome {
@@ -89,12 +97,14 @@ fn roxygen_oracle_report() {
     let blocked = load_blocked();
     let mut reports: Vec<FileReport> = Vec::new();
 
-    for (key, path) in &corpus {
+    for (key, path, case_options) in &corpus {
         let Ok(raw) = fs::read_to_string(path) else {
             continue;
         };
+        let options = ParseOptions::default()
+            .with_roxygen_markdown_default(case_options.roxygen_markdown_default);
 
-        let arity_out = match format(&raw) {
+        let arity_out = match format_with_options(&raw, FormatStyle::default(), &options) {
             Ok(out) => out,
             Err(_) => {
                 reports.push(FileReport {
@@ -106,8 +116,18 @@ fn roxygen_oracle_report() {
         };
 
         let (Some(orig_tree), Some(fmt_tree)) = (
-            oracle_tree(&rscript, &driver, &raw),
-            oracle_tree(&rscript, &driver, &arity_out),
+            oracle_tree(
+                &rscript,
+                &driver,
+                &raw,
+                case_options.roxygen_markdown_default,
+            ),
+            oracle_tree(
+                &rscript,
+                &driver,
+                &arity_out,
+                case_options.roxygen_markdown_default,
+            ),
         ) else {
             reports.push(FileReport {
                 key: key.clone(),
@@ -163,14 +183,15 @@ fn corpus_label() -> String {
     }
 }
 
-/// Returns `(identifier, path)` pairs. The identifier is the allowlist key: the
-/// file stem for the default corpus, or the corpus-relative path for a custom one.
-fn collect_corpus() -> Vec<(String, PathBuf)> {
+/// Returns `(identifier, path, options)` triples. The identifier is the allowlist
+/// key: the file stem for the default corpus, or the corpus-relative path for a
+/// custom one.
+fn collect_corpus() -> Vec<(String, PathBuf, CuratedOptions)> {
     if let Ok(dir) = std::env::var("ROXYGEN_ORACLE_CORPUS") {
         let root = PathBuf::from(&dir);
         let mut files = Vec::new();
         collect_r_files(&root, &root, &mut files);
-        files.sort();
+        files.sort_by(|a, b| a.0.cmp(&b.0));
         return files;
     }
 
@@ -189,15 +210,24 @@ fn collect_corpus() -> Vec<(String, PathBuf)> {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .into_owned();
-                files.push((key, path));
+                let options_path = path.with_extension("options.json");
+                let options = if options_path.is_file() {
+                    serde_json::from_str(
+                        &fs::read_to_string(options_path).expect("read curated options"),
+                    )
+                    .expect("parse curated options")
+                } else {
+                    CuratedOptions::default()
+                };
+                files.push((key, path, options));
             }
         }
     }
-    files.sort();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
     files
 }
 
-fn collect_r_files(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
+fn collect_r_files(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf, CuratedOptions)>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -211,7 +241,16 @@ fn collect_r_files(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .into_owned();
-            out.push((key, path));
+            let options_path = path.with_extension("options.json");
+            let options = if options_path.is_file() {
+                serde_json::from_str(
+                    &fs::read_to_string(options_path).expect("read corpus options"),
+                )
+                .expect("parse corpus options")
+            } else {
+                CuratedOptions::default()
+            };
+            out.push((key, path, options));
         }
     }
 }
@@ -232,10 +271,16 @@ fn locate_rscript() -> Option<PathBuf> {
 
 /// Run the oracle driver's `block-to-tree` op on `input`, returning the canonical
 /// Rd-tree text, or `None` if roxygen2 could not process it (non-zero exit).
-fn oracle_tree(rscript: &Path, driver: &Path, input: &str) -> Option<String> {
+fn oracle_tree(
+    rscript: &Path,
+    driver: &Path,
+    input: &str,
+    roxygen_markdown_default: bool,
+) -> Option<String> {
     let mut child = Command::new(rscript)
         .arg(driver)
         .arg("block-to-tree")
+        .arg(roxygen_markdown_default.to_string())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -270,6 +315,14 @@ const HARVEST_ALLOWLIST_REL: &str = "tests/oracle/roxygen-allowlist.txt";
 struct HarvestCase {
     slug: String,
     input: String,
+    #[serde(default)]
+    roxygen_markdown_default: bool,
+}
+
+#[derive(serde::Serialize)]
+struct OracleInput {
+    input: String,
+    roxygen_markdown_default: bool,
 }
 
 /// A harvested slug's fixed-point outcome.
@@ -320,7 +373,7 @@ fn read_slug_file(rel: &str) -> std::collections::BTreeSet<String> {
 /// Runs the driver's `trees-batch` op over `inputs`, returning one entry per
 /// input aligned by index: `Some(tree_text)` or `None` (roxygen2 errored, i.e.
 /// the `!ERROR` marker). Returns an all-`None` vector if the driver itself fails.
-fn batch_trees(rscript: &Path, driver: &Path, inputs: &[String]) -> Vec<Option<String>> {
+fn batch_trees(rscript: &Path, driver: &Path, inputs: &[OracleInput]) -> Vec<Option<String>> {
     let mut result = vec![None; inputs.len()];
     let payload = serde_json::to_string(inputs).expect("serialize batch payload");
     let mut child = match Command::new(rscript)
@@ -386,18 +439,32 @@ fn evaluate_harvest(
     driver: &Path,
     corpus: &[HarvestCase],
 ) -> Vec<(String, HOutcome)> {
-    let raw_inputs: Vec<String> = corpus.iter().map(|c| c.input.clone()).collect();
+    let raw_inputs: Vec<OracleInput> = corpus
+        .iter()
+        .map(|c| OracleInput {
+            input: c.input.clone(),
+            roxygen_markdown_default: c.roxygen_markdown_default,
+        })
+        .collect();
 
-    let mut fmt_inputs: Vec<String> = Vec::with_capacity(corpus.len());
+    let mut fmt_inputs: Vec<OracleInput> = Vec::with_capacity(corpus.len());
     let mut arity_ok: Vec<bool> = Vec::with_capacity(corpus.len());
     for c in corpus {
-        match format(&c.input) {
+        let options =
+            ParseOptions::default().with_roxygen_markdown_default(c.roxygen_markdown_default);
+        match format_with_options(&c.input, FormatStyle::default(), &options) {
             Ok(out) => {
-                fmt_inputs.push(out);
+                fmt_inputs.push(OracleInput {
+                    input: out,
+                    roxygen_markdown_default: c.roxygen_markdown_default,
+                });
                 arity_ok.push(true);
             }
             Err(_) => {
-                fmt_inputs.push(String::new());
+                fmt_inputs.push(OracleInput {
+                    input: String::new(),
+                    roxygen_markdown_default: c.roxygen_markdown_default,
+                });
                 arity_ok.push(false);
             }
         }

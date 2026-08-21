@@ -1,4 +1,5 @@
 use super::*;
+use crate::parser::ParseOptions;
 
 #[test]
 fn projects_plain_prose_sections() {
@@ -5064,5 +5065,56 @@ fn unknown_rd_macro_group_survives_nesting_and_markdown() {
     assert!(
         out.contains("(UNKNOWN \"\\\\zzz\") (LIST (\\emph (TEXT \"x\")))"),
         "got: {out}"
+    );
+}
+
+#[test]
+fn package_markdown_default_projects_directiveless_blocks() {
+    let src = "#' T\n\
+               #'\n\
+               #' @details *emphasis* and `code`\n\
+               #'\n\
+               #' - first\n\
+               #' - second\n\
+               #' @name default-on\n\
+               NULL\n";
+    let options = ParseOptions::default().with_roxygen_markdown_default(true);
+
+    assert_eq!(
+        project_to_rd_with_options(src, &options),
+        "(\\description (TEXT \"T\"))\n\
+         (\\details (\\emph (TEXT \"emphasis\")) (TEXT \"and\") (\\code (RCODE \"code\")) (\\itemize (\\item) (TEXT \"first\") (\\item) (TEXT \"second\")))\n\
+         (\\title (TEXT \"T\"))"
+    );
+}
+
+#[test]
+fn default_options_match_the_compatibility_entry_point() {
+    let src = "#' T\n\
+               #'\n\
+               #' @md\n\
+               #' @details *emphasis*\n\
+               #' @name explicit-md\n\
+               NULL\n";
+
+    assert_eq!(
+        project_to_rd_with_options(src, &ParseOptions::default()),
+        project_to_rd(src)
+    );
+}
+
+#[test]
+fn no_md_overrides_package_markdown_default() {
+    let src = "#' T\n\
+               #'\n\
+               #' @noMd\n\
+               #' @details *emphasis* and `code`\n\
+               #' @name default-off\n\
+               NULL\n";
+    let options = ParseOptions::default().with_roxygen_markdown_default(true);
+
+    assert_eq!(
+        project_to_rd_with_options(src, &options),
+        project_to_rd(src)
     );
 }
