@@ -107,6 +107,15 @@ impl Cache {
         }
     }
 
+    /// A cheap fingerprint of `meta.json` (mtime + length) for callers that
+    /// hold a loaded provider and want to notice an external harvest or a
+    /// cache wipe without reading the file. `None` when the file is missing
+    /// or unstattable — itself a distinguishable state.
+    pub fn meta_stamp(&self) -> Option<(std::time::SystemTime, u64)> {
+        let md = std::fs::metadata(self.meta_path()).ok()?;
+        Some((md.modified().ok()?, md.len()))
+    }
+
     fn write_meta(&self, meta: &IndexMeta) -> Result<()> {
         std::fs::create_dir_all(self.index_dir()).map_err(|e| CacheError::Io(e.to_string()))?;
         let json = serde_json::to_vec_pretty(meta).map_err(|e| CacheError::Serde(e.to_string()))?;

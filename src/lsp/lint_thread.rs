@@ -65,9 +65,9 @@ pub(crate) fn spawn_lint_thread(
             // worker, so its thread lives exactly as long as the lint thread.
             let mut worker = LintWorker {
                 db: IncrementalDatabase::default(),
-                index_loaded: HashSet::new(),
+                index_install: None,
                 index_attempts: HashSet::new(),
-                remote_loaded: HashSet::new(),
+                remote_install: None,
                 remote_attempts: HashSet::new(),
                 out_tx,
                 build_tx,
@@ -157,21 +157,34 @@ pub(crate) fn guard(label: &str, f: impl FnOnce()) -> bool {
     }
 }
 
+/// The identity of the harvested provider currently installed in the salsa
+/// [`LibraryIndex`]: which cache root it was read from — `None` when no root
+/// resolved and an *empty* provider was installed so analysis still takes the
+/// salsa resolution path — and the `meta.json` stamp observed at load. Compared
+/// on every lint, so a different workspace folder's cache root, a `cache-dir`
+/// config edit, or an external `arity index` run each swap a fresh provider in.
+#[derive(PartialEq, Eq)]
+struct InstalledIndex {
+    root: Option<PathBuf>,
+    meta_stamp: Option<(std::time::SystemTime, u64)>,
+}
+
 pub(crate) struct LintWorker {
     db: IncrementalDatabase,
-    /// Cache roots whose index has already been loaded into the salsa
-    /// [`LibraryIndex`] singleton. Keyed by the *resolved cache root* rather
-    /// than the document's directory: every directory a file is opened from
-    /// used to re-load (and re-install) the whole cache, churning an
-    /// allocation that scales with everything ever harvested (issue #116).
-    index_loaded: HashSet<PathBuf>,
+    /// What the salsa [`LibraryIndex`] singleton's harvested provider was
+    /// loaded from. The singleton holds exactly one provider, so this is one
+    /// installed identity, not a set of roots ever seen: a set could never
+    /// converge back after two roots alternate (a multi-folder workspace with
+    /// distinct `cache-dir`s), leaving the earlier root's documents resolving
+    /// against the wrong cache. `None` until the first lint.
+    index_install: Option<InstalledIndex>,
     /// Packages a background harvest has already been scheduled for this session
     /// — never retried, so a not-installed package doesn't loop.
     index_attempts: HashSet<SmolStr>,
-    /// Cache roots whose remote-sidecar disk cache has already been warmed
-    /// into the salsa [`LibraryIndex`]'s `remote` field. Keyed like
-    /// [`index_loaded`](Self::index_loaded).
-    remote_loaded: HashSet<PathBuf>,
+    /// The cache root whose remote-sidecar disk cache is currently warmed into
+    /// the salsa [`LibraryIndex`]'s `remote` field. One installed identity for
+    /// one slot, like [`index_install`](Self::index_install).
+    remote_install: Option<PathBuf>,
     /// Packages a remote-sidecar fetch has already been attempted for this session
     /// — never retried, so a package absent from the sidecar doesn't loop.
     remote_attempts: HashSet<SmolStr>,
@@ -498,8 +511,11 @@ impl LintWorker {
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("."));
 
-        self.ensure_index(&req.index_config);
-        self.ensure_remote(&req.index_config);
+        // Resolved once per request and threaded to every consumer below, so
+        // the env lookup isn't repeated four times on the keystroke path.
+        let cache_root = resolve_cache_root(None, req.index_config.cache_dir.as_deref()).ok();
+        self.ensure_index(cache_root.as_deref());
+        self.ensure_remote(cache_root.as_deref(), &req.index_config);
 
         let active = self.db.upsert_file(&req.path, req.buffer.text_arc());
         self.db.stage_edits(active, std::mem::take(&mut req.edits));
@@ -540,11 +556,23 @@ impl LintWorker {
         // entitled to use, and the undefined-symbol gates need them enumerable.
         let declared = self.declared_packages_for(&req.path);
         if req.index_config.auto_build {
-            self.maybe_build(&anchor, &req.index_config, req.buffer.text(), &declared);
+            self.maybe_build(
+                &anchor,
+                cache_root.as_deref(),
+                &req.index_config,
+                req.buffer.text(),
+                &declared,
+            );
         }
         // Fetch names-only exports for referenced packages the offline tiers don't
         // cover, when a sidecar URL is configured. Background, like `maybe_build`.
-        self.maybe_fetch_remote(&anchor, &req.index_config, req.buffer.text(), &declared);
+        self.maybe_fetch_remote(
+            &anchor,
+            cache_root.as_deref(),
+            &req.index_config,
+            req.buffer.text(),
+            &declared,
+        );
 
         // The snapshot carries the salsa library index, so `analyze_prepared`
         // resolves undefined symbols through it; this provider is only the
@@ -595,15 +623,28 @@ impl LintWorker {
             let _ = self.out_tx.send(Outbound::RelintAll);
         }
 
-        self.ensure_index(&req.index_config);
-        self.ensure_remote(&req.index_config);
+        let cache_root = resolve_cache_root(None, req.index_config.cache_dir.as_deref()).ok();
+        self.ensure_index(cache_root.as_deref());
+        self.ensure_remote(cache_root.as_deref(), &req.index_config);
         // A `DESCRIPTION` names exactly the packages its author is entitled to
         // use, so opening one warms the harvest for them — no R source needed.
         let declared = self.declared_packages_for(&req.path);
         if req.index_config.auto_build {
-            self.maybe_build(&root, &req.index_config, "", &declared);
+            self.maybe_build(
+                &root,
+                cache_root.as_deref(),
+                &req.index_config,
+                "",
+                &declared,
+            );
         }
-        self.maybe_fetch_remote(&root, &req.index_config, "", &declared);
+        self.maybe_fetch_remote(
+            &root,
+            cache_root.as_deref(),
+            &req.index_config,
+            "",
+            &declared,
+        );
 
         let rules = match self.resolved_rules(&req.lint_config) {
             Ok(rules) => rules,
@@ -703,26 +744,51 @@ impl LintWorker {
         });
     }
 
-    /// Load the index cache into the salsa [`LibraryIndex`] the first time we
-    /// see its resolved cache root. Idempotent per cache root, and a *lazy*
-    /// load: construction reads `meta.json` only, and each package's membership
-    /// and rich data are read on first use — so holding the provider for a
-    /// long-lived session costs memory proportional to the packages actually
-    /// asked about, not to everything ever harvested (issue #116). Runs on the
-    /// lint thread (sole writer); the HIGH-durability set means subsequent
-    /// keystrokes don't revalidate the library subgraph.
-    fn ensure_index(&mut self, cfg: &IndexConfig) {
-        let Ok(root) = resolve_cache_root(None, cfg.cache_dir.as_deref()) else {
-            return;
+    /// Keep the salsa [`LibraryIndex`] loaded from `cache_root`, reloading when
+    /// the root or its `meta.json` stamp differs from what is installed. The
+    /// stamp check (one stat per lint) is what makes an external `arity index`
+    /// run — or a cache wipe — visible mid-session; without it nothing would
+    /// ever re-read `meta.json`. A *lazy* load: construction reads `meta.json`
+    /// only, and each package's membership and rich data are read on first use,
+    /// so a long-lived session costs memory proportional to the packages
+    /// actually asked about, not to everything ever harvested (issue #116).
+    /// Runs on the lint thread (sole writer); the HIGH-durability set means
+    /// keystrokes between reloads don't revalidate the library subgraph.
+    ///
+    /// When no cache root resolves, an *empty* provider is installed (matching
+    /// the CLI): the singleton must exist so analysis takes the salsa
+    /// resolution path, which alone folds the enclosing package's `Depends`
+    /// attaches; the standalone fallback does not.
+    fn ensure_index(&mut self, cache_root: Option<&Path>) {
+        let current = InstalledIndex {
+            root: cache_root.map(Path::to_path_buf),
+            meta_stamp: cache_root.and_then(|r| Cache::new(r.to_path_buf()).meta_stamp()),
         };
-        if !self.index_loaded.insert(root.clone()) {
+        if self.index_install.as_ref() == Some(&current) {
             return;
         }
-        let indexed = IndexedProvider::from_cache_lazy(&Cache::new(root));
-        let loaded_any = indexed.packages().next().is_some();
+        let indexed = match &current.root {
+            Some(root) => IndexedProvider::from_cache_lazy(&Cache::new(root.clone())),
+            None => IndexedProvider::empty(),
+        };
+        // Readable packages, not `meta.json`'s claim: an orphaned meta whose
+        // files are gone offers nothing worth refreshing hints over. Settling
+        // the first readable package fills one membership; an orphaned meta
+        // costs one failed open per named package, once per (re)load.
+        let loaded_any = indexed.packages().any(|p| indexed.has_package(p));
+        // A stamp change under an unchanged root means the cache itself moved
+        // beneath open documents (an external harvest, a wipe): their published
+        // findings are stale, so re-lint them. A *root* change must not
+        // re-lint: with per-URI cache roots that would ping-pong forever.
+        let externally_changed =
+            matches!(&self.index_install, Some(prev) if prev.root == current.root);
         self.db.set_library_index(indexed);
+        self.index_install = Some(current);
         if loaded_any {
             let _ = self.out_tx.send(Outbound::RefreshInlayHints);
+        }
+        if externally_changed {
+            let _ = self.out_tx.send(Outbound::RelintAll);
         }
     }
 
@@ -749,10 +815,16 @@ impl LintWorker {
     fn maybe_build(
         &mut self,
         anchor: &Path,
+        cache_root: Option<&Path>,
         cfg: &IndexConfig,
         source: &str,
         declared: &[SmolStr],
     ) {
+        // No resolvable cache root means nowhere to harvest into; leave the
+        // packages unmarked so a root appearing later can still build them.
+        let Some(cache_root) = cache_root.map(Path::to_path_buf) else {
+            return;
+        };
         let current = self.db.library_data();
         let empty = IndexedProvider::empty();
         let indexed = current.as_deref().unwrap_or(&empty);
@@ -760,9 +832,6 @@ impl LintWorker {
         if to_build.is_empty() {
             return;
         }
-        let Ok(cache_root) = resolve_cache_root(None, cfg.cache_dir.as_deref()) else {
-            return;
-        };
         let cfg = cfg.clone();
         let anchor = anchor.to_path_buf();
         let build_tx = self.build_tx.clone();
@@ -802,23 +871,30 @@ impl LintWorker {
     }
 
     /// Warm the remote sidecar's disk cache into the salsa [`LibraryIndex`]'s
-    /// `remote` field the first time we see its resolved cache root, when a
-    /// sidecar URL is configured. Idempotent per cache root (like
-    /// [`ensure_index`](Self::ensure_index)), network-free (disk only). Runs on
-    /// the lint thread (sole writer); HIGH durability means later keystrokes
-    /// don't revalidate resolution.
-    fn ensure_remote(&mut self, cfg: &IndexConfig) {
+    /// `remote` field when the resolved cache root differs from the one
+    /// installed — one installed identity for one slot, like
+    /// [`ensure_index`](Self::ensure_index), so alternating roots always
+    /// converge back rather than latching the first-seen set. When a sidecar
+    /// URL is configured; network-free (disk only). Runs on the lint thread
+    /// (sole writer); HIGH durability means later keystrokes don't revalidate
+    /// resolution.
+    fn ensure_remote(&mut self, cache_root: Option<&Path>, cfg: &IndexConfig) {
         let Some(url) = cfg.remote_url.as_deref() else {
             return;
         };
-        let Ok(root) = resolve_cache_root(None, cfg.cache_dir.as_deref()) else {
+        let Some(root) = cache_root else {
             return;
         };
-        if !self.remote_loaded.insert(root.clone()) {
+        if self.remote_install.as_deref() == Some(root) {
             return;
         }
-        let cached = Sidecar::http(url, &root).load_cached();
-        if !cached.is_empty() {
+        let cached = Sidecar::http(url, root).load_cached();
+        let replacing = self.remote_install.is_some();
+        self.remote_install = Some(root.to_path_buf());
+        // An empty disk cache still *replaces* a previously installed root's
+        // sidecar — leaving it would resolve this root's documents against
+        // another cache's names. Only the very first, empty load writes nothing.
+        if !cached.is_empty() || replacing {
             self.db.set_remote_exports(cached);
         }
     }
@@ -830,11 +906,17 @@ impl LintWorker {
     fn maybe_fetch_remote(
         &mut self,
         anchor: &Path,
+        cache_root: Option<&Path>,
         cfg: &IndexConfig,
         source: &str,
         declared: &[SmolStr],
     ) {
         let Some(url) = cfg.remote_url.as_deref() else {
+            return;
+        };
+        // No resolvable cache root means nowhere to persist the fetched names;
+        // leave the packages unmarked so a root appearing later can fetch them.
+        let Some(cache_root) = cache_root.map(Path::to_path_buf) else {
             return;
         };
         let empty_index = IndexedProvider::empty();
@@ -848,9 +930,6 @@ impl LintWorker {
         if to_fetch.is_empty() {
             return;
         }
-        let Ok(cache_root) = resolve_cache_root(None, cfg.cache_dir.as_deref()) else {
-            return;
-        };
         let url = url.to_string();
         let _ = anchor;
         let remote_tx = self.remote_tx.clone();
