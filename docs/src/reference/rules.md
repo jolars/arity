@@ -103,6 +103,7 @@ so this page never drifts from the rules' actual behavior.
 - [`description-malformed-name`](#description-malformed-name)
 - [`description-malformed-version`](#description-malformed-version)
 - [`description-malformed-maintainer`](#description-malformed-maintainer)
+- [`description-encoding`](#description-encoding)
 - [`description-authors-at-r`](#description-authors-at-r)
 - [`description-empty-person`](#description-empty-person)
 - [`unused-dependency`](#unused-dependency)
@@ -2135,6 +2136,42 @@ warning: description-malformed-maintainer
 3 | Maintainer: Doe, Jane <jane@example.com>
   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the maintainer name `Doe, Jane` contains a comma but is not quoted
   = help: Quote the name (`"Doe, Jane" <jane@example.com>`), so the comma does not read as a second maintainer.
+```
+
+### `description-encoding`
+
+Flag non-ASCII text in a `DESCRIPTION` with no `Encoding` field, and non-ASCII text in fields R requires to be ASCII: `Package`, `Version`, `License`, and `Encoding`.
+
+A missing declaration has a safe fix: arity only lints text it has already decoded as UTF-8, so it can append `Encoding: UTF-8` without guessing. Non-ASCII content in an ASCII-only field has no autofix because choosing replacement text requires the author.
+
+This rule is **enabled by default**.
+
+A package containing UTF-8 text without declaring its encoding:
+
+```text
+Package: mypkg
+Version: 0.1.0
+Title: A naïve package
+License: MIT
+```
+
+```text
+warning: description-encoding
+ --> DESCRIPTION:3:12
+  |
+3 | Title: A naïve package
+  |            ^ DESCRIPTION contains non-ASCII text but does not declare its encoding
+  = help: Add `Encoding: UTF-8`.
+```
+
+After applying the fix:
+
+```text
+Package: mypkg
+Version: 0.1.0
+Title: A naïve package
+License: MIT
+Encoding: UTF-8
 ```
 
 ### `description-authors-at-r`

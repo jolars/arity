@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use arity::config::LintConfig;
 use arity::linter::{
-    LintError, LintResult, LintStatus, check_description_document, check_paths,
+    LintError, LintResult, LintStatus, apply_fixes, check_description_document, check_paths,
     check_paths_with_config,
 };
 use tempfile::TempDir;
@@ -221,6 +221,106 @@ fn messages(description: &str, rule: &str) -> Vec<String> {
     .filter(|d| d.rule == rule)
     .map(|d| d.message.body.clone())
     .collect()
+}
+
+// ---------------------------------------------------------------------------
+// description-encoding
+// ---------------------------------------------------------------------------
+
+#[test]
+fn description_encoding_adds_utf8_for_non_ascii_text() {
+    let text = COMPLETE_DESCRIPTION.replace("A Test Package", "A naïve Package");
+    let diagnostics =
+        check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+            .unwrap();
+    let finding = diagnostics
+        .iter()
+        .find(|d| d.rule == "description-encoding")
+        .expect("expected a description-encoding finding");
+    let fix = finding
+        .fix
+        .as_ref()
+        .expect("missing Encoding has a safe fix");
+
+    assert_eq!(
+        apply_fixes(&text, std::slice::from_ref(fix), false).output,
+        format!("{text}Encoding: UTF-8\n")
+    );
+}
+
+#[test]
+fn description_encoding_flags_non_ascii_in_ascii_only_fields_without_a_fix() {
+    for (field, value) in [
+        ("Package", "téstpkg"),
+        ("Version", "0.1.é"),
+        ("License", "MÍT"),
+        ("Encoding", "UTF-é"),
+    ] {
+        let mut text = COMPLETE_DESCRIPTION.to_string();
+        if field == "Encoding" {
+            text.push_str(&format!("Encoding: {value}\n"));
+        } else {
+            let original = match field {
+                "Package" => "testpkg",
+                "Version" => "0.1.0",
+                "License" => "MIT + file LICENSE",
+                _ => unreachable!(),
+            };
+            text = text.replacen(
+                &format!("{field}: {original}"),
+                &format!("{field}: {value}"),
+                1,
+            );
+            text.push_str("Encoding: UTF-8\n");
+        }
+        let diagnostics =
+            check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+                .unwrap();
+        let finding = diagnostics
+            .iter()
+            .find(|d| d.rule == "description-encoding")
+            .unwrap_or_else(|| panic!("expected a finding for {field}"));
+        assert!(finding.message.body.contains(field));
+        assert!(finding.fix.is_none());
+    }
+}
+
+#[test]
+fn description_encoding_ignores_ascii_and_declared_utf8() {
+    assert!(!ids(COMPLETE_DESCRIPTION).contains(&"description-encoding"));
+    let declared = format!("{COMPLETE_DESCRIPTION}Encoding: UTF-8\n");
+    let non_ascii = declared.replace("A Test Package", "A naïve Package");
+    assert!(!ids(&non_ascii).contains(&"description-encoding"));
+}
+
+#[test]
+fn description_encoding_fixed_output_is_parseable_and_clean() {
+    for text in [
+        COMPLETE_DESCRIPTION.replace("A Test Package", "A naïve Package"),
+        COMPLETE_DESCRIPTION
+            .trim_end_matches('\n')
+            .replace("A Test Package", "A naïve Package"),
+        COMPLETE_DESCRIPTION
+            .replace('\n', "\r\n")
+            .replace("A Test Package", "A naïve Package"),
+    ] {
+        let diagnostics =
+            check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+                .unwrap();
+        let fixes = diagnostics
+            .iter()
+            .filter(|d| d.rule == "description-encoding")
+            .filter_map(|d| d.fix.clone())
+            .collect::<Vec<_>>();
+        let fixed = apply_fixes(&text, &fixes, false).output;
+        let after =
+            check_description_document(Path::new("DESCRIPTION"), &fixed, &LintConfig::default())
+                .expect("fixed DESCRIPTION should parse");
+        assert!(
+            !after.iter().any(|d| d.rule == "description-encoding"),
+            "fixed output was not clean:\n{fixed}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

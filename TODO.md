@@ -551,11 +551,13 @@ Tier 2—needs a small bundled table or the project layer:
   `"GPL 2.0" -> "GPL-2"` mapping table, making this the only rule in the set
   with a genuinely **safe autofix**.
 
-- [ ] `description-encoding`. Non-ASCII bytes with no `Encoding` field (R's
+- [x] `description-encoding` (packaging; syn; safe fix, default on). Non-ASCII
+  bytes with no `Encoding` field (R's
   `missing_encoding`), and non-ASCII in the fields R requires be ASCII
   (`Package`, `Version`, `License`, `Encoding`). arity already reads the file
   as UTF-8, so "is this valid UTF-8" is decided, which makes
-  `Encoding: UTF-8` a **safe fix**.
+  `Encoding: UTF-8` a **safe fix**. Done; ASCII-only field findings are
+  report-only because their replacement text requires the author.
 
 - [x] `description-authors-at-r` (packaging; syn; no fix, default on). Done.
   The value is parsed with arity's own R parser and resolved statically, the
