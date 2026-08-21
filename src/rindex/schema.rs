@@ -31,10 +31,10 @@ pub struct PackageIndex {
     /// harvest time (used for staleness checks).
     pub lib_path: String,
     /// The package's own one-line `Title`, from its `DESCRIPTION` — not a
-    /// symbol's Rd help title (that is [`HelpDoc::title`]). Harvested rather
-    /// than read on demand because dependency-field completion labels *every*
-    /// candidate at once, and a file read per candidate is not an option.
-    /// `None` for a `DESCRIPTION` with no `Title` field.
+    /// symbol's Rd help title (that is [`HelpDoc::title`]). Harvested so hover
+    /// and `completionItem/resolve` can label a package without reading its
+    /// installed `DESCRIPTION`. `None` for a `DESCRIPTION` with no `Title`
+    /// field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<SmolStr>,
     /// R version that built the package (from `DESCRIPTION`'s `Built:` field),

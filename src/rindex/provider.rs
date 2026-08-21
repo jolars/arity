@@ -182,13 +182,31 @@ impl From<PackageExports> for Membership {
     }
 }
 
+impl Membership {
+    /// The membership view a rich [`PackageIndex`] implies. Both the eager
+    /// constructors and a lazy rich fill derive membership through this, so a
+    /// package's two views always come from one read of its file.
+    fn of_index(idx: &PackageIndex) -> Self {
+        Membership {
+            exports: idx
+                .symbols
+                .iter()
+                .filter(|s| s.exported)
+                .map(|s| s.name.clone())
+                .collect(),
+            attaches: idx.attaches.clone(),
+        }
+    }
+}
+
 /// One package the index knows of, with its membership and rich index either
 /// already resolved (the eager constructors) or filled from disk on first use
 /// (the lazy one). The inner `Option`s distinguish "read and empty" from "file
 /// missing or stale", which must read as *not indexed*.
 #[derive(Debug)]
 struct PackageSlot {
-    /// The version `meta.json` names — the file a lazy fill reads.
+    /// The package's installed version — the file name a lazy fill reads, and
+    /// answerable ([`IndexedProvider::version`]) without any file read.
     version: SmolStr,
     membership: OnceLock<Option<Membership>>,
     /// The full harvested index (formals + help bodies), filled per package on
@@ -200,13 +218,14 @@ struct PackageSlot {
 
 impl PackageSlot {
     /// A slot whose membership and rich index are already known.
-    fn resolved(membership: Membership, index: PackageIndex) -> Self {
+    fn resolved(index: PackageIndex) -> Self {
         let membership_cell = OnceLock::new();
-        let _ = membership_cell.set(Some(membership));
+        let _ = membership_cell.set(Some(Membership::of_index(&index)));
+        let version = index.version.clone();
         let index_cell = OnceLock::new();
         let _ = index_cell.set(Some(index));
         PackageSlot {
-            version: SmolStr::default(),
+            version,
             membership: membership_cell,
             index: index_cell,
         }
@@ -230,44 +249,32 @@ impl IndexedProvider {
 
     /// Build from a set of harvested package indices.
     pub fn from_indices(indices: impl IntoIterator<Item = PackageIndex>) -> Self {
-        let mut packages: HashMap<SmolStr, PackageSlot> = HashMap::new();
-        for idx in indices {
-            let membership = Membership {
-                exports: idx
-                    .symbols
-                    .iter()
-                    .filter(|s| s.exported)
-                    .map(|s| s.name.clone())
-                    .collect(),
-                attaches: idx.attaches.clone(),
-            };
-            packages.insert(idx.package.clone(), PackageSlot::resolved(membership, idx));
-        }
+        let packages = indices
+            .into_iter()
+            .map(|idx| (idx.package.clone(), PackageSlot::resolved(idx)))
+            .collect();
         IndexedProvider {
             packages,
             source: None,
         }
     }
 
-    /// Load every package index currently named by the cache's `meta.json`.
-    pub fn from_cache(cache: &Cache) -> Self {
-        Self::from_indices(cache.load_all())
-    }
-
     /// Note which packages the cache holds, deferring every package file to the
-    /// first question asked about that package. `has_package` and the `exports`
-    /// tests answer exactly as after [`from_cache`], but the rich per-symbol
-    /// data is never deserialized, so [`lookup`](Self::lookup) and
-    /// [`package`](Self::package) return `None`.
+    /// first question asked about that package. Construction reads `meta.json`
+    /// and nothing else; a package's membership fills on the first resolution
+    /// question about it and its rich per-symbol data
+    /// ([`lookup`](Self::lookup)/[`package`](Self::package)) on the first rich
+    /// question, so resident data scales with the packages a session actually
+    /// asks about, not with everything ever harvested (issue #116).
     ///
-    /// This is the lint CLI's load, and it is lazy because resolution
-    /// (`resolve_origin`/`package_indexed`) only ever asks about the packages a
-    /// file *attaches* — `library()`, a NAMESPACE `import()`, a package's own
-    /// declared attaches. A file that attaches nothing reads `meta.json` and
-    /// nothing else, where the eager load deserialized every harvested package
-    /// (megabytes of formals and help bodies) to answer no question at all.
-    /// Consumers of the rich data (LSP hover and completion) must use
-    /// [`from_cache`].
+    /// This is how both the lint CLI and the language server load the cache.
+    /// It works because every consumer asks per package: resolution
+    /// (`resolve_origin`/`package_indexed`) only about the packages a file
+    /// *attaches*, and hover/`completionItem/resolve` about the one package
+    /// under the cursor. Bulk consumers that label every harvested package at
+    /// once (dependency-field completion) must use the no-read
+    /// [`version`](Self::version)/[`package_if_resident`](Self::package_if_resident)
+    /// peeks instead of the filling accessors.
     pub fn from_cache_lazy(cache: &Cache) -> Self {
         let packages = cache
             .read_meta()
@@ -299,6 +306,12 @@ impl IndexedProvider {
         let slot = self.packages.get(package)?;
         slot.membership
             .get_or_init(|| {
+                // A rich fill that already read the file answers membership
+                // too; re-reading would double the work and could disagree
+                // with it if the file has since changed on disk.
+                if let Some(index) = slot.index.get() {
+                    return index.as_ref().map(Membership::of_index);
+                }
                 let exports = self
                     .source
                     .as_ref()?
@@ -315,13 +328,32 @@ impl IndexedProvider {
 
     /// Iterate every locally harvested package name.
     ///
-    /// Reads the slot map, not `indices`, so it stays correct under the lean
-    /// [`from_cache_lazy`](Self::from_cache_lazy) load, which never populates
-    /// the rich map. Naming a package here is `meta.json`'s claim and not yet a
-    /// read, so under that load the iterator may include a package whose file
-    /// has since gone away; ask [`has_package`](Self::has_package) to settle it.
+    /// Under the [`from_cache_lazy`](Self::from_cache_lazy) load, naming a
+    /// package here is `meta.json`'s claim and not yet a read, so the iterator
+    /// may include a package whose file has since gone away; ask
+    /// [`has_package`](Self::has_package) to settle it.
     pub fn packages(&self) -> impl Iterator<Item = &SmolStr> {
         self.packages.keys()
+    }
+
+    /// The installed version of `package`, answered without any file read: a
+    /// lazy slot carries the version `meta.json` names and an eager slot the
+    /// harvested index's. For bulk consumers (dependency-field completion
+    /// labels every harvested package at once) that must not fault package
+    /// files in.
+    pub fn version(&self, package: &str) -> Option<&SmolStr> {
+        self.packages
+            .get(package)
+            .map(|slot| &slot.version)
+            .filter(|v| !v.is_empty())
+    }
+
+    /// The rich index for `package` only when it is already resident — a peek
+    /// that never reads disk, for the same bulk consumers as
+    /// [`version`](Self::version). Per-package consumers use
+    /// [`package`](Self::package), which fills on demand.
+    pub fn package_if_resident(&self, package: &str) -> Option<&PackageIndex> {
+        self.packages.get(package)?.index.get()?.as_ref()
     }
 
     /// The rich entry for `pkg::name`, if indexed. Under the lazy load the
@@ -341,9 +373,17 @@ impl IndexedProvider {
     /// read as *no rich data*, never an invented empty index.
     pub fn package(&self, package: &str) -> Option<&PackageIndex> {
         let slot = self.packages.get(package)?;
-        slot.index
+        let index = slot
+            .index
             .get_or_init(|| self.source.as_ref()?.read_package(package, &slot.version))
-            .as_ref()
+            .as_ref();
+        // Seed membership off the same read: the common attached-then-hovered
+        // package parses its file once instead of twice, and the two views
+        // cannot disagree about a file that changed between two reads.
+        if let Some(idx) = index {
+            let _ = slot.membership.set(Some(Membership::of_index(idx)));
+        }
+        index
     }
 
     /// The harvested attach set for `package`, if one was captured. `None`
@@ -766,7 +806,8 @@ mod tests {
             .write_package(&meta_pkg("tidyverse", &[], &["dplyr"]))
             .unwrap();
 
-        let full = IndexedProvider::from_cache(&cache);
+        // The eager oracle: everything the cache holds, fully resolved.
+        let full = IndexedProvider::from_indices(cache.load_all());
         let lazy = IndexedProvider::from_cache_lazy(&cache);
 
         for name in ["filter", "across", "internal_helper", "nope"] {
@@ -843,6 +884,47 @@ mod tests {
         // Once filled, the payload is stable: a second query re-reads nothing.
         std::fs::remove_file(cache.index_dir().join("dplyr@1.0.json")).unwrap();
         assert!(lazy.lookup("dplyr", "filter").is_some());
+    }
+
+    #[test]
+    fn rich_fill_seeds_membership_from_the_same_read() {
+        use crate::rindex::cache::Cache;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().to_path_buf());
+        cache.write_package(&pkg("dplyr", &["across"])).unwrap();
+
+        let lazy = IndexedProvider::from_cache_lazy(&cache);
+        assert!(lazy.lookup("dplyr", "across").is_some());
+        // Deleting the file after the rich fill proves membership is answered
+        // from that same read rather than a second one — so the two views also
+        // cannot disagree about a file that changed between two reads.
+        std::fs::remove_file(cache.index_dir().join("dplyr@1.0.json")).unwrap();
+        assert!(lazy.has_package("dplyr"));
+        assert!(lazy.exports("dplyr", "across"));
+    }
+
+    #[test]
+    fn version_and_resident_peeks_read_no_files() {
+        use crate::rindex::cache::Cache;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().to_path_buf());
+        cache.write_package(&pkg("dplyr", &["across"])).unwrap();
+
+        let lazy = IndexedProvider::from_cache_lazy(&cache);
+        // Deleting the file up front proves the peeks fault nothing in:
+        // dependency-field completion labels every harvested package at once
+        // and must not deserialize the whole cache on the read pool.
+        std::fs::remove_file(cache.index_dir().join("dplyr@1.0.json")).unwrap();
+        assert_eq!(lazy.version("dplyr").map(SmolStr::as_str), Some("1.0"));
+        assert!(lazy.package_if_resident("dplyr").is_none());
+        assert!(lazy.version("absent").is_none());
+
+        // Eager slots carry their version too, with the index resident.
+        let eager = IndexedProvider::from_indices([pkg("tibble", &["tribble"])]);
+        assert_eq!(eager.version("tibble").map(SmolStr::as_str), Some("1.0"));
+        assert!(eager.package_if_resident("tibble").is_some());
     }
 
     #[test]
