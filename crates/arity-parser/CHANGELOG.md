@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.2](https://github.com/jolars/arity/compare/arity-parser-v0.5.1...arity-parser-v0.5.2) (2026-08-21)
+
+### Bug Fixes
+- **parser:** match read.dcf duplicate lookup ([`55f7b68`](https://github.com/jolars/arity/commit/55f7b6881fa5111c05307cb6250e99e65b5d7a37))
+- **parser:** match read.dcf empty-line folding ([`7ce1789`](https://github.com/jolars/arity/commit/7ce17894fc73e6b5b2c7e5f7075180f331494d44))
+- **parser:** span ordinary roxygen comments ([`592a5fe`](https://github.com/jolars/arity/commit/592a5fe17db1756fd6a8dde0d70236d102fa1cff))
+- **lint:** address future corpus false positives ([`5615b43`](https://github.com/jolars/arity/commit/5615b436a38e72c5148463cc98552026847a0261))
+- **parser:** reject return in native pipes ([`197a091`](https://github.com/jolars/arity/commit/197a0917736ad76ee1d8253ed688d260dcf5765c))
+
 ## [0.5.1](https://github.com/jolars/arity/compare/arity-parser-v0.5.0...arity-parser-v0.5.1) (2026-08-17)
 
 ### Bug Fixes
