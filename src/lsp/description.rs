@@ -214,12 +214,19 @@ pub fn compute_description_completions(
 
     let mut candidates: Vec<Candidate> = Vec::new();
     for name in indexed.packages() {
-        let index = indexed.package(name);
+        // Peeks only: this labels *every* harvested package at once, and under
+        // the lazy provider a filling accessor here would synchronously
+        // deserialize the whole cache on the read pool and pin it resident
+        // (issue #116). The version needs no read; the `Title` is shown when
+        // its package happens to be resident, and `completionItem/resolve`
+        // reads the one chosen package for the full card.
         candidates.push(Candidate {
             name: name.clone(),
             group: GROUP_INSTALLED,
-            version: index.map(|i| i.version.clone()),
-            title: index.and_then(|i| i.title.clone()),
+            version: indexed.version(name).cloned(),
+            title: indexed
+                .package_if_resident(name)
+                .and_then(|i| i.title.clone()),
         });
     }
     // `R` is the language, not a package, and only `Depends` may name it.
@@ -268,9 +275,8 @@ pub fn compute_description_completions(
             kind: Some(CompletionItemKind::MODULE),
             label_details: Some(CompletionItemLabelDetails {
                 detail: c.version.as_ref().map(|v| format!(" {v}")),
-                // The `Title` when we harvested one — the reason it lives in
-                // the index rather than being read on demand: labeling every
-                // candidate at once rules out a file read per candidate.
+                // The `Title` when its index is resident (see the peek above);
+                // otherwise the provenance label.
                 description: Some(
                     c.title
                         .as_ref()
