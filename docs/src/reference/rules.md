@@ -1839,15 +1839,15 @@ warning: description-missing-field
 
 Flag a `DESCRIPTION` field declared more than once.
 
-A repeated field is a silent mistake: nothing errors, and the file keeps whichever value the reader picks—except the readers disagree. R's `read.dcf` takes the **last** occurrence; arity takes the **first**. A duplicated `Version` therefore means R and arity are describing two different packages, and every tool downstream of either inherits the split.
+A repeated field is a silent mistake: nothing errors, and the last value quietly replaces the earlier value. Both arity and R's `read.dcf` apply that rule.
 
-The finding is reported on the *later* occurrence, since the earlier one is what arity already read. Duplicates are detected across DCF records, so a stray blank line does not hide one.
+The finding is reported on the *later* occurrence, which is both the repeat and the value that takes effect. Duplicates are detected across DCF records, so a stray blank line does not hide one.
 
-There is no autofix: removing a duplicate means choosing a value, and this rule exists precisely because it is not settled which value is already in effect.
+There is no autofix: removing a duplicate means choosing a value, and a fix would silently make that choice for the author.
 
 This rule is **enabled by default**.
 
-A field declared twice, which arity and `read.dcf` read differently:
+A field declared twice, with the later value silently taking effect:
 
 ```text
 Package: mypkg
@@ -1861,7 +1861,7 @@ warning: description-duplicate-field
  --> DESCRIPTION:4:1
   |
 4 | Version: 0.2.0
-  | ^^^^^^^ `Version` is already declared on line 2; arity reads the first occurrence and R's `read.dcf` reads the last, so the two disagree about this file
+  | ^^^^^^^ `Version` is already declared on line 2; this later occurrence silently replaces its value
   = help: Keep one `Version` field and delete the other.
 ```
 

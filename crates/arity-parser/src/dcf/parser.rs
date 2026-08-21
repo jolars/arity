@@ -494,13 +494,24 @@ mod tests {
         assert_eq!(field.folded_value(), "value");
     }
 
-    /// arity resolves a duplicate to the **first** occurrence; R's `read.dcf`
-    /// takes the last. Deliberate, and pinned so the divergence cannot drift.
+    /// Like `read.dcf`, document-wide lookup resolves a duplicate to its last
+    /// occurrence, including when a blank line put it in a later record.
     #[test]
-    fn first_duplicate_wins() {
+    fn last_duplicate_wins() {
         assert_eq!(
-            folded("Package: first\nPackage: second\n", "Package").as_deref(),
-            Some("first")
+            folded("Package: first\n\nPackage: second\n", "Package").as_deref(),
+            Some("second")
+        );
+    }
+
+    /// Record-local lookup follows the same last-wins rule.
+    #[test]
+    fn last_duplicate_in_record_wins() {
+        let output = doc("Package: first\nPackage: second\n");
+        let record = output.document().first_record().expect("a record");
+        assert_eq!(
+            record.field("Package").map(|field| field.folded_value()),
+            Some("second".to_string())
         );
     }
 

@@ -110,9 +110,8 @@ impl DescriptionFacts {
         let mut r_floor = None;
         let mut seen_r = false;
         for field in DependencyField::ALL {
-            // First occurrence wins, matching `Document::field` and every
-            // scalar reader here. R's `read.dcf` takes the last; closing that
-            // divergence is its own deliberate change.
+            // The last occurrence wins, matching `Document::field` and
+            // `read.dcf`.
             let Some(node) = document.field(field.name()) else {
                 continue;
             };
@@ -532,6 +531,22 @@ mod tests {
             facts.collate,
             ["a.R".to_string(), "b.R".to_string(), "c.R".to_string()].into()
         );
+    }
+
+    #[test]
+    fn scalar_facts_use_the_last_duplicate_field() {
+        let facts = DescriptionFacts::from_text(
+            "Package: first\n\
+             Depends: old\n\
+             Roxygen: list(markdown = FALSE)\n\
+             Package: second\n\
+             Depends: new\n\
+             Roxygen: list(markdown = TRUE)\n",
+        );
+
+        assert_eq!(facts.package.as_deref(), Some("second"));
+        assert_eq!(facts.declared_packages(), ["new".to_string()].into());
+        assert_eq!(facts.roxygen.as_deref(), Some("list(markdown = TRUE)"));
     }
 
     #[test]

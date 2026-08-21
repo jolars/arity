@@ -1266,11 +1266,6 @@ rounds, distributions overlapping.
   `crates/arity-formatter/src/formatter/description/order.rs`; do not maintain
   a second ordered list in the LSP.
 
-- [ ] **Match `read.dcf` when looking up duplicate fields.** Resolve a
-  duplicate name to its last occurrence rather than its first. Keep
-  `description-duplicate-field` reporting the duplicate, and remove the
-  oracle normalization when the lookup changes.
-
 - [ ] **Diagnose whitespace before a DESCRIPTION field colon.** Preserve the
   current lossless CST, but report headers such as `Package : p` through the
   planned near-miss `description-unknown-field` lint. R treats the field name

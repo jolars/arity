@@ -5,12 +5,10 @@
 //! comment. This harness runs both over the same inputs and fails on any
 //! disagreement outside the divergences arity keeps on purpose.
 //!
-//! **The permitted divergences** (see `TODO.md`; both are pinned by unit tests
-//! in `dcf/parser.rs` as well):
+//! **The permitted divergence** (see `TODO.md`; it is pinned by a unit test in
+//! `dcf/parser.rs` as well):
 //!
-//! 1. A duplicate field resolves to the **first** occurrence in arity; R takes
-//!    the last. Normalized here by comparing a last-wins map.
-//! 2. `read.dcf` does **not** trim a field name, so `Package : p` declares a
+//! 1. `read.dcf` does **not** trim a field name, so `Package : p` declares a
 //!    field literally named `"Package "` and R therefore sees no `Package` at
 //!    all. arity trims, which is the lenient direction: it reads a typo'd
 //!    header the way it was obviously meant, and the CST still keeps the
@@ -23,7 +21,7 @@
 //! `#[ignore]`d because it needs R: run via `task dcf-oracle`. A missing
 //! `Rscript` is a skip, never a failure.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -111,13 +109,20 @@ fn compare(input: &str, oracle: &Oracle) -> Result<(), String> {
             let actual: Vec<BTreeMap<String, String>> = document
                 .records()
                 .map(|record| {
-                    let mut fields = BTreeMap::new();
-                    for field in record.fields() {
-                        // Inserting in document order makes the *last*
-                        // duplicate win, which is divergence 1's normalization.
-                        fields.insert(field.name().to_string(), field.folded_value());
-                    }
-                    fields
+                    let names: BTreeSet<_> = record
+                        .fields()
+                        .map(|field| field.name().to_string())
+                        .collect();
+                    names
+                        .into_iter()
+                        .map(|name| {
+                            let value = record
+                                .field(&name)
+                                .expect("a name collected from this record")
+                                .folded_value();
+                            (name, value)
+                        })
+                        .collect()
                 })
                 .collect();
 

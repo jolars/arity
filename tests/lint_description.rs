@@ -235,8 +235,8 @@ fn duplicate_field_is_flagged_once_per_repeat() {
     );
 }
 
-/// The span is the *later* name: the first occurrence is the one arity reads,
-/// so the repeat is what the author has to resolve.
+/// The span is the *later* name: it is both the repeat and the value that takes
+/// effect.
 #[test]
 fn duplicate_field_spans_the_later_occurrence() {
     let text = format!("{COMPLETE_DESCRIPTION}Version: 0.2.0\n");
@@ -255,17 +255,17 @@ fn duplicate_field_spans_the_later_occurrence() {
     );
 }
 
-/// The message states which occurrence arity reads *and* which one R reads —
-/// the two disagree, and a duplicate field is where that becomes visible.
+/// The message states that the later occurrence silently replaces the first.
 #[test]
-fn duplicate_field_message_names_both_readings() {
+fn duplicate_field_message_explains_last_wins() {
     let text = format!("{COMPLETE_DESCRIPTION}Version: 0.2.0\n");
     let body = messages(&text, "description-duplicate-field")
         .pop()
         .expect("a message");
     assert!(body.contains("Version"), "{body}");
-    assert!(body.contains("first"), "{body}");
-    assert!(body.contains("read.dcf"), "{body}");
+    assert!(body.contains("line 2"), "{body}");
+    assert!(body.contains("later"), "{body}");
+    assert!(body.contains("replaces"), "{body}");
 }
 
 /// Three occurrences are two repeats, not one.

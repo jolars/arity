@@ -1,29 +1,18 @@
 //! `description-duplicate-field`: a `DESCRIPTION` field declared more than once.
 //!
 //! A repeated field is always a mistake, but it is a *silent* one: nothing
-//! errors, and the file keeps whichever value the reader happens to pick. Which
-//! is the problem — the readers disagree. R's `read.dcf` takes the **last**
-//! occurrence; arity takes the **first**, deliberately and consistently
-//! (`dcf::Document::field`). So a duplicated `Version` means R and arity are
-//! reading two different packages, and every tool downstream of either inherits
-//! that split.
+//! errors, and the last value quietly replaces the earlier value. Both arity
+//! and R's `read.dcf` apply that rule.
 //!
-//! This rule is where the divergence becomes visible instead of silent. It does
-//! not resolve it: which reading is right is a question about the DCF parser,
-//! answered by its own change with the `read.dcf` oracle to prove it (see
-//! `TODO.md`). Until then, saying so at the exact duplicate is worth more than
-//! either reader quietly winning.
-//!
-//! **The span is the later occurrence.** The first is the one arity reads, so
-//! the repeat is the line whose author has to decide.
+//! **The span is the later occurrence.** It is both the repeat and the value
+//! that takes effect.
 //!
 //! Record-blind, like every other `DESCRIPTION` reader: a stray blank line
 //! splits the file into two DCF records, and a field repeated across that split
 //! is still a repeated field.
 //!
-//! **No autofix.** Deleting a duplicate means choosing a value, and the whole
-//! point of the finding is that the two readers do not agree on which one is
-//! already in effect. A fix would silently pick a side.
+//! **No autofix.** Deleting a duplicate means choosing a value. A fix would
+//! silently make that choice for the author.
 
 use std::collections::HashMap;
 
@@ -33,7 +22,7 @@ use crate::linter::rules::{DcfRule, DcfRuleContext, Example};
 pub struct DescriptionDuplicateField;
 
 const EXAMPLES: &[Example] = &[Example {
-    caption: "A field declared twice, which arity and `read.dcf` read differently:",
+    caption: "A field declared twice, with the later value silently taking effect:",
     source: "Package: mypkg\nVersion: 0.1.0\nLicense: MIT + file LICENSE\nVersion: 0.2.0\n",
 }];
 
@@ -44,17 +33,13 @@ impl DcfRule for DescriptionDuplicateField {
 
     fn description(&self) -> &'static str {
         "Flag a `DESCRIPTION` field declared more than once.\n\nA repeated \
-         field is a silent mistake: nothing errors, and the file keeps \
-         whichever value the reader picks—except the readers disagree. R's \
-         `read.dcf` takes the **last** occurrence; arity takes the **first**. A \
-         duplicated `Version` therefore means R and arity are describing two \
-         different packages, and every tool downstream of either inherits the \
-         split.\n\nThe finding is reported on the *later* occurrence, since the \
-         earlier one is what arity already read. Duplicates are detected across \
-         DCF records, so a stray blank line does not hide one.\n\nThere is no \
-         autofix: removing a duplicate means choosing a value, and this rule \
-         exists precisely because it is not settled which value is already in \
-         effect."
+         field is a silent mistake: nothing errors, and the last value quietly \
+         replaces the earlier value. Both arity and R's `read.dcf` apply that \
+         rule.\n\nThe finding is reported on the *later* occurrence, which is \
+         both the repeat and the value that takes effect. Duplicates are \
+         detected across DCF records, so a stray blank line does not hide \
+         one.\n\nThere is no autofix: removing a duplicate means choosing a \
+         value, and a fix would silently make that choice for the author."
     }
 
     fn examples(&self) -> &'static [Example] {
@@ -86,9 +71,8 @@ impl DcfRule for DescriptionDuplicateField {
                 message: ViolationData::new(
                     "description-duplicate-field",
                     format!(
-                        "`{name}` is already declared on line {first}; arity reads the \
-                         first occurrence and R's `read.dcf` reads the last, so the two \
-                         disagree about this file"
+                        "`{name}` is already declared on line {first}; this later \
+                         occurrence silently replaces its value"
                     ),
                 )
                 .with_suggestion(format!("Keep one `{name}` field and delete the other.")),

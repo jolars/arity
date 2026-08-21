@@ -32,8 +32,8 @@ pub enum DeclineReason {
     /// Valid DCF, but not a `DESCRIPTION`: reordering across a record boundary
     /// would move a field from one record to another.
     MultipleRecords { count: usize },
-    /// `read.dcf` takes the last occurrence and arity's reader takes the first,
-    /// so sorting would make "last" arbitrary.
+    /// Sorting would make the last occurrence—and therefore the field's
+    /// effective value—arbitrary.
     DuplicateField { name: String },
     /// `Package : p` declares a field named `"Package "`. Re-emitting `Package:`
     /// would rename it.

@@ -72,13 +72,11 @@ impl Document {
         self.records().flat_map(|record| record.fields())
     }
 
-    /// The first field named `name`, across all records.
+    /// The last field named `name`, across all records.
     ///
-    /// **First** occurrence wins, which is what every caller did before this
-    /// module existed. Note R's own `read.dcf` takes the **last**; closing that
-    /// divergence is a deliberate change, not a drive-by.
+    /// Last occurrence wins, matching [`read.dcf`](https://stat.ethz.ch/R-manual/R-devel/library/base/html/read.dcf.html).
     pub fn field(&self, name: &str) -> Option<Field> {
-        self.fields().find(|field| field.name() == name)
+        self.fields().filter(|field| field.name() == name).last()
     }
 }
 
@@ -88,9 +86,9 @@ impl Record {
         self.0.children().filter_map(Field::cast)
     }
 
-    /// The first field of this record named `name`.
+    /// The last field of this record named `name`.
     pub fn field(&self, name: &str) -> Option<Field> {
-        self.fields().find(|field| field.name() == name)
+        self.fields().filter(|field| field.name() == name).last()
     }
 }
 
