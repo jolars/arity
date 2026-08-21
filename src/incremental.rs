@@ -19,7 +19,7 @@ use crate::project::{
     ClassSystem, DefKind, DescriptionFacts, PackageInfo, PackageReferences, ReadBinding, ReadSite,
     SourceEdgeKey, TopLevelEvent, collect_source_literal_edges, collect_top_level_events,
     collect_top_level_events_spanned, discover_packages, project_classes, project_defs,
-    project_graph, project_reads, relative_path, reverse_source_edges, workspace_project,
+    project_graph, project_reads, relative_path, reverse_source_edges,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::rindex::remote::RemoteExports;
@@ -167,7 +167,7 @@ pub struct LibraryIndex {
 }
 
 /// The explicit workspace file-set, modeled as a salsa **singleton** input at
-/// `Durability::MEDIUM`. The interned [`Project`](crate::project::Project) is
+/// `Durability::MEDIUM`. The [`Project`](crate::project::Project) snapshot is
 /// *derived* from this (see
 /// [`workspace_project`](crate::project::workspace_project)) rather than rebuilt
 /// by a per-request disk walk: the member files are discovered once (the LSP
@@ -1078,6 +1078,21 @@ impl IncrementalDatabase {
         wrote
     }
 
+    /// Install the workspace's package metadata directly, bypassing disk
+    /// discovery — how a test seeds a synthetic package root that exists only
+    /// in salsa. Production callers use
+    /// [`refresh_package_graph`](Self::refresh_package_graph), the disk reader.
+    pub fn set_package_metadata(&mut self, packages: Vec<PackageInfo>) {
+        let graph = match PackageGraph::try_get(self) {
+            Some(graph) => graph,
+            None => PackageGraph::new(self, Vec::new()),
+        };
+        graph
+            .set_packages(self)
+            .with_durability(Durability::MEDIUM)
+            .to(packages);
+    }
+
     /// Re-read one root's `DESCRIPTION` from disk. Returns whether the tracked
     /// text actually changed — the caller's cue to re-lint, so a touched but
     /// unedited file costs nothing.
@@ -1442,8 +1457,7 @@ impl Analysis {
         if self.0.workspace().is_none() {
             return Vec::new();
         }
-        let project = workspace_project(&self.0);
-        let index = project_defs(&self.0, project);
+        let index = project_defs(&self.0);
         let Some(sites) = index.by_name.get(name) else {
             return Vec::new();
         };
@@ -1474,8 +1488,7 @@ impl Analysis {
         if self.0.workspace().is_none() {
             return Vec::new();
         }
-        let project = workspace_project(&self.0);
-        let index = project_defs(&self.0, project);
+        let index = project_defs(&self.0);
         index
             .by_name
             .iter()
@@ -1505,8 +1518,7 @@ impl Analysis {
         if self.0.workspace().is_none() {
             return Vec::new();
         }
-        let project = workspace_project(&self.0);
-        let index = project_classes(&self.0, project);
+        let index = project_classes(&self.0);
         index
             .def_sites
             .get(name)
@@ -1535,8 +1547,7 @@ impl Analysis {
         if self.0.workspace().is_none() {
             return Vec::new();
         }
-        let project = workspace_project(&self.0);
-        let index = project_classes(&self.0, project);
+        let index = project_classes(&self.0);
         let map = if super_edge {
             &index.supertypes
         } else {
@@ -1576,8 +1587,7 @@ impl Analysis {
         if self.0.workspace().is_none() {
             return Vec::new();
         }
-        let project = workspace_project(&self.0);
-        let index = project_reads(&self.0, project);
+        let index = project_reads(&self.0);
         let Some(paths) = index.by_name.get(name) else {
             return Vec::new();
         };
@@ -1612,10 +1622,9 @@ impl Analysis {
         if self.0.workspace().is_none() {
             return CrossFileBinding::default();
         }
-        let project = workspace_project(&self.0);
-        let graph = project_graph(&self.0, project);
-        let defs = project_defs(&self.0, project);
-        let reads = project_reads(&self.0, project);
+        let graph = project_graph(&self.0);
+        let defs = project_defs(&self.0);
+        let reads = project_reads(&self.0);
 
         let def_paths: BTreeSet<PathBuf> = defs
             .by_name
@@ -1670,7 +1679,7 @@ impl Analysis {
         // could bind to (or be diverted from) the renamed def at runtime. With no
         // name-reader in reach there is nothing to miss or misrewrite, so a
         // dynamic source elsewhere is irrelevant and must not block the rename.
-        let rev = reverse_source_edges(&self.0, project);
+        let rev = reverse_source_edges(&self.0);
         let dynamic_source_risk = !rev.dynamic_sources.is_empty()
             && reads.by_name.get(name).is_some_and(|name_readers| {
                 name_readers.iter().any(|r| {
@@ -1733,8 +1742,7 @@ impl Analysis {
         if self.0.workspace().is_none() {
             return Some(all_reads);
         }
-        let project = workspace_project(&self.0);
-        let graph = project_graph(&self.0, project);
+        let graph = project_graph(&self.0);
 
         // Function-body reads all bind to the reader's final post-execution
         // scope. Resolve it once: an undecidable binding refuses the whole rename
@@ -1803,9 +1811,8 @@ impl Analysis {
         if self.0.workspace().is_none() {
             return Vec::new();
         }
-        let project = workspace_project(&self.0);
-        let graph = project_graph(&self.0, project);
-        let defs = project_defs(&self.0, project);
+        let graph = project_graph(&self.0);
+        let defs = project_defs(&self.0);
         let seen = graph.sees(from_file);
         defs.by_name
             .get(name)
@@ -1855,8 +1862,7 @@ impl Analysis {
             return Vec::new();
         };
 
-        let project = workspace_project(&self.0);
-        let rev = reverse_source_edges(&self.0, project);
+        let rev = reverse_source_edges(&self.0);
         // Raw workspace members, not `workspace_project`'s: that query drops
         // files with parse errors, but a broken file is still a legitimate
         // `source()` target whose remapping a healthy sourcer needs.

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use arity::incremental::{
@@ -7,9 +7,9 @@ use arity::incremental::{
 };
 use arity::parser::Edit;
 use arity::project::{
-    DefKind, Project, ProjectMember, external_resolution, package_facts_for, package_usage,
-    project_classes, project_defs, project_graph, project_reads, project_roxygen_topics,
-    reverse_source_edges, visible_symbols, workspace_project,
+    DefKind, PackageInfo, external_resolution, package_facts_for, package_usage, project_classes,
+    project_defs, project_graph, project_reads, project_roxygen_topics, reverse_source_edges,
+    visible_symbols, workspace_project,
 };
 use arity::rindex::provider::IndexedProvider;
 use arity::rindex::remote::RemoteExports;
@@ -567,31 +567,22 @@ fn in_memory_file_has_no_path() {
 }
 
 /// A two-file package: `a.R` defines `foo`, `b.R` reads it inside a function
-/// body. Returns the db and the two tracked inputs.
+/// body. Returns the db and the two tracked inputs. The synthetic `/pkg` root
+/// does not exist on disk, so the seed's package discovery finds nothing; the
+/// package metadata input is installed directly, exactly as
+/// `discover_packages` would have from a real checkout.
 fn package_ab(a_src: &str, b_src: &str) -> (IncrementalDatabase, SourceFile, SourceFile) {
     let mut db = IncrementalDatabase::default();
     let a = db.upsert_file(Path::new("/pkg/R/a.R"), a_src.to_string());
     let b = db.upsert_file(Path::new("/pkg/R/b.R"), b_src.to_string());
+    db.set_workspace_members(vec![a, b], vec![PathBuf::from("/pkg")]);
+    db.set_package_metadata(vec![PackageInfo {
+        root: PathBuf::from("/pkg"),
+        namespace: None,
+        dir_sources: BTreeSet::new(),
+        native_routines: BTreeSet::new(),
+    }]);
     (db, a, b)
-}
-
-/// Intern the `{a, b}` package membership. Mirrors production, which re-interns
-/// the (deduped) membership on every lint rather than holding an id across an
-/// edit — so the interned `Project` borrow never spans a `&mut db` write.
-fn project_ab(db: &IncrementalDatabase, a: SourceFile, b: SourceFile) -> Project<'_> {
-    let members = vec![
-        ProjectMember {
-            file: a,
-            path: PathBuf::from("/pkg/R/a.R"),
-            package_root: Some(PathBuf::from("/pkg")),
-        },
-        ProjectMember {
-            file: b,
-            path: PathBuf::from("/pkg/R/b.R"),
-            package_root: Some(PathBuf::from("/pkg")),
-        },
-    ];
-    Project::new(db, members, Vec::new(), Vec::new(), Vec::new(), Vec::new())
 }
 
 /// A two-script project where `a.R` sources `b.R`. No package root, so the only
@@ -600,35 +591,19 @@ fn scripts_ab(a_src: &str, b_src: &str) -> (IncrementalDatabase, SourceFile, Sou
     let mut db = IncrementalDatabase::default();
     let a = db.upsert_file(Path::new("/s/a.R"), a_src.to_string());
     let b = db.upsert_file(Path::new("/s/b.R"), b_src.to_string());
+    db.set_workspace_members(vec![a, b], vec![PathBuf::from("/s")]);
     (db, a, b)
-}
-
-fn project_scripts(db: &IncrementalDatabase, a: SourceFile, b: SourceFile) -> Project<'_> {
-    let members = vec![
-        ProjectMember {
-            file: a,
-            path: PathBuf::from("/s/a.R"),
-            package_root: None,
-        },
-        ProjectMember {
-            file: b,
-            path: PathBuf::from("/s/b.R"),
-            package_root: None,
-        },
-    ];
-    Project::new(db, members, Vec::new(), Vec::new(), Vec::new(), Vec::new())
 }
 
 #[test]
 fn body_edit_does_not_rebuild_reverse_source_edges() {
     // The firewall: `a.R` sources `b.R`; editing `b.R`'s function body re-runs
     // its model but not its (empty) source edges, so the reverse map's memo —
-    // keyed on the interned project + per-file source_edges — must be reused.
-    let (mut db, a, b) = scripts_ab("source(\"b.R\")\n", "bar <- function() {\n  baz()\n}\n");
+    // built on the project snapshot + per-file source_edges — must be reused.
+    let (mut db, _a, b) = scripts_ab("source(\"b.R\")\n", "bar <- function() {\n  baz()\n}\n");
 
     {
-        let project = project_scripts(&db, a, b);
-        let rev = reverse_source_edges(&db, project);
+        let rev = reverse_source_edges(&db);
         assert!(
             rev.sourced_by
                 .get(Path::new("/s/b.R"))
@@ -640,8 +615,7 @@ fn body_edit_does_not_rebuild_reverse_source_edges() {
     db.clear_query_log();
     db.set_file_text(b, "bar <- function() {\n  baz()\n  2\n}\n");
 
-    let project = project_scripts(&db, a, b);
-    let _ = reverse_source_edges(&db, project);
+    let _ = reverse_source_edges(&db);
 
     assert_eq!(
         count_by_kind(&db.query_log()).get(&QueryKind::ReverseSourceEdges),
@@ -654,18 +628,16 @@ fn body_edit_does_not_rebuild_reverse_source_edges() {
 fn adding_source_call_rebuilds_reverse_edges() {
     // The complement: adding a top-level `source()` changes a.R's source edges,
     // so the reverse map *must* rebuild and gain the new edge.
-    let (mut db, a, b) = scripts_ab("source(\"b.R\")\n", "bar <- 1\n");
+    let (mut db, a, _b) = scripts_ab("source(\"b.R\")\n", "bar <- 1\n");
 
     {
-        let project = project_scripts(&db, a, b);
-        let _ = reverse_source_edges(&db, project);
+        let _ = reverse_source_edges(&db);
     }
 
     db.clear_query_log();
     db.set_file_text(a, "source(\"b.R\")\nsource(\"c.R\")\n");
 
-    let project = project_scripts(&db, a, b);
-    let rev = reverse_source_edges(&db, project);
+    let rev = reverse_source_edges(&db);
 
     assert_eq!(
         count_by_kind(&db.query_log()).get(&QueryKind::ReverseSourceEdges),
@@ -682,9 +654,8 @@ fn adding_source_call_rebuilds_reverse_edges() {
 
 #[test]
 fn project_defs_aggregates_def_sites_by_name() {
-    let (db, a, b) = package_ab("foo <- function() 1\n", "bar <- 2\nfoo <- 3\n");
-    let project = project_ab(&db, a, b);
-    let defs = project_defs(&db, project);
+    let (db, _a, _b) = package_ab("foo <- function() 1\n", "bar <- 2\nfoo <- 3\n");
+    let defs = project_defs(&db);
 
     // `foo` is defined in both files — a function in a.R, a value in b.R.
     let foo = defs.by_name.get("foo").expect("foo is defined");
@@ -700,18 +671,16 @@ fn project_defs_aggregates_def_sites_by_name() {
 fn body_edit_does_not_rebuild_project_defs() {
     // The firewall: editing b.R's body re-runs its model and file_def_sites, but
     // the def-site set is unchanged, so the project-wide aggregate is reused.
-    let (mut db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() {\n  foo()\n}\n");
+    let (mut db, _a, b) = package_ab("foo <- function() 1\n", "bar <- function() {\n  foo()\n}\n");
 
     {
-        let project = project_ab(&db, a, b);
-        let _ = project_defs(&db, project);
+        let _ = project_defs(&db);
     }
 
     db.clear_query_log();
     db.set_file_text(b, "bar <- function() {\n  foo()\n  2\n}\n");
 
-    let project = project_ab(&db, a, b);
-    let _ = project_defs(&db, project);
+    let _ = project_defs(&db);
 
     let counts = count_by_kind(&db.query_log());
     assert_eq!(counts.get(&QueryKind::SemanticModel), Some(&1));
@@ -724,12 +693,11 @@ fn body_edit_does_not_rebuild_project_defs() {
 
 #[test]
 fn project_classes_aggregates_inheritance_edges() {
-    let (db, a, b) = package_ab(
+    let (db, _a, _b) = package_ab(
         "setClass(\"Animal\")\n",
         "setClass(\"Dog\", contains = \"Animal\")\n",
     );
-    let project = project_ab(&db, a, b);
-    let classes = project_classes(&db, project);
+    let classes = project_classes(&db);
 
     // Forward edge: Dog -> Animal; inverse edge: Animal -> Dog.
     assert!(
@@ -753,14 +721,13 @@ fn project_classes_aggregates_inheritance_edges() {
 fn body_edit_does_not_rebuild_project_classes() {
     // The firewall: editing a function body in b.R re-runs its model, but the
     // class-def set is unchanged, so the project-wide class aggregate is reused.
-    let (mut db, a, b) = package_ab(
+    let (mut db, _a, b) = package_ab(
         "setClass(\"Animal\")\n",
         "setClass(\"Dog\", contains = \"Animal\")\nf <- function() {\n  1\n}\n",
     );
 
     {
-        let project = project_ab(&db, a, b);
-        let _ = project_classes(&db, project);
+        let _ = project_classes(&db);
     }
 
     db.clear_query_log();
@@ -769,8 +736,7 @@ fn body_edit_does_not_rebuild_project_classes() {
         "setClass(\"Dog\", contains = \"Animal\")\nf <- function() {\n  2\n}\n",
     );
 
-    let project = project_ab(&db, a, b);
-    let _ = project_classes(&db, project);
+    let _ = project_classes(&db);
 
     let counts = count_by_kind(&db.query_log());
     assert_eq!(
@@ -782,18 +748,16 @@ fn body_edit_does_not_rebuild_project_classes() {
 
 #[test]
 fn adding_a_class_rebuilds_project_classes() {
-    let (mut db, a, b) = package_ab("setClass(\"Animal\")\n", "x <- 1\n");
+    let (mut db, _a, b) = package_ab("setClass(\"Animal\")\n", "x <- 1\n");
 
     {
-        let project = project_ab(&db, a, b);
-        let _ = project_classes(&db, project);
+        let _ = project_classes(&db);
     }
 
     db.clear_query_log();
     db.set_file_text(b, "x <- 1\nsetClass(\"Dog\", contains = \"Animal\")\n");
 
-    let project = project_ab(&db, a, b);
-    let classes = project_classes(&db, project);
+    let classes = project_classes(&db);
 
     let counts = count_by_kind(&db.query_log());
     assert_eq!(
@@ -820,11 +784,10 @@ const TOPIC_B: &str =
 fn body_edit_does_not_rebuild_project_roxygen_topics() {
     // The firewall: the topic projection is range-free and turns only on the
     // documentation and the formals, so editing a body leaves it equal.
-    let (mut db, a, b) = package_ab(TOPIC_A, TOPIC_B);
+    let (mut db, a, _b) = package_ab(TOPIC_A, TOPIC_B);
 
     {
-        let project = project_ab(&db, a, b);
-        let _ = project_roxygen_topics(&db, project);
+        let _ = project_roxygen_topics(&db);
     }
 
     db.clear_query_log();
@@ -833,8 +796,7 @@ fn body_edit_does_not_rebuild_project_roxygen_topics() {
         "#' Add\n#' @param x A number.\n#' @export\nadd <- function(x, y) {\n  x + y + 0\n}\n",
     );
 
-    let project = project_ab(&db, a, b);
-    let _ = project_roxygen_topics(&db, project);
+    let _ = project_roxygen_topics(&db);
 
     let counts = count_by_kind(&db.query_log());
     assert_eq!(
@@ -846,18 +808,16 @@ fn body_edit_does_not_rebuild_project_roxygen_topics() {
 
 #[test]
 fn adding_a_param_tag_rebuilds_project_roxygen_topics() {
-    let (mut db, a, b) = package_ab(TOPIC_A, "#' @rdname add\nadd2 <- function(x, y) x + y\n");
+    let (mut db, _a, b) = package_ab(TOPIC_A, "#' @rdname add\nadd2 <- function(x, y) x + y\n");
 
     {
-        let project = project_ab(&db, a, b);
-        let _ = project_roxygen_topics(&db, project);
+        let _ = project_roxygen_topics(&db);
     }
 
     db.clear_query_log();
     db.set_file_text(b, TOPIC_B);
 
-    let project = project_ab(&db, a, b);
-    let topics = project_roxygen_topics(&db, project);
+    let topics = project_roxygen_topics(&db);
 
     let counts = count_by_kind(&db.query_log());
     assert_eq!(
@@ -879,18 +839,16 @@ fn adding_a_param_tag_rebuilds_project_roxygen_topics() {
 
 #[test]
 fn adding_top_level_binding_rebuilds_project_defs() {
-    let (mut db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() foo()\n");
+    let (mut db, _a, b) = package_ab("foo <- function() 1\n", "bar <- function() foo()\n");
 
     {
-        let project = project_ab(&db, a, b);
-        let _ = project_defs(&db, project);
+        let _ = project_defs(&db);
     }
 
     db.clear_query_log();
     db.set_file_text(b, "bar <- function() foo()\nqux <- 2\n");
 
-    let project = project_ab(&db, a, b);
-    let defs = project_defs(&db, project);
+    let defs = project_defs(&db);
 
     let counts = count_by_kind(&db.query_log());
     assert_eq!(
@@ -906,16 +864,14 @@ fn def_range_in_recovers_live_span_after_edit() {
     // The range-free aggregate omits def spans; def_range_in recovers them from
     // the fresh model, so the span tracks the *current* text. Inserting a leading
     // line shifts foo's definition; the recovered range must still spell "foo".
-    let (mut db, a, b) = package_ab("foo <- function() 1\n", "bar <- 2\n");
+    let (mut db, a, _b) = package_ab("foo <- function() 1\n", "bar <- 2\n");
     {
-        let project = project_ab(&db, a, b);
-        let _ = project_defs(&db, project);
+        let _ = project_defs(&db);
     }
 
     db.set_file_text(a, "# header\nfoo <- function() 1\n");
 
-    let project = project_ab(&db, a, b);
-    let defs = project_defs(&db, project);
+    let defs = project_defs(&db);
     assert!(
         defs.by_name
             .get("foo")
@@ -952,11 +908,7 @@ fn workspace_project_excludes_parse_error_files() {
     db.set_workspace_members(vec![a, bad], vec![PathBuf::from("/s")]);
     let project = workspace_project(&db);
 
-    let paths: Vec<_> = project
-        .members(&db)
-        .iter()
-        .map(|m| m.path.clone())
-        .collect();
+    let paths: Vec<_> = project.members.iter().map(|m| m.path.clone()).collect();
     assert_eq!(
         paths,
         vec![PathBuf::from("/s/a.R")],
@@ -967,7 +919,7 @@ fn workspace_project_excludes_parse_error_files() {
 #[test]
 fn keystroke_backdates_workspace_project_and_spares_graph() {
     // The membership firewall: a body edit re-runs workspace_project (it reads
-    // the edited file's parse status), but it backdates to the *same* interned
+    // the edited file's parse status), but it backdates to an *equal*
     // Project, so the cross-file project graph derived from it is not rebuilt.
     let mut db = IncrementalDatabase::default();
     let a = db.upsert_file(Path::new("/s/a.R"), "foo <- function() 1\n".to_string());
@@ -978,17 +930,17 @@ fn keystroke_backdates_workspace_project_and_spares_graph() {
     db.set_workspace_members(vec![a, b], vec![PathBuf::from("/s")]);
 
     {
-        let project = workspace_project(&db);
-        let _ = visible_symbols(&db, project, a);
-        let _ = visible_symbols(&db, project, b);
+        let _ = workspace_project(&db);
+        let _ = visible_symbols(&db, a);
+        let _ = visible_symbols(&db, b);
     }
 
     db.clear_query_log();
     db.set_file_text(b, "bar <- function() {\n  foo()\n  2\n}\n");
 
-    let project = workspace_project(&db);
-    let _ = visible_symbols(&db, project, a);
-    let _ = visible_symbols(&db, project, b);
+    let _ = workspace_project(&db);
+    let _ = visible_symbols(&db, a);
+    let _ = visible_symbols(&db, b);
 
     assert_eq!(
         count_by_kind(&db.query_log()).get(&QueryKind::ProjectGraph),
@@ -1035,7 +987,7 @@ fn adding_a_member_rebuilds_workspace_project() {
         Some(&1),
         "adding a member must re-run workspace_project"
     );
-    assert_eq!(project.members(&db).len(), 2);
+    assert_eq!(project.members.len(), 2);
 }
 
 #[test]
@@ -1094,9 +1046,8 @@ fn workspace_def_sites_empty_without_a_workspace_or_match() {
 fn project_reads_aggregates_free_reads_by_name() {
     // The read-site mirror of project_defs: `foo` is free-read in b.R but bound
     // (not free-read) in a.R, so the index points only at b.R.
-    let (db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() {\n  foo()\n}\n");
-    let project = project_ab(&db, a, b);
-    let reads = project_reads(&db, project);
+    let (db, _a, _b) = package_ab("foo <- function() 1\n", "bar <- function() {\n  foo()\n}\n");
+    let reads = project_reads(&db);
 
     let foo = reads.by_name.get("foo").expect("foo is free-read");
     assert!(foo.contains(&PathBuf::from("/pkg/R/b.R")));
@@ -1108,16 +1059,14 @@ fn project_reads_aggregates_free_reads_by_name() {
 
 #[test]
 fn unchanged_use_only_names_spare_the_project_graph() {
-    let (mut db, a, b) = package_ab("label <- \"value\"\n", "glue::glue(\"Label: {label}\")\n");
+    let (mut db, _a, b) = package_ab("label <- \"value\"\n", "glue::glue(\"Label: {label}\")\n");
     {
-        let project = project_ab(&db, a, b);
-        let _ = project_graph(&db, project);
+        let _ = project_graph(&db);
     }
 
     db.clear_query_log();
     db.set_file_text(b, "glue::glue(\"Longer label: {label}\")\n");
-    let project = project_ab(&db, a, b);
-    let _ = project_graph(&db, project);
+    let _ = project_graph(&db);
 
     let counts = count_by_kind(&db.query_log());
     assert_eq!(counts.get(&QueryKind::FileUseOnlyReads), Some(&1));
@@ -1130,16 +1079,14 @@ fn unchanged_use_only_names_spare_the_project_graph() {
 
 #[test]
 fn changed_use_only_name_rebuilds_the_project_graph() {
-    let (mut db, a, b) = package_ab("label <- \"value\"\n", "glue::glue(\"{label}\")\n");
+    let (mut db, _a, b) = package_ab("label <- \"value\"\n", "glue::glue(\"{label}\")\n");
     {
-        let project = project_ab(&db, a, b);
-        let _ = project_graph(&db, project);
+        let _ = project_graph(&db);
     }
 
     db.clear_query_log();
     db.set_file_text(b, "glue::glue(\"{other}\")\n");
-    let project = project_ab(&db, a, b);
-    let _ = project_graph(&db, project);
+    let _ = project_graph(&db);
 
     let counts = count_by_kind(&db.query_log());
     assert_eq!(counts.get(&QueryKind::ProjectGraph), Some(&1));
@@ -1149,18 +1096,16 @@ fn changed_use_only_name_rebuilds_the_project_graph() {
 fn body_edit_does_not_rebuild_project_reads() {
     // The firewall: editing b.R's body re-runs its model and file_free_reads, but
     // the free-read name set is unchanged, so the project-wide aggregate is reused.
-    let (mut db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() {\n  foo()\n}\n");
+    let (mut db, _a, b) = package_ab("foo <- function() 1\n", "bar <- function() {\n  foo()\n}\n");
 
     {
-        let project = project_ab(&db, a, b);
-        let _ = project_reads(&db, project);
+        let _ = project_reads(&db);
     }
 
     db.clear_query_log();
     db.set_file_text(b, "bar <- function() {\n  foo()\n  2\n}\n");
 
-    let project = project_ab(&db, a, b);
-    let _ = project_reads(&db, project);
+    let _ = project_reads(&db);
 
     let counts = count_by_kind(&db.query_log());
     assert_eq!(counts.get(&QueryKind::SemanticModel), Some(&1));
@@ -1278,10 +1223,9 @@ fn body_edit_does_not_rebuild_project_scope() {
 
     // Materialize the graph + both files' visibility.
     {
-        let project = project_ab(&db, a, b);
-        let _ = visible_symbols(&db, project, a);
-        let _ = visible_symbols(&db, project, b);
-        assert!(visible_symbols(&db, project, b).visible.contains("foo"));
+        let _ = visible_symbols(&db, a);
+        let _ = visible_symbols(&db, b);
+        assert!(visible_symbols(&db, b).visible.contains("foo"));
     }
 
     db.clear_query_log();
@@ -1290,9 +1234,8 @@ fn body_edit_does_not_rebuild_project_scope() {
     db.set_file_text(b, "bar <- function() {\n  foo()\n  2\n}\n");
 
     // Re-lint: re-intern the (unchanged) membership, as production does.
-    let project = project_ab(&db, a, b);
-    let _ = visible_symbols(&db, project, a);
-    let _ = visible_symbols(&db, project, b);
+    let _ = visible_symbols(&db, a);
+    let _ = visible_symbols(&db, b);
 
     let counts = count_by_kind(&db.query_log());
     // b's parse + model re-run (the body changed)...
@@ -1318,9 +1261,8 @@ fn export_change_rebuilds_project_scope() {
     let (mut db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() {\n  foo()\n}\n");
 
     {
-        let project = project_ab(&db, a, b);
-        let _ = visible_symbols(&db, project, a);
-        let _ = visible_symbols(&db, project, b);
+        let _ = visible_symbols(&db, a);
+        let _ = visible_symbols(&db, b);
     }
 
     db.clear_query_log();
@@ -1328,9 +1270,8 @@ fn export_change_rebuilds_project_scope() {
     // Add a new top-level binding: b's exports change.
     db.set_file_text(b, "bar <- function() {\n  foo()\n}\nqux <- 2\n");
 
-    let project = project_ab(&db, a, b);
-    let _ = visible_symbols(&db, project, a);
-    let _ = visible_symbols(&db, project, b);
+    let _ = visible_symbols(&db, a);
+    let _ = visible_symbols(&db, b);
 
     let counts = count_by_kind(&db.query_log());
     assert_eq!(
@@ -1349,19 +1290,17 @@ fn body_edit_reruns_top_level_events_but_backdates() {
     // The new order-bearing firewall: editing b.R's function *body* re-extracts
     // its top-level event sequence (the tree changed), but the sequence is
     // unchanged, so it backdates and the project graph above it is spared.
-    let (mut db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() {\n  foo()\n}\n");
+    let (mut db, _a, b) = package_ab("foo <- function() 1\n", "bar <- function() {\n  foo()\n}\n");
     {
-        let project = project_ab(&db, a, b);
         let _ = top_level_events(&db, b);
-        let _ = visible_symbols(&db, project, b);
+        let _ = visible_symbols(&db, b);
     }
 
     db.clear_query_log();
     db.set_file_text(b, "bar <- function() {\n  foo()\n  2\n}\n");
 
-    let project = project_ab(&db, a, b);
     let _ = top_level_events(&db, b);
-    let _ = visible_symbols(&db, project, b);
+    let _ = visible_symbols(&db, b);
 
     let counts = count_by_kind(&db.query_log());
     assert_eq!(
@@ -1382,17 +1321,15 @@ fn reordering_top_level_statements_rebuilds_project_graph() {
     // (all order-independent sets) unchanged — only the *ordered* top_level_events
     // firewall differs. That alone must rebuild the graph, since load-order
     // resolution depends on the order.
-    let (mut db, a, b) = package_ab("foo <- function() 1\n", "foo\nbar\n");
+    let (mut db, _a, b) = package_ab("foo <- function() 1\n", "foo\nbar\n");
     {
-        let project = project_ab(&db, a, b);
-        let _ = visible_symbols(&db, project, b);
+        let _ = visible_symbols(&db, b);
     }
 
     db.clear_query_log();
     db.set_file_text(b, "bar\nfoo\n");
 
-    let project = project_ab(&db, a, b);
-    let _ = visible_symbols(&db, project, b);
+    let _ = visible_symbols(&db, b);
 
     let counts = count_by_kind(&db.query_log());
     assert_eq!(
@@ -1403,41 +1340,21 @@ fn reordering_top_level_statements_rebuilds_project_graph() {
 }
 
 #[test]
-fn reinterning_same_membership_reuses_graph_memo() {
-    // Interning a fresh `Project` from an unchanged membership snapshot yields
-    // the same id, so the graph memo is reused — this is what keeps the scope
-    // warm across lints that re-discover the same set of files.
+fn requerying_same_membership_reuses_graph_memo() {
+    // Re-asking with an unchanged membership must reuse the graph memo — this
+    // is what keeps the scope warm across lints over the same set of files.
     let (db, a, b) = package_ab("foo <- function() 1\n", "bar <- function() foo()\n");
-    let project = project_ab(&db, a, b);
-    let _ = visible_symbols(&db, project, a);
-    let _ = visible_symbols(&db, project, b);
+    let _ = visible_symbols(&db, a);
+    let _ = visible_symbols(&db, b);
 
     db.clear_query_log();
 
-    // Re-intern the identical membership (same files, same roots, no namespaces).
-    let project2 = project_ab(&db, a, b);
-    assert!(
-        project == project2,
-        "same membership should re-intern to the same id"
-    );
-
-    let _ = visible_symbols(&db, project2, b);
+    let _ = visible_symbols(&db, b);
     assert_eq!(
         count_by_kind(&db.query_log()).get(&QueryKind::ProjectGraph),
         None,
         "an unchanged membership must not rebuild the graph"
     );
-}
-
-/// A single-file "project" with no package root (a bare script), so cross-file
-/// visibility is complete and resolution turns purely on the library index.
-fn project_one<'db>(db: &'db IncrementalDatabase, file: SourceFile, path: &str) -> Project<'db> {
-    let members = vec![ProjectMember {
-        file,
-        path: PathBuf::from(path),
-        package_root: None,
-    }];
-    Project::new(db, members, Vec::new(), Vec::new(), Vec::new(), Vec::new())
 }
 
 /// A harvested package index for `name` exporting `exports`.
@@ -1479,8 +1396,8 @@ fn body_edit_does_not_rerun_external_resolution() {
     let manifest = db.set_library_index(IndexedProvider::empty());
 
     {
-        let project = project_one(&db, file, path);
-        let res = external_resolution(&db, manifest, project, file);
+        db.set_workspace_members(vec![file], Vec::new());
+        let res = external_resolution(&db, manifest, file);
         assert!(
             res.unresolved.contains("bar"),
             "bar is undefined: {:?}",
@@ -1494,8 +1411,8 @@ fn body_edit_does_not_rerun_external_resolution() {
     // packages ({}) are unchanged.
     db.set_file_text(file, "foo <- function() {\n  bar(1)\n  2\n}\n");
 
-    let project = project_one(&db, file, path);
-    let _ = external_resolution(&db, manifest, project, file);
+    db.set_workspace_members(vec![file], Vec::new());
+    let _ = external_resolution(&db, manifest, file);
 
     let counts = count_by_kind(&db.query_log());
     // The body changed, so the model re-runs...
@@ -1524,8 +1441,8 @@ fn swapping_library_index_invalidates_resolution() {
     // `across`, so `across` is unresolved.
     let manifest = db.set_library_index(IndexedProvider::from_indices([index_pkg("somepkg", &[])]));
     {
-        let project = project_one(&db, file, path);
-        let res = external_resolution(&db, manifest, project, file);
+        db.set_workspace_members(vec![file], Vec::new());
+        let res = external_resolution(&db, manifest, file);
         assert!(
             res.unresolved.contains("across"),
             "across unresolved before swap: {:?}",
@@ -1541,8 +1458,8 @@ fn swapping_library_index_invalidates_resolution() {
         &["across"],
     )]));
 
-    let project = project_one(&db, file, path);
-    let res = external_resolution(&db, manifest, project, file);
+    db.set_workspace_members(vec![file], Vec::new());
+    let res = external_resolution(&db, manifest, file);
     assert!(
         !res.unresolved.contains("across"),
         "across resolves after the swap: {:?}",
@@ -1581,8 +1498,8 @@ fn unindexed_attached_package_suppresses_resolution() {
     );
     let manifest = db.set_library_index(IndexedProvider::empty());
 
-    let project = project_one(&db, file, path);
-    let res = external_resolution(&db, manifest, project, file);
+    db.set_workspace_members(vec![file], Vec::new());
+    let res = external_resolution(&db, manifest, file);
     assert!(
         res.unresolved.is_empty(),
         "an unindexed attached package suppresses resolution: {:?}",
@@ -1610,8 +1527,8 @@ fn harvested_attach_sets_gate_and_resolve_external_resolution() {
         index_pkg("helperpkg", &["helper_fn"]),
     ]));
     {
-        let project = project_one(&db, file, path);
-        let res = external_resolution(&db, manifest, project, file);
+        db.set_workspace_members(vec![file], Vec::new());
+        let res = external_resolution(&db, manifest, file);
         assert!(
             !res.unresolved.contains("helper_fn"),
             "helper_fn resolves via the harvested attach set: {:?}",
@@ -1629,8 +1546,8 @@ fn harvested_attach_sets_gate_and_resolve_external_resolution() {
     let mut meta = index_pkg("metaverse", &[]);
     meta.attaches = vec!["ghost_pkg_xyz".into()];
     let manifest = db.set_library_index(IndexedProvider::from_indices([meta]));
-    let project = project_one(&db, file, path);
-    let res = external_resolution(&db, manifest, project, file);
+    db.set_workspace_members(vec![file], Vec::new());
+    let res = external_resolution(&db, manifest, file);
     assert!(
         res.unresolved.is_empty(),
         "an un-indexed harvested attach member suppresses resolution: {:?}",
@@ -1662,8 +1579,8 @@ fn remote_sidecar_resolves_uninstalled_package() {
     // Without the sidecar, tinytable is neither indexed nor bundled: suppressed.
     let manifest = db.set_library_index(IndexedProvider::empty());
     {
-        let project = project_one(&db, file, path);
-        let res = external_resolution(&db, manifest, project, file);
+        db.set_workspace_members(vec![file], Vec::new());
+        let res = external_resolution(&db, manifest, file);
         assert!(
             res.unresolved.is_empty(),
             "unindexed package suppresses the file: {:?}",
@@ -1673,8 +1590,8 @@ fn remote_sidecar_resolves_uninstalled_package() {
 
     // Install the sidecar: tinytable exports `tt` (but not `bogus`).
     let manifest = db.set_remote_exports(remote_exports(&[("tinytable", &["tt"])]));
-    let project = project_one(&db, file, path);
-    let res = external_resolution(&db, manifest, project, file);
+    db.set_workspace_members(vec![file], Vec::new());
+    let res = external_resolution(&db, manifest, file);
     assert!(
         !res.unresolved.contains("tt"),
         "tt resolves via the sidecar: {:?}",
@@ -1701,8 +1618,8 @@ fn body_edit_does_not_rerun_resolution_with_remote_installed() {
     db.set_library_index(IndexedProvider::empty());
     let manifest = db.set_remote_exports(remote_exports(&[("tinytable", &["tt"])]));
     {
-        let project = project_one(&db, file, path);
-        let res = external_resolution(&db, manifest, project, file);
+        db.set_workspace_members(vec![file], Vec::new());
+        let res = external_resolution(&db, manifest, file);
         assert!(
             !res.unresolved.contains("tt"),
             "tt resolves before the edit: {:?}",
@@ -1717,8 +1634,8 @@ fn body_edit_does_not_rerun_resolution_with_remote_installed() {
         file,
         "library(tinytable)\nfoo <- function() {\n  tt(1)\n  2\n}\n",
     );
-    let project = project_one(&db, file, path);
-    let _ = external_resolution(&db, manifest, project, file);
+    db.set_workspace_members(vec![file], Vec::new());
+    let _ = external_resolution(&db, manifest, file);
 
     let counts = count_by_kind(&db.query_log());
     assert_eq!(counts.get(&QueryKind::SemanticModel), Some(&1));
@@ -1904,7 +1821,7 @@ fn workspace_project_is_pure_namespace_not_reread_on_keystroke() {
     let m = db.upsert_file(&member_path, "foo <- function() 1\n".to_string());
     db.set_workspace_members(vec![m], vec![root.to_path_buf()]);
 
-    let before: Vec<_> = workspace_project(&db).namespaces(&db).clone();
+    let before: Vec<_> = workspace_project(&db).namespaces.clone();
     assert_eq!(
         before,
         vec![(root.to_path_buf(), "export(foo)\n".to_string())],
@@ -1916,7 +1833,7 @@ fn workspace_project_is_pure_namespace_not_reread_on_keystroke() {
     std::fs::write(root.join("NAMESPACE"), "export(bar)\n").unwrap();
     db.set_file_text(m, "foo <- function() 2\n");
 
-    let after: Vec<_> = workspace_project(&db).namespaces(&db).clone();
+    let after: Vec<_> = workspace_project(&db).namespaces.clone();
     assert_eq!(
         before, after,
         "a keystroke must not re-read NAMESPACE from disk (query is pure)"
@@ -1925,7 +1842,7 @@ fn workspace_project_is_pure_namespace_not_reread_on_keystroke() {
     // An explicit refresh is the correct invalidation path: it re-reads disk and
     // re-runs the query with the new metadata.
     db.refresh_package_graph();
-    let refreshed: Vec<_> = workspace_project(&db).namespaces(&db).clone();
+    let refreshed: Vec<_> = workspace_project(&db).namespaces.clone();
     assert_eq!(
         refreshed,
         vec![(root.to_path_buf(), "export(bar)\n".to_string())],
@@ -2026,7 +1943,7 @@ fn description_collate_edit_reaches_the_project() {
     // the project graph consumes, so it must propagate. Without this, "nothing
     // re-runs" could just as well mean the dependency was never wired up.
     let (mut db, _m, dir) = description_package(DESCRIPTION_BASE);
-    let before = workspace_project(&db).collations(&db).clone();
+    let before = workspace_project(&db).collations.clone();
     assert!(
         before.iter().all(|c| c.complete),
         "`Collate: foo.R` matches the analyzed member, so the package is complete"
@@ -2039,7 +1956,7 @@ fn description_collate_edit_reaches_the_project() {
     )
     .expect("DESCRIPTION");
     db.refresh_package_graph();
-    let after = workspace_project(&db).collations(&db).clone();
+    let after = workspace_project(&db).collations.clone();
 
     assert_eq!(
         count_by_kind(&db.query_log()).get(&QueryKind::WorkspaceProject),
@@ -2059,8 +1976,8 @@ fn description_collate_edit_reaches_the_project() {
 #[test]
 fn a_body_edit_spares_the_package_usage_fold() {
     let (mut db, m, _dir) = description_package(DESCRIPTION_BASE);
-    let project = workspace_project(&db);
-    let _ = package_usage(&db, project);
+    let _ = workspace_project(&db);
+    let _ = package_usage(&db);
 
     db.clear_query_log();
     // A body edit: the file still names no package and still exports `foo`.
@@ -2069,8 +1986,8 @@ fn a_body_edit_spares_the_package_usage_fold() {
         "foo <- function() 1 + 1
 ",
     );
-    let project = workspace_project(&db);
-    let _ = package_usage(&db, project);
+    let _ = workspace_project(&db);
+    let _ = package_usage(&db);
 
     let counts = count_by_kind(&db.query_log());
     assert_eq!(
@@ -2090,9 +2007,9 @@ fn a_body_edit_spares_the_package_usage_fold() {
 #[test]
 fn a_new_qualified_call_reaches_the_package_usage_fold() {
     let (mut db, m, _dir) = description_package(DESCRIPTION_BASE);
-    let project = workspace_project(&db);
+    let _ = workspace_project(&db);
     assert!(
-        !package_usage(&db, project)[&_dir.path().to_path_buf()]
+        !package_usage(&db)[&_dir.path().to_path_buf()]
             .used
             .contains("dplyr")
     );
@@ -2103,8 +2020,8 @@ fn a_new_qualified_call_reaches_the_package_usage_fold() {
         "foo <- function() dplyr::filter(x)
 ",
     );
-    let project = workspace_project(&db);
-    let usage = package_usage(&db, project);
+    let _ = workspace_project(&db);
+    let usage = package_usage(&db);
 
     assert_eq!(
         count_by_kind(&db.query_log()).get(&QueryKind::PackageUsage),
@@ -2235,8 +2152,8 @@ fn depends_attaches_but_imports_does_not() {
     )]));
 
     {
-        let project = workspace_project(&db);
-        let res = external_resolution(&db, manifest, project, m);
+        let _ = workspace_project(&db);
+        let res = external_resolution(&db, manifest, m);
         assert!(
             res.unresolved.is_empty(),
             "a Depends package is attached, so its bare export resolves: {:?}",
@@ -2247,8 +2164,8 @@ fn depends_attaches_but_imports_does_not() {
     // The same package under `Imports` must leave the bare name unresolved.
     std::fs::write(dir.path().join("DESCRIPTION"), describe("Imports")).expect("DESCRIPTION");
     db.refresh_package_graph();
-    let project = workspace_project(&db);
-    let res = external_resolution(&db, manifest, project, m);
+    let _ = workspace_project(&db);
+    let res = external_resolution(&db, manifest, m);
     assert!(
         res.unresolved.contains("helper"),
         "an Imports package is not attached, so a bare name stays unresolved: {:?}",
@@ -2268,8 +2185,8 @@ fn an_unindexed_depends_suppresses_the_file() {
     let manifest = db.set_library_index(IndexedProvider::empty());
 
     {
-        let project = workspace_project(&db);
-        let res = external_resolution(&db, manifest, project, m);
+        let _ = workspace_project(&db);
+        let res = external_resolution(&db, manifest, m);
         assert!(
             res.unresolved.is_empty(),
             "an unindexed Depends could define the name, so the file is suppressed: {:?}",
@@ -2281,8 +2198,8 @@ fn an_unindexed_depends_suppresses_the_file() {
     // this the assertion above would also hold if nothing resolved anything.
     std::fs::write(dir.path().join("DESCRIPTION"), "Package: foo\n").expect("DESCRIPTION");
     db.refresh_package_graph();
-    let project = workspace_project(&db);
-    let res = external_resolution(&db, manifest, project, m);
+    let _ = workspace_project(&db);
+    let res = external_resolution(&db, manifest, m);
     assert!(
         res.unresolved.contains("mystery"),
         "with nothing attached the undefined name must be reported: {:?}",
@@ -2306,8 +2223,8 @@ fn wildcard_import_clears_once_the_package_is_indexed() {
     // Unindexed: we cannot enumerate helperpkg, so the file stays suppressed.
     {
         let manifest = db.set_library_index(IndexedProvider::empty());
-        let project = workspace_project(&db);
-        let res = external_resolution(&db, manifest, project, m);
+        let _ = workspace_project(&db);
+        let res = external_resolution(&db, manifest, m);
         assert!(
             res.unresolved.is_empty(),
             "an unenumerable wildcard import must still suppress: {:?}",
@@ -2321,8 +2238,8 @@ fn wildcard_import_clears_once_the_package_is_indexed() {
         "helperpkg",
         &["helper"],
     )]));
-    let project = workspace_project(&db);
-    let res = external_resolution(&db, manifest, project, m);
+    let _ = workspace_project(&db);
+    let res = external_resolution(&db, manifest, m);
     assert!(
         !res.unresolved.contains("helper"),
         "import(helperpkg) puts its exports in scope: {:?}",
@@ -2346,8 +2263,8 @@ fn dynamic_source_still_suppresses() {
         "source(paste0(dir, '/x.R'))\nfoo <- function() mystery(1)\n".to_string(),
     );
     let manifest = db.set_library_index(IndexedProvider::empty());
-    let project = project_one(&db, file, path);
-    let res = external_resolution(&db, manifest, project, file);
+    db.set_workspace_members(vec![file], Vec::new());
+    let res = external_resolution(&db, manifest, file);
     assert!(
         res.unresolved.is_empty(),
         "a dynamic source() could supply any name, so the file stays suppressed: {:?}",

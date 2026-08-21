@@ -7,14 +7,15 @@
 //! - [`crate::incremental::file_exports`] / `file_free_reads` / `source_edges` —
 //!   per-file projections that stay *equal* across a body edit (salsa backdates).
 //! - [`project_graph`] — assembles those into the cross-file [`ProjectScope`].
-//!   Keyed on the interned [`Project`] (a disk-derived membership snapshot), so
-//!   an unchanged project + backdated per-file facts means its memo is reused.
+//!   Built on the backdated [`workspace_project`] snapshot (disk-derived
+//!   membership), so an unchanged project + backdated per-file facts means its
+//!   memo is reused.
 //! - [`visible_symbols`] — one file's owned [`Visibility`] slice of the scope,
 //!   the value the linter consumes.
 //!
 //! Because `project_graph` depends only on the backdated per-file queries and
-//! the (re-validated) interned `Project`, editing a body re-runs neither it nor
-//! `visible_symbols`. See `tests/salsa_incremental.rs`.
+//! the (backdated) [`workspace_project`] snapshot, editing a body re-runs
+//! neither it nor `visible_symbols`. See `tests/salsa_incremental.rs`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -41,7 +42,7 @@ use crate::semantic::symbols::{LoadedPackage, PackageOrigin};
 
 /// One member of a project: its tracked input, on-disk path, and enclosing
 /// package root (if any). Disk-derived — assembled in the lint write-phase and
-/// folded into the interned [`Project`] key, so the graph queries stay pure.
+/// folded into the [`Project`] snapshot, so the graph queries stay pure.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct ProjectMember {
     pub file: SourceFile,
@@ -51,7 +52,7 @@ pub struct ProjectMember {
 
 /// One package root's collation/completeness verdict: whether the analyzed
 /// member set covers every R source file the package will load. Disk-derived
-/// (like the NAMESPACE texts) and frozen into the interned [`Project`], so the
+/// (like the NAMESPACE texts) and frozen into the [`Project`] snapshot, so the
 /// graph queries stay pure and backdate across body edits.
 ///
 /// `complete == false` means a top-level def or read of a name could hide in an
@@ -95,12 +96,12 @@ pub struct PackageInfo {
 }
 
 /// One package root's *resolution-relevant* declarations, frozen into the
-/// interned [`Project`] so the graph queries stay pure.
+/// [`Project`] snapshot so the graph queries stay pure.
 ///
 /// Deliberately a strict subset of
 /// [`DescriptionFacts`](crate::project::DescriptionFacts): the compat floors and
 /// the `Roxygen` field affect no cross-file scope, so keeping them out means a
-/// `RoxygenNote:` bump re-interns to the *same* `Project` id and the
+/// `RoxygenNote:` bump re-derives an *equal* `Project` snapshot and the
 /// [`project_graph`] memo survives it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PackageDeclarations {
@@ -114,28 +115,31 @@ pub struct PackageDeclarations {
     pub declared: BTreeSet<String>,
 }
 
-/// A project as an interned membership snapshot: the set of member files, the
-/// NAMESPACE texts of the packages they belong to, each package root's
+/// A project as a membership snapshot: the set of member files, the NAMESPACE
+/// texts of the packages they belong to, each package root's
 /// collation/completeness verdict, its declared dependencies, and the native
-/// routines it binds. Interning dedups by value, so an unchanged membership
-/// yields the same id across lints (a body edit doesn't change the set) and the
-/// graph memo survives. Callers must sort every field for a stable,
-/// dedup-friendly key.
-#[salsa::interned]
-pub struct Project<'db> {
-    #[returns(ref)]
+/// routines it binds.
+///
+/// Plain `Eq` data returned by [`workspace_project`], deliberately **not** a
+/// `#[salsa::interned]` struct: salsa never garbage-collects an interned value
+/// created above `Durability::LOW`, so every metadata change (a `NAMESPACE`
+/// rewrite, a `DESCRIPTION` fact edit, a membership move) minted one more
+/// immortal snapshot *plus* the project-level memos keyed on its id — the
+/// language server leaked the whole project graph per change (issue #116). As a
+/// tracked query's value it backdates on equality instead, giving the same
+/// firewall (a body edit re-derives an equal snapshot and downstream memos
+/// survive) with exactly one retained generation. Producers must sort every
+/// field so equal memberships compare equal.
+#[derive(Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
+pub struct Project {
     pub members: Vec<ProjectMember>,
-    #[returns(ref)]
     pub namespaces: Vec<(PathBuf, String)>,
-    #[returns(ref)]
     pub collations: Vec<PackageCollation>,
-    #[returns(ref)]
     pub declarations: Vec<PackageDeclarations>,
     /// Per package root, the names its `useDynLib()` binds
     /// ([`PackageInfo::native_routines`]). Disk-derived like `namespaces`, and
     /// frozen here for the same reason: [`project_graph`] resolves against them
     /// without touching disk.
-    #[returns(ref)]
     pub native_routines: Vec<(PathBuf, BTreeSet<String>)>,
 }
 
@@ -280,22 +284,22 @@ pub fn r_dir_sources(root: &Path) -> BTreeSet<String> {
     expected
 }
 
-/// Derive the interned [`Project`] from the explicit [`Workspace`] file-set,
-/// replacing the per-request disk walk and imperative interning. Membership is
-/// the workspace's cleanly-parsing, on-disk members, sorted by path; pathless
-/// in-memory files and files with parse errors are dropped (the long-standing
-/// invariant — a broken file contributes nothing to cross-file scope).
+/// Derive the [`Project`] snapshot from the explicit [`Workspace`] file-set,
+/// replacing the per-request disk walk. Membership is the workspace's
+/// cleanly-parsing, on-disk members, sorted by path; pathless in-memory files
+/// and files with parse errors are dropped (the long-standing invariant — a
+/// broken file contributes nothing to cross-file scope).
 ///
-/// Re-runs when the workspace input changes or a member's parse status flips, but
-/// backdates to the *same* interned `Project` id when the derived membership is
-/// unchanged, so a body edit doesn't rebuild [`project_graph`] (the existing
-/// interning firewall). The query is **pure** (no disk): the per-root NAMESPACE
-/// texts, expected-source sets, and package-root markers come from the
-/// [`PackageGraph`](crate::incremental::PackageGraph) input (populated in the
-/// write-phase by [`discover_packages`]), so a keystroke re-run does only
-/// in-memory work and a watcher can invalidate disk changes correctly.
-#[salsa::tracked(returns(copy))]
-pub fn workspace_project<'db>(db: &'db dyn IncrementalDb) -> Project<'db> {
+/// Re-runs when the workspace input changes or a member's parse status flips,
+/// but **backdates** when the derived snapshot is unchanged (`Project: Eq`), so
+/// a body edit doesn't rebuild [`project_graph`]. The query is **pure** (no
+/// disk): the per-root NAMESPACE texts, expected-source sets, and package-root
+/// markers come from the [`PackageGraph`](crate::incremental::PackageGraph)
+/// input (populated in the write-phase by [`discover_packages`]), so a
+/// keystroke re-run does only in-memory work and a watcher can invalidate disk
+/// changes correctly.
+#[salsa::tracked(returns(ref))]
+pub fn workspace_project(db: &dyn IncrementalDb) -> Project {
     db.record_query(QueryLogEntry {
         kind: QueryKind::WorkspaceProject,
         file: None,
@@ -400,14 +404,13 @@ pub fn workspace_project<'db>(db: &'db dyn IncrementalDb) -> Project<'db> {
         .collect();
     declarations.sort_by(|a, b| a.root.cmp(&b.root));
 
-    Project::new(
-        db,
+    Project {
         members,
         namespaces,
         collations,
         declarations,
         native_routines,
-    )
+    }
 }
 
 /// The [`DescriptionFacts`] of the package enclosing `path`, from the tracked
@@ -459,23 +462,21 @@ pub struct PackageUsage {
 
 /// Every tracked package root's [`PackageUsage`], keyed by root.
 ///
-/// Keyed on the interned [`Project`] and folded from the backdated per-file
+/// Folded from the backdated [`workspace_project`] snapshot and per-file
 /// [`package_references`], so it backdates across a body edit exactly like
 /// [`project_graph`]: editing inside a function changes neither the packages a
 /// file names nor the membership, so this is not re-executed.
 #[salsa::tracked(returns(ref))]
-pub fn package_usage<'db>(
-    db: &'db dyn IncrementalDb,
-    project: Project<'db>,
-) -> BTreeMap<PathBuf, PackageUsage> {
+pub fn package_usage(db: &dyn IncrementalDb) -> BTreeMap<PathBuf, PackageUsage> {
     db.record_query(QueryLogEntry {
         kind: QueryKind::PackageUsage,
         file: None,
     });
 
+    let project = workspace_project(db);
     let mut usage: BTreeMap<PathBuf, PackageUsage> = BTreeMap::new();
     let mut sources: BTreeMap<PathBuf, usize> = BTreeMap::new();
-    for member in project.members(db) {
+    for member in &project.members {
         let Some(root) = member.package_root.clone() else {
             continue;
         };
@@ -494,7 +495,7 @@ pub fn package_usage<'db>(
 
     // A NAMESPACE `import()`/`importFrom()` reaches its package as surely as a
     // `::` does, and for many packages it is the *only* thing that does.
-    for (root, namespace) in project.namespaces(db) {
+    for (root, namespace) in &project.namespaces {
         let info = crate::rindex::harvest::parse_namespace(namespace, &[]);
         let entry = usage.entry(root.clone()).or_default();
         entry.used.extend(info.imported_packages);
@@ -502,16 +503,13 @@ pub fn package_usage<'db>(
     }
 
     let complete_roots: BTreeSet<&PathBuf> = project
-        .collations(db)
+        .collations
         .iter()
         .filter(|collation| collation.complete)
         .map(|collation| &collation.root)
         .collect();
-    let with_namespace: BTreeSet<&PathBuf> = project
-        .namespaces(db)
-        .iter()
-        .map(|(root, _)| root)
-        .collect();
+    let with_namespace: BTreeSet<&PathBuf> =
+        project.namespaces.iter().map(|(root, _)| root).collect();
     for (root, entry) in &mut usage {
         entry.complete = complete_roots.contains(root)
             && with_namespace.contains(root)
@@ -524,10 +522,9 @@ pub fn package_usage<'db>(
 /// any file under a package root. `None` outside every tracked package.
 pub fn package_usage_for<'db>(
     db: &'db dyn IncrementalDb,
-    project: Project<'db>,
     path: &Path,
 ) -> Option<&'db PackageUsage> {
-    let usage = package_usage(db, project);
+    let usage = package_usage(db);
     let roots: BTreeSet<&PathBuf> = usage.keys().collect();
     let root = package_root_in(path, &roots)?;
     usage.get(&root)
@@ -557,14 +554,15 @@ fn description_facts_by_root(db: &dyn IncrementalDb) -> HashMap<PathBuf, &Descri
 /// `no_eq` only forgoes backdating *when it does re-run* (an export actually
 /// changed), and [`visible_symbols`] re-establishes per-file backdating above it.
 #[salsa::tracked(returns(ref), no_eq, unsafe(non_salsa_values))]
-pub fn project_graph<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> ProjectScope {
+pub fn project_graph(db: &dyn IncrementalDb) -> ProjectScope {
     db.record_query(QueryLogEntry {
         kind: QueryKind::ProjectGraph,
         file: None,
     });
 
+    let project = workspace_project(db);
     let facts: Vec<FileFacts> = project
-        .members(db)
+        .members
         .iter()
         // `Arc::clone`, not a deep copy: these five are the per-file memos
         // themselves, and three of them are retained in the `ProjectScope`
@@ -581,14 +579,14 @@ pub fn project_graph<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> 
         })
         .collect();
 
-    let namespaces: HashMap<PathBuf, String> = project.namespaces(db).iter().cloned().collect();
+    let namespaces: HashMap<PathBuf, String> = project.namespaces.iter().cloned().collect();
     let package_complete: HashMap<PathBuf, bool> = project
-        .collations(db)
+        .collations
         .iter()
         .map(|c| (c.root.clone(), c.complete))
         .collect();
     let native_routines: HashMap<PathBuf, BTreeSet<String>> =
-        project.native_routines(db).iter().cloned().collect();
+        project.native_routines.iter().cloned().collect();
     ProjectScope::build(&facts, &namespaces, &package_complete, &native_routines)
 }
 
@@ -596,17 +594,13 @@ pub fn project_graph<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> 
 /// and the file's (stable) input path, so it backdates across body edits and
 /// re-runs only when the file's actual cross-file visibility changes.
 #[salsa::tracked(returns(ref))]
-pub fn visible_symbols<'db>(
-    db: &'db dyn IncrementalDb,
-    project: Project<'db>,
-    file: SourceFile,
-) -> Visibility {
+pub fn visible_symbols(db: &dyn IncrementalDb, file: SourceFile) -> Visibility {
     db.record_query(QueryLogEntry {
         kind: QueryKind::VisibleSymbols,
         file: Some(file),
     });
 
-    let graph = project_graph(db, project);
+    let graph = project_graph(db);
     // A project member always has a path; a pathless (in-memory) file never
     // enters a project, so it simply has no cross-file visibility.
     let Some(path) = file.path(db).as_deref() else {
@@ -673,21 +667,19 @@ fn invert_source_edges<'a>(
     rev
 }
 
-/// The "who sources me" index for `project`, inverting every member's forward
-/// `source_edges`. Keyed on the interned [`Project`] and the per-member
-/// (range-free) `source_edges` firewall, so it backdates across body edits.
+/// The "who sources me" index for the workspace project, inverting every
+/// member's forward `source_edges`. Built on the backdated [`workspace_project`]
+/// snapshot and the per-member (range-free) `source_edges` firewall, so it
+/// backdates across body edits.
 #[salsa::tracked(returns(ref))]
-pub fn reverse_source_edges<'db>(
-    db: &'db dyn IncrementalDb,
-    project: Project<'db>,
-) -> ReverseSources {
+pub fn reverse_source_edges(db: &dyn IncrementalDb) -> ReverseSources {
     db.record_query(QueryLogEntry {
         kind: QueryKind::ReverseSourceEdges,
         file: None,
     });
     invert_source_edges(
-        project
-            .members(db)
+        workspace_project(db)
+            .members
             .iter()
             .map(|m| (m.path.as_path(), source_edges(db, m.file).as_slice())),
     )
@@ -707,17 +699,17 @@ pub struct DefIndex {
 }
 
 /// Aggregate every member's [`file_def_sites`] into the project-wide
-/// [`DefIndex`]. Keyed on the interned [`Project`] and the per-file firewall, so
-/// it backdates across body edits and re-runs only when some file's top-level
-/// definitions change.
+/// [`DefIndex`]. Built on the backdated [`workspace_project`] snapshot and the
+/// per-file firewall, so it backdates across body edits and re-runs only when
+/// some file's top-level definitions change.
 #[salsa::tracked(returns(ref))]
-pub fn project_defs<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> DefIndex {
+pub fn project_defs(db: &dyn IncrementalDb) -> DefIndex {
     db.record_query(QueryLogEntry {
         kind: QueryKind::ProjectDefs,
         file: None,
     });
     let mut index = DefIndex::default();
-    for member in project.members(db) {
+    for member in &workspace_project(db).members {
         for (name, kind) in file_def_sites(db, member.file) {
             index
                 .by_name
@@ -751,16 +743,17 @@ pub struct ClassIndex {
 
 /// Aggregate every member's [`file_class_defs`] into the project-wide
 /// [`ClassIndex`], recording both the forward supertype edges and their inverse.
-/// Keyed on the interned [`Project`] and the per-file firewall, so it backdates
-/// across body edits and re-runs only when some file's class definitions change.
+/// Built on the backdated [`workspace_project`] snapshot and the per-file
+/// firewall, so it backdates across body edits and re-runs only when some
+/// file's class definitions change.
 #[salsa::tracked(returns(ref))]
-pub fn project_classes<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> ClassIndex {
+pub fn project_classes(db: &dyn IncrementalDb) -> ClassIndex {
     db.record_query(QueryLogEntry {
         kind: QueryKind::ProjectClasses,
         file: None,
     });
     let mut index = ClassIndex::default();
-    for member in project.members(db) {
+    for member in &workspace_project(db).members {
         for (name, def) in file_class_defs(db, member.file) {
             index
                 .def_sites
@@ -829,23 +822,21 @@ impl RoxygenTopicIndex {
 }
 
 /// Aggregate every package member's [`file_roxygen_topics`] into the
-/// package-wide [`RoxygenTopicIndex`]. Keyed on the interned [`Project`] and the
-/// per-file firewall, so it backdates across body edits and re-runs only when
-/// some file's documentation actually changes.
+/// package-wide [`RoxygenTopicIndex`]. Built on the backdated
+/// [`workspace_project`] snapshot and the per-file firewall, so it backdates
+/// across body edits and re-runs only when some file's documentation actually
+/// changes.
 ///
 /// Members are visited in `project.members` order, which is sorted by path, so
 /// a topic's member list is deterministic.
 #[salsa::tracked(returns(ref))]
-pub fn project_roxygen_topics<'db>(
-    db: &'db dyn IncrementalDb,
-    project: Project<'db>,
-) -> RoxygenTopicIndex {
+pub fn project_roxygen_topics(db: &dyn IncrementalDb) -> RoxygenTopicIndex {
     db.record_query(QueryLogEntry {
         kind: QueryKind::ProjectRoxygenTopics,
         file: None,
     });
     let mut index = RoxygenTopicIndex::default();
-    for member in project.members(db) {
+    for member in &workspace_project(db).members {
         let Some(root) = member.package_root.as_ref() else {
             continue;
         };
@@ -865,10 +856,9 @@ pub fn project_roxygen_topics<'db>(
 /// tracked package, where topic resolution falls back to the file-local view.
 pub fn roxygen_topics_for<'db>(
     db: &'db dyn IncrementalDb,
-    project: Project<'db>,
     path: &Path,
 ) -> Option<&'db PackageTopics> {
-    let index = project_roxygen_topics(db, project);
+    let index = project_roxygen_topics(db);
     let roots: BTreeSet<&PathBuf> = index.by_package.keys().collect();
     let root = package_root_in(path, &roots)?;
     index.by_package.get(&root)
@@ -888,17 +878,17 @@ pub struct ReadIndex {
 }
 
 /// Aggregate every member's [`file_free_reads`] into the project-wide
-/// [`ReadIndex`]. Keyed on the interned [`Project`] and the per-file firewall, so
-/// it backdates across body edits and re-runs only when some file's free-read
-/// name set changes.
+/// [`ReadIndex`]. Built on the backdated [`workspace_project`] snapshot and the
+/// per-file firewall, so it backdates across body edits and re-runs only when
+/// some file's free-read name set changes.
 #[salsa::tracked(returns(ref))]
-pub fn project_reads<'db>(db: &'db dyn IncrementalDb, project: Project<'db>) -> ReadIndex {
+pub fn project_reads(db: &dyn IncrementalDb) -> ReadIndex {
     db.record_query(QueryLogEntry {
         kind: QueryKind::ProjectReads,
         file: None,
     });
     let mut index = ReadIndex::default();
-    for member in project.members(db) {
+    for member in &workspace_project(db).members {
         for name in file_free_reads(db, member.file).iter() {
             index
                 .by_name
@@ -926,7 +916,7 @@ pub struct ExternalResolution {
 ///
 /// The union of two provenances: the file's own `library()`/`require()` calls
 /// and location-implied attaches ([`loaded_names`], a per-file firewall), and
-/// the `Depends` its package declares (this project's interned declarations).
+/// the `Depends` its package declares (the project snapshot's declarations).
 ///
 /// Deliberately **not** `Imports`: R does not attach an `Imports` package, and
 /// resolving its exports as bare names here would accept code that fails under
@@ -936,31 +926,23 @@ pub struct ExternalResolution {
 /// A `BTreeSet<String>` like `loaded_names`, so it backdates: a body edit
 /// leaves it equal and [`external_resolution`] is not re-run.
 #[salsa::tracked(returns(ref))]
-pub fn attached_names<'db>(
-    db: &'db dyn IncrementalDb,
-    project: Project<'db>,
-    file: SourceFile,
-) -> BTreeSet<String> {
+pub fn attached_names(db: &dyn IncrementalDb, file: SourceFile) -> BTreeSet<String> {
     db.record_query(QueryLogEntry {
         kind: QueryKind::AttachedNames,
         file: Some(file),
     });
+    let project = workspace_project(db);
     let mut names = loaded_names(db, file).clone();
     // A NAMESPACE `import(pkg)` puts every export of pkg in this file's scope,
     // which for name resolution is indistinguishable from attaching it.
-    names.extend(
-        visible_symbols(db, project, file)
-            .wildcard_imports
-            .iter()
-            .cloned(),
-    );
+    names.extend(visible_symbols(db, file).wildcard_imports.iter().cloned());
     let root = project
-        .members(db)
+        .members
         .iter()
         .find(|m| m.file == file)
         .and_then(|m| m.package_root.as_ref());
     if let Some(root) = root
-        && let Some(decl) = project.declarations(db).iter().find(|d| &d.root == root)
+        && let Some(decl) = project.declarations.iter().find(|d| &d.root == root)
     {
         names.extend(decl.attached.iter().cloned());
     }
@@ -981,10 +963,9 @@ pub fn attached_names<'db>(
 /// and re-applies the per-occurrence local-binding check, so a name bound in one
 /// scope but free in another is handled correctly.
 #[salsa::tracked(returns(ref))]
-pub fn external_resolution<'db>(
-    db: &'db dyn IncrementalDb,
+pub fn external_resolution(
+    db: &dyn IncrementalDb,
     manifest: LibraryIndex,
-    project: Project<'db>,
     file: SourceFile,
 ) -> ExternalResolution {
     db.record_query(QueryLogEntry {
@@ -994,7 +975,7 @@ pub fn external_resolution<'db>(
 
     let index: &crate::rindex::provider::IndexedProvider = manifest.data(db);
     let remote: &crate::rindex::remote::RemoteExports = manifest.remote(db);
-    let loaded = attached_names(db, project, file);
+    let loaded = attached_names(db, file);
 
     // Gate: an attached package whose exports we don't fully know could define
     // any of the unresolved names — suppress the whole file. A meta-package
@@ -1013,7 +994,7 @@ pub fn external_resolution<'db>(
         return ExternalResolution::default();
     }
 
-    let visibility = visible_symbols(db, project, file);
+    let visibility = visible_symbols(db, file);
     // Gate: cross-file visibility left incomplete by something nothing can
     // resolve — a dynamic or unanalyzed `source()` — could supply any name.
     if visibility.incomplete {

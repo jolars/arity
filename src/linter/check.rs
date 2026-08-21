@@ -22,10 +22,9 @@ use crate::incremental::{
 };
 use crate::project::description::DescriptionFacts;
 use crate::project::{
-    PackageCollation, PackageDeclarations, PackageUsage, Project, ProjectMember,
-    expected_r_sources, external_resolution, package_facts_for, package_root, package_root_of_dir,
-    package_usage, package_usage_for, project_graph, project_roxygen_topics, roxygen_topics_for,
-    visible_symbols, workspace_project,
+    PackageUsage, expected_r_sources, external_resolution, package_facts_for, package_root,
+    package_root_of_dir, package_usage, package_usage_for, project_graph, project_roxygen_topics,
+    roxygen_topics_for, visible_symbols, workspace_project,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::semantic::SymbolProvider;
@@ -258,9 +257,9 @@ pub fn check_paths_with_index(
 
     let manifest = db.set_library_index(indexed);
 
-    // Seed the explicit workspace file-set and derive the interned project from
-    // it. `workspace_project` filters to cleanly-parsing members, reads each
-    // package's NAMESPACE, and interns — the same membership the inline build
+    // Seed the explicit workspace file-set; `workspace_project` derives the
+    // project snapshot from it, filtering to cleanly-parsing members and
+    // reading each package's NAMESPACE — the same membership the inline build
     // produced, now keyed off the salsa `Workspace` input.
     let members: Vec<SourceFile> = tracked
         .values()
@@ -301,12 +300,10 @@ pub fn check_paths_with_index(
         })
         .collect::<Vec<()>>();
 
-    let project = workspace_project(&db);
-
-    project_graph(&db, project);
-    project_roxygen_topics(&db, project);
+    project_graph(&db);
+    project_roxygen_topics(&db);
     if !description_sources.is_empty() {
-        package_usage(&db, project);
+        package_usage(&db);
     }
 
     // The cross-file path resolves undefined symbols through `external_resolution`
@@ -326,10 +323,9 @@ pub fn check_paths_with_index(
                 let diagnostics = syntax_error_diagnostics(worker.parse_diagnostics(file), &path);
                 (LintStatus::ParseDiagnostics { count }, diagnostics)
             } else {
-                let project = workspace_project(worker);
-                let visibility = visible_symbols(worker, project, file);
+                let visibility = visible_symbols(worker, file);
                 let file_scope = visibility.scope();
-                let resolution = external_resolution(worker, manifest, project, file);
+                let resolution = external_resolution(worker, manifest, file);
                 let package = package_facts_for(worker, &path);
                 let kept = lint_parsed_file(
                     worker,
@@ -341,7 +337,7 @@ pub fn check_paths_with_index(
                         project: Some(&file_scope),
                         resolution: Some(resolution),
                         package,
-                        topics: roxygen_topics_for(worker, project, &path),
+                        topics: roxygen_topics_for(worker, &path),
                     },
                 );
                 let status = if kept.is_empty() {
@@ -364,8 +360,7 @@ pub fn check_paths_with_index(
         .into_par_iter()
         .map_with(db.clone(), |worker, (path, content)| {
             let worker = &*worker;
-            let project = workspace_project(worker);
-            let usage = package_usage_for(worker, project, &path);
+            let usage = package_usage_for(worker, &path);
             let (status, diagnostics) = lint_description_source(&path, &content, &rules, usage);
             LintFileReport {
                 path,
@@ -428,28 +423,6 @@ fn excluded_package_sources(lint_files: &[PathBuf]) -> Vec<PathBuf> {
         }
     }
     extra
-}
-
-/// Intern a [`Project`] from a membership snapshot. Sorts `members` by path so
-/// the interned key is deterministic — an unchanged set always yields the same
-/// id, which is what keeps the project-graph memo alive across body edits.
-fn intern_project<'db>(
-    db: &'db dyn IncrementalDb,
-    mut members: Vec<ProjectMember>,
-    namespaces: Vec<(PathBuf, String)>,
-    collations: Vec<PackageCollation>,
-    declarations: Vec<PackageDeclarations>,
-    native_routines: Vec<(PathBuf, BTreeSet<String>)>,
-) -> Project<'db> {
-    members.sort_by(|a, b| a.path.cmp(&b.path));
-    Project::new(
-        db,
-        members,
-        namespaces,
-        collations,
-        declarations,
-        native_routines,
-    )
 }
 
 /// Run the resolved rules against a cleanly-parsed file, using the cached parse
@@ -518,24 +491,6 @@ pub struct PreparedProject {
     /// worker caches one `Arc` per lint config and hands a clone to each
     /// keystroke's prepare; the read-phase borrows through it.
     rules: Arc<ResolvedRules>,
-    /// Cleanly-parsing project members (incl. `active`), with their tracked
-    /// inputs and package roots; files with parse diagnostics are dropped, as
-    /// before. Plain owned data — *not* an interned [`Project`] — because the
-    /// LSP moves this across a thread boundary onto a different db handle and
-    /// interns inside the read-phase ([`analyze_prepared`]).
-    members: Vec<ProjectMember>,
-    /// `(package_root, NAMESPACE text)` pairs, sorted by root.
-    namespaces: Vec<(PathBuf, String)>,
-    /// Per package root, its completeness verdict, sorted by root. Snapshotted
-    /// from the interned [`Project`] (disk-derived in [`workspace_project`]) so
-    /// the read-phase re-interns it without touching disk.
-    collations: Vec<PackageCollation>,
-    /// Per package root, the dependencies its `DESCRIPTION` declares, sorted by
-    /// root. Snapshotted from the interned [`Project`] like `collations`.
-    declarations: Vec<PackageDeclarations>,
-    /// Per package root, the names its `useDynLib()` binds, sorted by root.
-    /// Snapshotted from the interned [`Project`] like `collations`.
-    native_routines: Vec<(PathBuf, BTreeSet<String>)>,
 }
 
 /// Write-phase of cross-file linting (needs `&mut db`). Discovers the enclosing
@@ -560,22 +515,13 @@ pub fn prepare_document_in_project(
         return None;
     }
 
-    let project = workspace_project(&*db);
-    let members = project.members(&*db).clone();
-    let namespaces = project.namespaces(&*db).clone();
-    let collations = project.collations(&*db).clone();
-    let declarations = project.declarations(&*db).clone();
-    let native_routines = project.native_routines(&*db).clone();
+    // Force the project snapshot on the write phase so the read phase starts
+    // from a warm (and, on a body edit, backdated) memo. The read phase runs on
+    // a snapshot of this very storage — the next write blocks until the
+    // snapshot drops — so it sees exactly this state and carries no copy.
+    workspace_project(&*db);
 
-    Some(PreparedProject {
-        active,
-        rules,
-        members,
-        namespaces,
-        collations,
-        declarations,
-        native_routines,
-    })
+    Some(PreparedProject { active, rules })
 }
 
 /// Fold the project enclosing `path` — its R package root, else its directory —
@@ -697,26 +643,18 @@ pub fn analyze_prepared(
     provider: &dyn SymbolProvider,
 ) -> Vec<Diagnostic> {
     let db = analysis.as_db();
-    let project = intern_project(
-        db,
-        prepared.members.clone(),
-        prepared.namespaces.clone(),
-        prepared.collations.clone(),
-        prepared.declarations.clone(),
-        prepared.native_routines.clone(),
-    );
     let active_path = analysis
         .file_path(prepared.active)
         .map(Path::to_path_buf)
         .unwrap_or_default();
-    let visibility = visible_symbols(db, project, prepared.active);
+    let visibility = visible_symbols(db, prepared.active);
     let file_scope = visibility.scope();
     // Resolve undefined symbols through the salsa library index when one is
     // installed (HIGH-durability, so it survives keystrokes); else fall back to
     // the threaded `provider`. The query memoizes and backdates across body edits.
     let resolution = analysis
         .library_index()
-        .map(|manifest| external_resolution(db, manifest, project, prepared.active));
+        .map(|manifest| external_resolution(db, manifest, prepared.active));
     lint_parsed_file(
         db,
         prepared.active,
@@ -727,7 +665,7 @@ pub fn analyze_prepared(
             project: Some(&file_scope),
             resolution,
             package: package_facts_for(db, &active_path),
-            topics: roxygen_topics_for(db, project, &active_path),
+            topics: roxygen_topics_for(db, &active_path),
         },
     )
 }
@@ -787,7 +725,7 @@ pub fn check_description_in_project(
     rules: &ResolvedRules,
 ) -> Vec<Diagnostic> {
     let db = analysis.as_db();
-    let usage = package_usage_for(db, workspace_project(db), path);
+    let usage = package_usage_for(db, path);
     lint_description_source(path, content, rules, usage).1
 }
 
