@@ -720,6 +720,13 @@ pub fn top_level_events(db: &dyn IncrementalDb, file: SourceFile) -> Arc<Vec<Top
 pub struct IncrementalDatabase {
     storage: salsa::Storage<Self>,
     query_log: Arc<Mutex<Vec<QueryLogEntry>>>,
+    /// Whether executed queries are recorded into
+    /// [`query_log`](Self::query_log). Off until the first
+    /// [`clear_query_log`](Self::clear_query_log) opens an observation window,
+    /// so the long-running language server (which never reads the log) does not
+    /// accumulate an entry per executed query for the whole session. Shared
+    /// across clones.
+    query_log_enabled: Arc<std::sync::atomic::AtomicBool>,
     /// Normalized-path → input index plus the [`FileId`] allocator, so repeated
     /// edits to the same path (under any equivalent spelling) reuse the same
     /// `SourceFile` input — and thus its cached queries — instead of creating a
@@ -763,6 +770,7 @@ impl Default for IncrementalDatabase {
         Self {
             storage: salsa::Storage::new(None),
             query_log: Arc::new(Mutex::new(Vec::new())),
+            query_log_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             source_map: Arc::new(Mutex::new(FileSourceMap::default())),
             reparse_cache: Arc::new(Mutex::new(HashMap::new())),
             pending_edits: Arc::new(Mutex::new(HashMap::new())),
@@ -789,6 +797,7 @@ impl Clone for IncrementalDatabase {
         Self {
             storage: self.storage.clone(),
             query_log: Arc::clone(&self.query_log),
+            query_log_enabled: Arc::clone(&self.query_log_enabled),
             source_map: Arc::clone(&self.source_map),
             reparse_cache: Arc::clone(&self.reparse_cache),
             pending_edits: Arc::clone(&self.pending_edits),
@@ -1250,7 +1259,11 @@ impl IncrementalDatabase {
         control_flow(self, file)
     }
 
+    /// Start (or restart) a query-log observation window: clear the log and
+    /// enable recording. Recording is off until the first call, so a caller
+    /// that never observes the log (the language server) pays no memory for it.
     pub fn clear_query_log(&self) {
+        self.query_log_enabled.store(true, Ordering::Relaxed);
         self.query_log
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -2029,6 +2042,9 @@ impl salsa::Database for IncrementalDatabase {}
 #[salsa::db]
 impl IncrementalDb for IncrementalDatabase {
     fn record_query(&self, entry: QueryLogEntry) {
+        if !self.query_log_enabled.load(Ordering::Relaxed) {
+            return;
+        }
         self.query_log
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -2100,6 +2116,29 @@ mod tests {
         let file = db.upsert_file(path, "x <- 1\n".to_string());
         assert_eq!(db.file_text(file), "x <- 1\n");
         assert!(db.lookup_file(path) == Some(file), "lookup after poison");
+    }
+
+    #[test]
+    fn query_log_records_nothing_until_observation_starts() {
+        // The language server runs for days and never reads the query log; if
+        // every executed query were recorded unconditionally the log would grow
+        // without bound for the whole session (issue #116). Recording starts
+        // only at `clear_query_log`, the "begin observing" call every test
+        // makes before asserting on the log.
+        let db = IncrementalDatabase::default();
+        let file = db.add_file("x <- 1\n");
+        let _ = parsed_document(&db, file);
+        assert!(
+            db.query_log().is_empty(),
+            "no observation window is open, so nothing may be recorded"
+        );
+
+        db.clear_query_log();
+        let _ = semantic_model(&db, file);
+        assert!(
+            !db.query_log().is_empty(),
+            "after clear_query_log, executed queries are recorded"
+        );
     }
 
     // --- expand_dir_renames ---------------------------------------------
