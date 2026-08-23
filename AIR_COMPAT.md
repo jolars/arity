@@ -7,26 +7,7 @@ This is a **soft gauge, not a quality gate**, and is subordinate to Tenet 1 (det
 - **Corpus:** formatter fixtures (`crates/arity-formatter/tests/fixtures/formatter/*/expected.R`)
 - **Line similarity:** 99.1%  _(Dice coefficient over lines)_
 - **File compatibility:** 93.2%  (205/220 files unchanged by air)
-- **Intentional deviations:** 3  ·  **Unexplained divergences:** 12
-
-## Unexplained divergences (triage queue)
-
-Each of these is **either a bug to fix** (air is more idiomatic --- adopt it) **or a deliberate deviation to record** (add it to `tests/air_compat_allowlist.toml` with a reason). Leaving it here is the "tension": diverging from air should be a conscious, documented choice.
-
-| File | Line similarity |
-|---|---|
-| `directive_skip_file` | 33.3% |
-| `directive_region_unclosed` | 44.4% |
-| `directive_skip_control_flow_body` | 54.5% |
-| `assignment_rhs_breaks_before_lhs_subset_bare_body` | 66.7% |
-| `directive_both_prefix` | 66.7% |
-| `assignment_rhs_breaks_before_lhs_subset_in_function` | 76.9% |
-| `directive_skip_statement` | 76.9% |
-| `assignment_rhs_if_else_comment` | 77.8% |
-| `directive_skip_in_block` | 80.0% |
-| `directive_region` | 81.8% |
-| `subset2_assign_if_else_rhs` | 81.8% |
-| `air_pipelines` | 95.8% |
+- **Intentional deviations:** 15  ·  **Unexplained divergences:** 0
 
 ## Recorded intentional deviations
 
@@ -35,6 +16,18 @@ Listed in `tests/air_compat_allowlist.toml`. These diverge from air on purpose.
 | File | Line similarity | Reason |
 |---|---|---|
 | `air_call` | 99.5% | unbreakable-atom hug: arity keeps `with(<over-width symbol>, {` compact; air expands |
+| `air_pipelines` | 95.8% | arity preserves `=` assignment; air rewrites it to `<-` |
+| `assignment_rhs_breaks_before_lhs_subset_bare_body` | 66.7% | assignment adds no break of its own; arity keeps the first RHS multiplication together |
+| `assignment_rhs_breaks_before_lhs_subset_in_function` | 76.9% | assignment adds no break of its own; arity keeps the first RHS multiplication together |
+| `assignment_rhs_if_else_comment` | 77.8% | arity preserves `=` assignment; air rewrites it to `<-` |
 | `call_trailing_braced_expression` | 95.1% | unbreakable-atom hug: arity keeps `with(<over-width symbol>, {` compact; air expands |
+| `directive_both_prefix` | 66.7% | arity's short `arity skip` form preserves the statement; air does not honor the directive |
+| `directive_region` | 81.8% | arity's `off` region preserves its contents byte-for-byte; air does not honor the directive |
+| `directive_region_unclosed` | 44.4% | arity's unclosed `off` region preserves through EOF; air does not honor the directive |
+| `directive_skip_control_flow_body` | 54.5% | arity's `skip` preserves the braceless body byte-for-byte; air does not honor the directive |
+| `directive_skip_file` | 33.3% | arity's `skip-file` preserves the file byte-for-byte; air does not honor the directive |
+| `directive_skip_in_block` | 80.0% | arity's `skip` preserves the indented block statement; air does not honor the directive |
+| `directive_skip_statement` | 76.9% | arity's `skip` preserves the hand-aligned statement; air does not honor the directive |
 | `paren_own_line_comment` | 0.0% | own-line comment stays inside the parens; air hoists it out of the statement |
+| `subset2_assign_if_else_rhs` | 81.8% | arity preserves `=` assignment; air rewrites it to `<-` |
 

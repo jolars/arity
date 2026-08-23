@@ -39,3 +39,29 @@ call_trailing_braced_expression = "unbreakable-atom hug: arity keeps `with(<over
 # air does not do this for the identical shape in a call argument list, which it
 # keeps inside. Arity applies the one rule to both.
 paren_own_line_comment = "own-line comment stays inside the parens; air hoists it out of the statement"
+
+# Format directives are Arity's explicit byte-preservation contract. Air does
+# not recognize them and formats the protected statement, region, or file. The
+# resulting divergence is therefore the intended effect of each fixture.
+directive_skip_file = "arity's `skip-file` preserves the file byte-for-byte; air does not honor the directive"
+directive_region_unclosed = "arity's unclosed `off` region preserves through EOF; air does not honor the directive"
+directive_skip_control_flow_body = "arity's `skip` preserves the braceless body byte-for-byte; air does not honor the directive"
+directive_both_prefix = "arity's short `arity skip` form preserves the statement; air does not honor the directive"
+directive_skip_statement = "arity's `skip` preserves the hand-aligned statement; air does not honor the directive"
+directive_skip_in_block = "arity's `skip` preserves the indented block statement; air does not honor the directive"
+directive_region = "arity's `off` region preserves its contents byte-for-byte; air does not honor the directive"
+
+# Arity preserves the assignment operator written by the user. Air canonicalizes
+# `=` assignments to `<-`; that rewrite is outside a layout-only formatter's
+# remit and is not valid as a context-free token substitution in R.
+assignment_rhs_if_else_comment = "arity preserves `=` assignment; air rewrites it to `<-`"
+subset2_assign_if_else_rhs = "arity preserves `=` assignment; air rewrites it to `<-`"
+air_pipelines = "arity preserves `=` assignment; air rewrites it to `<-`"
+
+# Assignment itself introduces no width-driven break. Its RHS binary chain
+# chooses its layout from its own start column, keeping the first complete
+# multiplication together; air breaks that multiplication after `*` to account
+# for the long subset-assignment LHS. These fixtures pin the Arity behavior as a
+# regression guard against unnecessarily exploding `[[` expressions.
+assignment_rhs_breaks_before_lhs_subset_bare_body = "assignment adds no break of its own; arity keeps the first RHS multiplication together"
+assignment_rhs_breaks_before_lhs_subset_in_function = "assignment adds no break of its own; arity keeps the first RHS multiplication together"
