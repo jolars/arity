@@ -10,8 +10,8 @@ name: Smoke Test
 on:
   workflow_dispatch:
   schedule:
-    # Weekly, Sunday 04:00 UTC.
-    - cron: "0 4 * * 0"
+    # Weekly, Monday 04:00 UTC.
+    - cron: "0 4 * * 1"
 
 env:
   CARGO_TERM_COLOR: always
