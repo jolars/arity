@@ -131,6 +131,7 @@ fn fixture_names() -> &'static [&'static str] {
         "function_definition_user_requested_line_break_followup",
         "function_bare_control_flow_body",
         "function_param_default_if_else",
+        "function_param_comment_before_comma",
         "function_body_curly_curly",
         "subset_basic_and_holes",
         "subset_holes_trailing_function",

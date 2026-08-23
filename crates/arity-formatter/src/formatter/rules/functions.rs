@@ -1284,8 +1284,7 @@ fn brace_wrap_body_with_comments(body: Ir, comments: &[String]) -> Ir {
 
 /// IR port of [`format_function_parameters`]'s comment branch: with a comment in
 /// the param list, emit each comma-delimited segment's raw (trimmed) lines one
-/// per line, a comma after the last line of every non-final segment. The list is
-/// always broken.
+/// per line. The list is always broken.
 fn ir_function_params_with_comments(param_elements: &[SyntaxElement<RLanguage>]) -> Ir {
     let segments = split_top_level_function_params(param_elements);
     if segments.is_empty() {
@@ -1293,20 +1292,18 @@ fn ir_function_params_with_comments(param_elements: &[SyntaxElement<RLanguage>])
     }
     let mut lines: Vec<Ir> = Vec::new();
     for (idx, segment) in segments.iter().enumerate() {
-        let raw = snippet_from_elements(segment);
+        let raw = if idx + 1 < segments.len() {
+            function_param_snippet_with_comma(segment)
+        } else {
+            snippet_from_elements(segment)
+        };
         let seg_lines: Vec<&str> = raw
             .lines()
             .map(str::trim)
             .filter(|line| !line.is_empty())
             .collect();
-        let last = seg_lines.len();
-        for (line_idx, line) in seg_lines.iter().enumerate() {
-            let add_comma = idx + 1 < segments.len() && line_idx + 1 == last;
-            lines.push(Ir::text(if add_comma {
-                format!("{line},")
-            } else {
-                (*line).to_string()
-            }));
+        for line in seg_lines {
+            lines.push(Ir::text(line.to_string()));
         }
     }
     Ir::concat([
@@ -1318,6 +1315,26 @@ fn ir_function_params_with_comments(param_elements: &[SyntaxElement<RLanguage>])
         Ir::hard_line(),
         Ir::text(")"),
     ])
+}
+
+/// Restore a segment's delimiter after its last syntactic element. A comma can
+/// legally follow a comment on the next source line, but rendering it after the
+/// comment text turns it into part of that comment and makes the output invalid.
+fn function_param_snippet_with_comma(segment: &[SyntaxElement<RLanguage>]) -> String {
+    let mut raw = String::new();
+    let mut insertion = None;
+    for element in segment {
+        raw.push_str(&element.to_string());
+        if !super::super::core::is_trivia(element.kind()) && element.kind() != SyntaxKind::COMMENT {
+            insertion = Some(raw.len());
+        }
+    }
+    if let Some(offset) = insertion {
+        raw.insert(offset, ',');
+    } else {
+        raw.push(',');
+    }
+    raw
 }
 
 /// The conditional choice between bare inline body and braced-block hug.
