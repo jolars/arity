@@ -286,6 +286,7 @@ lifecycle
 linreg
 lintr
 listenv
+listviewer
 litedown
 lme4
 lmerTest
@@ -409,6 +410,7 @@ registry
 rematch
 rematch2
 remotes
+rentrez
 renv
 repr
 reprex
@@ -457,6 +459,7 @@ shinyWidgets
 shinydashboard
 shinyjs
 shinystan
+shinytest2
 shinythemes
 showtext
 showtextdb
@@ -511,6 +514,7 @@ timeDate
 timechange
 tinytest
 tinytex
+torch
 tseries
 tweenr
 tzdb
