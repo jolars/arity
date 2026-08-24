@@ -19,30 +19,6 @@
 
 ## Formatter
 
-- [x] Format [`tribble()`](https://tibble.tidyverse.org/reference/tribble.html)
-  calls as readable row-wise tables. Done in
-  `crates/arity-formatter/src/formatter/rules/table.rs`: leading `~name`
-  formulas declare the columns, the remaining cells are chunked into rows of
-  that width, and each cell is padded so cells, commas, and numeric decimal
-  points line up. Both `tribble(...)` and `pkg::tribble(...)` are recognized.
-  Rows come from the header count, never from input line breaks, so the layout
-  stays deterministic; where a call is already a well-formed table the output is
-  byte-identical to air's `fmt: table`.
-
-  Layout is all-or-nothing and declining it is total: a ragged cell count, a
-  hole, a named argument, `...`/`!!`/`!!!`, or a cell that cannot render on one
-  line falls back to ordinary call formatting, as does any call carrying a
-  comment (a comment has no cell to live in, and the ordinary path already
-  relocates it without loss). Trailing commas are preserved. Fixtures:
-  `tribble_table_basic`, `_numeric_alignment`, `_cells`, `_comments`,
-  `_fallback`; the two fallback fixtures are recorded air deviations.
-
-- [x] Share one **bounded, indexed line-diff core** between `format --check` and
-  LSP formatting. Done in `src/text/line_diff.rs`: both consumers project the
-  same indexed operations, unanchored gaps have a deterministic work bound, and
-  over-budget gaps become one replacement. CLI diff construction remains lazy
-  under `--quiet`; LSP coverage fallback and reconstruction tests remain pinned.
-
 - [ ] Report an **outdated `# arity-format` directive** — one whose marked span
   the formatter would not have changed anyway. It is a `format --check` fact,
   not a semantic one, so it belongs to the formatter, not to
