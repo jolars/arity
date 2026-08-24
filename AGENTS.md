@@ -479,9 +479,20 @@ hand-edit `CHANGELOG.md` or any version field: versionary owns Cargo, npm,
 editor, and other versions. Pre-1.0 breaking changes produce minor bumps.
 
 Release streams are root CLI `v*`, parser `arity-parser-v*`, formatter
-`arity-formatter-v*`, and VS Code following CLI. Editor/member paths are
-excluded from CLI version calculation, so commits spanning root, member crates,
-or `editors/` must be split atomically.
+`arity-formatter-v*`, VS Code following CLI, and Zed `arity-zed-v*`. Only the
+root stream may carry assets: the Zed extension resolves its download with
+`latest_github_release(require_assets: true)`, which cannot filter by tag
+prefix, so an asset on any sibling stream would shadow the CLI release.
+
+Editor/member paths are excluded from CLI version calculation, so commits
+spanning root, member crates, or `editors/` must be split atomically. The VS
+Code bundled binary must not be load-bearing—PATH fallback remains necessary
+for NixOS. `editors/zed` obeys the same rule by resolving PATH before
+downloading. It is a language-server-only extension, deliberately outside the
+root workspace (its own `[workspace]`, edition 2021, `wasm32-wasip2`), so the
+`zed` CI job is the only thing that compiles it; a version bump must also
+refresh its `Cargo.lock`. Its registry entry in `zed-industries/extensions` is
+submitted by hand, which is why it does not follow the CLI version.
 
 Main pushes run tests/audit/deny and versionary opens a release PR. Merging tags
 and fans out builds/publishing. `publish-cargo.yml` publishes unpublished

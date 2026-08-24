@@ -156,7 +156,7 @@ jobs:
   build-release-assets:
     name: Build & Upload Release Assets
     needs: versionary
-    if: ${{ needs.versionary.outputs.release_created == 'true' }}
+    if: ${{ needs.versionary.outputs.release_created == 'true' && startsWith(needs.versionary.outputs.tag_name, 'v') }}
     uses: ./.github/workflows/packages.yml
     with:
       upload: "true"
@@ -169,7 +169,7 @@ jobs:
   publish-extensions:
     name: Publish Editor Extensions
     needs: [versionary, build-release-assets]
-    if: ${{ needs.versionary.outputs.release_created == 'true' }}
+    if: ${{ needs.versionary.outputs.release_created == 'true' && startsWith(needs.versionary.outputs.tag_name, 'v') }}
     uses: ./.github/workflows/publish-code-extensions.yml
     with:
       release-tag: ${{ needs.versionary.outputs.tag_name }}
