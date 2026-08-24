@@ -19,20 +19,23 @@
 
 ## Formatter
 
-- [ ] Format [`tribble()`](https://tibble.tidyverse.org/reference/tribble.html)
-  calls as readable row-wise tables. One or more leading one-sided formulas
-  (`~name`) declare the columns; when the remaining unnamed arguments form
-  complete rows, put the headers and each row on their own line, align cells and
-  commas by rendered width, and align numeric decimal points where practical.
-  Recognize both `tribble(...)` and `tibble::tribble(...)`.
+- [x] Format [`tribble()`](https://tibble.tidyverse.org/reference/tribble.html)
+  calls as readable row-wise tables. Done in
+  `crates/arity-formatter/src/formatter/rules/table.rs`: leading `~name`
+  formulas declare the columns, the remaining cells are chunked into rows of
+  that width, and each cell is padded so cells, commas, and numeric decimal
+  points line up. Both `tribble(...)` and `pkg::tribble(...)` are recognized.
+  Rows come from the header count, never from input line breaks, so the layout
+  stays deterministic; where a call is already a well-formed table the output is
+  byte-identical to air's `fmt: table`.
 
-  Build this as native IR over a reusable argument-table layout—not verbatim
-  output or input-line preservation. If the header count or row shape is not
-  statically known, a cell cannot render flat, or `!!`/`!!!` makes the argument
-  count dynamic, fall back to ordinary call formatting. Model comments and
-  trailing commas without losing or relocating trivia. Add fixtures for bare
-  and qualified calls, uneven cell widths, numeric columns, long or nested
-  cells, comments, dynamic-dot fallback, losslessness, and idempotence.
+  Layout is all-or-nothing and declining it is total: a ragged cell count, a
+  hole, a named argument, `...`/`!!`/`!!!`, or a cell that cannot render on one
+  line falls back to ordinary call formatting, as does any call carrying a
+  comment (a comment has no cell to live in, and the ordinary path already
+  relocates it without loss). Trailing commas are preserved. Fixtures:
+  `tribble_table_basic`, `_numeric_alignment`, `_cells`, `_comments`,
+  `_fallback`; the two fallback fixtures are recorded air deviations.
 
 - [x] Share one **bounded, indexed line-diff core** between `format --check` and
   LSP formatting. Done in `src/text/line_diff.rs`: both consumers project the

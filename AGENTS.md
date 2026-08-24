@@ -207,6 +207,25 @@ layout opt-out.
 - `skip-file` short-circuits `format_node`, preserving even line endings;
   `format_range` returns `None`.
 
+### Table layout
+
+`rules/table.rs` lays a `tribble()` call out as a header line plus one line per
+row. It is the one sanctioned construct-specific layout, and it stays narrow:
+`tribble` alone, bare or `::`-qualified, with no directive and no configurable
+name list.
+
+- Rows come from the **header count**, never from input line breaks. Air's
+  `fmt: table` decides rows from the source layout; arity must not.
+- Cells are rendered flat through `Printer::render_flat` and emitted as measured
+  text, because alignment only holds if a cell is exactly one line.
+- Declining the table is total: it returns `Option`, never an error, and every
+  ambiguous shape (ragged rows, holes, named arguments, `...`/`!!`/`!!!`, a cell
+  with a forced break, any comment in the call) falls back to ordinary call
+  formatting rather than guessing a row shape.
+- Where a call already is a well-formed table the output is byte-identical to
+  air, which makes air a real oracle for the alignment arithmetic. The recorded
+  deviations are the fallback fixtures, where air tables a call that is not one.
+
 ### DESCRIPTION formatting
 
 `formatter/description/` is a separate first-fit formatter, not the R layout
