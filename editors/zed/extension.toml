@@ -1,0 +1,11 @@
+id = "arity-language-server"
+name = "Arity"
+description = "Language server, formatter, and linter for R"
+version = "0.1.0"
+schema_version = 1
+authors = ["Johan Larsson <johan@jolars.co>"]
+repository = "https://github.com/jolars/arity"
+
+[language_servers.arity-language-server]
+name = "Arity Language Server"
+languages = ["R"]
