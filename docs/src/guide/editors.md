@@ -91,6 +91,74 @@ including the syntax/parse errors that an `arity.toml` `[lint]` selection
 stays the right tool when you want to keep parse errors but mute specific lint
 rules across every editor and the CLI.
 
+## Zed
+
+Arity attaches to Zed's `R` language, which the [R
+extension](https://github.com/ocsmit/zed-r) provides. Install that one first,
+then install **Arity** from the extensions view (`zed: extensions` in the
+command palette).
+
+Zed uses the `arity` on your `PATH` when there is one, and otherwise downloads
+the release binary matching your platform. Keeping Arity on the `PATH` is the
+better option on distributions that cannot run the generic release build, NixOS
+above all.
+
+The R extension also ships `r_language_server`. Zed runs both servers unless you
+say otherwise, so name the ones you want and put Arity first when it should
+handle formatting, in `settings.json`:
+
+```json
+{
+  "languages": {
+    "R": {
+      "language_servers": ["arity-language-server", "r_language_server"],
+      "formatter": "language_server",
+      "format_on_save": "on"
+    }
+  }
+}
+```
+
+To run Arity alone, drop `"r_language_server"` from the list.
+
+Editor settings go under the server's id and act as fallbacks when the project
+has no `arity.toml`:
+
+```json
+{
+  "lsp": {
+    "arity-language-server": {
+      "settings": {
+        "lineWidth": 100,
+        "indentWidth": 2
+      }
+    }
+  }
+}
+```
+
+An `arity.toml` in the project is authoritative, so prefer the file when the
+whole team should share the behavior.
+
+To point Zed at a particular binary, set `binary.path`:
+
+```json
+{
+  "lsp": {
+    "arity-language-server": {
+      "binary": { "path": "/opt/arity/bin/arity", "arguments": ["lsp"] }
+    }
+  }
+}
+```
+
+`arguments` replaces the command line rather than extending it, so it has to
+keep naming a subcommand that speaks LSP.
+
+The R extension recognizes files by `.r` or `.R` suffix. It does not assign its
+language to `DESCRIPTION`, so the Arity extension cannot attach to those files
+until Zed's R language definition covers them.
+
 ## Neovim
 
 With [`nvim-lspconfig`](https://github.com/neovim/nvim-lspconfig) installed,
