@@ -46,6 +46,16 @@ pub(crate) fn ir_call_expr(
         ]));
     }
 
+    // A `tribble()` whose cells form complete rows lays out as a table. This
+    // sits after the comment check on purpose: a comment inside the call has no
+    // cell of its own to live in, so such a call keeps the ordinary
+    // comment-relocating layout rather than risking moved trivia.
+    if let Some(table) =
+        super::table::ir_tribble_table(&elements[..lparen_idx], &arg_list, indent, ctx)
+    {
+        return Ok(Ir::concat([callee, table]));
+    }
+
     let (slots, comma_count) = collect_call_ir_slots(&arg_list, indent, ctx)?;
 
     // Empty call: no arguments and no holes.

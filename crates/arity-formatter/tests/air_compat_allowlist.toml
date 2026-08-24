@@ -73,3 +73,15 @@ air_pipelines = "arity preserves `=` assignment; air rewrites it to `<-`"
 # regression guard against unnecessarily exploding `[[` expressions.
 assignment_rhs_breaks_before_lhs_subset_bare_body = "assignment adds no break of its own; arity keeps the first RHS multiplication together"
 assignment_rhs_breaks_before_lhs_subset_in_function = "assignment adds no break of its own; arity keeps the first RHS multiplication together"
+
+# Table layout is all-or-nothing, and its rows come from the header count. Air
+# tables every `tribble()` unconditionally, splitting rows wherever the author
+# happened to break lines, so it lays out as a "table" a call that is not one:
+# a ragged cell count, a hole, a named argument, or dynamic dots all still get
+# padded into columns. Air also relocates a comment out of the nested call it
+# belongs to in the process (`c(\n  1, # first\n  2\n)` becomes
+# `c(1, 2) # first`). Arity declines the table for exactly those shapes and
+# keeps the ordinary call layout, which is what these two fixtures pin. The
+# fixtures where the cells *do* form a table match air byte for byte.
+tribble_table_fallback = "arity declines table layout when the cells do not form complete rows; air tables every `tribble()`"
+tribble_table_comments = "arity keeps comment relocation out of table layout; air tables the call and moves the comment"

@@ -244,6 +244,23 @@ impl Printer {
         self.run(ir, base, base)
     }
 
+    /// Render `ir` on a single line, ignoring the configured line width so no
+    /// nested group breaks of its own accord. `None` when the result still spans
+    /// several lines, i.e. the document carries a forced break and so has no
+    /// flat form at all.
+    ///
+    /// Table layout uses this both to measure a cell and to emit it: a cell that
+    /// cannot lie flat has no place in an aligned row, and one that can has no
+    /// layout freedom left to hand back to the printer.
+    pub(crate) fn render_flat(&self, ir: &Ir) -> Option<String> {
+        let unbounded = Printer {
+            line_width: usize::MAX,
+            indent_unit: self.indent_unit,
+        };
+        let text = unbounded.run(ir, 0, 0);
+        (!text.contains('\n')).then_some(text)
+    }
+
     fn run(&self, ir: &Ir, base_indent: usize, init_col: usize) -> String {
         self.run_with_mode(ir, base_indent, init_col, Mode::Break)
     }
