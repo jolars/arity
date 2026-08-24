@@ -22,6 +22,21 @@ struct Writer {
     col: usize,
     pending_indent: usize,
     needs_indent: bool,
+    line: usize,
+    line_indent: usize,
+    suffixes: Vec<LineSuffixMark>,
+}
+
+/// The rendered position of a structured trailing comment. Keeping this
+/// metadata beside the output lets alignment operate on comments identified by
+/// the CST rather than rediscovering `#` characters in rendered strings.
+struct LineSuffixMark {
+    line: usize,
+    indent: usize,
+    separator_start: usize,
+    separator_end: usize,
+    code_col: usize,
+    comment_width: usize,
 }
 
 impl Writer {
@@ -31,6 +46,9 @@ impl Writer {
             col: 0,
             pending_indent: 0,
             needs_indent: false,
+            line: 0,
+            line_indent: 0,
+            suffixes: Vec::new(),
         }
     }
 
@@ -69,11 +87,34 @@ impl Writer {
         self.col += s.chars().count();
     }
 
+    fn write_line_suffix(&mut self, s: &str) {
+        if s.is_empty() {
+            return;
+        }
+        self.flush_indent();
+        let separator_len = s.bytes().take_while(|byte| *byte == b' ').count();
+        debug_assert!(separator_len > 0, "line suffix must include a separator");
+        let separator_start = self.out.len();
+        let code_col = self.col;
+        self.out.push_str(s);
+        self.col += s.chars().count();
+        self.suffixes.push(LineSuffixMark {
+            line: self.line,
+            indent: self.line_indent,
+            separator_start,
+            separator_end: separator_start + separator_len,
+            code_col,
+            comment_width: s[separator_len..].chars().count(),
+        });
+    }
+
     /// Move to a fresh line indented to `indent`.
     fn newline(&mut self, indent: usize) {
         self.out.push('\n');
+        self.line += 1;
         self.col = 0;
         self.pending_indent = indent;
+        self.line_indent = indent;
         self.needs_indent = true;
     }
 
@@ -81,8 +122,10 @@ impl Writer {
     fn empty_line(&mut self, indent: usize) {
         self.out.push('\n');
         self.out.push('\n');
+        self.line += 2;
         self.col = 0;
         self.pending_indent = indent;
+        self.line_indent = indent;
         self.needs_indent = true;
     }
 
@@ -110,12 +153,72 @@ impl Writer {
                 first = false;
             } else {
                 self.out.push('\n');
+                self.line += 1;
                 self.col = 0;
                 self.needs_indent = false;
             }
             self.out.push_str(segment);
             self.col += segment.chars().count();
         }
+    }
+
+    fn finish(mut self, line_width: usize) -> String {
+        let mut replacements: Vec<(usize, usize, usize)> = Vec::new();
+        let mut start = 0usize;
+        while start < self.suffixes.len() {
+            let mut same_line_end = start + 1;
+            while same_line_end < self.suffixes.len()
+                && self.suffixes[same_line_end].line == self.suffixes[start].line
+            {
+                same_line_end += 1;
+            }
+            if same_line_end > start + 1 {
+                // Multiple suffix nodes on one physical line are not separate
+                // code/comment pairs and form a hard alignment boundary.
+                start = same_line_end;
+                continue;
+            }
+
+            let mut end = start + 1;
+            while end < self.suffixes.len()
+                && self.suffixes[end].line == self.suffixes[end - 1].line + 1
+                && self.suffixes[end].indent == self.suffixes[start].indent
+                && (end + 1 == self.suffixes.len()
+                    || self.suffixes[end + 1].line != self.suffixes[end].line)
+            {
+                end += 1;
+            }
+
+            let run = &self.suffixes[start..end];
+            if run.len() >= 2 {
+                let target = run
+                    .iter()
+                    .map(|suffix| suffix.code_col)
+                    .max()
+                    .expect("non-empty suffix run")
+                    + 1;
+                if run
+                    .iter()
+                    .all(|suffix| target + suffix.comment_width <= line_width)
+                {
+                    for suffix in run {
+                        replacements.push((
+                            suffix.separator_start,
+                            suffix.separator_end,
+                            target - suffix.code_col,
+                        ));
+                    }
+                }
+            }
+            start = end;
+        }
+
+        // Earlier byte offsets remain valid when edits are applied from right
+        // to left, even when a shorter line gains several spaces.
+        for (start, end, width) in replacements.into_iter().rev() {
+            self.out.replace_range(start..end, &" ".repeat(width));
+        }
+        self.out
     }
 }
 
@@ -148,6 +251,7 @@ impl Printer {
     fn run_with_mode(&self, ir: &Ir, base_indent: usize, init_col: usize, mode: Mode) -> String {
         let mut w = Writer::new();
         w.col = init_col;
+        w.line_indent = base_indent;
         let mut stack: Vec<(usize, Mode, &Ir)> = vec![(base_indent, mode, ir)];
         while let Some((indent, mode, node)) = stack.pop() {
             match node {
@@ -155,10 +259,10 @@ impl Printer {
                 Ir::Text(s) => w.write_text(s),
                 Ir::Verbatim { text, .. } => w.write_verbatim(text),
                 Ir::Skipped(text) => w.write_skipped(text),
-                // A trailing comment sits exactly where it appears (an adjacent
-                // HardLine ends the line right after it), so it renders inline
-                // like text; only fit measurement treats it as zero width.
-                Ir::LineSuffix(text) => w.write_text(text),
+                // A trailing comment renders inline; Writer retains its
+                // structured position so adjacent suffixes can align after the
+                // layout is fixed. Fit measurement still treats it as zero width.
+                Ir::LineSuffix(text) => w.write_line_suffix(text),
                 Ir::Concat(items) => {
                     for item in items.iter().rev() {
                         stack.push((indent, mode, item));
@@ -219,7 +323,7 @@ impl Printer {
                 }
             }
         }
-        w.out
+        w.finish(self.line_width)
     }
 
     /// Pick the layout for an [`Ir::ConditionalGroup`] at the current column:
@@ -675,6 +779,79 @@ mod tests {
         // line suffix it stays flat and the comment rides the end of the line.
         let ir = Ir::concat([group, Ir::line_suffix(" # note")]);
         assert_eq!(printer.print(&ir), "aaaa || bbbb # note");
+    }
+
+    #[test]
+    fn adjacent_line_suffixes_align_to_the_longest_prefix() {
+        let printer = Printer::new(FormatStyle::default());
+        let ir = Ir::concat([
+            Ir::text("a"),
+            Ir::line_suffix(" # first"),
+            Ir::hard_line(),
+            Ir::text("long"),
+            Ir::line_suffix(" # second"),
+        ]);
+        assert_eq!(printer.print(&ir), "a    # first\nlong # second");
+    }
+
+    #[test]
+    fn suffix_alignment_counts_unicode_columns_not_bytes() {
+        let printer = Printer::new(FormatStyle::default());
+        let ir = Ir::concat([
+            Ir::text("é"),
+            Ir::line_suffix(" # first"),
+            Ir::hard_line(),
+            Ir::text("long"),
+            Ir::line_suffix(" # second"),
+        ]);
+        assert_eq!(printer.print(&ir), "é    # first\nlong # second");
+    }
+
+    #[test]
+    fn suffix_alignment_stops_at_a_different_indentation() {
+        let printer = Printer::new(FormatStyle::default());
+        let ir = Ir::concat([
+            Ir::text("a"),
+            Ir::line_suffix(" # first"),
+            Ir::indent(Ir::concat([
+                Ir::hard_line(),
+                Ir::text("long"),
+                Ir::line_suffix(" # second"),
+            ])),
+        ]);
+        assert_eq!(printer.print(&ir), "a # first\n  long # second");
+    }
+
+    #[test]
+    fn multiple_suffixes_on_one_line_break_alignment() {
+        let printer = Printer::new(FormatStyle::default());
+        let ir = Ir::concat([
+            Ir::text("a"),
+            Ir::line_suffix(" # first"),
+            Ir::line_suffix(" # second"),
+            Ir::hard_line(),
+            Ir::text("long"),
+            Ir::line_suffix(" # third"),
+        ]);
+        assert_eq!(printer.print(&ir), "a # first # second\nlong # third");
+    }
+
+    #[test]
+    fn suffix_run_stays_unaligned_if_padding_would_overflow() {
+        let style = FormatStyle {
+            line_width: 14,
+            indent_width: 2,
+            line_ending: LineEnding::Lf,
+        };
+        let printer = Printer::new(style);
+        let ir = Ir::concat([
+            Ir::text("a"),
+            Ir::line_suffix(" # 1234567890"),
+            Ir::hard_line(),
+            Ir::text("long"),
+            Ir::line_suffix(" # short"),
+        ]);
+        assert_eq!(printer.print(&ir), "a # 1234567890\nlong # short");
     }
 
     #[test]

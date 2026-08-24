@@ -189,7 +189,7 @@ pub fn format_range(
     let Some(window_start) = window_start else {
         return Ok(None);
     };
-    let window = window_start..window_end;
+    let window = expand_comment_alignment_window(&lines, window_start..window_end);
 
     let rendered = if in_block {
         ir_block_statements(&lines, window, base_indent, ctx)?
@@ -217,6 +217,41 @@ pub fn format_range(
         range: TextRange::new(start, end),
         text,
     }))
+}
+
+/// Include the complete adjacent run when a range touches an alignable trailing
+/// comment. Otherwise formatting one member could choose a column that its
+/// untouched neighbors do not share, diverging from whole-document formatting.
+fn expand_comment_alignment_window(
+    lines: &[Vec<SyntaxElement<RLanguage>>],
+    mut window: std::ops::Range<usize>,
+) -> std::ops::Range<usize> {
+    let plan = super::directive::plan(lines);
+    let participates = |idx: usize| {
+        !plan.contains(idx)
+            && lines.get(idx).is_some_and(|line| {
+                let significant: Vec<_> = line
+                    .iter()
+                    .filter(|el| !is_trivia_kind(el.kind()))
+                    .collect();
+                significant.len() >= 2
+                    && significant
+                        .last()
+                        .is_some_and(|el| super::trivia::is_inline_trailing_comment(el))
+            })
+    };
+
+    if participates(window.start) {
+        while window.start > 0 && participates(window.start - 1) {
+            window.start -= 1;
+        }
+    }
+    if window.end > 0 && participates(window.end - 1) {
+        while window.end < lines.len() && participates(window.end) {
+            window.end += 1;
+        }
+    }
+    window
 }
 
 /// The deepest ROOT/BLOCK_EXPR node whose statement list fully contains `range`.

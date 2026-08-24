@@ -39,6 +39,7 @@ fn fixture_names() -> &'static [&'static str] {
         "assignment_precedence",
         "assignment_walrus",
         "comment_blank_line_gap_preserved",
+        "comment_trailing_alignment",
         "binary_comment_after_operator",
         "binary_comment_before_operator",
         "binary_chain_comment_before_operator",

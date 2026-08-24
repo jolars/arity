@@ -96,6 +96,33 @@ fn keeps_trailing_comment_in_selection() {
 }
 
 #[test]
+fn widens_selection_to_an_adjacent_comment_alignment_run() {
+    assert_eq!(
+        range_format("a<-1 # first\n<<long_name<-2 # second>>\nz<-3 # third\n"),
+        "a <- 1         # first\nlong_name <- 2 # second\nz <- 3         # third\n"
+    );
+}
+
+#[test]
+fn comment_alignment_declines_when_padding_would_overflow() {
+    let marked = "<<a<-1 # this comment consumes the remaining width\nlong_name<-2 # short>>\n";
+    let (text, range) = parse_marked(marked);
+    let parsed = parse(&text);
+    assert!(parsed.diagnostics.is_empty());
+    let style = FormatStyle {
+        line_width: 48,
+        ..FormatStyle::default()
+    };
+    let formatted = format_range(&parsed.cst, range, style, &text)
+        .expect("format_range failed")
+        .expect("emits an edit");
+    assert_eq!(
+        formatted.text,
+        "a <- 1 # this comment consumes the remaining width\nlong_name <- 2 # short"
+    );
+}
+
+#[test]
 fn empty_selection_in_whitespace_is_a_noop() {
     // A cursor on a blank line touches no statement.
     assert_eq!(range_format("a<-1\n<<>>\nb<-2\n"), "a<-1\n\nb<-2\n");

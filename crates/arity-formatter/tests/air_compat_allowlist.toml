@@ -40,6 +40,14 @@ call_trailing_braced_expression = "unbreakable-atom hug: arity keeps `with(<over
 # keeps inside. Arity applies the one rule to both.
 paren_own_line_comment = "own-line comment stays inside the parens; air hoists it out of the statement"
 
+# Adjacent trailing comments align at the longest code prefix when the run fits
+# within `line-width`. Air keeps one separating space in these cases; Arity uses
+# the rustfmt-style alignment rule pinned by the dedicated fixture.
+air_braced_expressions = "arity aligns adjacent trailing comments; air keeps one separating space"
+braced_empty_loops = "arity aligns adjacent trailing comments; air keeps one separating space"
+call_arg_comment_before_unary = "arity aligns adjacent trailing comments; air keeps one separating space"
+comment_trailing_alignment = "arity aligns adjacent trailing comments; air keeps one separating space"
+
 # Format directives are Arity's explicit byte-preservation contract. Air does
 # not recognize them and formats the protected statement, region, or file. The
 # resulting divergence is therefore the intended effect of each fixture.

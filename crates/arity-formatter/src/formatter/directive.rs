@@ -84,6 +84,12 @@ impl SkipPlan {
             .find(|(start, _, _)| *start == line)
             .map(|(_, end, range)| (*end, *range))
     }
+
+    pub(super) fn contains(&self, line: usize) -> bool {
+        self.runs
+            .iter()
+            .any(|(start, end, _)| *start <= line && line <= *end)
+    }
 }
 
 /// Read the directives of one statement list.

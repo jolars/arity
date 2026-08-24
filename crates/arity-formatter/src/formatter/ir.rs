@@ -90,8 +90,9 @@ pub(crate) enum Ir {
     /// This one is the layout engine being told, explicitly, to stand down.
     /// Always forces a break: a skipped statement owns its lines.
     Skipped(Rc<str>),
-    /// A trailing comment that runs to end of line, rendered inline where it sits
-    /// but counted as **zero width** by every fit measurement. This is the
+    /// A trailing comment that runs to end of line, rendered inline (and aligned
+    /// with adjacent suffixes at the same indentation) but counted as **zero
+    /// width** by every fit measurement. This is the
     /// Wadler/Prettier "line suffix" concept, scoped to same-line trailing
     /// comments: air treats such a comment as a zero-width suffix, so a long
     /// comment never forces an otherwise-fitting group to break. The break that

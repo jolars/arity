@@ -481,7 +481,7 @@ fn ir_if_branch(
     {
         let mut ir = ir_block_expr_with_prefixed_comments(node, indent, ctx, &combined)?;
         if let Some(comment) = trailing {
-            ir = Ir::concat([ir, Ir::text(" "), Ir::text(comment)]);
+            ir = Ir::concat([ir, Ir::line_suffix(format!(" {comment}"))]);
         }
         return Ok((ir, true));
     }
@@ -841,7 +841,7 @@ fn ir_external_body(
 ) -> Ir {
     let assembled = ir_with_leading_comments(leading, header, body);
     match trailing_comment {
-        Some(comment) => Ir::concat([assembled, Ir::text(" "), Ir::text(comment)]),
+        Some(comment) => Ir::concat([assembled, Ir::line_suffix(format!(" {comment}"))]),
         None => assembled,
     }
 }
@@ -1019,7 +1019,7 @@ pub(crate) fn try_format_if_with_external_body(
     let body = synthetic_block(vec![Ir::text(then_comment), body_expr]);
     let header = Ir::concat([ir_condition_header("if (", condition), Ir::text(" "), body]);
     let ir = match trailing_comment {
-        Some(comment) => Ir::concat([header, Ir::text(" "), Ir::text(comment)]),
+        Some(comment) => Ir::concat([header, Ir::line_suffix(format!(" {comment}"))]),
         None => header,
     };
     Ok(Some((ir, cursor - line_idx)))

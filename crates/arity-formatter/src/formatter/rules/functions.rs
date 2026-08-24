@@ -844,11 +844,16 @@ fn layout_call_comment_items(items: &[IrCallItem]) -> Vec<Ir> {
                     && comment_arg.is_comment_only
                     && !comment_arg.leading_newline
                 {
-                    out.push(Ir::concat([
-                        arg.ir.clone(),
-                        Ir::text(" "),
-                        Ir::text(comment_arg.comment_text.clone()),
-                    ]));
+                    let suffix = if arg.ir.ends_with_line_suffix() {
+                        // The argument already ends on a standalone comment
+                        // after relocation. This second comment becomes text on
+                        // that comment line, so it cannot participate in an
+                        // alignment run as though the first comment were code.
+                        Ir::text(format!(" {}", comment_arg.comment_text))
+                    } else {
+                        Ir::line_suffix(format!(" {}", comment_arg.comment_text))
+                    };
+                    out.push(Ir::concat([arg.ir.clone(), suffix]));
                     i += 2;
                     continue;
                 }
@@ -865,11 +870,11 @@ fn layout_call_comment_items(items: &[IrCallItem]) -> Vec<Ir> {
                 ) = (items.get(i + 1), items.get(i + 2))
                     && comment_arg.is_comment_only
                 {
-                    let sep = if arg.ends_with_eq { " , " } else { ", " };
+                    let sep = if arg.ends_with_eq { " ," } else { "," };
                     out.push(Ir::concat([
                         arg.ir.clone(),
                         Ir::text(sep),
-                        Ir::text(comment_arg.comment_text.clone()),
+                        Ir::line_suffix(format!(" {}", comment_arg.comment_text)),
                     ]));
                     i += 3;
                     while let Some(IrCallItem::Arg(extra)) = items.get(i) {
@@ -1072,8 +1077,7 @@ fn ir_curly_curly_with_comments(
     parts.push(Ir::hard_line());
     parts.push(Ir::text("}}"));
     if let Some(comment) = inline_trailing {
-        parts.push(Ir::text(" "));
-        parts.push(Ir::text(comment));
+        parts.push(Ir::line_suffix(format!(" {comment}")));
     }
     for comment in &outer_post_comments {
         parts.push(Ir::hard_line());
@@ -1292,19 +1296,8 @@ fn ir_function_params_with_comments(param_elements: &[SyntaxElement<RLanguage>])
     }
     let mut lines: Vec<Ir> = Vec::new();
     for (idx, segment) in segments.iter().enumerate() {
-        let raw = if idx + 1 < segments.len() {
-            function_param_snippet_with_comma(segment)
-        } else {
-            snippet_from_elements(segment)
-        };
-        let seg_lines: Vec<&str> = raw
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .collect();
-        for line in seg_lines {
-            lines.push(Ir::text(line.to_string()));
-        }
+        let (raw, comments) = function_param_snippet(segment, idx + 1 < segments.len());
+        lines.extend(function_param_lines(&raw, &comments));
     }
     Ir::concat([
         Ir::text("("),
@@ -1320,21 +1313,72 @@ fn ir_function_params_with_comments(param_elements: &[SyntaxElement<RLanguage>])
 /// Restore a segment's delimiter after its last syntactic element. A comma can
 /// legally follow a comment on the next source line, but rendering it after the
 /// comment text turns it into part of that comment and makes the output invalid.
-fn function_param_snippet_with_comma(segment: &[SyntaxElement<RLanguage>]) -> String {
+fn function_param_snippet(
+    segment: &[SyntaxElement<RLanguage>],
+    append_comma: bool,
+) -> (String, Vec<(usize, usize)>) {
     let mut raw = String::new();
     let mut insertion = None;
+    let mut comments = Vec::new();
     for element in segment {
+        let start = raw.len();
         raw.push_str(&element.to_string());
+        if element.kind() == SyntaxKind::COMMENT {
+            comments.push((start, raw.len()));
+        }
         if !super::super::core::is_trivia(element.kind()) && element.kind() != SyntaxKind::COMMENT {
             insertion = Some(raw.len());
         }
     }
-    if let Some(offset) = insertion {
-        raw.insert(offset, ',');
-    } else {
-        raw.push(',');
+    if append_comma {
+        if let Some(offset) = insertion {
+            raw.insert(offset, ',');
+            for (start, end) in &mut comments {
+                if *start >= offset {
+                    *start += 1;
+                    *end += 1;
+                }
+            }
+        } else {
+            raw.push(',');
+        }
     }
-    raw
+    (raw, comments)
+}
+
+/// Turn the raw parameter snippet into physical-line IR while retaining the
+/// parser's identification of trailing comments. This preserves the existing
+/// trimmed fallback layout without searching rendered strings for `#`.
+fn function_param_lines(raw: &str, comments: &[(usize, usize)]) -> Vec<Ir> {
+    let mut lines = Vec::new();
+    let mut line_start = 0usize;
+    for chunk in raw.split_inclusive('\n') {
+        let line = chunk.strip_suffix('\n').unwrap_or(chunk);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let line_end = line_start + line.len();
+        let comment = comments
+            .iter()
+            .find(|(start, _)| line_start <= *start && *start <= line_end);
+        let ir = if let Some((comment_start, comment_end)) = comment {
+            let prefix = raw[line_start..*comment_start].trim();
+            let comment = raw[*comment_start..*comment_end].trim();
+            if prefix.is_empty() {
+                Ir::text(comment.to_string())
+            } else {
+                Ir::concat([
+                    Ir::text(prefix.to_string()),
+                    Ir::line_suffix(format!(" {comment}")),
+                ])
+            }
+        } else {
+            Ir::text(line.trim().to_string())
+        };
+        if !matches!(ir, Ir::Text(ref text) if text.is_empty()) {
+            lines.push(ir);
+        }
+        line_start += chunk.len();
+    }
+    lines
 }
 
 /// The conditional choice between bare inline body and braced-block hug.
@@ -1647,13 +1691,44 @@ fn split_top_level_function_params(
     let mut segments = Vec::new();
     let mut current = Vec::new();
     let mut depth = 0usize;
+    let mut idx = 0usize;
 
-    for element in elements {
+    while idx < elements.len() {
+        let element = &elements[idx];
         match element {
             NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::COMMA && depth == 0 => {
+                // In canonical output the comma precedes its trailing comment.
+                // Keep that same-line comment with the segment on the comma's
+                // left, then let `function_param_snippet` put the delimiter
+                // back before it. Without this lookahead, a second format pass
+                // would reinterpret the comment as leading the next parameter.
+                let mut trailing = Vec::new();
+                let mut cursor = idx + 1;
+                let mut saw_comment = false;
+                while cursor < elements.len() {
+                    match &elements[cursor] {
+                        NodeOrToken::Token(next) if next.kind() == SyntaxKind::WHITESPACE => {
+                            trailing.push(elements[cursor].clone());
+                            cursor += 1;
+                        }
+                        NodeOrToken::Token(next) if next.kind() == SyntaxKind::COMMENT => {
+                            saw_comment = true;
+                            trailing.push(elements[cursor].clone());
+                            cursor += 1;
+                        }
+                        _ => break,
+                    }
+                }
+                if saw_comment {
+                    current.extend(trailing);
+                    idx = cursor;
+                } else {
+                    idx += 1;
+                }
                 if !current.is_empty() {
                     segments.push(std::mem::take(&mut current));
                 }
+                continue;
             }
             NodeOrToken::Token(tok)
                 if matches!(
@@ -1681,6 +1756,7 @@ fn split_top_level_function_params(
             }
             _ => current.push(element.clone()),
         }
+        idx += 1;
     }
     if !current.is_empty() {
         segments.push(current);
