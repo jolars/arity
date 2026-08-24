@@ -19,26 +19,26 @@
 
 ## Formatter
 
-- [ ] Tribbles
+- [ ] Format [`tribble()`](https://tibble.tidyverse.org/reference/tribble.html)
+  calls as readable row-wise tables. One or more leading one-sided formulas
+  (`~name`) declare the columns; when the remaining unnamed arguments form
+  complete rows, put the headers and each row on their own line, align cells and
+  commas by rendered width, and align numeric decimal points where practical.
+  Recognize both `tribble(...)` and `tibble::tribble(...)`.
+
+  Build this as native IR over a reusable argument-table layout—not verbatim
+  output or input-line preservation. If the header count or row shape is not
+  statically known, a cell cannot render flat, or `!!`/`!!!` makes the argument
+  count dynamic, fall back to ordinary call formatting. Model comments and
+  trailing commas without losing or relocating trivia. Add fixtures for bare
+  and qualified calls, uneven cell widths, numeric columns, long or nested
+  cells, comments, dynamic-dot fallback, losslessness, and idempotence.
 
 - [x] Share one **bounded, indexed line-diff core** between `format --check` and
-  LSP formatting. The CLI already defers `TextDiff::from_lines` until
-  `print_diff`, so `--quiet` correctly pays no diff cost; preserve that. The
-  remaining duplication is `src/main.rs::print_diff` versus
-  `src/lsp/format.rs::line_diff_edits`, both of which independently run the
-  default Myers diff. The LSP's greater-than-half replacement policy is
-  applied only after that diff completes, so it limits edit payload, not
-  computation.
-
-  Use a shared operation model carrying old and new line ranges. The CLI should
-  project it into its existing context-grouped, line-numbered display, while the
-  LSP projects the same operations into precise `TextEdit` ranges and keeps its
-  coverage fallback. Bound unanchored work deterministically and represent an
-  over-budget gap as one replacement; do not use a clock timeout. Add
-  reconstruction tests for both inputs, a repetitive all-changed stress case,
-  and LSP tests proving the edits reproduce formatter output. Re-measure the
-  algorithm and work bound on R before copying Fatou's constants: an earlier
-  probe favored Patience for Arity, but `similar` and the corpus may have moved.
+  LSP formatting. Done in `src/text/line_diff.rs`: both consumers project the
+  same indexed operations, unanchored gaps have a deterministic work bound, and
+  over-budget gaps become one replacement. CLI diff construction remains lazy
+  under `--quiet`; LSP coverage fallback and reconstruction tests remain pinned.
 
 - [ ] Report an **outdated `# arity-format` directive** — one whose marked span
   the formatter would not have changed anyway. It is a `format --check` fact,
@@ -267,7 +267,8 @@ semantic `shadowed-builtin` and is prone to noise).
   `substitute`/`match.call`/`eval(..., envir)` in its body, then gating the
   matching call-site arguments the way `gate_verb` already gates a masking verb's.
   Two constraints make it a design pass, not a patch: it crosses the
-  semantic/project split `.claude/rules/semantic.md` keeps apart, and the per-file
+  semantic/project split documented under "Semantic and project layers" in
+  `AGENTS.md`, and the per-file
   projection it would live on **must stay range-free** or every keystroke rebuilds
   the project graph (`tests/salsa_incremental.rs`). Reproducer: `R/euler.R:272`
   against `tests/testthat/test-plotting.R:672`.
@@ -393,17 +394,17 @@ Prerequisite worth doing first, and the thing that makes the rest defensible:
 
 - [x] **A `.check_package_description` differential oracle.** Done:
   `tests/oracle/description_oracle.R` + `tests/description_oracle.rs`,
-  `#[ignore]`d, `task description-oracle`. 53 cases (the rindex fixtures,
-  the reference checkouts when present, and a planted-defect table), and a
-  missing `Rscript` is a skip, as in the other two oracles.
+  `#[ignore]`d, `task description-oracle`. The corpus combines rindex fixtures,
+  optional reference checkouts, and a planted-defect table; a missing `Rscript`
+  is a skip, as in the other two oracles.
 
   Four checkers, because one is not enough:
   `.check_package_description(strict = TRUE)`,
-  `.check_package_description_authors_at_R_field(strict = 2L)` (the outer
+  `.check_package_description_authors_at_R_field(strict = 3L)` (the outer
   checker calls it at `strict = FALSE`, so the per-person name, role, ORCID,
   and ROR signals are unreachable from there), the `duplicates` half of
-  `.check_package_description2`, and the two version components of
-  `.check_package_CRAN_incoming(localOnly = TRUE)`. The last two are
+  `.check_package_description2`, and the version, Maintainer, and Author
+  components of `.check_package_CRAN_incoming(localOnly = TRUE)`. The last two are
   cherry-picked, not taken whole: their other components need installed
   packages, a `src/`, files, or the network, which a text-only oracle has no
   business simulating. Note the CRAN checker reaches the version only after a
@@ -411,15 +412,14 @@ Prerequisite worth doing first, and the thing that makes the rest defensible:
   otherwise—a planted case that wants those signals has to carry both.
 
   **Two-sided by construction**, because arity implements a fraction of what
-  R checks. `GATES` holds the rules arity ships and requires containment,
-  not parity: every finding arity reports must be backed by an R signal on
-  that case. The reverse is not gated—`description-version-constraint`
+  R checks. `GATES` holds shipped rules with a direct R counterpart and requires
+  containment, not parity: every finding from a gated rule must be backed by an
+  R signal on that case. The reverse is not gated—`description-version-constraint`
   deliberately says nothing about a malformed package *name*, and demanding
-  parity would be demanding a rule that does not exist. `PLANNED` holds the
-  signals no rule covers, each tagged with the rule above that will claim
-  it; they are counted and ranked, never failed, and that ranking is the
-  work-list. Today: text-format 10, authors-at-r 4, encoding 3, then one or
-  two each for the rest.
+  parity would be demanding a rule that does not exist. `PLANNED` holds signals
+  no rule covers, tagged with the rule that may claim them; they are counted and
+  ranked, never failed, and the current ranking is printed by
+  `task description-oracle`.
 
   Two structural failures keep it honest, and both were verified by
   mutation rather than assumed: an **unknown signal fails** (R's checkers
@@ -570,9 +570,9 @@ Tier 2—needs a small bundled table or the project layer:
   `"GPL 2.0" -> "GPL-2"` mapping table, making this the only rule in the set
   with a genuinely **safe autofix**.
 
-- [x] `description-encoding` (packaging; syn; safe fix, default on). Non-ASCII
-  bytes with no `Encoding` field (R's
-  `missing_encoding`), and non-ASCII in the fields R requires be ASCII
+- [x] `description-encoding` (packaging; syn; safe fix, default on). Text outside
+  R's byte-level ISO-8859 set with no `Encoding` field (`missing_encoding`), and
+  non-ASCII in the fields R requires be ASCII
   (`Package`, `Version`, `License`, `Encoding`). arity already reads the file
   as UTF-8, so "is this valid UTF-8" is decided, which makes
   `Encoding: UTF-8` a **safe fix**. Done; ASCII-only field findings are
@@ -785,11 +785,9 @@ Gated on the package being attached (`model.loaded_packages()`).
   languageserver advertises it with first-trigger `\n` and more-triggers `)`,
   `]`, `}`—reformat the current statement as the user closes a bracket or presses
   enter. arity advertises full + range formatting but **not**
-  `documentOnTypeFormattingProvider` (`src/lsp/server.rs`). Small wiring over the
-  existing `format_range` path, but **gated on the CRLF bug already logged under
-  Formatter** (line-ending config isn't threaded into `format_range`, so a range
-  edit in a CRLF buffer splices LF); fix that first, then advertise. (2026-07-02
-  languageserver survey.)
+  `documentOnTypeFormattingProvider` (`src/lsp/server.rs`). Wire it over the
+  existing `format_range` path and pin the trigger characters plus CRLF edits in
+  protocol tests. (2026-07-02 languageserver survey.)
 
 - [ ] **Inlay hints for R** (`textDocument/inlayHint`). E.g. argument-name hints
   at call sites (matching positional args to index formals). Speculative. Not
@@ -1217,7 +1215,8 @@ rounds, distributions overlapping.
   `source_for` closure calls `fs::read_to_string` per file with a finding, to
   render snippet context — a third read of bytes the salsa database held until
   moments earlier (153 findings on tidyr, 1.25 ms including teardown). The
-  texts are `Arc<str>` (`incremental.rs:60`), so the fix is plumbing, not I/O:
+  texts are `Arc<str>` (`src/incremental.rs::SourceFile`), so the fix is plumbing,
+  not I/O:
   hand a handle out with the report for each file that has findings. The
   deferred database teardown is not an obstacle — a cloned `Arc` keeps its own
   refcount, so the text survives the `rayon::spawn` drop regardless of when it

@@ -205,9 +205,9 @@ than re-triaging.
    - **Watch the skipped-unparseable count** in the corpus runner's stderr
      summary. Making files parse *moves them into the checked set*, where they
      can hit pre-existing formatter gaps. Those are not regressions, but they
-     are new failures the next scan will file—record them in `TODO.md` under
-     the corpus-gaps list (as issue #68's follow-ups are) and say so in the
-     report.
+     are new failures the next scan will file—record them as distinct items in
+     `TODO.md` under the affected subsystem, retain the originating issue link,
+     and say so in the report.
    - For formatter rule changes, run `task air-compat` and triage any new
      divergence per `AGENTS.md` (adopt, or record in
      `crates/arity-formatter/tests/air_compat_allowlist.toml` with a

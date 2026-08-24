@@ -4,7 +4,7 @@
 //! the Packaging rules are pinned against the code that actually decides —
 //! `tools:::.check_package_description(strict = TRUE)`, the `Authors@R` checker
 //! at its strict tier, the `duplicates` half of `.check_package_description2`,
-//! and the version and `Maintainer` components of
+//! and the version, `Maintainer`, and `Author` components of
 //! `.check_package_CRAN_incoming`. The last
 //! two are cherry-picked rather than taken whole, because most of what those
 //! checkers report is about files, URLs, network state, and installed packages,
@@ -185,6 +185,19 @@ const GATES: &[Gate] = &[
         ],
         backing: Backing::Signal,
     },
+    // The three signals cover the two halves of the rule: a missing declaration
+    // for text outside R's ISO-8859 set, and non-ASCII field names or values in
+    // fields R requires to be ASCII. They carry no comparable offender text, so
+    // presence is the strongest backing the checker exposes.
+    Gate {
+        rule: "description-encoding",
+        signals: &[
+            "missing_encoding",
+            "fields_with_non_ASCII_tags",
+            "fields_with_non_ASCII_values",
+        ],
+        backing: Backing::Signal,
+    },
 ];
 
 /// Signals no rule covers yet, each tagged with the `TODO.md` rule it is
@@ -193,9 +206,6 @@ const GATES: &[Gate] = &[
 const PLANNED: &[(&str, &str)] = &[
     ("bad_Title", "description-title-format"),
     ("bad_Description", "description-text-format"),
-    ("missing_encoding", "description-encoding"),
-    ("fields_with_non_ASCII_tags", "description-encoding"),
-    ("fields_with_non_ASCII_values", "description-encoding"),
     // `bad_authors_at_R_field_*` is otherwise gated; these three are the ones
     // `description-authors-at-r` deliberately leaves to R.
     //
@@ -561,6 +571,13 @@ const PLANTED: &[(&str, &str)] = &[
     (
         "missing-encoding",
         "Package: testpkg\nVersion: 0.1.0\nTitle: \u{65e5}\u{672c}\u{8a9e}\n",
+    ),
+    // R's byte-level ISO-8859 heuristic accepts this UTF-8 spelling without an
+    // Encoding field. It keeps the missing-encoding gate honest in the
+    // false-positive direction.
+    (
+        "missing-encoding-latin1-representable",
+        "Package: testpkg\nVersion: 0.1.0\nTitle: Café\n",
     ),
     (
         "non-ascii-value",

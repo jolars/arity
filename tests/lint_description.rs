@@ -229,7 +229,7 @@ fn messages(description: &str, rule: &str) -> Vec<String> {
 
 #[test]
 fn description_encoding_adds_utf8_for_non_ascii_text() {
-    let text = COMPLETE_DESCRIPTION.replace("A Test Package", "A naïve Package");
+    let text = COMPLETE_DESCRIPTION.replace("A Test Package", "A 日本語 Package");
     let diagnostics =
         check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
             .unwrap();
@@ -288,21 +288,23 @@ fn description_encoding_flags_non_ascii_in_ascii_only_fields_without_a_fix() {
 #[test]
 fn description_encoding_ignores_ascii_and_declared_utf8() {
     assert!(!ids(COMPLETE_DESCRIPTION).contains(&"description-encoding"));
+    let latin1_representable = COMPLETE_DESCRIPTION.replace("A Test Package", "A naïve Package");
+    assert!(!ids(&latin1_representable).contains(&"description-encoding"));
     let declared = format!("{COMPLETE_DESCRIPTION}Encoding: UTF-8\n");
-    let non_ascii = declared.replace("A Test Package", "A naïve Package");
+    let non_ascii = declared.replace("A Test Package", "A 日本語 Package");
     assert!(!ids(&non_ascii).contains(&"description-encoding"));
 }
 
 #[test]
 fn description_encoding_fixed_output_is_parseable_and_clean() {
     for text in [
-        COMPLETE_DESCRIPTION.replace("A Test Package", "A naïve Package"),
+        COMPLETE_DESCRIPTION.replace("A Test Package", "A 日本語 Package"),
         COMPLETE_DESCRIPTION
             .trim_end_matches('\n')
-            .replace("A Test Package", "A naïve Package"),
+            .replace("A Test Package", "A 日本語 Package"),
         COMPLETE_DESCRIPTION
             .replace('\n', "\r\n")
-            .replace("A Test Package", "A naïve Package"),
+            .replace("A Test Package", "A 日本語 Package"),
     ] {
         let diagnostics =
             check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())

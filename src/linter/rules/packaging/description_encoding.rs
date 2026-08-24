@@ -1,9 +1,9 @@
-//! `description-encoding`: non-ASCII text whose encoding is undeclared, or
-//! non-ASCII text in a field R requires to be ASCII.
+//! `description-encoding`: text outside R's byte-level ISO-8859 set whose
+//! encoding is undeclared, or non-ASCII text in a field R requires to be ASCII.
 //!
 //! R expects `Package`, `Version`, `License`, and `Encoding` to contain ASCII
-//! only. Elsewhere, UTF-8 text is valid, but a package containing it must
-//! declare `Encoding`.
+//! only. Elsewhere, R requires an encoding declaration when its UTF-8 bytes
+//! include the 0x80..=0x9f range rejected by `tools:::.is_ISO_8859`.
 //!
 //! Adding `Encoding: UTF-8` is a safe fix because arity has already decoded the
 //! input as UTF-8. Invalid UTF-8 never reaches lint rules. Content in an
@@ -20,7 +20,7 @@ const ASCII_ONLY_FIELDS: [&str; 4] = ["Package", "Version", "License", "Encoding
 
 const EXAMPLES: &[Example] = &[Example {
     caption: "A package containing UTF-8 text without declaring its encoding:",
-    source: "Package: mypkg\nVersion: 0.1.0\nTitle: A naïve package\nLicense: MIT\n",
+    source: "Package: mypkg\nVersion: 0.1.0\nTitle: A 日本語 package\nLicense: MIT\n",
 }];
 
 impl DcfRule for DescriptionEncoding {
@@ -29,7 +29,8 @@ impl DcfRule for DescriptionEncoding {
     }
 
     fn description(&self) -> &'static str {
-        "Flag non-ASCII text in a `DESCRIPTION` with no `Encoding` field, and \
+        "Flag text outside R's ISO-8859 byte set in a `DESCRIPTION` with no \
+         `Encoding` field, and \
          non-ASCII text in fields R requires to be ASCII: `Package`, `Version`, \
          `License`, and `Encoding`.\n\nA missing declaration has a safe fix: \
          arity only lints text it has already decoded as UTF-8, so it can append \
@@ -70,7 +71,7 @@ impl DcfRule for DescriptionEncoding {
         if ctx.document.field("Encoding").is_some() {
             return;
         }
-        let Some(range) = first_non_ascii_range(
+        let Some(range) = first_non_iso_8859_range(
             &text,
             TextRange::new(TextSize::from(0), ctx.root.text_range().end()),
         ) else {
@@ -90,7 +91,7 @@ impl DcfRule for DescriptionEncoding {
             range,
             message: ViolationData::new(
                 "description-encoding",
-                "DESCRIPTION contains non-ASCII text but does not declare its encoding",
+                "DESCRIPTION contains text that requires an encoding declaration",
             )
             .with_suggestion("Add `Encoding: UTF-8`."),
             fix: Some(Fix::safe(
@@ -116,5 +117,26 @@ fn first_non_ascii_range(text: &str, range: TextRange) -> Option<TextRange> {
                         .expect("source offset fits in TextSize"),
                 )
             })
+        })
+}
+
+/// Match the byte-level predicate used by `tools:::.is_ISO_8859`.
+fn first_non_iso_8859_range(text: &str, range: TextRange) -> Option<TextRange> {
+    let start: usize = range.start().into();
+    let end: usize = range.end().into();
+    text.get(start..end)?
+        .char_indices()
+        .find_map(|(offset, ch)| {
+            ch.encode_utf8(&mut [0; 4])
+                .as_bytes()
+                .iter()
+                .any(|byte| (0x80..=0x9f).contains(byte))
+                .then(|| {
+                    TextRange::new(
+                        TextSize::try_from(start + offset).expect("source offset fits in TextSize"),
+                        TextSize::try_from(start + offset + ch.len_utf8())
+                            .expect("source offset fits in TextSize"),
+                    )
+                })
         })
 }

@@ -4,9 +4,8 @@
 //! functions), these drive the *real* server loop over
 //! [`lsp_server::Connection::memory`]: the initialize handshake, message
 //! dispatch, request coalescing/supersession on the lint thread, and the
-//! shutdown/exit lifecycle. This is the regression net for the planned
-//! request-cancellation work (see `TODO.md`, "request cancellation +
-//! stale-read protocol").
+//! shutdown/exit lifecycle. This is the regression net for request cancellation
+//! and stale-read gating as well as the surrounding protocol machinery.
 //!
 //! Everything is timeout-guarded: a wedged server surfaces as a panic (test
 //! failure), never a hang. Because linting runs asynchronously on a dedicated

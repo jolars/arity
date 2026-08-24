@@ -2140,7 +2140,7 @@ warning: description-malformed-maintainer
 
 ### `description-encoding`
 
-Flag non-ASCII text in a `DESCRIPTION` with no `Encoding` field, and non-ASCII text in fields R requires to be ASCII: `Package`, `Version`, `License`, and `Encoding`.
+Flag text outside R's ISO-8859 byte set in a `DESCRIPTION` with no `Encoding` field, and non-ASCII text in fields R requires to be ASCII: `Package`, `Version`, `License`, and `Encoding`.
 
 A missing declaration has a safe fix: arity only lints text it has already decoded as UTF-8, so it can append `Encoding: UTF-8` without guessing. Non-ASCII content in an ASCII-only field has no autofix because choosing replacement text requires the author.
 
@@ -2151,16 +2151,16 @@ A package containing UTF-8 text without declaring its encoding:
 ```text
 Package: mypkg
 Version: 0.1.0
-Title: A naïve package
+Title: A 日本語 package
 License: MIT
 ```
 
 ```text
 warning: description-encoding
- --> DESCRIPTION:3:12
+ --> DESCRIPTION:3:10
   |
-3 | Title: A naïve package
-  |            ^ DESCRIPTION contains non-ASCII text but does not declare its encoding
+3 | Title: A 日本語 package
+  |          ^^ DESCRIPTION contains text that requires an encoding declaration
   = help: Add `Encoding: UTF-8`.
 ```
 
@@ -2169,7 +2169,7 @@ After applying the fix:
 ```text
 Package: mypkg
 Version: 0.1.0
-Title: A naïve package
+Title: A 日本語 package
 License: MIT
 Encoding: UTF-8
 ```

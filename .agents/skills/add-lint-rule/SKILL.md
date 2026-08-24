@@ -8,9 +8,10 @@ description: Add a new built-in lint rule to the arity linter—implement it
 
 Use this skill when asked to add a new built-in lint rule (correctness,
 suspicious, readability, performance, ...), whether or not it ships an auto-fix.
-The roadmap of planned rules lives in `TODO.md` under "Rule roadmap"—when
-the request names a roadmap item, follow its category/cost/safety annotation and
-check the item off when done.
+The roadmap of planned rules lives in `TODO.md` under "Linter," principally in
+"Rule-candidate audit" and "Phase 5—Package-aware rules." When the request names
+a roadmap item, follow its category/cost/safety annotation and check the item off
+when done.
 
 ## Tenets that constrain a rule (from `AGENTS.md`)
 
