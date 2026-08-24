@@ -16,10 +16,10 @@ use crate::parser::{
     map_range_through_edits, parse_with_options, reparse_edits_with_options, reparse_with_options,
 };
 use crate::project::{
-    ClassSystem, DefKind, DescriptionFacts, PackageInfo, PackageReferences, ReadBinding, ReadSite,
-    SourceEdgeKey, TopLevelEvent, collect_source_literal_edges, collect_top_level_events,
-    collect_top_level_events_spanned, discover_packages, project_classes, project_defs,
-    project_graph, project_reads, relative_path, reverse_source_edges,
+    ClassSystem, DefKind, DescriptionFacts, FunctionPromiseSeed, PackageInfo, PackageReferences,
+    ReadBinding, ReadSite, SourceEdgeKey, TopLevelEvent, collect_source_literal_edges,
+    collect_top_level_events, collect_top_level_events_spanned, discover_packages, project_classes,
+    project_defs, project_graph, project_reads, relative_path, reverse_source_edges,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::rindex::remote::RemoteExports;
@@ -272,6 +272,7 @@ pub enum QueryKind {
     FileDefSites,
     FileClassDefs,
     FileRoxygenTopics,
+    FilePromiseSeeds,
     SourceEdges,
     TopLevelEvents,
     ReverseSourceEdges,
@@ -280,6 +281,7 @@ pub enum QueryKind {
     ProjectDefs,
     ProjectClasses,
     ProjectRoxygenTopics,
+    ProjectPromises,
     ProjectReads,
     VisibleSymbols,
     LoadedNames,
@@ -614,6 +616,21 @@ pub fn file_roxygen_topics(
         file: Some(file),
     });
     crate::project::file_roxygen_topics(&parsed_tree_root(db, file))
+}
+
+/// Package-local function formals and their promise-use evidence. Range-free:
+/// unrelated body edits backdate, while a changed capture/forwarding contract
+/// invalidates the package callers that rely on it.
+#[salsa::tracked(returns(ref))]
+pub fn file_promise_seeds(
+    db: &dyn IncrementalDb,
+    file: SourceFile,
+) -> BTreeMap<String, FunctionPromiseSeed> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::FilePromiseSeeds,
+        file: Some(file),
+    });
+    crate::project::file_promise_seeds(semantic_model(db, file), &parsed_tree_root(db, file))
 }
 
 /// The names of the packages attached via `library()`/`require()` in the file,

@@ -27,13 +27,16 @@ use smol_str::SmolStr;
 use crate::incremental::{
     Descriptions, IncrementalDb, LibraryIndex, PackageGraph, QueryKind, QueryLogEntry, SourceFile,
     Workspace, description_facts, file_class_defs, file_def_sites, file_exports, file_free_reads,
-    file_qualified_reads, file_roxygen_topics, file_use_only_reads, loaded_names,
-    package_references, parse_diagnostics, source_edges, top_level_events,
+    file_promise_seeds, file_qualified_reads, file_roxygen_topics, file_use_only_reads,
+    loaded_names, package_references, parse_diagnostics, source_edges, top_level_events,
 };
 use crate::project::classes::ClassSystem;
 use crate::project::description::DescriptionFacts;
 use crate::project::exports::DefKind;
 use crate::project::native::dynlib_bound_names;
+use crate::project::promises::{
+    FunctionPromiseSeed, PackagePromiseIndex, PromiseSummaries, solve_package,
+};
 use crate::project::roxygen::TopicMember;
 use crate::project::scope::{FileFacts, FileScope, LayeredSet, ProjectScope, package_root_of_dir};
 use crate::project::source::{SourceEdgeKey, SourceTarget};
@@ -910,6 +913,40 @@ pub fn project_reads(db: &dyn IncrementalDb) -> ReadIndex {
 #[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub struct ExternalResolution {
     pub unresolved: BTreeSet<String>,
+    pub local_functions: PromiseSummaries,
+}
+
+/// Promise behavior of package-local functions, grouped by package root.
+/// Both the seeds and the solved summaries are range-free, so an unrelated
+/// function-body edit backdates before reaching callers.
+#[salsa::tracked(returns(ref))]
+pub fn project_promises(db: &dyn IncrementalDb) -> PackagePromiseIndex {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::ProjectPromises,
+        file: None,
+    });
+    let mut seeds_by_root: BTreeMap<PathBuf, BTreeMap<String, FunctionPromiseSeed>> =
+        BTreeMap::new();
+    for member in &workspace_project(db).members {
+        let Some(root) = &member.package_root else {
+            continue;
+        };
+        if member.path.parent() != Some(root.join("R").as_path()) {
+            continue;
+        }
+        let package = seeds_by_root.entry(root.clone()).or_default();
+        for (name, seed) in file_promise_seeds(db, member.file) {
+            if package.insert(name.clone(), seed.clone()).is_some() {
+                package.insert(name.clone(), FunctionPromiseSeed::default());
+            }
+        }
+    }
+    PackagePromiseIndex {
+        by_root: seeds_by_root
+            .into_iter()
+            .map(|(root, seeds)| (root, solve_package(seeds)))
+            .collect(),
+    }
 }
 
 /// Every package whose exports resolve as **bare names** in `file`.
@@ -1024,7 +1061,20 @@ pub fn external_resolution(
         .cloned()
         .collect();
 
-    ExternalResolution { unresolved }
+    let project = workspace_project(db);
+    let local_functions = project
+        .members
+        .iter()
+        .find(|member| member.file == file)
+        .and_then(|member| member.package_root.as_ref())
+        .and_then(|root| project_promises(db).by_root.get(root))
+        .cloned()
+        .unwrap_or_default();
+
+    ExternalResolution {
+        unresolved,
+        local_functions,
+    }
 }
 
 #[cfg(test)]

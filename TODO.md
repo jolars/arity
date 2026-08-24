@@ -237,20 +237,19 @@ semantic `shadowed-builtin` and is prone to noise).
   operator be defined as a call to itself. A local polyfill is routine below the
   R 4.4 floor the rule's own fix warns about. Exempt via `defines_coalesce_operator`.
 
-- [ ] **NSE argument to a package-local function.** eulerr's `euler()`/`venn()` do
+- [x] **NSE argument to a package-local function.** eulerr's `euler()`/`venn()` do
   `by <- substitute(by)`, so `euler(dat, by = list(sex, age))` never evaluates
   `sex`/`age` in the caller — but all 21 remaining `undefined-symbol` findings in
-  eulerr are exactly that. `is_data_masking_callee` matches a hardcoded verb list
-  by name and is single-file, so catching this needs a new cross-file fact:
-  *which formals does this package's function defuse*, inferred from
-  `substitute`/`match.call`/`eval(..., envir)` in its body, then gating the
-  matching call-site arguments the way `gate_verb` already gates a masking verb's.
-  Two constraints make it a design pass, not a patch: it crosses the
-  semantic/project split documented under "Semantic and project layers" in
-  `AGENTS.md`, and the per-file
-  projection it would live on **must stay range-free** or every keystroke rebuilds
-  the project graph (`tests/salsa_incremental.rs`). Reproducer: `R/euler.R:272`
-  against `tests/testthat/test-plotting.R:672`.
+  eulerr were exactly that. Package-local calls now follow a conservative
+  contract: `file_promise_seeds` projects range-free formal-use evidence,
+  `project_promises` propagates eager behavior through package wrappers, and the
+  rule checks an actual argument only when its matched formal is proven eager.
+  Capture, opaque forwarding, unused promises, duplicate definitions, and
+  ambiguous argument matching suppress instead. This avoids package-specific
+  function lists and deliberately spends false negatives to keep false positives
+  rare. `tests/salsa_incremental.rs` pins both backdating and invalidation when
+  the promise contract changes. Reproducer: `R/euler.R:272` against
+  `tests/testthat/test-plotting.R:672`.
 
 - Deliberately **not** changed: `duplicated-arguments` on `list(b = 1, b = 2)`.
   Legal R (two elements, both named `b`), so it is the same shape as the `c()`

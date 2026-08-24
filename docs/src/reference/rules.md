@@ -123,7 +123,7 @@ so this page never drifts from the rules' actual behavior.
 
 Flag an identifier read that resolves to no in-scope binding and no known package export.
 
-Gated for safety: the rule stays silent for a whole file unless every `library()`-attached package is indexed, since an un-indexed package could export the otherwise-unresolved name.
+Gated for safety: the rule stays silent for a whole file unless every `library()`-attached package is indexed, since an un-indexed package could export the otherwise-unresolved name. In an analyzed package, a package-local call argument is checked only when its matched formal is proven to evaluate the promise normally; capture, opaque forwarding, and ambiguous behavior stay silent.
 
 This rule is **enabled by default**.
 

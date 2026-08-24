@@ -9,8 +9,10 @@
 //! positive.
 
 use rowan::TextRange;
+use rowan::ast::AstNode as _;
 use smol_str::SmolStr;
 
+use crate::ast::{Arg, CallExpr, HasArgList as _};
 use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::semantic::{LoadedPackage, PackageOrigin, implicit_attached_packages};
@@ -26,7 +28,10 @@ impl Rule for UndefinedSymbol {
         "Flag an identifier read that resolves to no in-scope binding and no \
          known package export.\n\nGated for safety: the rule stays silent for a \
          whole file unless every `library()`-attached package is indexed, since \
-         an un-indexed package could export the otherwise-unresolved name."
+         an un-indexed package could export the otherwise-unresolved name. In \
+         an analyzed package, a package-local call argument is checked only \
+         when its matched formal is proven to evaluate the promise normally; \
+         capture, opaque forwarding, and ambiguous behavior stay silent."
     }
 
     fn examples(&self) -> &'static [Example] {
@@ -64,10 +69,76 @@ impl Rule for UndefinedSymbol {
                     .filter(|ident| ctx.model.resolve_local(ident).is_none())
                     .filter(|ident| ident.name != ".packageName" || !ctx.is_package_r_source())
                     .filter(|ident| resolution.unresolved.contains(ident.name.as_str()))
+                    // Last: this one walks the tree, so it should only run for
+                    // the names that survived every cheap set lookup.
+                    .filter(|ident| {
+                        !inside_non_eager_local_argument(
+                            ctx.root,
+                            ctx.model,
+                            ctx.is_package_r_source(),
+                            ident.range,
+                            &resolution.local_functions,
+                        )
+                    })
                     .map(|ident| undefined(&ident.name, ident.range)),
             ),
             None => self.run_standalone(ctx, sink),
         }
+    }
+}
+
+fn inside_non_eager_local_argument(
+    root: &crate::syntax::SyntaxNode,
+    model: &crate::semantic::SemanticModel,
+    is_package_r_source: bool,
+    range: TextRange,
+    functions: &std::collections::BTreeMap<String, crate::project::FunctionPromiseSummary>,
+) -> bool {
+    let Some(mut node) = root
+        .covering_element(range)
+        .into_token()
+        .and_then(|token| token.parent())
+    else {
+        return false;
+    };
+    loop {
+        if let Some(arg) = Arg::cast(node.clone())
+            && let Some(call_node) = node.parent().and_then(|list| list.parent())
+            && let Some(call) = CallExpr::cast(call_node)
+            && let Some(name) = call.callee_name()
+            && let Some(summary) = functions.get(name.as_str())
+        {
+            if let Some(callee) = call.callee_token()
+                && let Some(ident) = model
+                    .idents()
+                    .iter()
+                    .find(|ident| ident.range == callee.text_range())
+                && let Some(binding) = model.resolve_local(ident)
+            {
+                let scope = model.scope(model.binding(binding).scope).kind;
+                if scope != crate::semantic::ScopeKind::File || !is_package_r_source {
+                    return true;
+                }
+            }
+            let args: Vec<Arg> = call.args().collect();
+            let Some(argument) = args
+                .iter()
+                .position(|candidate| candidate.syntax() == arg.syntax())
+            else {
+                return true;
+            };
+            let names: Vec<Option<SmolStr>> = args.iter().map(Arg::name).collect();
+            let Some(formal) = summary.matched_formal(&names, argument) else {
+                return true;
+            };
+            if !summary.eager.contains(&formal) {
+                return true;
+            }
+        }
+        let Some(parent) = node.parent() else {
+            return false;
+        };
+        node = parent;
     }
 }
 

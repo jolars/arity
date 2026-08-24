@@ -507,6 +507,213 @@ fn package_resolves_bindings_across_files() {
 }
 
 #[test]
+fn undefined_symbol_suppresses_package_local_defused_arguments() {
+    let result = lint_pkg_with_test(
+        "euler <- function(data, by) {\n  by <- substitute(by)\n  list(data, by)\n}\n",
+        "dat <- data.frame(value = 1)\neuler(dat, by = list(sex, age))\n",
+        IndexedProvider::empty(),
+    );
+
+    let messages: Vec<&str> = result
+        .reports
+        .iter()
+        .flat_map(|report| &report.diagnostics)
+        .filter(|diagnostic| diagnostic.rule == "undefined-symbol")
+        .map(|diagnostic| diagnostic.message.body.as_str())
+        .collect();
+    assert!(
+        messages.is_empty(),
+        "defused names were flagged: {messages:?}"
+    );
+}
+
+#[test]
+fn undefined_symbol_propagates_package_local_defusal_through_wrappers() {
+    let result = lint_pkg_with_test(
+        "inner <- function(x) substitute(x)\nouter <- function(x) inner(x)\n",
+        "outer(column_name)\n",
+        IndexedProvider::empty(),
+    );
+
+    let messages: Vec<&str> = result
+        .reports
+        .iter()
+        .flat_map(|report| &report.diagnostics)
+        .filter(|diagnostic| diagnostic.rule == "undefined-symbol")
+        .map(|diagnostic| diagnostic.message.body.as_str())
+        .collect();
+    assert!(
+        messages.is_empty(),
+        "forwarded defusal was flagged: {messages:?}"
+    );
+}
+
+#[test]
+fn undefined_symbol_keeps_package_local_eager_arguments() {
+    let result = lint_pkg_with_test(
+        "add_one <- function(x) x + 1\n",
+        "add_one(misspelled_name)\n",
+        IndexedProvider::empty(),
+    );
+
+    let messages: Vec<&str> = result
+        .reports
+        .iter()
+        .flat_map(|report| &report.diagnostics)
+        .filter(|diagnostic| diagnostic.rule == "undefined-symbol")
+        .map(|diagnostic| diagnostic.message.body.as_str())
+        .collect();
+    assert_eq!(
+        messages.len(),
+        1,
+        "expected the eager argument finding: {messages:?}"
+    );
+    assert!(messages[0].contains("misspelled_name"));
+}
+
+#[test]
+fn undefined_symbol_suppresses_unclassified_package_local_arguments() {
+    let result = lint_pkg_with_test(
+        "forward <- function(x) external_helper(x)\n",
+        "forward(maybe_symbolic)\n",
+        IndexedProvider::empty(),
+    );
+
+    let messages: Vec<&str> = result
+        .reports
+        .iter()
+        .flat_map(|report| &report.diagnostics)
+        .filter(|diagnostic| diagnostic.rule == "undefined-symbol")
+        .map(|diagnostic| diagnostic.message.body.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("maybe_symbolic")),
+        "unclassified promise behavior was flagged: {messages:?}"
+    );
+}
+
+#[test]
+fn undefined_symbol_suppresses_conditionally_forced_package_local_arguments() {
+    let result = lint_pkg_with_test(
+        "maybe <- function(x, use) {\n  if (use) x else 1\n}\n",
+        "maybe(symbolic_when_unused, FALSE)\n",
+        IndexedProvider::empty(),
+    );
+
+    let messages: Vec<&str> = result
+        .reports
+        .iter()
+        .flat_map(|report| &report.diagnostics)
+        .filter(|diagnostic| diagnostic.rule == "undefined-symbol")
+        .map(|diagnostic| diagnostic.message.body.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("symbolic_when_unused")),
+        "conditionally forced promise was flagged: {messages:?}"
+    );
+}
+
+#[test]
+fn undefined_symbol_suppresses_brace_free_conditional_package_local_arguments() {
+    // `if (use) x else 1` skips `x` exactly like the braced form does; the
+    // missing braces must not make the formal look unconditionally forced.
+    let result = lint_pkg_with_test(
+        "maybe <- function(x, use) if (use) x else 1\nguard <- function(x, ok) ok || x\n",
+        "maybe(symbolic_when_unused, FALSE)\nguard(symbolic_guard, TRUE)\n",
+        IndexedProvider::empty(),
+    );
+
+    let messages: Vec<&str> = result
+        .reports
+        .iter()
+        .flat_map(|report| &report.diagnostics)
+        .filter(|diagnostic| diagnostic.rule == "undefined-symbol")
+        .map(|diagnostic| diagnostic.message.body.as_str())
+        .collect();
+    assert!(
+        messages.iter().all(|message| !message.contains("symbolic")),
+        "a bypassable use proved eagerness: {messages:?}"
+    );
+}
+
+#[test]
+fn undefined_symbol_suppresses_conditionally_forwarded_package_local_arguments() {
+    // The forward reaches an eager formal, but the call that would force it is
+    // guarded, so the outer formal is not proven eager.
+    let result = lint_pkg_with_test(
+        "inner <- function(y) y + 1\nouter <- function(x, use) {\n  if (use) inner(x) else 0\n}\n",
+        "outer(symbolic_when_unused, FALSE)\n",
+        IndexedProvider::empty(),
+    );
+
+    let messages: Vec<&str> = result
+        .reports
+        .iter()
+        .flat_map(|report| &report.diagnostics)
+        .filter(|diagnostic| diagnostic.rule == "undefined-symbol")
+        .map(|diagnostic| diagnostic.message.body.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("symbolic_when_unused")),
+        "a guarded forward proved eagerness: {messages:?}"
+    );
+}
+
+#[test]
+fn undefined_symbol_suppresses_package_local_default_value_arguments() {
+    // `b = a` forces `a` only when `b` itself is forced, which the summary
+    // does not track.
+    let result = lint_pkg_with_test(
+        "defaulted <- function(a, b = a) 0\n",
+        "defaulted(symbolic_default)\n",
+        IndexedProvider::empty(),
+    );
+
+    let messages: Vec<&str> = result
+        .reports
+        .iter()
+        .flat_map(|report| &report.diagnostics)
+        .filter(|diagnostic| diagnostic.rule == "undefined-symbol")
+        .map(|diagnostic| diagnostic.message.body.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("symbolic_default")),
+        "a default-value use proved eagerness: {messages:?}"
+    );
+}
+
+#[test]
+fn undefined_symbol_suppresses_arguments_of_a_local_shadow() {
+    let result = lint_pkg_with_test(
+        "evaluate <- function(x) x + 1\n",
+        "evaluate <- function(x) substitute(x)\nevaluate(symbolic_local)\n",
+        IndexedProvider::empty(),
+    );
+
+    let messages: Vec<&str> = result
+        .reports
+        .iter()
+        .flat_map(|report| &report.diagnostics)
+        .filter(|diagnostic| diagnostic.rule == "undefined-symbol")
+        .map(|diagnostic| diagnostic.message.body.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("symbolic_local")),
+        "a test-local defuser shadow was treated as the package function: {messages:?}"
+    );
+}
+
+#[test]
 fn package_sources_resolve_the_implicit_package_name() {
     let dir = tempdir().expect("failed to create temp dir");
     std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
@@ -7431,4 +7638,29 @@ fn misplaced_suppression_resolves_the_comment_at_every_token_boundary() {
             "{src:?}"
         );
     }
+}
+
+#[test]
+fn undefined_symbol_suppresses_nested_package_local_forwards() {
+    // `lazy` never forces its argument, so `eager(x)` is never evaluated and
+    // `x` is never forced; one eager hop inside the nest proves nothing.
+    let result = lint_pkg_with_test(
+        "eager <- function(y) y + 1\nlazy <- function(a) 0\nouter <- function(x) lazy(eager(x))\n",
+        "outer(never_forced)\n",
+        IndexedProvider::empty(),
+    );
+
+    let messages: Vec<&str> = result
+        .reports
+        .iter()
+        .flat_map(|report| &report.diagnostics)
+        .filter(|diagnostic| diagnostic.rule == "undefined-symbol")
+        .map(|diagnostic| diagnostic.message.body.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("never_forced")),
+        "a nested forward proved eagerness: {messages:?}"
+    );
 }

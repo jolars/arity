@@ -11,6 +11,7 @@ pub mod description;
 pub mod exports;
 pub mod graph;
 pub mod native;
+pub mod promises;
 pub mod roxygen;
 pub mod scope;
 pub mod sequence;
@@ -29,10 +30,14 @@ pub use graph::{
     PackageTopics, PackageUsage, Project, ProjectMember, ReadIndex, ReverseSources,
     RoxygenTopicIndex, Visibility, attached_names, discover_packages, expected_r_sources,
     external_resolution, package_facts_for, package_usage, package_usage_for, project_classes,
-    project_defs, project_graph, project_reads, project_roxygen_topics, reverse_source_edges,
-    roxygen_topics_for, visible_symbols, workspace_project,
+    project_defs, project_graph, project_promises, project_reads, project_roxygen_topics,
+    reverse_source_edges, roxygen_topics_for, visible_symbols, workspace_project,
 };
 pub use native::{dynlib_bound_names, registered_routines};
+pub use promises::{
+    FunctionPromiseSeed, FunctionPromiseSummary, PackagePromiseIndex, PromiseSummaries,
+    file_promise_seeds,
+};
 pub use roxygen::{
     ParamDoc, TopicMember, documented_binding_name, documented_function, file_roxygen_topics,
     has_title, inherits_params, joins_other_topic, param_doc, topic_key, topic_member,

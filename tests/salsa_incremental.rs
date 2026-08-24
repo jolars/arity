@@ -8,8 +8,8 @@ use arity::incremental::{
 use arity::parser::Edit;
 use arity::project::{
     DefKind, PackageInfo, external_resolution, package_facts_for, package_usage, project_classes,
-    project_defs, project_graph, project_reads, project_roxygen_topics, reverse_source_edges,
-    visible_symbols, workspace_project,
+    project_defs, project_graph, project_promises, project_reads, project_roxygen_topics,
+    reverse_source_edges, visible_symbols, workspace_project,
 };
 use arity::rindex::provider::IndexedProvider;
 use arity::rindex::remote::RemoteExports;
@@ -699,6 +699,53 @@ fn body_edit_does_not_rebuild_project_defs() {
         None,
         "a body edit must not rebuild project_defs"
     );
+}
+
+#[test]
+fn promise_summary_backdates_across_irrelevant_body_edit() {
+    let (mut db, a, _b) = package_ab(
+        "capture <- function(x) {\n  substitute(x)\n}\n",
+        "capture(column)\n",
+    );
+    let before = project_promises(&db).clone();
+
+    db.clear_query_log();
+    db.set_file_text(
+        a,
+        "capture <- function(x) {\n  substitute(x)\n  invisible(NULL)\n}\n",
+    );
+    let after = project_promises(&db).clone();
+
+    assert_eq!(before, after);
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(counts.get(&QueryKind::FilePromiseSeeds), Some(&1));
+    assert_eq!(
+        counts.get(&QueryKind::ProjectPromises),
+        None,
+        "an equal range-free seed must spare the package aggregate"
+    );
+}
+
+#[test]
+fn changed_promise_contract_rebuilds_package_summary() {
+    let (mut db, a, _b) = package_ab("evaluate <- function(x) x + 1\n", "evaluate(value)\n");
+    assert!(
+        project_promises(&db).by_root[Path::new("/pkg")]["evaluate"]
+            .eager
+            .contains("x")
+    );
+
+    db.clear_query_log();
+    db.set_file_text(a, "evaluate <- function(x) substitute(x)\n");
+    let after = project_promises(&db);
+
+    assert!(
+        !after.by_root[Path::new("/pkg")]["evaluate"]
+            .eager
+            .contains("x")
+    );
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(counts.get(&QueryKind::ProjectPromises), Some(&1));
 }
 
 #[test]

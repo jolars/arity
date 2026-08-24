@@ -1,12 +1,12 @@
 ---
 source: tests/rule_docs.rs
-expression: render_rule_doc(rule.as_ref())
+expression: render_rule_doc(&rule)
 ---
 ### `undefined-symbol`
 
 Flag an identifier read that resolves to no in-scope binding and no known package export.
 
-Gated for safety: the rule stays silent for a whole file unless every `library()`-attached package is indexed, since an un-indexed package could export the otherwise-unresolved name.
+Gated for safety: the rule stays silent for a whole file unless every `library()`-attached package is indexed, since an un-indexed package could export the otherwise-unresolved name. In an analyzed package, a package-local call argument is checked only when its matched formal is proven to evaluate the promise normally; capture, opaque forwarding, and ambiguous behavior stay silent.
 
 This rule is **enabled by default**.
 

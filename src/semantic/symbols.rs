@@ -399,23 +399,23 @@ pub fn model_frame_formals(name: &str) -> Option<&'static [&'static str]> {
 /// R's three passes: exact names first (the only way to reach formals declared
 /// after `...`), then unique-prefix partial matches against the formals before
 /// `...`, then positional fill of what remains before `...`.
-pub fn match_args_to_formals(
+pub fn match_args_to_formals<'a, T: AsRef<str>>(
     names: &[Option<SmolStr>],
-    formals: &'static [&'static str],
-) -> Vec<Option<&'static str>> {
+    formals: &'a [T],
+) -> Vec<Option<&'a str>> {
     let dots = formals
         .iter()
-        .position(|f| *f == "...")
+        .position(|formal| formal.as_ref() == "...")
         .unwrap_or(formals.len());
     let mut consumed = vec![false; formals.len()];
-    let mut matched: Vec<Option<&'static str>> = vec![None; names.len()];
+    let mut matched: Vec<Option<&'a str>> = vec![None; names.len()];
     for (arg, slot) in names.iter().zip(matched.iter_mut()) {
         let Some(name) = arg else { continue };
-        if let Some(j) =
-            (0..formals.len()).find(|&j| !consumed[j] && j != dots && formals[j] == name.as_str())
+        if let Some(j) = (0..formals.len())
+            .find(|&j| !consumed[j] && j != dots && formals[j].as_ref() == name.as_str())
         {
             consumed[j] = true;
-            *slot = Some(formals[j]);
+            *slot = Some(formals[j].as_ref());
         }
     }
     for (arg, slot) in names.iter().zip(matched.iter_mut()) {
@@ -424,10 +424,10 @@ pub fn match_args_to_formals(
             continue;
         }
         let mut candidates =
-            (0..dots).filter(|&j| !consumed[j] && formals[j].starts_with(name.as_str()));
+            (0..dots).filter(|&j| !consumed[j] && formals[j].as_ref().starts_with(name.as_str()));
         if let (Some(j), None) = (candidates.next(), candidates.next()) {
             consumed[j] = true;
-            *slot = Some(formals[j]);
+            *slot = Some(formals[j].as_ref());
         }
     }
     let mut next = 0;
@@ -442,7 +442,7 @@ pub fn match_args_to_formals(
             break;
         }
         consumed[next] = true;
-        *slot = Some(formals[next]);
+        *slot = Some(formals[next].as_ref());
     }
     matched
 }
