@@ -49,6 +49,32 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --verbose
 
+  msrv:
+    if: github.event_name != 'schedule'
+    name: Minimum Rust 1.88
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust 1.88
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88"
+
+      - name: Cache cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-msrv-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-msrv-
+
+      - name: Run tests
+        run: cargo test --workspace --locked --verbose
+
   wasm:
     if: github.event_name != 'schedule'
     name: Wasm Build
@@ -131,7 +157,7 @@ jobs:
 
   versionary:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [test, wasm, zed, cargo-audit, cargo-deny]
+    needs: [test, msrv, wasm, zed, cargo-audit, cargo-deny]
     runs-on: ubuntu-latest
     permissions:
       contents: write
