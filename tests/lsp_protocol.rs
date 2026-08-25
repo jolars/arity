@@ -609,6 +609,48 @@ fn did_open_then_formatting_request_responds() {
 }
 
 #[test]
+fn formatting_reloads_changed_config_without_watcher_support() {
+    // Neovim deliberately does not advertise dynamic watched-file registration
+    // on Linux. A config edit must therefore become visible on the next format
+    // request without a `workspace/didChangeWatchedFiles` notification.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(dir.path().join(".git")).expect("create git boundary");
+    let config_path = dir.path().join("arity.toml");
+    std::fs::write(&config_path, "[format]\nline-width = 40\n").expect("write config");
+    let uri = path_uri(&dir.path().join("main.R"));
+    let source = "x<-foo(alpha,beta,gamma,delta,epsilon,zeta,eta,theta)\n";
+
+    let mut h = Harness::start_push();
+    h.did_open(&uri, source, 1);
+    let narrow = h.formatted_buffer(&uri, source);
+
+    // Keep the byte length unchanged and advance the mtime explicitly so the
+    // assertion remains reliable on filesystems with coarse timestamps.
+    std::fs::write(&config_path, "[format]\nline-width = 80\n").expect("rewrite config");
+    let modified = std::fs::metadata(&config_path)
+        .expect("config metadata")
+        .modified()
+        .expect("config mtime");
+    std::fs::File::options()
+        .append(true)
+        .open(&config_path)
+        .expect("open config")
+        .set_modified(modified + Duration::from_secs(2))
+        .expect("advance config mtime");
+
+    let wide = h.formatted_buffer(&uri, source);
+    assert_ne!(
+        wide, narrow,
+        "the updated line width must change formatting"
+    );
+    assert_eq!(
+        wide,
+        "x <- foo(alpha, beta, gamma, delta, epsilon, zeta, eta, theta)\n"
+    );
+    h.shutdown();
+}
+
+#[test]
 fn formatting_works_when_the_documents_directory_is_missing() {
     // Regression: config discovery canonicalized its anchor directory, so a
     // buffer whose parent directory doesn't exist made `resolve_settings` fail

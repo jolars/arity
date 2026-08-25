@@ -177,6 +177,59 @@ const REQUEST_CANCELLED: i32 = -32800;
 /// and the client should re-request. Mirrors `error_codes::CONTENT_MODIFIED`.
 const CONTENT_MODIFIED: i32 = -32801;
 
+/// The cheap part of an `arity.toml` candidate's identity. Modification time
+/// catches an in-place save; length also catches writes on coarse-mtime
+/// filesystems when the new representation has a different size.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConfigFileStamp {
+    modified: Option<SystemTime>,
+    len: u64,
+}
+
+fn config_file_stamp(path: &Path) -> Option<ConfigFileStamp> {
+    let metadata = std::fs::metadata(path).ok()?;
+    metadata.is_file().then(|| ConfigFileStamp {
+        modified: metadata.modified().ok(),
+        len: metadata.len(),
+    })
+}
+
+/// Snapshot every candidate consulted by config discovery. Missing candidates
+/// are significant—a newly created nearer config must displace a cached parent.
+fn config_fingerprint(anchor: &Path) -> Option<Vec<(PathBuf, Option<ConfigFileStamp>)>> {
+    let canonical = anchor.canonicalize().ok()?;
+    let mut fingerprint = Vec::new();
+    for dir in canonical.ancestors() {
+        let candidate = dir.join(crate::config::CONFIG_FILE_NAME);
+        let stamp = config_file_stamp(&candidate);
+        let found = stamp.is_some();
+        fingerprint.push((candidate, stamp));
+        if found || dir.join(".git").exists() {
+            break;
+        }
+    }
+    Some(fingerprint)
+}
+
+#[derive(Debug, Clone)]
+struct CachedSettings {
+    resolved: ResolvedSettings,
+    fingerprint: Vec<(PathBuf, Option<ConfigFileStamp>)>,
+}
+
+impl CachedSettings {
+    fn new(resolved: ResolvedSettings, anchor: &Path) -> Option<Self> {
+        Some(Self {
+            resolved,
+            fingerprint: config_fingerprint(anchor)?,
+        })
+    }
+
+    fn is_fresh(&self, anchor: &Path) -> bool {
+        Some(&self.fingerprint) == config_fingerprint(anchor).as_ref()
+    }
+}
+
 pub(crate) struct GlobalState {
     documents: HashMap<Uri, Document>,
     /// The most recent lint findings per document, tagged with the version they
@@ -220,7 +273,9 @@ pub(crate) struct GlobalState {
     /// Monotonic id source for server→client requests (`workspace/diagnostic/
     /// refresh`); the client's responses are ignored by the main loop.
     next_req_id: i32,
-    config_cache: HashMap<PathBuf, ResolvedSettings>,
+    /// Per-directory config resolutions. Filesystem fingerprints keep the cache
+    /// correct for clients that cannot register recursive watched files.
+    config_cache: HashMap<PathBuf, CachedSettings>,
     /// Editor-pushed formatter defaults; the fallback when no `arity.toml` is
     /// found. Updated by `workspace/didChangeConfiguration`.
     editor_settings: EditorSettings,
@@ -1643,8 +1698,12 @@ impl GlobalState {
             .ok_or(ConfigResolveError::NoParentDirectory)?
             .to_path_buf();
 
-        if let Some(s) = self.config_cache.get(&anchor) {
-            return Ok(s.clone());
+        if let Some(cached) = self
+            .config_cache
+            .get(&anchor)
+            .filter(|cached| cached.is_fresh(&anchor))
+        {
+            return Ok(cached.resolved.clone());
         }
 
         let (config, source) = Config::resolve(None, false, &anchor)
@@ -1663,7 +1722,9 @@ impl GlobalState {
             lint: config.lint,
             index,
         };
-        self.config_cache.insert(anchor, resolved.clone());
+        if let Some(cached) = CachedSettings::new(resolved.clone(), &anchor) {
+            self.config_cache.insert(anchor, cached);
+        }
         Ok(resolved)
     }
 
@@ -1966,6 +2027,30 @@ mod cancellation_gate {
             "/tmp/t.R"
         }))
         .expect("valid file uri")
+    }
+
+    #[test]
+    fn resolve_settings_detects_nearer_config_creation_and_deletion() {
+        let repo = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(repo.path().join(".git")).expect("create git boundary");
+        std::fs::write(
+            repo.path().join("arity.toml"),
+            "[format]\nline-width = 60\n",
+        )
+        .expect("write root config");
+        let nested = repo.path().join("nested");
+        std::fs::create_dir(&nested).expect("create nested directory");
+        let uri = uri::from_path(&nested.join("main.R")).expect("file URI");
+        let (mut state, _rig) = test_state();
+
+        assert_eq!(state.resolve_settings(&uri).unwrap().style.line_width, 60);
+
+        let nearer = nested.join("arity.toml");
+        std::fs::write(&nearer, "[format]\nline-width = 40\n").expect("write nearer config");
+        assert_eq!(state.resolve_settings(&uri).unwrap().style.line_width, 40);
+
+        std::fs::remove_file(nearer).expect("remove nearer config");
+        assert_eq!(state.resolve_settings(&uri).unwrap().style.line_width, 60);
     }
 
     #[test]
