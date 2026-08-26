@@ -44,7 +44,7 @@ use crate::rindex::cache::{CacheError, atomic_write};
 /// produces misses, never wrong answers, and [`cache_path`] already embeds the
 /// arity version — so a binary that hashes differently never reads an older
 /// binary's file in the first place.
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 const ARITY_VERSION: &str = env!("CARGO_PKG_VERSION");
 

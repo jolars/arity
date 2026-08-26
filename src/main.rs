@@ -795,7 +795,7 @@ fn run_format_check(
     match check_paths_with_style_cached(paths, style, exclude, descriptions, cache.as_mut()) {
         Ok(result) => {
             report_unchecked(&result.failed_files, &result.skipped, out.quiet);
-            if result.changed_files.is_empty() {
+            if result.changed_files.is_empty() && result.outdated_directives.is_empty() {
                 if out.verbose {
                     eprintln!("{} file(s) already formatted", result.checked_files);
                 }
@@ -804,14 +804,16 @@ fn run_format_check(
                 // account of what would change; `--quiet` trades it for the
                 // file list plus a summary, for callers (a CI step over a
                 // wholly unformatted project) that would drown in hunks.
-                for file in &result.changed_files {
-                    println!("would reformat {}", file.path.display());
+                if !result.changed_files.is_empty() {
+                    for file in &result.changed_files {
+                        println!("would reformat {}", file.path.display());
+                    }
+                    println!(
+                        "{} of {} file(s) would be reformatted",
+                        result.changed_files.len(),
+                        result.checked_files
+                    );
                 }
-                println!(
-                    "{} of {} file(s) would be reformatted",
-                    result.changed_files.len(),
-                    result.checked_files
-                );
             } else {
                 let use_color = color_enabled(out.color, io::stdout().is_terminal());
                 for (idx, file) in result.changed_files.iter().enumerate() {
@@ -822,12 +824,17 @@ fn run_format_check(
                         .expect("failed to write formatting diff");
                 }
             }
+            for directive in &result.outdated_directives {
+                directive
+                    .write_diagnostic(&mut io::stdout().lock())
+                    .expect("failed to write format directive diagnostic");
+            }
             // Reported *after* the diff, so a file that could not be checked
             // never costs the user the account of the files that could. A
             // failure outranks a mere reformat: the run has no verdict for it.
             if !result.failed_files.is_empty() {
                 ExitCode::from(2)
-            } else if result.changed_files.is_empty() {
+            } else if result.changed_files.is_empty() && result.outdated_directives.is_empty() {
                 ExitCode::SUCCESS
             } else {
                 ExitCode::from(1)

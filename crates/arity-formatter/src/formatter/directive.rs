@@ -43,6 +43,27 @@ pub fn is_honored_position(token: &SyntaxToken) -> bool {
         .is_some_and(|parent| matches!(parent.kind(), SyntaxKind::ROOT | SyntaxKind::BLOCK_EXPR))
 }
 
+/// Whether `token` is a directive the formatter actually sequences.
+///
+/// `skip-file` is a whole-tree prepass. The other verbs must occupy a line by
+/// themselves in a statement list; a trailing comment is deliberately inert.
+pub(super) fn is_honored_directive(token: &SyntaxToken, verb: Verb) -> bool {
+    if verb == Verb::SkipFile {
+        return true;
+    }
+    is_honored_position(token) && comment_occupies_line(token)
+}
+
+fn comment_occupies_line(token: &SyntaxToken) -> bool {
+    let before_is_clear = std::iter::successors(token.prev_token(), |token| token.prev_token())
+        .take_while(|token| token.kind() != SyntaxKind::NEWLINE)
+        .all(|token| token.kind() == SyntaxKind::WHITESPACE);
+    let after_is_clear = std::iter::successors(token.next_token(), |token| token.next_token())
+        .take_while(|token| token.kind() != SyntaxKind::NEWLINE)
+        .all(|token| token.kind() == SyntaxKind::WHITESPACE);
+    before_is_clear && after_is_clear
+}
+
 /// Whether a comment reads as a `skip-file` addressed to the formatter.
 ///
 /// The R grammar asks this once per file, before any formatting, and the answer
@@ -98,13 +119,16 @@ impl SkipPlan {
 /// directive's target is "the next line that carries code" — the line-wise
 /// reading of the linter's next-non-trivia-sibling rule, which in a statement
 /// list is the same node.
-pub(super) fn plan(lines: &[Vec<SyntaxElement<RLanguage>>]) -> SkipPlan {
+pub(super) fn plan(
+    lines: &[Vec<SyntaxElement<RLanguage>>],
+    ignored_directive: Option<TextRange>,
+) -> SkipPlan {
     let mut plan = SkipPlan::default();
     let mut pending_skip = false;
     let mut region_start: Option<usize> = None;
 
     for (idx, line) in lines.iter().enumerate() {
-        match line_directive(line) {
+        match line_directive(line, ignored_directive) {
             Some(Verb::Skip) => {
                 pending_skip = true;
                 continue;
@@ -167,12 +191,18 @@ fn push_run(
 /// The verb of a directive written on a line of its own, if the formatter is
 /// addressed by it. A directive trailing a statement is *not* one: it would
 /// have to be sliced out of the very text it marks.
-fn line_directive(line: &[SyntaxElement<RLanguage>]) -> Option<Verb> {
+fn line_directive(
+    line: &[SyntaxElement<RLanguage>],
+    ignored_directive: Option<TextRange>,
+) -> Option<Verb> {
     let elements = significant(line);
     let [NodeOrToken::Token(token)] = elements.as_slice() else {
         return None;
     };
     if token.kind() != SyntaxKind::COMMENT {
+        return None;
+    }
+    if ignored_directive == Some(token.text_range()) {
         return None;
     }
     match parse(token.text())? {

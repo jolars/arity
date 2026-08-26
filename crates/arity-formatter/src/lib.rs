@@ -30,7 +30,8 @@ pub mod syntax;
 pub use rowan;
 
 pub use formatter::{
-    DeclineReason, DescriptionFormatError, FormatError, FormatStyle, LineEnding, RangeFormatted,
-    format, format_description, format_description_with_style, format_node, format_range,
-    format_with_options, format_with_style,
+    DeclineReason, DescriptionFormatError, FormatAnalysis, FormatError, FormatStyle, LineEnding,
+    RangeFormatted, analyze_format_with_options, format, format_description,
+    format_description_with_style, format_node, format_range, format_with_options,
+    format_with_style,
 };

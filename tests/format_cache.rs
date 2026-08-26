@@ -80,6 +80,29 @@ fn unformatted_file_is_never_recorded() {
 }
 
 #[test]
+fn file_with_outdated_directive_is_never_recorded() {
+    let src = tempfile::tempdir().unwrap();
+    let cache_root = tempfile::tempdir().unwrap();
+    let style = FormatStyle::default();
+    let content = "# arity-format skip: legacy workaround\nx <- 1\n";
+    let file = write_file(src.path(), "outdated.R", content);
+
+    let mut cache = FormatCache::load(cache_root.path(), &style);
+    let result = check_paths_with_style_cached(
+        std::slice::from_ref(&file),
+        style,
+        &ExcludeFilter::none(),
+        true,
+        Some(&mut cache),
+    )
+    .unwrap();
+
+    assert!(result.changed_files.is_empty());
+    assert_eq!(result.outdated_directives.len(), 1);
+    assert!(!cache.is_fixed_point(CacheKey::r(content, false)));
+}
+
+#[test]
 fn no_cache_run_writes_nothing() {
     let src = tempfile::tempdir().unwrap();
     let cache_root = tempfile::tempdir().unwrap();

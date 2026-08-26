@@ -79,7 +79,7 @@ pub(super) fn ir_block_expr_with_prefixed_comments(
         });
     let lines = split_lines(body_elements, "block body")?;
 
-    let plan = super::directive::plan(&lines);
+    let plan = super::directive::plan(&lines, ctx.ignored_directive());
     let mut items: Vec<Ir> = Vec::new();
     for comment in prefixed_comments {
         items.push(Ir::text(comment.clone()));

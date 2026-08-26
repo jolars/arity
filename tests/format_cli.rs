@@ -184,6 +184,25 @@ fn cli_format_check_succeeds_for_unchanged_files() {
 }
 
 #[test]
+fn cli_format_check_reports_outdated_format_directive() {
+    let dir = tempdir().expect("failed to create temp dir");
+    let file = dir.path().join("outdated.R");
+    std::fs::write(&file, "# arity-format skip: legacy workaround\nx <- 1\n")
+        .expect("failed to write input file");
+
+    let output = run_cli_no_stdin([
+        "format",
+        "--check",
+        file.to_str().expect("temp file path should be utf-8"),
+    ]);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8(output.stdout).expect("utf-8");
+    assert!(stdout.contains("outdated.R:1:1"), "{stdout}");
+    assert!(stdout.contains("outdated format directive"), "{stdout}");
+}
+
+#[test]
 fn cli_format_check_requires_paths() {
     let output = run_cli_no_stdin(["format", "--check"]);
     assert!(!output.status.success());

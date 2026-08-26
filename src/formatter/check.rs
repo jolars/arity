@@ -9,10 +9,13 @@ use super::FormatStyle;
 use super::source::{Formatted, cache_key, format_file, merge};
 use crate::file_discovery::{
     DiscoveredFiles, ExcludeFilter, FileDiscoveryError, collect_r_files, collect_source_files,
+    is_description_file,
 };
 use crate::formatter::cache::FormatCache;
+use crate::parser::ParseOptions;
 use crate::project::description::MarkdownDefaultResolver;
 use crate::text::line_diff::bounded_line_diff;
+use arity_formatter::formatter::analyze_format_with_options;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckResult {
@@ -20,6 +23,8 @@ pub struct CheckResult {
     /// skipped.
     pub checked_files: usize,
     pub changed_files: Vec<ChangedFile>,
+    /// Honored directives that have no effect on formatter output.
+    pub outdated_directives: Vec<OutdatedDirective>,
     /// Files the run could not check. Collected rather than returned, so one
     /// unreadable `DESCRIPTION` at a package root does not decide whether the
     /// project's `.R` files get checked at all — `merge` sorts by path, and a
@@ -30,6 +35,31 @@ pub struct CheckResult {
     /// `arity lint` gives for the same file, and a file arity cannot decode is
     /// not a file it can have an opinion about.
     pub skipped: Vec<PathBuf>,
+}
+
+/// An honored `# arity-format` directive whose protected source is already
+/// formatter-clean.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutdatedDirective {
+    pub path: PathBuf,
+    pub line: usize,
+    pub column: usize,
+}
+
+impl OutdatedDirective {
+    pub fn write_diagnostic(&self, out: &mut impl io::Write) -> io::Result<()> {
+        writeln!(
+            out,
+            "{}:{}:{}: outdated format directive",
+            self.path.display(),
+            self.line,
+            self.column
+        )?;
+        writeln!(
+            out,
+            "  = help: the formatter produces the same output without this directive"
+        )
+    }
 }
 
 /// A file the run could not check, and why.
@@ -215,6 +245,7 @@ pub fn check_paths_with_style_cached(
             return Ok(CheckResult {
                 checked_files: 0,
                 changed_files: Vec::new(),
+                outdated_directives: Vec::new(),
                 failed_files: Vec::new(),
                 skipped: Vec::new(),
             });
@@ -224,6 +255,7 @@ pub fn check_paths_with_style_cached(
 
     let total = files.len();
     let mut changed_files = Vec::new();
+    let mut outdated_directives = Vec::new();
     let mut failed_files = Vec::new();
     let mut skipped = Vec::new();
     // The package-wide roxygen markdown default, per file (memoized per
@@ -257,19 +289,45 @@ pub fn check_paths_with_style_cached(
             continue;
         }
 
-        let formatted = match format_file(&path, &content, style, &mut markdown) {
-            Ok(Formatted::Text(formatted)) => formatted,
-            // Valid input the formatter left alone: checked, unchanged, and not
-            // worth caching (the decline is cheap to re-derive).
-            Ok(Formatted::Declined(_)) => continue,
-            Err(err) => {
-                failed_files.push(FailedFile {
-                    path,
-                    reason: format!("failed to format: {err}"),
-                });
-                continue;
+        let (formatted, file_outdated) = if is_description_file(&path) {
+            let formatted = match format_file(&path, &content, style, &mut markdown) {
+                Ok(Formatted::Text(formatted)) => formatted,
+                // Valid input the formatter left alone: checked, unchanged, and not
+                // worth caching (the decline is cheap to re-derive).
+                Ok(Formatted::Declined(_)) => continue,
+                Err(err) => {
+                    failed_files.push(FailedFile {
+                        path,
+                        reason: format!("failed to format: {err}"),
+                    });
+                    continue;
+                }
+            };
+            (formatted, Vec::new())
+        } else {
+            let options =
+                ParseOptions::default().with_roxygen_markdown_default(markdown.resolve(&path));
+            match analyze_format_with_options(&content, style, &options) {
+                Ok(analysis) => (analysis.formatted, analysis.outdated_directives),
+                Err(err) => {
+                    failed_files.push(FailedFile {
+                        path,
+                        reason: format!("failed to format: {err}"),
+                    });
+                    continue;
+                }
             }
         };
+        for range in &file_outdated {
+            let start = usize::from(range.start());
+            let prefix = &content[..start];
+            let line_start = prefix.rfind('\n').map_or(0, |idx| idx + 1);
+            outdated_directives.push(OutdatedDirective {
+                path: path.clone(),
+                line: prefix.bytes().filter(|byte| *byte == b'\n').count() + 1,
+                column: content[line_start..start].chars().count() + 1,
+            });
+        }
 
         if formatted != content {
             changed_files.push(ChangedFile {
@@ -277,7 +335,9 @@ pub fn check_paths_with_style_cached(
                 original: content,
                 formatted,
             });
-        } else if let Some(c) = cache.as_deref_mut() {
+        } else if file_outdated.is_empty()
+            && let Some(c) = cache.as_deref_mut()
+        {
             c.record_fixed_point(cache_key(&path, &content, &mut markdown));
         }
     }
@@ -292,6 +352,7 @@ pub fn check_paths_with_style_cached(
     Ok(CheckResult {
         checked_files: total - failed_files.len() - skipped.len(),
         changed_files,
+        outdated_directives,
         failed_files,
         skipped,
     })

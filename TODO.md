@@ -19,12 +19,6 @@
 
 ## Formatter
 
-- [ ] Report an **outdated `# arity-format` directive** — one whose marked span
-  the formatter would not have changed anyway. It is a `format --check` fact,
-  not a semantic one, so it belongs to the formatter, not to
-  `outdated-suppression`: computing it means formatting the span and comparing,
-  which the linter must not do.
-
 - [ ] Measure a **line-spanning reflow chunk** by its widest segment, not its
   flattened length. Only a soft-wrapped `\verb{…}` still reaches this — every
   other inline Rd macro joins its wrap (`join_soft_breaks`) — but there

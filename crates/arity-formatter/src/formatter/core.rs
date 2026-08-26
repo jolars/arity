@@ -94,6 +94,67 @@ pub fn format_with_options(
     format_node(&parse_output.cst, style, input)
 }
 
+/// Formatter output together with check-only facts discovered by comparing
+/// alternate formatter decisions over the same parsed tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormatAnalysis {
+    pub formatted: String,
+    pub outdated_directives: Vec<TextRange>,
+}
+
+/// Format once and identify honored directives that no longer affect output.
+///
+/// This is a formatter fact rather than a lint fact: each candidate is disabled
+/// in turn and the formatter outputs are compared. Closing `on` directives and
+/// directives in inert positions are not candidates. The parsed tree and
+/// ordinary formatted output are each computed only once.
+pub fn analyze_format_with_options(
+    input: &str,
+    style: FormatStyle,
+    options: &ParseOptions,
+) -> Result<FormatAnalysis, FormatError> {
+    let parse_output = parse_with_options(input, options);
+    if !parse_output.diagnostics.is_empty() {
+        return Err(FormatError::ParseErrors {
+            count: parse_output.diagnostics.len(),
+        });
+    }
+
+    let root = &parse_output.cst;
+    let formatted = format_node(root, style, input)?;
+    let candidates = root.descendants_with_tokens().filter_map(|element| {
+        let NodeOrToken::Token(token) = element else {
+            return None;
+        };
+        if token.kind() != SyntaxKind::COMMENT {
+            return None;
+        }
+        let arity_parser::directive::Parsed::Directive(directive) =
+            arity_parser::directive::parse(token.text())?
+        else {
+            return None;
+        };
+        if !directive.tool.affects_format()
+            || directive.verb == arity_parser::directive::Verb::On
+            || !super::directive::is_honored_directive(&token, directive.verb)
+        {
+            return None;
+        }
+        Some(token.text_range())
+    });
+
+    let mut outdated = Vec::new();
+    for range in candidates {
+        if format_node_ignoring_directive(root, style, input, range)? == formatted {
+            outdated.push(range);
+        }
+    }
+    Ok(FormatAnalysis {
+        formatted,
+        outdated_directives: outdated,
+    })
+}
+
 /// Format an already-parsed CST. The caller is responsible for rejecting input
 /// that failed to parse (the diagnostics live next to the green tree in the
 /// salsa cache, not on the node); this entry only guards against stray `ERROR`
@@ -108,14 +169,36 @@ pub fn format_node(
     style: FormatStyle,
     source: &str,
 ) -> Result<String, FormatError> {
-    // `# arity-format skip-file` is answered here and nowhere else: the file
-    // comes back byte for byte, so `--check` reports it clean and idempotence
-    // holds trivially. Not even the line ending is normalized — the point of
-    // the directive is that nothing is decided.
-    if scan_tokens(root)?.skipped {
+    format_node_with_ignored_directive(root, style, source, None)
+}
+
+fn format_node_ignoring_directive(
+    root: &SyntaxNode,
+    style: FormatStyle,
+    source: &str,
+    ignored_directive: TextRange,
+) -> Result<String, FormatError> {
+    format_node_with_ignored_directive(root, style, source, Some(ignored_directive))
+}
+
+fn format_node_with_ignored_directive(
+    root: &SyntaxNode,
+    style: FormatStyle,
+    source: &str,
+    ignored_directive: Option<TextRange>,
+) -> Result<String, FormatError> {
+    // `# arity-format skip-file` is answered here and nowhere else: ordinary
+    // formatting hands the file back byte for byte, so idempotence holds
+    // trivially. Not even the line ending is normalized — the point of the
+    // directive is that nothing is decided. Check analysis separately asks
+    // whether the same bytes emerge when one such directive is ignored.
+    if scan_tokens(root, ignored_directive)?.skipped {
         return Ok(source.to_string());
     }
-    let ctx = FormatContext::new(style);
+    let ctx = match ignored_directive {
+        Some(range) => FormatContext::ignoring_directive(style, range),
+        None => FormatContext::new(style),
+    };
     let mut formatted = format_root(root, ctx)?;
     if source.ends_with('\n') && !formatted.ends_with('\n') {
         formatted.push('\n');
@@ -151,7 +234,7 @@ pub fn format_range(
     style: FormatStyle,
     source: &str,
 ) -> Result<Option<RangeFormatted>, FormatError> {
-    if scan_tokens(root)?.skipped {
+    if scan_tokens(root, None)?.skipped {
         return Ok(None);
     }
     let ctx = FormatContext::new(style);
@@ -226,7 +309,7 @@ fn expand_comment_alignment_window(
     lines: &[Vec<SyntaxElement<RLanguage>>],
     mut window: std::ops::Range<usize>,
 ) -> std::ops::Range<usize> {
-    let plan = super::directive::plan(lines);
+    let plan = super::directive::plan(lines, None);
     let participates = |idx: usize| {
         !plan.contains(idx)
             && lines.get(idx).is_some_and(|line| {
@@ -289,7 +372,32 @@ fn line_significant_span(line: &[SyntaxElement<RLanguage>]) -> Option<TextRange>
 ///
 /// An `ERROR` token outranks the directive: `skip-file` declines to decide
 /// layout, it does not certify that the tree is formattable.
-fn scan_tokens(root: &SyntaxNode) -> Result<TokenScan, FormatError> {
+fn scan_tokens(
+    root: &SyntaxNode,
+    ignored_directive: Option<TextRange>,
+) -> Result<TokenScan, FormatError> {
+    if let Some(ignored) = ignored_directive {
+        let mut skipped = false;
+        for element in root.descendants_with_tokens() {
+            let NodeOrToken::Token(token) = element else {
+                continue;
+            };
+            if token.kind() == SyntaxKind::ERROR {
+                return Err(FormatError::UnsupportedConstruct {
+                    kind: token.kind(),
+                    snippet: token.text().to_string(),
+                });
+            }
+            if token.text_range() != ignored
+                && token.kind() == SyntaxKind::COMMENT
+                && super::directive::is_skip_file(token.text())
+            {
+                skipped = true;
+            }
+        }
+        return Ok(TokenScan { skipped });
+    }
+
     let mut scan = TokenScan { skipped: false };
     // An explicit stack, not recursion: nesting depth is the input's, and a
     // prepass must not be the thing that overflows on a tree the parser built.
@@ -367,7 +475,7 @@ pub(super) fn ir_statements(
     indent: usize,
     ctx: FormatContext,
 ) -> Result<StatementsIr, FormatError> {
-    let plan = super::directive::plan(lines);
+    let plan = super::directive::plan(lines, ctx.ignored_directive());
     let mut items: Vec<Ir> = Vec::new();
     let mut first_line: Option<usize> = None;
     let mut last_line: Option<usize> = None;
@@ -441,7 +549,7 @@ pub(super) fn ir_block_statements(
     indent: usize,
     ctx: FormatContext,
 ) -> Result<StatementsIr, FormatError> {
-    let plan = super::directive::plan(lines);
+    let plan = super::directive::plan(lines, ctx.ignored_directive());
     let mut items: Vec<Ir> = Vec::new();
     let mut first_line: Option<usize> = None;
     let mut last_line: Option<usize> = None;
@@ -770,6 +878,85 @@ mod tests {
                 "mismatch for {source:?}"
             );
         }
+    }
+
+    #[test]
+    fn reports_only_format_directives_that_no_longer_change_output() {
+        let source = concat!(
+            "# arity-format skip: already canonical\n",
+            "x <- 1\n",
+            "# arity-format skip: still needed\n",
+            "y<-2\n",
+            "# arity-format off: already canonical region\n",
+            "z <- 3\n",
+            "# arity-format on\n",
+        );
+
+        let outdated =
+            analyze_format_with_options(source, FormatStyle::default(), &ParseOptions::default())
+                .expect("analyzes directives")
+                .outdated_directives;
+
+        assert_eq!(outdated.len(), 2);
+        assert_eq!(
+            &source[usize::from(outdated[0].start())..usize::from(outdated[0].end())],
+            "# arity-format skip: already canonical"
+        );
+        assert_eq!(
+            &source[usize::from(outdated[1].start())..usize::from(outdated[1].end())],
+            "# arity-format off: already canonical region"
+        );
+    }
+
+    #[test]
+    fn does_not_report_inert_or_closing_directives_as_outdated() {
+        let source = concat!(
+            "f(\n",
+            "  # arity-format skip: inert here\n",
+            "  x = 1\n",
+            ")\n",
+            "# arity-format on\n",
+        );
+
+        assert!(
+            analyze_format_with_options(source, FormatStyle::default(), &ParseOptions::default(),)
+                .expect("analyzes directives")
+                .outdated_directives
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn skip_file_is_outdated_only_when_unprotected_output_is_unchanged() {
+        for (source, expected) in [
+            ("# arity-format skip-file\nx <- 1\n", 1),
+            ("# arity-format skip-file\nx<-1\n", 0),
+        ] {
+            assert_eq!(
+                analyze_format_with_options(
+                    source,
+                    FormatStyle::default(),
+                    &ParseOptions::default(),
+                )
+                .expect("analyzes directives")
+                .outdated_directives
+                .len(),
+                expected,
+                "mismatch for {source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn detects_outdated_directive_inside_block_statement_list() {
+        let source = "f <- function() {\n  # arity-format skip\n  x <- 1\n}\n";
+        assert_eq!(
+            analyze_format_with_options(source, FormatStyle::default(), &ParseOptions::default(),)
+                .expect("analyzes directives")
+                .outdated_directives
+                .len(),
+            1
+        );
     }
 
     #[test]
