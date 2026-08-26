@@ -26,4 +26,4 @@ pub use check::{
 };
 pub use diagnostic::{Applicability, Diagnostic, Fix, Severity, ViolationData};
 pub use fix::{FixOutcome, apply_fixes};
-pub use render::{OutputMode, render_findings};
+pub use render::{OutputMode, render_findings, render_findings_shared};

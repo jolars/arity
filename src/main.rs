@@ -2,6 +2,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use arity::cli::{Cli, ColorChoice, Commands, LintOutput};
 use arity::config::{Config, ConfigError, LintConfig};
@@ -12,7 +13,7 @@ use arity::formatter::{
 };
 use arity::incremental::IncrementalDatabase;
 use arity::linter::{
-    OutputMode, apply_fixes, check_document, check_document_in_project, render_findings,
+    OutputMode, apply_fixes, check_document, check_document_in_project, render_findings_shared,
 };
 use arity::parser::ParseOptions;
 use arity::parser::{parse, reconstruct};
@@ -1091,7 +1092,13 @@ fn run_lint(
             }
 
             if !all_findings.is_empty() {
-                let source_for = |path: &PathBuf| fs::read_to_string(path).ok();
+                let source_for = |path: &PathBuf| {
+                    result
+                        .reports
+                        .iter()
+                        .find(|report| &report.path == path)
+                        .and_then(|report| report.source.clone())
+                };
                 emit_findings(&all_findings, output, out.color, &source_for);
             } else if out.verbose {
                 eprintln!("{} file(s) checked, no findings", result.reports.len());
@@ -1251,7 +1258,7 @@ fn emit_findings(
     findings: &[arity::linter::Diagnostic],
     output: LintOutput,
     color: ColorChoice,
-    source_for: &dyn Fn(&PathBuf) -> Option<String>,
+    source_for: &dyn Fn(&PathBuf) -> Option<Arc<str>>,
 ) {
     let mode = match output {
         LintOutput::Pretty => OutputMode::Pretty,
@@ -1260,7 +1267,7 @@ fn emit_findings(
     };
     // Human output goes to stderr; JSON to stdout.
     let use_color = color_enabled(color, io::stderr().is_terminal());
-    let rendered = render_findings(findings, mode, use_color, source_for);
+    let rendered = render_findings_shared(findings, mode, use_color, source_for);
     if matches!(mode, OutputMode::Json) {
         println!("{rendered}");
     } else {
@@ -1306,6 +1313,7 @@ fn run_lint_stdin(
     if findings.is_empty() {
         return ExitCode::SUCCESS;
     }
+    let content = Arc::<str>::from(content);
     let source_for = |p: &PathBuf| (p == &path).then(|| content.clone());
     emit_findings(&findings, output, out.color, &source_for);
     ExitCode::from(1)

@@ -41,6 +41,7 @@ fn lint_reports_clean_status_for_parseable_files() {
     assert_eq!(result.total_findings, 0);
     assert_eq!(result.reports.len(), 1);
     assert_eq!(result.reports[0].status, LintStatus::Clean);
+    assert!(result.reports[0].source.is_none());
 }
 
 #[test]
@@ -73,6 +74,10 @@ fn lint_flags_duplicate_formal() {
     let report = &result.reports[0];
     assert!(matches!(report.status, LintStatus::Findings { count: 1 }));
     assert_eq!(report.diagnostics[0].rule, "duplicate-formal");
+    assert_eq!(
+        report.source.as_deref(),
+        Some("f <- function(x, x) x\nf(1, 2)\n")
+    );
 }
 
 #[test]

@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use annotate_snippets::{AnnotationKind, Level, Renderer, Snippet};
 
@@ -29,6 +30,18 @@ pub fn render_findings(
     use_color: bool,
     source_for: &dyn Fn(&PathBuf) -> Option<String>,
 ) -> String {
+    render_findings_shared(diagnostics, mode, use_color, &|path| {
+        source_for(path).map(Arc::from)
+    })
+}
+
+/// Render diagnostics from shared source buffers without copying their text.
+pub fn render_findings_shared(
+    diagnostics: &[Diagnostic],
+    mode: OutputMode,
+    use_color: bool,
+    source_for: &dyn Fn(&PathBuf) -> Option<Arc<str>>,
+) -> String {
     match mode {
         OutputMode::Json => render_json(diagnostics),
         OutputMode::Concise => render_concise(diagnostics, source_for),
@@ -44,7 +57,7 @@ fn render_json(diagnostics: &[Diagnostic]) -> String {
 
 fn render_concise(
     diagnostics: &[Diagnostic],
-    source_for: &dyn Fn(&PathBuf) -> Option<String>,
+    source_for: &dyn Fn(&PathBuf) -> Option<Arc<str>>,
 ) -> String {
     // Group diagnostics by file so we can reuse the LineIndex.
     let mut by_path: BTreeMap<&PathBuf, Vec<&Diagnostic>> = BTreeMap::new();
@@ -80,7 +93,7 @@ fn render_concise(
 fn render_pretty(
     diagnostics: &[Diagnostic],
     use_color: bool,
-    source_for: &dyn Fn(&PathBuf) -> Option<String>,
+    source_for: &dyn Fn(&PathBuf) -> Option<Arc<str>>,
 ) -> String {
     let renderer = if use_color {
         Renderer::styled()

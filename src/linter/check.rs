@@ -85,6 +85,9 @@ pub struct LintFileReport {
     pub path: PathBuf,
     pub status: LintStatus,
     pub diagnostics: Vec<Diagnostic>,
+    /// The analyzed buffer when this report has diagnostics, retained so
+    /// callers can render snippets without reading a potentially changed file.
+    pub source: Option<Arc<str>>,
 }
 
 #[derive(Debug, Clone)]
@@ -347,10 +350,12 @@ pub fn check_paths_with_index(
                 };
                 (status, kept)
             };
+            let source = (!diagnostics.is_empty()).then(|| file.text(worker).clone());
             LintFileReport {
                 path,
                 status,
                 diagnostics,
+                source,
             }
         })
         .collect();
@@ -362,10 +367,12 @@ pub fn check_paths_with_index(
             let worker = &*worker;
             let usage = package_usage_for(worker, &path);
             let (status, diagnostics) = lint_description_source(&path, &content, &rules, usage);
+            let source = (!diagnostics.is_empty()).then(|| Arc::<str>::from(content));
             LintFileReport {
                 path,
                 status,
                 diagnostics,
+                source,
             }
         })
         .collect();

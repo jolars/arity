@@ -93,6 +93,19 @@ fn an_explicitly_named_description_is_linted() {
     assert_eq!(description_report(&result).status, LintStatus::Clean);
 }
 
+#[test]
+fn a_description_report_with_findings_retains_its_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("DESCRIPTION");
+    let source = "Package testpkg\n";
+    std::fs::write(&path, source).unwrap();
+
+    let result = check_paths(std::slice::from_ref(&path)).expect("lint should succeed");
+    let report = description_report(&result);
+    assert!(matches!(report.status, LintStatus::ParseDiagnostics { .. }));
+    assert_eq!(report.source.as_deref(), Some(source));
+}
+
 /// A file named `DESCRIPTION` that does not sit at a package root is somebody
 /// else's data — a fixture, a vendored copy, a scraped corpus — and linting it
 /// would report on a file the project does not own.

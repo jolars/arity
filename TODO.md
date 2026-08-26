@@ -1189,16 +1189,13 @@ rounds, distributions overlapping.
   all four from a single walk is the structural fix, and the largest serial item
   left.
 
-- [ ] **Render re-reads from disk what pass 1 already had.** `main.rs`'s
-  `source_for` closure calls `fs::read_to_string` per file with a finding, to
-  render snippet context — a third read of bytes the salsa database held until
-  moments earlier (153 findings on tidyr, 1.25 ms including teardown). The
-  texts are `Arc<str>` (`src/incremental.rs::SourceFile`), so the fix is plumbing,
-  not I/O:
-  hand a handle out with the report for each file that has findings. The
-  deferred database teardown is not an obstacle — a cloned `Arc` keeps its own
-  refcount, so the text survives the `rayon::spawn` drop regardless of when it
-  runs.
+- [x] **Render re-read from disk what pass 1 already had.** Each report with
+  diagnostics now retains the analyzed `Arc<str>` (clean reports retain no
+  text), and the CLI renders through the shared buffer after the salsa database
+  teardown is scheduled. On tidyr this removed one source-file open for each of
+  the 18 files with findings (87 -> 69 opens under `R/`). Pretty lint output on
+  one pinned core moved from 42.51 to 42.28 ms median (-0.55%, 20 interleaved
+  runs); minima moved from 41.82 to 41.57 ms (-0.58%).
 
 - [x] **`arity lint --fix` cost 61 ms on a four-line file.** Attributed, and the
   waste in it removed: the per-document project seed (`seed_workspace_for`) ran
