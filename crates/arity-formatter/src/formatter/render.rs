@@ -3,7 +3,9 @@ use rowan::{NodeOrToken, SyntaxElement, SyntaxToken};
 use super::context::FormatContext;
 use super::core::FormatError;
 use super::ir::Ir;
-use super::trivia::{is_quarto_code_annotation, is_trivia, split_lines};
+use super::trivia::{
+    ir_inline_trailing_comment, is_quarto_code_annotation, is_trivia, split_lines,
+};
 
 use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
 
@@ -102,7 +104,7 @@ pub(super) fn ir_block_expr_with_prefixed_comments(
     }
 
     let open = match opening_annotation {
-        Some(annotation) => Ir::concat([Ir::text("{"), Ir::line_suffix(format!(" {annotation}"))]),
+        Some(annotation) => Ir::concat([Ir::text("{"), ir_inline_trailing_comment(&annotation)]),
         None => Ir::text("{"),
     };
 

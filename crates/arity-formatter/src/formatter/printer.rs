@@ -1,7 +1,7 @@
 //! The layout engine: walks an [`Ir`] tree and renders it to a string, deciding
 //! for each [`Ir::Group`] whether it fits flat on the current line or must break.
 
-use super::ir::Ir;
+use super::ir::{Ir, LineSuffixKind};
 use super::style::FormatStyle;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -37,6 +37,7 @@ struct LineSuffixMark {
     separator_end: usize,
     code_col: usize,
     comment_width: usize,
+    kind: LineSuffixKind,
 }
 
 impl Writer {
@@ -87,7 +88,7 @@ impl Writer {
         self.col += s.chars().count();
     }
 
-    fn write_line_suffix(&mut self, s: &str) {
+    fn write_line_suffix(&mut self, s: &str, kind: LineSuffixKind) {
         if s.is_empty() {
             return;
         }
@@ -105,6 +106,7 @@ impl Writer {
             separator_end: separator_start + separator_len,
             code_col,
             comment_width: s[separator_len..].chars().count(),
+            kind,
         });
     }
 
@@ -182,7 +184,9 @@ impl Writer {
             let mut end = start + 1;
             while end < self.suffixes.len()
                 && self.suffixes[end].line == self.suffixes[end - 1].line + 1
-                && self.suffixes[end].indent == self.suffixes[start].indent
+                && self.suffixes[end].kind == self.suffixes[start].kind
+                && (self.suffixes[start].kind == LineSuffixKind::QuartoAnnotation
+                    || self.suffixes[end].indent == self.suffixes[start].indent)
                 && (end + 1 == self.suffixes.len()
                     || self.suffixes[end + 1].line != self.suffixes[end].line)
             {
@@ -279,7 +283,7 @@ impl Printer {
                 // A trailing comment renders inline; Writer retains its
                 // structured position so adjacent suffixes can align after the
                 // layout is fixed. Fit measurement still treats it as zero width.
-                Ir::LineSuffix(text) => w.write_line_suffix(text),
+                Ir::LineSuffix { text, kind } => w.write_line_suffix(text, *kind),
                 Ir::Concat(items) => {
                     for item in items.iter().rev() {
                         stack.push((indent, mode, item));
@@ -428,7 +432,7 @@ impl Printer {
         while let Some(node) = stack.pop() {
             match node {
                 // A line suffix (trailing comment) is zero width for fit.
-                Ir::Nil | Ir::SoftLine | Ir::LineSuffix(_) => {}
+                Ir::Nil | Ir::SoftLine | Ir::LineSuffix { .. } => {}
                 Ir::Text(s) => {
                     let w = s.chars().count();
                     if w > remaining {
@@ -514,7 +518,7 @@ impl Printer {
         while let Some(node) = stack.pop() {
             match node {
                 // A line suffix (trailing comment) is zero width for fit.
-                Ir::Nil | Ir::SoftLine | Ir::LineSuffix(_) => {}
+                Ir::Nil | Ir::SoftLine | Ir::LineSuffix { .. } => {}
                 Ir::Text(s) => {
                     col += s.chars().count();
                     if col > self.line_width {
@@ -577,7 +581,7 @@ impl Printer {
                 Ir::Nil => {}
                 // A line suffix (trailing comment) is zero width for fit; the
                 // break that follows it is measured on its own.
-                Ir::LineSuffix(_) => {}
+                Ir::LineSuffix { .. } => {}
                 Ir::SoftLine => return true,
                 Ir::Text(s) => {
                     col += s.chars().count();
@@ -665,7 +669,7 @@ impl Printer {
         while let Some((mode, node)) = stack.pop() {
             match node {
                 // A line suffix (trailing comment) is zero width for fit.
-                Ir::Nil | Ir::LineSuffix(_) => {}
+                Ir::Nil | Ir::LineSuffix { .. } => {}
                 Ir::Text(s) => {
                     col += s.chars().count();
                     if col > self.line_width {
@@ -837,6 +841,21 @@ mod tests {
             ])),
         ]);
         assert_eq!(printer.print(&ir), "a # first\n  long # second");
+    }
+
+    #[test]
+    fn quarto_annotations_align_across_indentation() {
+        let printer = Printer::new(FormatStyle::default());
+        let ir = Ir::concat([
+            Ir::text("a"),
+            Ir::quarto_annotation_suffix(" # <1>"),
+            Ir::indent(Ir::concat([
+                Ir::hard_line(),
+                Ir::text("long"),
+                Ir::quarto_annotation_suffix(" # <2>"),
+            ])),
+        ]);
+        assert_eq!(printer.print(&ir), "a      # <1>\n  long # <2>");
     }
 
     #[test]

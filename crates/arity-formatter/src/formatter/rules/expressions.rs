@@ -6,7 +6,7 @@ use super::super::core::{
     FormatError, format_expr_segment, ir_expr_segment, ir_expr_with_optional_comment, ir_line,
 };
 use super::super::ir::Ir;
-use super::super::trivia::split_lines;
+use super::super::trivia::{ir_inline_trailing_comment, split_lines};
 use super::functions::{build_named_arg_ir, ir_arg_side, ir_curly_curly, single_node};
 use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
 
@@ -513,7 +513,7 @@ fn comment_suffix(comments: &[String]) -> Ir {
     if comments.is_empty() {
         Ir::nil()
     } else {
-        Ir::line_suffix(format!(" {}", comments.join(" ")))
+        ir_inline_trailing_comment(&comments.join(" "))
     }
 }
 

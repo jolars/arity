@@ -518,7 +518,10 @@ pub(super) fn ir_line(
         // The trailing comment is a zero-width line suffix so it never forces the
         // expression's own groups to break (matching air); the statement
         // separator supplies the newline that ends its line.
-        return Ok(Ir::concat([expr, Ir::line_suffix(format!(" {comment}"))]));
+        return Ok(Ir::concat([
+            expr,
+            super::trivia::ir_inline_trailing_comment(&comment),
+        ]));
     }
 
     ir_expr_segment(&significant, "line expression", indent, ctx)
@@ -653,7 +656,10 @@ pub(super) fn ir_expr_with_optional_comment(
         // expression to break (matching air). A break always follows it in
         // context (statement separator, or the enclosing list that a comment
         // forces open).
-        return Ok(Ir::concat([expr, Ir::line_suffix(format!(" {comment}"))]));
+        return Ok(Ir::concat([
+            expr,
+            super::trivia::ir_inline_trailing_comment(&comment),
+        ]));
     }
 
     ir_expr_segment(elements, context, indent, ctx)

@@ -7,6 +7,7 @@ use super::super::core::{
 };
 use super::super::ir::Ir;
 use super::super::printer::Printer;
+use super::super::trivia::ir_inline_trailing_comment;
 use crate::ast::{AstNode, ForExpr, ForExprParts, IfExpr, WhileExpr, WhileExprParts};
 use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
 
@@ -481,7 +482,7 @@ fn ir_if_branch(
     {
         let mut ir = ir_block_expr_with_prefixed_comments(node, indent, ctx, &combined)?;
         if let Some(comment) = trailing {
-            ir = Ir::concat([ir, Ir::line_suffix(format!(" {comment}"))]);
+            ir = Ir::concat([ir, ir_inline_trailing_comment(&comment)]);
         }
         return Ok((ir, true));
     }
@@ -492,13 +493,13 @@ fn ir_if_branch(
     if combined.is_empty() {
         let mut expr_ir = ir_expr_with_optional_comment(core, "if branch", indent, ctx)?;
         if let Some(comment) = trailing {
-            expr_ir = Ir::concat([expr_ir, Ir::line_suffix(format!(" {comment}"))]);
+            expr_ir = Ir::concat([expr_ir, ir_inline_trailing_comment(&comment)]);
         }
         return Ok((expr_ir, false));
     }
     let mut expr_ir = ir_expr_with_optional_comment(core, "if branch", indent + 1, ctx)?;
     if let Some(comment) = trailing {
-        expr_ir = Ir::concat([expr_ir, Ir::line_suffix(format!(" {comment}"))]);
+        expr_ir = Ir::concat([expr_ir, ir_inline_trailing_comment(&comment)]);
     }
     Ok((
         synthetic_block_with_comments(vec![expr_ir], &combined),
@@ -841,7 +842,7 @@ fn ir_external_body(
 ) -> Ir {
     let assembled = ir_with_leading_comments(leading, header, body);
     match trailing_comment {
-        Some(comment) => Ir::concat([assembled, Ir::line_suffix(format!(" {comment}"))]),
+        Some(comment) => Ir::concat([assembled, ir_inline_trailing_comment(&comment)]),
         None => assembled,
     }
 }
@@ -1019,7 +1020,7 @@ pub(crate) fn try_format_if_with_external_body(
     let body = synthetic_block(vec![Ir::text(then_comment), body_expr]);
     let header = Ir::concat([ir_condition_header("if (", condition), Ir::text(" "), body]);
     let ir = match trailing_comment {
-        Some(comment) => Ir::concat([header, Ir::line_suffix(format!(" {comment}"))]),
+        Some(comment) => Ir::concat([header, ir_inline_trailing_comment(&comment)]),
         None => header,
     };
     Ok(Some((ir, cursor - line_idx)))

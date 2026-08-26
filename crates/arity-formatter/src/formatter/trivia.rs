@@ -1,6 +1,7 @@
 use rowan::{NodeOrToken, SyntaxElement};
 
 use super::core::FormatError;
+use super::ir::Ir;
 use crate::syntax::{RLanguage, SyntaxKind};
 
 pub(super) fn split_lines(
@@ -105,4 +106,15 @@ pub(super) fn is_quarto_code_annotation(text: &str) -> bool {
         return false;
     };
     !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// Render a structured trailing comment, retaining whether it is a Quarto
+/// annotation so the printer can apply the annotation-specific gutter rule.
+pub(super) fn ir_inline_trailing_comment(text: &str) -> Ir {
+    let suffix = format!(" {text}");
+    if is_quarto_code_annotation(text) {
+        Ir::quarto_annotation_suffix(suffix)
+    } else {
+        Ir::line_suffix(suffix)
+    }
 }

@@ -10,11 +10,11 @@ our_apply <- function(x, fun, ...) { # <1>
   val
 }
 
-penguins |> # <1>
-  mutate( # <2>
+penguins |>                                      # <1>
+  mutate(                                        # <2>
     bill_ratio = bill_depth_mm / bill_length_mm, # <2>
     bill_area = bill_depth_mm * bill_length_mm   # <2>
-  ) # <2>
+  )                                              # <2>
 
 f(
   # ordinary comment

@@ -6,7 +6,7 @@ use super::super::core::{
     ir_expr_with_optional_comment, ir_line, reparse_snippet_from_elements, snippet_from_elements,
 };
 use super::super::ir::Ir;
-use super::super::trivia::{is_quarto_code_annotation, split_lines};
+use super::super::trivia::{ir_inline_trailing_comment, is_quarto_code_annotation, split_lines};
 use super::expressions::{
     ArgSlot, build_arg_group, build_arg_hug, expr_ends_in_block, should_force_leading_hole_expand,
 };
@@ -607,7 +607,7 @@ fn ir_call_args_with_comments(
         return Ok(match opening_annotation {
             Some(annotation) => Ir::concat([
                 Ir::text("("),
-                Ir::line_suffix(format!(" {annotation}")),
+                ir_inline_trailing_comment(&annotation),
                 Ir::hard_line(),
                 Ir::text(")"),
             ]),
@@ -615,7 +615,7 @@ fn ir_call_args_with_comments(
         });
     }
     let open = match opening_annotation {
-        Some(annotation) => Ir::concat([Ir::text("("), Ir::line_suffix(format!(" {annotation}"))]),
+        Some(annotation) => Ir::concat([Ir::text("("), ir_inline_trailing_comment(&annotation)]),
         None => Ir::text("("),
     };
     Ok(Ir::concat([
@@ -915,7 +915,7 @@ fn layout_call_comment_items(items: &[IrCallItem]) -> Vec<Ir> {
                         // alignment run as though the first comment were code.
                         Ir::text(format!(" {}", comment_arg.comment_text))
                     } else {
-                        Ir::line_suffix(format!(" {}", comment_arg.comment_text))
+                        ir_inline_trailing_comment(&comment_arg.comment_text)
                     };
                     out.push(Ir::concat([arg.ir.clone(), suffix]));
                     i += 2;
@@ -938,7 +938,7 @@ fn layout_call_comment_items(items: &[IrCallItem]) -> Vec<Ir> {
                     out.push(Ir::concat([
                         arg.ir.clone(),
                         Ir::text(sep),
-                        Ir::line_suffix(format!(" {}", comment_arg.comment_text)),
+                        ir_inline_trailing_comment(&comment_arg.comment_text),
                     ]));
                     i += 3;
                     while let Some(IrCallItem::Arg(extra)) = items.get(i) {
@@ -1141,7 +1141,7 @@ fn ir_curly_curly_with_comments(
     parts.push(Ir::hard_line());
     parts.push(Ir::text("}}"));
     if let Some(comment) = inline_trailing {
-        parts.push(Ir::line_suffix(format!(" {comment}")));
+        parts.push(ir_inline_trailing_comment(&comment));
     }
     for comment in &outer_post_comments {
         parts.push(Ir::hard_line());
@@ -1431,7 +1431,7 @@ fn function_param_lines(raw: &str, comments: &[(usize, usize)]) -> Vec<Ir> {
             } else {
                 Ir::concat([
                     Ir::text(prefix.to_string()),
-                    Ir::line_suffix(format!(" {comment}")),
+                    ir_inline_trailing_comment(comment),
                 ])
             }
         } else {

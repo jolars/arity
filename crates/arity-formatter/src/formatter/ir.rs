@@ -16,6 +16,12 @@
 
 use std::rc::Rc;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LineSuffixKind {
+    Comment,
+    QuartoAnnotation,
+}
+
 /// A document node describing how a piece of code may be laid out.
 #[derive(Debug, Clone)]
 pub(crate) enum Ir {
@@ -90,9 +96,10 @@ pub(crate) enum Ir {
     /// This one is the layout engine being told, explicitly, to stand down.
     /// Always forces a break: a skipped statement owns its lines.
     Skipped(Rc<str>),
-    /// A trailing comment that runs to end of line, rendered inline (and aligned
-    /// with adjacent suffixes at the same indentation) but counted as **zero
-    /// width** by every fit measurement. This is the
+    /// A trailing comment that runs to end of line, rendered inline but counted
+    /// as **zero width** by every fit measurement. Ordinary comments align with
+    /// adjacent suffixes at the same indentation; Quarto annotations align
+    /// across indentation levels to form a visual gutter. This is the
     /// Wadler/Prettier "line suffix" concept, scoped to same-line trailing
     /// comments: air treats such a comment as a zero-width suffix, so a long
     /// comment never forces an otherwise-fitting group to break. The break that
@@ -100,7 +107,7 @@ pub(crate) enum Ir {
     /// separately by a following hard break (an adjacent [`Ir::HardLine`], or the
     /// statement separator between lines), so this node itself does not force a
     /// break. The text must not contain a newline.
-    LineSuffix(Rc<str>),
+    LineSuffix { text: Rc<str>, kind: LineSuffixKind },
     /// An ordered list of candidate layouts. The printer picks the first
     /// candidate whose *first line* fits at the current column under a
     /// break-aware measurement (nested groups decide their own break, success
@@ -259,7 +266,19 @@ impl Ir {
     /// A trailing comment rendered inline but measured as zero width; see
     /// [`Ir::LineSuffix`].
     pub(crate) fn line_suffix(s: impl Into<Rc<str>>) -> Ir {
-        Ir::LineSuffix(s.into())
+        Ir::LineSuffix {
+            text: s.into(),
+            kind: LineSuffixKind::Comment,
+        }
+    }
+
+    /// A Quarto code annotation rendered as a trailing comment, but permitted
+    /// to align with adjacent annotations across indentation levels.
+    pub(crate) fn quarto_annotation_suffix(s: impl Into<Rc<str>>) -> Ir {
+        Ir::LineSuffix {
+            text: s.into(),
+            kind: LineSuffixKind::QuartoAnnotation,
+        }
     }
 
     pub(crate) fn line() -> Ir {
@@ -283,7 +302,7 @@ impl Ir {
             Ir::Text(_)
             | Ir::Verbatim { .. }
             | Ir::Skipped(_)
-            | Ir::LineSuffix(_)
+            | Ir::LineSuffix { .. }
             | Ir::HardLine
             | Ir::EmptyLine
             | Ir::Line
@@ -323,7 +342,7 @@ impl Ir {
                 cands.first().is_some_and(Ir::contains_forced_break)
             }
             Ir::Text(_)
-            | Ir::LineSuffix(_)
+            | Ir::LineSuffix { .. }
             | Ir::Line
             | Ir::SoftLine
             | Ir::IfBreak { .. }
@@ -341,7 +360,7 @@ impl Ir {
     /// selected counts, since the layout choice is the printer's to make.
     pub(crate) fn ends_with_line_suffix(&self) -> bool {
         match self {
-            Ir::LineSuffix(_) => true,
+            Ir::LineSuffix { .. } => true,
             Ir::Verbatim { text, .. } | Ir::Skipped(text) => text
                 .rsplit('\n')
                 .next()
