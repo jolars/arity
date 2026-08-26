@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.0](https://github.com/jolars/arity/compare/arity-code-v0.20.0...arity-code-v0.21.0) (2026-08-26)
+
+### Bug Fixes
+- **editors:** pin `@types/vscode` and update arity version ([`0f6ee17`](https://github.com/jolars/arity/commit/0f6ee173b815acebc52116327df1b7dbf12e77fe))
+
+### Dependencies
+- updated arity to v0.21.0
+
 ## [0.20.0](https://github.com/jolars/arity/compare/arity-code-v0.19.1...arity-code-v0.20.0) (2026-08-21)
 
 ### Dependencies

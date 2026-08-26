@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/jolars/arity/compare/arity-formatter-v0.5.0...arity-formatter-v0.6.0) (2026-08-26)
+
+### Features
+- **format:** report outdated directives ([`eaa48e2`](https://github.com/jolars/arity/commit/eaa48e2791da1f88751dd0a2078135fa6e71a02c))
+- **formatter:** format tribble calls as tables ([`cd62e90`](https://github.com/jolars/arity/commit/cd62e903ba5adc87aedc3fa9170eae680b01231a))
+- **format:** align trailing comments ([`58d854c`](https://github.com/jolars/arity/commit/58d854c510c5ff90963bafcecd68d13b8f68ac89))
+
+### Bug Fixes
+- **formatter:** align Quarto annotations ([`12e8695`](https://github.com/jolars/arity/commit/12e869526cb0bfbeb8561265e4002d6462d18e88))
+- **formatter:** preserve Quarto annotations ([`02678e5`](https://github.com/jolars/arity/commit/02678e5dea41bd2819a8f547b4b7441603e52165))
+- **format:** preserve commas before comments ([`d529b97`](https://github.com/jolars/arity/commit/d529b97a951f0b00d37d0a0798e3d04f33d8c125)), closes [#117](https://github.com/jolars/arity/issues/117)
+
 ## [0.5.0](https://github.com/jolars/arity/compare/arity-formatter-v0.4.1...arity-formatter-v0.5.0) (2026-08-21)
 
 ### Features
