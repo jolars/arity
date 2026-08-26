@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.21.0](https://github.com/jolars/arity/compare/v0.20.0...v0.21.0) (2026-08-26)
+
+### Features
+- **format:** report outdated directives ([`eaa48e2`](https://github.com/jolars/arity/commit/eaa48e2791da1f88751dd0a2078135fa6e71a02c))
+- **lsp:** refresh cached config ([`6d82ca0`](https://github.com/jolars/arity/commit/6d82ca064d060cf3c5226f947e68bf3ae4b5bfb8))
+- **format:** align trailing comments ([`58d854c`](https://github.com/jolars/arity/commit/58d854c510c5ff90963bafcecd68d13b8f68ac89))
+
+### Bug Fixes
+- **lint:** gate local promise arguments ([`2ec3e8b`](https://github.com/jolars/arity/commit/2ec3e8b9fab3ec41ff5b06e8c1a52b6f7a7b6265))
+- **format:** preserve commas before comments ([`d529b97`](https://github.com/jolars/arity/commit/d529b97a951f0b00d37d0a0798e3d04f33d8c125)), closes [#117](https://github.com/jolars/arity/issues/117)
+
+### Performance Improvements
+- **lint:** reuse analyzed source for rendering ([`6cab16e`](https://github.com/jolars/arity/commit/6cab16eab1ca8d891b6a53cd9ddce17f930646cc))
+
+### Dependencies
+- updated crates/arity-formatter to v0.6.0
+
 ## [0.20.0](https://github.com/jolars/arity/compare/v0.19.1...v0.20.0) (2026-08-21)
 
 ### Features
