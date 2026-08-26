@@ -6,7 +6,7 @@ use super::super::core::{
     ir_expr_with_optional_comment, ir_line, reparse_snippet_from_elements, snippet_from_elements,
 };
 use super::super::ir::Ir;
-use super::super::trivia::split_lines;
+use super::super::trivia::{is_quarto_code_annotation, split_lines};
 use super::expressions::{
     ArgSlot, build_arg_group, build_arg_hug, expr_ends_in_block, should_force_leading_hole_expand,
 };
@@ -594,7 +594,8 @@ fn ir_call_args_with_comments(
     indent: usize,
     ctx: FormatContext,
 ) -> Result<Ir, FormatError> {
-    let items = collect_call_comment_items(arg_list, indent, ctx)?;
+    let opening_annotation = opening_call_annotation(arg_list);
+    let items = collect_call_comment_items(arg_list, indent, ctx, opening_annotation.is_some())?;
     // A leading run of bare holes packs onto the open-paren line (`fn(,,`)
     // rather than each comma taking its own line; only an interior hole (one
     // preceded by a real arg or comment) breaks. Mirrors `leading_empty_run`
@@ -603,10 +604,22 @@ fn ir_call_args_with_comments(
     let lead = Ir::text(",".repeat(lead_commas));
     let lines = layout_call_comment_items(rest);
     if lines.is_empty() {
-        return Ok(Ir::concat([Ir::text("("), lead, Ir::text(")")]));
+        return Ok(match opening_annotation {
+            Some(annotation) => Ir::concat([
+                Ir::text("("),
+                Ir::line_suffix(format!(" {annotation}")),
+                Ir::hard_line(),
+                Ir::text(")"),
+            ]),
+            None => Ir::concat([Ir::text("("), lead, Ir::text(")")]),
+        });
     }
+    let open = match opening_annotation {
+        Some(annotation) => Ir::concat([Ir::text("("), Ir::line_suffix(format!(" {annotation}"))]),
+        None => Ir::text("("),
+    };
     Ok(Ir::concat([
-        Ir::text("("),
+        open,
         lead,
         Ir::indent(Ir::concat([
             Ir::hard_line(),
@@ -637,12 +650,21 @@ fn collect_call_comment_items(
     arg_list: &SyntaxNode,
     indent: usize,
     ctx: FormatContext,
+    skip_opening_annotation: bool,
 ) -> Result<Vec<IrCallItem>, FormatError> {
     let elements: Vec<_> = arg_list.children_with_tokens().collect();
     let mut items = Vec::new();
+    let mut skipped_opening_annotation = false;
     for (idx, element) in elements.iter().enumerate() {
         match element {
             NodeOrToken::Node(arg) if arg.kind() == SyntaxKind::ARG => {
+                if skip_opening_annotation
+                    && !skipped_opening_annotation
+                    && comment_only_annotation(arg).is_some()
+                {
+                    skipped_opening_annotation = true;
+                    continue;
+                }
                 let mut arg_info = ir_call_comment_arg(arg, indent, ctx)?;
                 arg_info.leading_newline = has_newline_before_arg(&elements, idx);
                 items.push(IrCallItem::Arg(arg_info));
@@ -656,6 +678,38 @@ fn collect_call_comment_items(
         }
     }
     Ok(items)
+}
+
+/// A Quarto annotation immediately following `(`, before the first newline.
+/// The parser represents it as a comment-only `ARG`; ordinary comments retain
+/// the existing behavior of moving onto their own line.
+fn opening_call_annotation(arg_list: &SyntaxNode) -> Option<String> {
+    for element in arg_list.children_with_tokens() {
+        match element {
+            NodeOrToken::Token(token) if token.kind() == SyntaxKind::WHITESPACE => {}
+            NodeOrToken::Token(token) if token.kind() == SyntaxKind::NEWLINE => return None,
+            NodeOrToken::Node(arg) if arg.kind() == SyntaxKind::ARG => {
+                return comment_only_annotation(&arg);
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+fn comment_only_annotation(arg: &SyntaxNode) -> Option<String> {
+    let significant: Vec<_> = arg
+        .children_with_tokens()
+        .filter(|element| !super::super::core::is_trivia(element.kind()))
+        .collect();
+    match significant.as_slice() {
+        [NodeOrToken::Token(token)]
+            if token.kind() == SyntaxKind::COMMENT && is_quarto_code_annotation(token.text()) =>
+        {
+            Some(token.text().to_string())
+        }
+        _ => None,
+    }
 }
 
 /// Whether a comma at `idx` is followed by a newline before the next argument or

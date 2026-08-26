@@ -91,3 +91,18 @@ pub(super) fn inline_trailing_comment_text(element: &SyntaxElement<RLanguage>) -
         _ => None,
     }
 }
+
+/// Whether `text` is a Quarto code annotation such as `# <1>`.
+///
+/// Quarto attaches the annotation to its physical source line, so formatter
+/// rules that normally relocate a dangling comment must leave this narrow,
+/// documented form on the line where it appeared.
+pub(super) fn is_quarto_code_annotation(text: &str) -> bool {
+    let Some(annotation) = text.trim_end().strip_prefix("# <") else {
+        return false;
+    };
+    let Some(number) = annotation.strip_suffix('>') else {
+        return false;
+    };
+    !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+}

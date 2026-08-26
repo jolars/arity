@@ -3,7 +3,7 @@ use rowan::{NodeOrToken, SyntaxElement, SyntaxToken};
 use super::context::FormatContext;
 use super::core::FormatError;
 use super::ir::Ir;
-use super::trivia::{is_trivia, split_lines};
+use super::trivia::{is_quarto_code_annotation, is_trivia, split_lines};
 
 use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
 
@@ -55,7 +55,27 @@ pub(super) fn ir_block_expr_with_prefixed_comments(
     prefixed_comments: &[String],
     ir_line: IrLineFn,
 ) -> Result<Ir, FormatError> {
-    let lines = split_lines(block_statement_elements(node)?, "block body")?;
+    let mut body_elements = block_statement_elements(node)?;
+    let opening_annotation_idx = body_elements
+        .iter()
+        .take_while(|element| element.kind() != SyntaxKind::NEWLINE)
+        .position(|element| match element {
+            NodeOrToken::Token(token) if token.kind() == SyntaxKind::COMMENT => {
+                is_quarto_code_annotation(token.text())
+            }
+            _ => false,
+        })
+        .filter(|idx| {
+            body_elements[..*idx]
+                .iter()
+                .all(|element| element.kind() == SyntaxKind::WHITESPACE)
+        });
+    let opening_annotation =
+        opening_annotation_idx.and_then(|idx| match body_elements.remove(idx) {
+            NodeOrToken::Token(token) => Some(token.text().to_string()),
+            NodeOrToken::Node(_) => None,
+        });
+    let lines = split_lines(body_elements, "block body")?;
 
     let plan = super::directive::plan(&lines);
     let mut items: Vec<Ir> = Vec::new();
@@ -77,9 +97,14 @@ pub(super) fn ir_block_expr_with_prefixed_comments(
             }
         }
     }
-    if items.is_empty() {
+    if items.is_empty() && opening_annotation.is_none() {
         return Ok(Ir::text("{}"));
     }
+
+    let open = match opening_annotation {
+        Some(annotation) => Ir::concat([Ir::text("{"), Ir::line_suffix(format!(" {annotation}"))]),
+        None => Ir::text("{"),
+    };
 
     let body = Ir::concat(
         items
@@ -87,7 +112,7 @@ pub(super) fn ir_block_expr_with_prefixed_comments(
             .map(|it| Ir::concat([Ir::hard_line(), it])),
     );
     Ok(Ir::concat([
-        Ir::text("{"),
+        open,
         Ir::indent(Ir::break_body(body)),
         Ir::hard_line(),
         Ir::text("}"),
