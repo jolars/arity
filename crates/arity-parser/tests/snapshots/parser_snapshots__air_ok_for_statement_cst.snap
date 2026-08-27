@@ -1,5 +1,5 @@
 ---
-source: tests/parser_snapshots.rs
+source: crates/arity-parser/tests/parser_snapshots.rs
 expression: tree
 ---
 ROOT@0..135
@@ -42,7 +42,7 @@ ROOT@0..135
     IDENT@69..70 "i"
   NEWLINE@70..71 "\n"
   NEWLINE@71..72 "\n"
-  FOR_EXPR@72..130
+  FOR_EXPR@72..134
     FOR_KW@72..75 "for"
     WHITESPACE@75..76 " "
     COMMENT@76..87 "# dangling1"
@@ -63,7 +63,7 @@ ROOT@0..135
     RPAREN@117..118 ")"
     WHITESPACE@118..119 " "
     COMMENT@119..130 "# dangling3"
-  NEWLINE@130..131 "\n"
-  WHITESPACE@131..133 "  "
-  IDENT@133..134 "a"
+    NEWLINE@130..131 "\n"
+    WHITESPACE@131..133 "  "
+    IDENT@133..134 "a"
   NEWLINE@134..135 "\n"

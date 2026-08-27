@@ -277,6 +277,7 @@ fn fixture_names() -> &'static [&'static str] {
         "if_comment_in_condition",
         "for_simple",
         "for_newline_body",
+        "control_body_comment",
         "for_missing_in",
         "for_missing_rparen",
         "while_simple",

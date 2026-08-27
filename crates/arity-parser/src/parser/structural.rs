@@ -16,6 +16,26 @@ fn skip_clause_trivia(tokens: &[Token], mut i: usize) -> usize {
     i
 }
 
+/// Skip comments before a required body when another token follows. At EOF a
+/// trailing comment remains the recoverable placeholder body accepted by the
+/// existing parser contract; otherwise R ignores the comment and the following
+/// expression is the body.
+fn skip_body_trivia(tokens: &[Token], cursor: usize) -> usize {
+    let body = skip_clause_trivia(tokens, cursor);
+    if body < tokens.len() {
+        body
+    } else {
+        let mut fallback = cursor;
+        while tokens
+            .get(fallback)
+            .is_some_and(|token| matches!(token.kind, TokKind::Whitespace | TokKind::Newline))
+        {
+            fallback += 1;
+        }
+        fallback
+    }
+}
+
 pub(crate) fn parse_if_expr(
     tokens: &[Token],
     start: usize,
@@ -194,7 +214,7 @@ pub(crate) fn parse_while_expr(
         }
     }
 
-    let body_start = ctx.skip_ws_and_newlines(cursor);
+    let body_start = skip_body_trivia(tokens, cursor);
     if let Some(body_expr) = parse_expr(tokens, body_start, 0, diagnostics, md_default) {
         push_range(&mut events, cursor, body_expr.start);
         events.extend(body_expr.events);
@@ -230,7 +250,7 @@ pub(crate) fn parse_repeat_expr(
     let mut events = vec![Event::Start(SyntaxKind::REPEAT_EXPR), Event::Tok(start)];
     let mut cursor = start + 1;
 
-    let body_start = ctx.skip_ws_and_newlines(cursor);
+    let body_start = skip_body_trivia(tokens, cursor);
     if let Some(body_expr) = parse_expr(tokens, body_start, 0, diagnostics, md_default) {
         push_range(&mut events, cursor, body_expr.start);
         events.extend(body_expr.events);
@@ -346,7 +366,7 @@ pub(crate) fn parse_for_expr(
         }
     }
 
-    let body_start = ctx.skip_ws_and_newlines(cursor);
+    let body_start = skip_body_trivia(tokens, cursor);
     if let Some(body_expr) = parse_expr(tokens, body_start, 0, diagnostics, md_default) {
         push_range(&mut events, cursor, body_expr.start);
         events.extend(body_expr.events);

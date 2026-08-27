@@ -1,0 +1,60 @@
+---
+source: crates/arity-parser/tests/parser_snapshots.rs
+expression: tree
+---
+ROOT@0..104
+  FOR_EXPR@0..31
+    FOR_KW@0..3 "for"
+    WHITESPACE@3..4 " "
+    LPAREN@4..5 "("
+    IDENT@5..6 "x"
+    WHITESPACE@6..7 " "
+    IN_KW@7..9 "in"
+    WHITESPACE@9..10 " "
+    IDENT@10..12 "xs"
+    RPAREN@12..13 ")"
+    WHITESPACE@13..14 " "
+    COMMENT@14..24 "# for body"
+    NEWLINE@24..25 "\n"
+    WHITESPACE@25..27 "  "
+    CALL_EXPR@27..31
+      IDENT@27..28 "f"
+      LPAREN@28..29 "("
+      ARG_LIST@29..30
+        ARG@29..30
+          IDENT@29..30 "x"
+      RPAREN@30..31 ")"
+  NEWLINE@31..32 "\n"
+  WHILE_EXPR@32..73
+    WHILE_KW@32..37 "while"
+    WHITESPACE@37..38 " "
+    LPAREN@38..39 "("
+    CALL_EXPR@39..48
+      IDENT@39..46 "waiting"
+      LPAREN@46..47 "("
+      ARG_LIST@47..47
+      RPAREN@47..48 ")"
+    RPAREN@48..49 ")"
+    NEWLINE@49..50 "\n"
+    WHITESPACE@50..52 "  "
+    COMMENT@52..64 "# while body"
+    NEWLINE@64..65 "\n"
+    WHITESPACE@65..67 "  "
+    CALL_EXPR@67..73
+      IDENT@67..71 "tick"
+      LPAREN@71..72 "("
+      ARG_LIST@72..72
+      RPAREN@72..73 ")"
+  NEWLINE@73..74 "\n"
+  REPEAT_EXPR@74..103
+    REPEAT_KW@74..80 "repeat"
+    WHITESPACE@80..81 " "
+    COMMENT@81..94 "# repeat body"
+    NEWLINE@94..95 "\n"
+    WHITESPACE@95..97 "  "
+    CALL_EXPR@97..103
+      IDENT@97..101 "step"
+      LPAREN@101..102 "("
+      ARG_LIST@102..102
+      RPAREN@102..103 ")"
+  NEWLINE@103..104 "\n"
