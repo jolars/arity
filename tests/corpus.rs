@@ -1,14 +1,13 @@
 //! Tier 0 corpus smoke test (real-world R robustness).
 //!
 //! Runs arity's parser + formatter over a corpus of real `.R` files and asserts
-//! the two foundational invariants on every file:
+//! four foundational invariants on every file:
 //!
 //! 1. **Losslessness** --- `reconstruct(raw) == raw` (the parser preserves all
 //!    text). This is checked even for files arity cannot yet format.
 //! 2. **Idempotence** --- `format(format(x)) == format(x)`.
-//!
-//! It does **not** check semantic preservation (that the formatted code *means*
-//! the same thing); that needs a trivia-stripped AST comparison and is deferred.
+//! 3. **Syntax preservation** --- normalized R syntax is unchanged.
+//! 4. **Comment preservation** --- ordinary comments retain their text and order.
 //!
 //! Unlike `cargo test`'s curated fixtures, this points at a large, uncurated
 //! body of real code (e.g. a checkout of CRAN packages) to surface panics,
@@ -32,15 +31,18 @@
 //! A file arity cannot parse (parse diagnostics) is **skipped**, not failed ---
 //! the corpus contains code targeting R features arity may not support yet, and
 //! a parse gap is a known limitation rather than a regression. A losslessness
-//! violation, an idempotence violation, a non-parse format error, or a panic in
-//! either parsing or formatting is a hard failure.
+//! violation, syntax or comment drift, an idempotence violation, a non-parse
+//! format error, or a panic in either parsing or formatting is a hard failure.
 
 use std::fs;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 
 use arity::dcf;
-use arity::formatter::{DescriptionFormatError, FormatError, format, format_description};
+use arity::formatter::{
+    DescriptionFormatError, FormatError, FormatVerificationError, format, format_description,
+    format_verified,
+};
 use arity::parser::reconstruct;
 
 /// Why a single file failed the smoke test.
@@ -52,6 +54,10 @@ enum Failure {
     FormatError(String),
     /// `format(format(x)) != format(x)`.
     Idempotence,
+    /// Formatting changed the normalized R syntax.
+    SyntaxPreservation(String),
+    /// Formatting changed ordinary comment text or order.
+    CommentPreservation(String),
     /// Parsing or formatting panicked.
     Panic(String),
     /// A `DESCRIPTION` failure. Kept as its own family so the weekly scan's
@@ -77,6 +83,8 @@ impl Failure {
             Failure::Lossless => "losslessness",
             Failure::FormatError(_) => "format error",
             Failure::Idempotence => "idempotence",
+            Failure::SyntaxPreservation(_) => "syntax preservation",
+            Failure::CommentPreservation(_) => "comment preservation",
             Failure::Panic(_) => "panic",
             Failure::Dcf(DcfFailure::Lossless) => "DESCRIPTION losslessness",
             Failure::Dcf(DcfFailure::FormatError(_)) => "DESCRIPTION format error",
@@ -94,6 +102,8 @@ impl Failure {
             Failure::Lossless => "losslessness",
             Failure::FormatError(_) => "format-error",
             Failure::Idempotence => "idempotence",
+            Failure::SyntaxPreservation(_) => "syntax-preservation",
+            Failure::CommentPreservation(_) => "comment-preservation",
             Failure::Panic(_) => "panic",
             Failure::Dcf(DcfFailure::Lossless) => "dcf-losslessness",
             Failure::Dcf(DcfFailure::FormatError(_)) => "dcf-format-error",
@@ -114,6 +124,8 @@ impl Failure {
                 DcfFailure::Lossless | DcfFailure::Idempotence | DcfFailure::CommentLoss,
             ) => "",
             Failure::FormatError(msg)
+            | Failure::SyntaxPreservation(msg)
+            | Failure::CommentPreservation(msg)
             | Failure::Panic(msg)
             | Failure::Dcf(
                 DcfFailure::FormatError(msg) | DcfFailure::Panic(msg) | DcfFailure::Meaning(msg),
@@ -247,23 +259,27 @@ fn check_file(raw: &str) -> Option<Failure> {
         Err(panic) => return Some(Failure::Panic(format!("parse: {}", panic_msg(&panic)))),
     }
 
-    // 2. Format once.
-    let first = match catch_unwind(AssertUnwindSafe(|| format(raw))) {
-        Ok(Ok(out)) => out,
-        Ok(Err(FormatError::ParseErrors { .. })) => {
-            return Some(Failure::FormatError(SKIP_PARSE.to_string()));
-        }
-        Ok(Err(other)) => return Some(Failure::FormatError(other.to_string())),
-        Err(panic) => return Some(Failure::Panic(format!("format: {}", panic_msg(&panic)))),
-    };
-
-    // 3. Idempotence --- format(format(x)) == format(x).
-    match catch_unwind(AssertUnwindSafe(|| format(&first))) {
-        Ok(Ok(second)) if second != first => Some(Failure::Idempotence),
+    // 2--4. Format once, then verify syntax, comments, and idempotence.
+    match catch_unwind(AssertUnwindSafe(|| format_verified(raw))) {
         Ok(Ok(_)) => None,
-        // The first pass produced output the formatter then rejects: a real bug.
-        Ok(Err(err)) => Some(Failure::FormatError(format!("on reformat: {err}"))),
-        Err(panic) => Some(Failure::Panic(format!("reformat: {}", panic_msg(&panic)))),
+        Ok(Err(FormatVerificationError::Format(FormatError::ParseErrors { .. }))) => {
+            Some(Failure::FormatError(SKIP_PARSE.to_string()))
+        }
+        Ok(Err(FormatVerificationError::Format(err))) => {
+            Some(Failure::FormatError(err.to_string()))
+        }
+        Ok(Err(FormatVerificationError::OutputInvalid(err))) => {
+            Some(Failure::FormatError(format!("on formatted output: {err}")))
+        }
+        Ok(Err(FormatVerificationError::SyntaxChanged { detail })) => {
+            Some(Failure::SyntaxPreservation(detail))
+        }
+        Ok(Err(FormatVerificationError::CommentsChanged { detail })) => {
+            Some(Failure::CommentPreservation(detail))
+        }
+        Ok(Err(FormatVerificationError::NonIdempotent)) => Some(Failure::Idempotence),
+        Ok(Err(other)) => Some(Failure::FormatError(other.to_string())),
+        Err(panic) => Some(Failure::Panic(format!("verify: {}", panic_msg(&panic)))),
     }
 }
 

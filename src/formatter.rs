@@ -16,4 +16,6 @@ pub use check::{
     ChangedFile, CheckError, CheckResult, FailedFile, OutdatedDirective, check_paths,
     check_paths_with_style, check_paths_with_style_cached,
 };
-pub use source::{FormatSourceError, Formatted, cache_key, format_file, merge};
+pub use source::{
+    FormatSourceError, Formatted, cache_key, format_file, format_file_verified, merge,
+};

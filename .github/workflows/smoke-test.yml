@@ -1,11 +1,9 @@
 name: Smoke Test
 
 # Weekly Tier 0 corpus smoke test: clone a set of real R package repos, format
-# every .R file with arity, and assert losslessness + idempotence on each (the
-# `corpus` integration test). Regressions are filed as deduped GitHub issues.
-#
-# It does NOT check semantic preservation (that formatted code means the same);
-# that needs a trivia-stripped AST comparison and is deferred.
+# every .R file with arity, and assert losslessness, normalized syntax and
+# comment preservation, and idempotence on each (the `corpus` integration
+# test). Regressions are filed as deduped GitHub issues.
 
 on:
   workflow_dispatch:
@@ -57,11 +55,11 @@ jobs:
       # Known non-actionable failures to suppress from the report. Each entry is
       # `repo|path|category`; the path is repo-relative, as the corpus report
       # keys it. Only the *named* category is suppressed -- if the same file
-      # starts failing a different way (losslessness, a panic), that failure is
-      # still recorded, so the allowlist can never mask a new regression. Drop
-      # an entry the moment arity handles the file: it then simply passes and
-      # records nothing, and a stale entry is the one way this list *can* hide a
-      # real bug.
+      # starts failing a different way (syntax preservation, losslessness, a
+      # panic), that failure is still recorded, so the allowlist can never mask
+      # a new regression. Drop an entry the moment arity handles the file: it
+      # then simply passes and records nothing, and a stale entry is the one way
+      # this list *can* hide a real bug.
       #
       # The bar is *not valid R*, not merely *unfixed*: R itself rejects the
       # file (check with `R --vanilla -q -e 'parse("<file>")'`), or it is not R
@@ -293,7 +291,7 @@ jobs:
               echo "# this file"
               case "$failure_type" in
                 losslessness) echo "cargo run --release -- parse --verify --quiet \"/tmp/target/$sample_file\"" ;;
-                idempotence) echo "cargo run --release -- format --verify \"/tmp/target/$sample_file\"" ;;
+                idempotence|syntax-preservation|comment-preservation) echo "cargo run --release -- format --verify \"/tmp/target/$sample_file\"" ;;
                 # Every DESCRIPTION category reproduces the same way: format the
                 # one file and look at what came back.
                 dcf-*) echo "cargo run --release -- format --verify \"/tmp/target/$sample_file\"" ;;
@@ -320,6 +318,8 @@ jobs:
               ensure_label "smoke-test" "5319E7" "Corpus smoke-test regressions"
               case "$failure_type" in
                 idempotence) color="B60205" ;;
+                syntax-preservation) color="B60205" ;;
+                comment-preservation) color="D93F0B" ;;
                 losslessness) color="D93F0B" ;;
                 format-error) color="FBCA04" ;;
                 panic) color="E11D21" ;;

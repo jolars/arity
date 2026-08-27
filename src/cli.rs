@@ -83,7 +83,7 @@ pub enum Commands {
         #[arg(long, value_name = "PATH")]
         stdin_filename: Option<PathBuf>,
 
-        /// Verify formatting idempotence for supported inputs (does not write files)
+        /// Verify idempotence and R syntax/comment preservation (does not write files)
         #[arg(long)]
         verify: bool,
 

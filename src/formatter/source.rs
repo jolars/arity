@@ -7,9 +7,12 @@
 
 use std::path::{Path, PathBuf};
 
-use arity_formatter::formatter::{DeclineReason, DescriptionFormatError};
+use arity_formatter::formatter::{DeclineReason, DescriptionFormatError, FormatVerificationError};
 
-use super::{FormatError, FormatStyle, format_description_with_style, format_with_options};
+use super::{
+    FormatError, FormatStyle, format_description_with_style, format_verified_with_options,
+    format_with_options,
+};
 use crate::file_discovery::{DiscoveredFiles, is_description_file};
 use crate::formatter::cache::CacheKey;
 use crate::parser::ParseOptions;
@@ -38,19 +41,68 @@ pub enum Formatted {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormatSourceError {
     R(FormatError),
+    RVerification(FormatVerificationError),
     Description(DescriptionFormatError),
+    DescriptionVerification(String),
 }
 
 impl std::fmt::Display for FormatSourceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::R(err) => write!(f, "{err}"),
+            Self::RVerification(err) => write!(f, "{err}"),
             Self::Description(err) => write!(f, "{err}"),
+            Self::DescriptionVerification(message) => f.write_str(message),
         }
     }
 }
 
-impl std::error::Error for FormatSourceError {}
+/// Format one file and verify every invariant supported by its grammar.
+///
+/// R checks normalized syntax, ordinary comments, and idempotence. DESCRIPTION
+/// retains its existing idempotence-only contract; its structural meaning has
+/// a separate corpus oracle.
+pub fn format_file_verified(
+    path: &Path,
+    content: &str,
+    style: FormatStyle,
+    markdown: &mut MarkdownDefaultResolver,
+) -> Result<Formatted, FormatSourceError> {
+    if is_description_file(path) {
+        let formatted = match format_description_with_style(content, style) {
+            Ok(text) => text,
+            Err(DescriptionFormatError::Declined(reason)) => {
+                return Ok(Formatted::Declined(reason));
+            }
+            Err(err) => return Err(FormatSourceError::Description(err)),
+        };
+        match format_description_with_style(&formatted, style) {
+            Ok(reformatted) if reformatted == formatted => Ok(Formatted::Text(formatted)),
+            Ok(_) => Err(FormatSourceError::DescriptionVerification(
+                "formatter verification failed (non-idempotent output)".to_string(),
+            )),
+            Err(err) => Err(FormatSourceError::DescriptionVerification(format!(
+                "formatted output failed verification: {err}"
+            ))),
+        }
+    } else {
+        let options = ParseOptions::default().with_roxygen_markdown_default(markdown.resolve(path));
+        format_verified_with_options(content, style, &options)
+            .map(Formatted::Text)
+            .map_err(FormatSourceError::RVerification)
+    }
+}
+
+impl std::error::Error for FormatSourceError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::R(err) => Some(err),
+            Self::RVerification(err) => Some(err),
+            Self::Description(err) => Some(err),
+            Self::DescriptionVerification(_) => None,
+        }
+    }
+}
 
 /// Format `content`, choosing the grammar from `path`.
 ///
@@ -141,6 +193,22 @@ mod tests {
         )
         .expect_err("errors");
         assert!(matches!(err, FormatSourceError::Description(_)));
+    }
+
+    #[test]
+    fn verified_r_format_accepts_body_brace_normalization() {
+        let mut markdown = MarkdownDefaultResolver::new();
+        let formatted = format_file_verified(
+            Path::new("pkg/R/code.R"),
+            "if (x) y else z\n",
+            FormatStyle::default(),
+            &mut markdown,
+        )
+        .expect("formats and verifies");
+        assert_eq!(
+            formatted,
+            Formatted::Text("if (x) {\n  y\n} else {\n  z\n}\n".to_string())
+        );
     }
 
     #[test]

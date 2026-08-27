@@ -9,7 +9,8 @@ use arity::config::{Config, ConfigError, LintConfig};
 use arity::file_discovery::{ExcludeFilter, collect_r_files};
 use arity::formatter::{
     FormatCache, FormatStyle, Formatted, check_paths_with_style_cached,
-    format_description_with_style, format_file, format_with_options,
+    format_description_with_style, format_file, format_file_verified, format_verified_with_options,
+    format_with_options,
 };
 use arity::incremental::IncrementalDatabase;
 use arity::linter::{
@@ -709,27 +710,17 @@ fn run_format(
         let options = ParseOptions::default().with_roxygen_markdown_default(
             arity::project::description::roxygen_markdown_default_for_dir(&anchor),
         );
-        let formatted = match format_with_options(&input, style, &options) {
+        let formatted = match if modes.verify {
+            format_verified_with_options(&input, style, &options).map_err(|err| err.to_string())
+        } else {
+            format_with_options(&input, style, &options).map_err(|err| err.to_string())
+        } {
             Ok(formatted) => formatted,
             Err(err) => {
                 eprintln!("error: {err}");
                 return ExitCode::from(1);
             }
         };
-
-        if modes.verify {
-            let reformatted = match format_with_options(&formatted, style, &options) {
-                Ok(reformatted) => reformatted,
-                Err(err) => {
-                    eprintln!("error: formatted output failed verification: {err}");
-                    return ExitCode::from(1);
-                }
-            };
-            if reformatted != formatted {
-                eprintln!("error: formatter verification failed (non-idempotent output)");
-                return ExitCode::from(1);
-            }
-        }
 
         print!("{formatted}");
         return ExitCode::SUCCESS;
@@ -939,7 +930,11 @@ fn run_format_write_paths(
                 continue;
             }
         };
-        let formatted = match format_file(&path, &input, style, &mut markdown) {
+        let formatted = match if verify {
+            format_file_verified(&path, &input, style, &mut markdown)
+        } else {
+            format_file(&path, &input, style, &mut markdown)
+        } {
             Ok(Formatted::Text(formatted)) => formatted,
             Ok(Formatted::Declined(reason)) => {
                 if out.verbose {
@@ -954,32 +949,6 @@ fn run_format_write_paths(
             }
         };
         if verify {
-            let reformatted = match format_file(&path, &formatted, style, &mut markdown) {
-                Ok(Formatted::Text(reformatted)) => reformatted,
-                Ok(Formatted::Declined(reason)) => {
-                    eprintln!(
-                        "error: formatted output of {} would now be declined: {reason}",
-                        path.display()
-                    );
-                    failed += 1;
-                    continue;
-                }
-                Err(err) => {
-                    eprintln!(
-                        "error: formatted output failed verification for {}: {err}",
-                        path.display()
-                    );
-                    failed += 1;
-                    continue;
-                }
-            };
-            if reformatted != formatted {
-                eprintln!(
-                    "error: formatter verification failed for {} (non-idempotent output)",
-                    path.display()
-                );
-                failed += 1;
-            }
             continue;
         }
         if formatted != input {

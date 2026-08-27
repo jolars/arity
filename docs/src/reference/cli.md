@@ -65,7 +65,7 @@ Format R files and package DESCRIPTIONs
 :   Filename the stdin buffer stands for; decides which grammar it is formatted as. Without it, stdin is formatted as R
 
 `--verify`
-:   Verify formatting idempotence for supported inputs (does not write files)
+:   Verify idempotence and R syntax/comment preservation (does not write files)
 
 `--check`
 :   Check formatting without writing changes; prints a diff for each file that would be reformatted and exits non-zero if any differ. Requires path arguments: there is no file on disk to report on when reading stdin
