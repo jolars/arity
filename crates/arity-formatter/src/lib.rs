@@ -6,10 +6,11 @@
 //! the input's existing line breaks never influence the result. The target
 //! style is the tidyverse R style guide.
 //!
-//! The entry points are [`format`] and [`format_with_style`], configured via
-//! [`FormatStyle`]. With the `serde` feature, `FormatStyle` is
-//! (de)serializable; the `schema` feature additionally derives
-//! `schemars::JsonSchema`.
+//! The primary entry points are [`format`] and [`format_with_style`], configured
+//! via [`FormatStyle`]. Their [`format_verified`] counterparts additionally
+//! check normalized syntax, ordinary comments, and idempotence. With the
+//! `serde` feature, `FormatStyle` is (de)serializable; the `schema` feature
+//! additionally derives `schemars::JsonSchema`.
 //!
 //! A package's `DESCRIPTION` is a second grammar with its own entry point,
 //! [`format_description`]; see [`formatter::description`].
@@ -30,8 +31,9 @@ pub mod syntax;
 pub use rowan;
 
 pub use formatter::{
-    DeclineReason, DescriptionFormatError, FormatAnalysis, FormatError, FormatStyle, LineEnding,
-    RangeFormatted, analyze_format_with_options, format, format_description,
-    format_description_with_style, format_node, format_range, format_with_options,
+    DeclineReason, DescriptionFormatError, FormatAnalysis, FormatError, FormatStyle,
+    FormatVerificationError, LineEnding, RangeFormatted, analyze_format_with_options, format,
+    format_description, format_description_with_style, format_node, format_range, format_verified,
+    format_verified_with_options, format_verified_with_style, format_with_options,
     format_with_style,
 };

@@ -22,6 +22,7 @@ fn(
     var
     # C6
   }} # C7 (this line, but after folded 2nd `}`)
-  # C8 (after both `}}`) # C9 (same line as C8)
+  # C8 (after both `}}`)
+  # C9 (same line as C8)
   # C10
 )

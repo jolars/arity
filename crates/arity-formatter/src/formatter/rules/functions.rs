@@ -908,16 +908,18 @@ fn layout_call_comment_items(items: &[IrCallItem]) -> Vec<Ir> {
                     && comment_arg.is_comment_only
                     && !comment_arg.leading_newline
                 {
-                    let suffix = if arg.ir.ends_with_line_suffix() {
-                        // The argument already ends on a standalone comment
-                        // after relocation. This second comment becomes text on
-                        // that comment line, so it cannot participate in an
-                        // alignment run as though the first comment were code.
-                        Ir::text(format!(" {}", comment_arg.comment_text))
+                    if arg.ir.ends_with_line_suffix() {
+                        // Joining two comment tokens onto one physical line
+                        // makes the second `#` part of the first token after
+                        // reparsing. Keep the source-order boundary instead.
+                        out.push(arg.ir.clone());
+                        out.push(Ir::verbatim_forced(comment_arg.comment_text.clone()));
                     } else {
-                        ir_inline_trailing_comment(&comment_arg.comment_text)
-                    };
-                    out.push(Ir::concat([arg.ir.clone(), suffix]));
+                        out.push(Ir::concat([
+                            arg.ir.clone(),
+                            ir_inline_trailing_comment(&comment_arg.comment_text),
+                        ]));
+                    }
                     i += 2;
                     continue;
                 }

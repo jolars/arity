@@ -9,6 +9,7 @@ pub(crate) mod roxygen;
 pub(crate) mod rules;
 pub mod style;
 pub(crate) mod trivia;
+pub mod verify;
 
 pub use core::{
     FormatAnalysis, FormatError, RangeFormatted, analyze_format_with_options, format, format_node,
@@ -18,3 +19,7 @@ pub use description::{
     DeclineReason, DescriptionFormatError, format_description, format_description_with_style,
 };
 pub use style::{FormatStyle, LineEnding};
+pub use verify::{
+    FormatVerificationError, format_verified, format_verified_with_options,
+    format_verified_with_style,
+};

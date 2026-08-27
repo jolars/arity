@@ -18,5 +18,10 @@ Configure via `FormatStyle` and `format_with_style`. The optional `serde`
 feature makes `FormatStyle` (de)serializable (kebab-case keys, matching
 `arity.toml`); the `schema` feature additionally derives `schemars::JsonSchema`.
 
+Use `format_verified` (or its `_with_style` / `_with_options` variants) when an
+integration should additionally check normalized R syntax, ordinary comment
+preservation, and formatting idempotence. Ordinary `format` remains the
+single-pass path.
+
 This crate's API is still early and may change between releases; it is versioned
 independently of the `arity` CLI.

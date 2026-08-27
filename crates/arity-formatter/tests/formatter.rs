@@ -1,4 +1,4 @@
-use arity_formatter::formatter::{FormatStyle, format, format_with_style};
+use arity_formatter::formatter::{FormatStyle, format, format_verified, format_with_style};
 use arity_formatter::parser::{parse, reconstruct};
 use insta::assert_snapshot;
 use std::{fs, path::Path};
@@ -377,8 +377,8 @@ fn formatter_fixtures_match_expected_and_snapshots() {
     for name in fixture_names() {
         let input = fixture_text(name, "input.R");
         let expected = fixture_text(name, "expected.R");
-        let formatted = format(&input).unwrap_or_else(|err| {
-            panic!("failed to format fixture {name}: {err}");
+        let formatted = format_verified(&input).unwrap_or_else(|err| {
+            panic!("failed to format and verify fixture {name}: {err}");
         });
 
         assert_eq!(formatted, expected, "formatted output mismatch for {name}");
