@@ -1,12 +1,12 @@
 {
   "schema_version": 2,
   "meta": {
-    "generated_at": "2026-08-17T20:44:21Z",
+    "generated_at": "2026-08-28T17:58:10Z",
     "host": {"os": "linux", "arch": "x86_64", "cpu": "AMD Ryzen 9 7900 12-Core Processor"},
     "backend": "hyperfine",
     "min_runs": 3,
     "tools": {
-      "arity": {"version": "0.19.0"},
+      "arity": {"version": "0.21.0"},
       "air": {"version": "0.11.0"},
       "jarl": {"version": "0.5.0"},
       "styler": {"version": "1.11.0"},
@@ -25,21 +25,21 @@
           "documents":[
             {"id":"MASS-file","name":"MASS/polr.R","size_bytes":19787,"lines":534},
             {"id":"tidyr-file","name":"tidyr/pivot-wide.R","size_bytes":23349,"lines":807},
-            {"id":"small","name":"small","size_bytes":133856,"lines":9190},
-            {"id":"large","name":"large","size_bytes":1606272,"lines":110280}
+            {"id":"small","name":"small","size_bytes":145964,"lines":9792},
+            {"id":"large","name":"large","size_bytes":1751568,"lines":117504}
           ],
           "results":[
-            {"document":"MASS-file","tool":"arity","mean_ms":4.5394,"stddev_ms":0.4232,"min_ms":3.7563,"max_ms":6.3327},
-            {"document":"MASS-file","tool":"air","mean_ms":7.7617,"stddev_ms":0.4719,"min_ms":7.2045,"max_ms":9.6387},
-            {"document":"MASS-file","tool":"styler","mean_ms":2882.0828,"stddev_ms":46.2661,"min_ms":2854.9683,"max_ms":2935.5042},
-            {"document":"tidyr-file","tool":"arity","mean_ms":4.0815,"stddev_ms":0.5558,"min_ms":3.1395,"max_ms":6.1024},
-            {"document":"tidyr-file","tool":"air","mean_ms":5.1316,"stddev_ms":0.3794,"min_ms":4.6118,"max_ms":6.8791},
-            {"document":"tidyr-file","tool":"styler","mean_ms":1581.9384,"stddev_ms":30.1459,"min_ms":1560.2751,"max_ms":1616.3667},
-            {"document":"small","tool":"arity","mean_ms":4.9593,"stddev_ms":0.6450,"min_ms":4.1756,"max_ms":7.8705},
-            {"document":"small","tool":"air","mean_ms":25.3331,"stddev_ms":1.2591,"min_ms":23.3426,"max_ms":28.4275},
-            {"document":"small","tool":"styler","mean_ms":10956.3429,"stddev_ms":78.7718,"min_ms":10879.9249,"max_ms":11037.2745},
-            {"document":"large","tool":"arity","mean_ms":35.5311,"stddev_ms":1.1871,"min_ms":33.5190,"max_ms":38.4535},
-            {"document":"large","tool":"air","mean_ms":293.8621,"stddev_ms":3.8336,"min_ms":289.1873,"max_ms":300.6480}
+            {"document":"MASS-file","tool":"arity","mean_ms":4.4727,"stddev_ms":0.5168,"min_ms":3.7554,"max_ms":7.2952},
+            {"document":"MASS-file","tool":"air","mean_ms":7.5867,"stddev_ms":0.3866,"min_ms":7.1195,"max_ms":9.2703},
+            {"document":"MASS-file","tool":"styler","mean_ms":2747.7155,"stddev_ms":7.9207,"min_ms":2739.8682,"max_ms":2755.7076},
+            {"document":"tidyr-file","tool":"arity","mean_ms":3.7580,"stddev_ms":0.4456,"min_ms":3.1698,"max_ms":5.3659},
+            {"document":"tidyr-file","tool":"air","mean_ms":4.8262,"stddev_ms":0.3014,"min_ms":4.4924,"max_ms":6.2519},
+            {"document":"tidyr-file","tool":"styler","mean_ms":1537.2993,"stddev_ms":9.7326,"min_ms":1528.8265,"max_ms":1547.9296},
+            {"document":"small","tool":"arity","mean_ms":5.2457,"stddev_ms":0.5584,"min_ms":4.4289,"max_ms":6.7872},
+            {"document":"small","tool":"air","mean_ms":26.7996,"stddev_ms":1.2772,"min_ms":25.1939,"max_ms":30.3170},
+            {"document":"small","tool":"styler","mean_ms":11905.7877,"stddev_ms":90.3582,"min_ms":11841.7608,"max_ms":12009.1455},
+            {"document":"large","tool":"arity","mean_ms":38.2327,"stddev_ms":1.2617,"min_ms":36.1313,"max_ms":41.1023},
+            {"document":"large","tool":"air","mean_ms":316.8726,"stddev_ms":2.8766,"min_ms":312.6459,"max_ms":320.7543}
           ]
         },
         {
@@ -51,10 +51,10 @@
             {"id":"MASS","name":"MASS","size_bytes":214820,"lines":5951}
           ],
           "results":[
-            {"document":"tidyr","tool":"arity","mean_ms":21.9747,"stddev_ms":0.9938,"min_ms":20.3581,"max_ms":25.7235},
-            {"document":"tidyr","tool":"air","mean_ms":35.7695,"stddev_ms":1.3707,"min_ms":33.6781,"max_ms":39.4974},
-            {"document":"MASS","tool":"arity","mean_ms":44.7293,"stddev_ms":1.0139,"min_ms":42.5831,"max_ms":46.6431},
-            {"document":"MASS","tool":"air","mean_ms":61.4255,"stddev_ms":1.4269,"min_ms":59.6392,"max_ms":64.7402}
+            {"document":"tidyr","tool":"arity","mean_ms":23.7817,"stddev_ms":1.2979,"min_ms":21.5994,"max_ms":27.4288},
+            {"document":"tidyr","tool":"air","mean_ms":34.7477,"stddev_ms":0.9502,"min_ms":32.7467,"max_ms":37.0314},
+            {"document":"MASS","tool":"arity","mean_ms":34.6127,"stddev_ms":1.1217,"min_ms":32.5566,"max_ms":37.1117},
+            {"document":"MASS","tool":"air","mean_ms":60.6168,"stddev_ms":1.3221,"min_ms":58.7749,"max_ms":63.5248}
           ]
         }
       ]
@@ -70,21 +70,21 @@
           "documents":[
             {"id":"MASS-file","name":"MASS/polr.R","size_bytes":19787,"lines":534},
             {"id":"tidyr-file","name":"tidyr/pivot-wide.R","size_bytes":23349,"lines":807},
-            {"id":"small","name":"small","size_bytes":133856,"lines":9190},
-            {"id":"large","name":"large","size_bytes":1606272,"lines":110280}
+            {"id":"small","name":"small","size_bytes":145964,"lines":9792},
+            {"id":"large","name":"large","size_bytes":1751568,"lines":117504}
           ],
           "results":[
-            {"document":"MASS-file","tool":"arity","mean_ms":26.3987,"stddev_ms":1.0944,"min_ms":23.6673,"max_ms":30.1176},
-            {"document":"MASS-file","tool":"jarl","mean_ms":12.4994,"stddev_ms":0.4682,"min_ms":11.5562,"max_ms":13.9962},
-            {"document":"MASS-file","tool":"lintr","mean_ms":975.0079,"stddev_ms":0.6919,"min_ms":974.2426,"max_ms":975.5891},
-            {"document":"tidyr-file","tool":"arity","mean_ms":25.2688,"stddev_ms":0.9487,"min_ms":23.2480,"max_ms":27.8093},
-            {"document":"tidyr-file","tool":"jarl","mean_ms":10.1980,"stddev_ms":0.4547,"min_ms":9.4084,"max_ms":11.6612},
-            {"document":"tidyr-file","tool":"lintr","mean_ms":846.0711,"stddev_ms":26.2401,"min_ms":817.8288,"max_ms":869.6959},
-            {"document":"small","tool":"arity","mean_ms":26.6746,"stddev_ms":0.7630,"min_ms":25.2649,"max_ms":28.8333},
-            {"document":"small","tool":"jarl","mean_ms":27.1160,"stddev_ms":1.1148,"min_ms":25.3392,"max_ms":30.8494},
-            {"document":"small","tool":"lintr","mean_ms":10500.6996,"stddev_ms":165.5857,"min_ms":10399.3179,"max_ms":10691.7826},
-            {"document":"large","tool":"arity","mean_ms":530.1104,"stddev_ms":18.7950,"min_ms":506.2846,"max_ms":554.5883},
-            {"document":"large","tool":"jarl","mean_ms":356.0426,"stddev_ms":3.3498,"min_ms":351.0904,"max_ms":361.4808}
+            {"document":"MASS-file","tool":"arity","mean_ms":33.4184,"stddev_ms":1.1425,"min_ms":30.9797,"max_ms":37.2951},
+            {"document":"MASS-file","tool":"jarl","mean_ms":12.4402,"stddev_ms":0.4886,"min_ms":11.5170,"max_ms":13.8498},
+            {"document":"MASS-file","tool":"lintr","mean_ms":981.4801,"stddev_ms":14.0224,"min_ms":968.3394,"max_ms":996.2431},
+            {"document":"tidyr-file","tool":"arity","mean_ms":31.4682,"stddev_ms":0.8928,"min_ms":29.4236,"max_ms":33.4072},
+            {"document":"tidyr-file","tool":"jarl","mean_ms":9.9755,"stddev_ms":0.3846,"min_ms":9.3095,"max_ms":11.2249},
+            {"document":"tidyr-file","tool":"lintr","mean_ms":808.5469,"stddev_ms":8.5707,"min_ms":800.5652,"max_ms":817.6049},
+            {"document":"small","tool":"arity","mean_ms":30.6670,"stddev_ms":0.7076,"min_ms":29.1755,"max_ms":33.1071},
+            {"document":"small","tool":"jarl","mean_ms":29.1582,"stddev_ms":0.9993,"min_ms":27.9410,"max_ms":31.9701},
+            {"document":"small","tool":"lintr","mean_ms":11104.2609,"stddev_ms":68.7394,"min_ms":11030.4178,"max_ms":11166.3917},
+            {"document":"large","tool":"arity","mean_ms":648.8999,"stddev_ms":7.7585,"min_ms":641.3281,"max_ms":658.0069},
+            {"document":"large","tool":"jarl","mean_ms":447.2692,"stddev_ms":20.3180,"min_ms":430.7405,"max_ms":485.4109}
           ]
         },
         {
@@ -96,12 +96,12 @@
             {"id":"MASS","name":"MASS","size_bytes":214820,"lines":5951}
           ],
           "results":[
-            {"document":"tidyr","tool":"arity","mean_ms":26.9099,"stddev_ms":1.0654,"min_ms":24.2267,"max_ms":29.8872},
-            {"document":"tidyr","tool":"jarl","mean_ms":13.3534,"stddev_ms":0.7479,"min_ms":11.9324,"max_ms":16.0914},
-            {"document":"tidyr","tool":"lintr","mean_ms":8254.9885,"stddev_ms":38.5026,"min_ms":8210.9410,"max_ms":8282.2381},
-            {"document":"MASS","tool":"arity","mean_ms":27.3644,"stddev_ms":1.3155,"min_ms":24.6014,"max_ms":31.9965},
-            {"document":"MASS","tool":"jarl","mean_ms":17.8611,"stddev_ms":0.8040,"min_ms":16.1634,"max_ms":20.3736},
-            {"document":"MASS","tool":"lintr","mean_ms":8823.5507,"stddev_ms":23.8386,"min_ms":8802.4617,"max_ms":8849.4158}
+            {"document":"tidyr","tool":"arity","mean_ms":33.2877,"stddev_ms":1.1213,"min_ms":30.8935,"max_ms":35.6605},
+            {"document":"tidyr","tool":"jarl","mean_ms":12.9940,"stddev_ms":0.6575,"min_ms":11.6915,"max_ms":15.6360},
+            {"document":"tidyr","tool":"lintr","mean_ms":8109.7822,"stddev_ms":115.4004,"min_ms":8032.9300,"max_ms":8242.4821},
+            {"document":"MASS","tool":"arity","mean_ms":35.5884,"stddev_ms":1.3092,"min_ms":32.9321,"max_ms":38.9722},
+            {"document":"MASS","tool":"jarl","mean_ms":17.6530,"stddev_ms":0.8965,"min_ms":15.9771,"max_ms":21.0746},
+            {"document":"MASS","tool":"lintr","mean_ms":8419.4192,"stddev_ms":13.2854,"min_ms":8410.0474,"max_ms":8434.6231}
           ]
         }
       ]
