@@ -51,15 +51,15 @@ jobs:
 
   msrv:
     if: github.event_name != 'schedule'
-    name: Minimum Rust 1.88
+    name: Minimum Rust 1.89
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Rust 1.88
+      - name: Install Rust 1.89
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.88"
+          toolchain: "1.89"
 
       - name: Cache cargo registry
         uses: actions/cache@v6
