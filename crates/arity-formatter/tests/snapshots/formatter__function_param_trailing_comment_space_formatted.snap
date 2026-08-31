@@ -1,0 +1,10 @@
+---
+source: crates/arity-formatter/tests/formatter.rs
+expression: formatted
+---
+f <- function(
+  alias, ### char
+  model
+) {
+  NULL
+}

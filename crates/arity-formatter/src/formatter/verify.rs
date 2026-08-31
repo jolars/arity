@@ -369,7 +369,7 @@ fn collect_comments(node: &SyntaxNode, in_roxygen: bool, comments: &mut Vec<Stri
         match child {
             NodeOrToken::Node(node) => collect_comments(&node, in_roxygen, comments),
             NodeOrToken::Token(token) if !in_roxygen && token.kind() == SyntaxKind::COMMENT => {
-                comments.push(token.text().to_string());
+                comments.push(token.text().trim_end().to_string());
             }
             NodeOrToken::Token(_) => {}
         }
@@ -388,6 +388,11 @@ mod tests {
     #[test]
     fn ignores_layout_comments_and_statement_separators() {
         verify("x <- 1; # first\ny <- 2\n", "# first\nx<-1\ny<-2\n").unwrap();
+    }
+
+    #[test]
+    fn ignores_trailing_whitespace_in_ordinary_comments() {
+        verify("x # comment \n", "x # comment\n").unwrap();
     }
 
     #[test]

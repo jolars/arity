@@ -6,7 +6,7 @@ This is a **soft gauge, not a quality gate**, and is subordinate to Tenet 1 (det
 
 - **Corpus:** formatter fixtures (`crates/arity-formatter/tests/fixtures/formatter/*/expected.R`)
 - **Line similarity:** 97.9%  _(Dice coefficient over lines)_
-- **File compatibility:** 90.4%  (208/230 files unchanged by air)
+- **File compatibility:** 90.5%  (209/231 files unchanged by air)
 - **Intentional deviations:** 21  ·  **Unexplained divergences:** 1
 
 ## Unexplained divergences (triage queue)
