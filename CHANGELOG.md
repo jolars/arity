@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.22.0](https://github.com/jolars/arity/compare/v0.21.0...v0.22.0) (2026-08-31)
+
+### Features
+- verify formatter preserves syntax ([`b144f7d`](https://github.com/jolars/arity/commit/b144f7dc58e945b12c1484822b524ed403338bb7))
+
+### Bug Fixes
+- **formatter:** preserve else after comments ([`bdf224d`](https://github.com/jolars/arity/commit/bdf224de85a1dd4977d79b8675d7ec2945d50162)), fixes [#129](https://github.com/jolars/arity/issues/129)
+- **formatter:** ignore comment trailing whitespace ([`4d924d0`](https://github.com/jolars/arity/commit/4d924d050a8d043903118113d139597fef14f0ae)), fixes [#128](https://github.com/jolars/arity/issues/128)
+- **formatter:** keep bare if consequences ([`bd63cc8`](https://github.com/jolars/arity/commit/bd63cc8ff9976b4d9697d9229db0ed0909ceacb7)), fixes [#125](https://github.com/jolars/arity/issues/125)
+- **formatter:** preserve comment order ([`44626da`](https://github.com/jolars/arity/commit/44626dad0cc4da45700fa2a7ffda05c89e8da375)), fixes [#123](https://github.com/jolars/arity/issues/123)
+
+### Dependencies
+- updated crates/arity-formatter to v0.7.0
+- updated crates/arity-parser to v0.5.3
+
 ## [0.21.0](https://github.com/jolars/arity/compare/v0.20.0...v0.21.0) (2026-08-26)
 
 ### Features
