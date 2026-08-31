@@ -2,7 +2,8 @@
 name: smoke-test-triage
 description: Triage and fix arity corpus smoke-test regressions (losslessness,
   idempotence, format-error, panic) reported by the weekly scan of real R
-  package repos and the GitHub issues it files.
+  package repos and the GitHub issues it files, closing verified stale reports
+  when possible.
 ---
 
 Use this skill when asked to investigate failures reported by the corpus
@@ -31,14 +32,30 @@ issues. Consequences that shape triage:
 - Losslessness is checked on **every** file, including the skipped-unparseable
   ones.
 - The scan is weekly and issues are deduped by a marker
-  (`arity-corpus-key:repo=…;type=…`). An issue that stops reproducing gets a
-  "No longer reproducing" comment rather than being closed automatically.
+  (`arity-corpus-key:repo=…;type=…`). The workflow comments when a bucket is
+  green; that is a triage signal, not on its own proof that the issue can close.
 
 **Check the `ALLOWLIST` in `.github/workflows/smoke-test.yml` first.** It holds
 `repo|path|category` entries for failures already triaged as out of scope, and
 matching failures are suppressed from the report. An issue naming an
 already-listed file means the scan predates the entry—confirm and close rather
 than re-triaging.
+
+**Close verified stale reports.** A scheduled green comment uses a newer
+upstream head, so it is not enough by itself. During triage, if the issue's
+pinned repository SHA, complete category bucket, and matching scanner
+configuration no longer reproduce on the current checkout, close the issue
+automatically when GitHub authentication permits it. Add a concise closure
+comment naming the original command, upstream SHA, whole-bucket before/after
+counts, and the fixing Arity commit when it can be identified, then run:
+
+```sh
+gh issue close <issue-number> --reason completed --comment "<evidence>"
+```
+
+When practical, baseline the scan revision first. Do not close an issue if the
+setup is uncertain. If GitHub authentication or permission fails, leave it open
+and report the failed closure.
 
 ## Goals
 
@@ -47,6 +64,7 @@ than re-triaging.
 3. Add regression coverage in the right test surface.
 4. Fix root cause (not symptom).
 5. Validate targeted cases, then the whole target repo, then the full suite.
+6. Close a report that is verified stale when the evidence and permissions allow.
 
 ## Triage workflow
 
@@ -248,6 +266,6 @@ When done, report:
 6. What you did **not** fix: the remaining buckets by root cause, which were
    allowlisted as out of scope (with the reason), which are open gaps still
    worth work, and any newly-checked files that surfaced pre-existing formatter
-   gaps. Say plainly whether the issue can be closed or should stay open—a scan
-   issue is rarely one bug, and a partial fix reported as a whole one is worse
-   than no fix.
+   gaps. Say plainly whether the issue can be closed or should stay open, and
+   whether you closed it automatically—a scan issue is rarely one bug, and a
+   partial fix reported as a whole one is worse than no fix.
