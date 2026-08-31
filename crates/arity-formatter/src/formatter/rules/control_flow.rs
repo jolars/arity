@@ -2,8 +2,9 @@ use rowan::{NodeOrToken, SyntaxElement, SyntaxToken};
 
 use super::super::context::FormatContext;
 use super::super::core::{
-    FormatError, ir_block_expr_with_prefixed_comments, ir_expr_element, ir_expr_segment,
-    ir_expr_with_optional_comment, is_trivia, snippet_from_elements,
+    FormatError, ir_block_expr_with_prefixed_comments, ir_block_expr_with_trailing_comments,
+    ir_expr_element, ir_expr_segment, ir_expr_with_optional_comment, is_trivia,
+    snippet_from_elements,
 };
 use super::super::ir::Ir;
 use super::super::printer::Printer;
@@ -334,10 +335,12 @@ fn ir_if_expr_impl(
             .first()
             .and_then(|el| el.as_node())
             .expect("then branch starts with a block");
-        (
-            ir_block_expr_with_prefixed_comments(block, indent, ctx, then_comments)?,
-            true,
-        )
+        let block = if attach_to_then {
+            ir_block_expr_with_trailing_comments(block, indent, ctx, then_comments)?
+        } else {
+            ir_block_expr_with_prefixed_comments(block, indent, ctx, then_comments)?
+        };
+        (block, true)
     } else {
         // Bare then-branch. A comment between the body and `else` cannot stay
         // inline (it would swallow `else` or read as an ambiguous sibling), so

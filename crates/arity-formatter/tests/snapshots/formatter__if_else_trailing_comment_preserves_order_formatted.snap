@@ -1,0 +1,11 @@
+---
+source: crates/arity-formatter/tests/formatter.rs
+expression: formatted
+---
+x <- if (a) {
+  ## first reason
+  ## second reason
+  b
+} else {
+  c
+}

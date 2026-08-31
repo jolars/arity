@@ -55,6 +55,7 @@ pub(super) fn ir_block_expr_with_prefixed_comments(
     indent: usize,
     ctx: FormatContext,
     prefixed_comments: &[String],
+    comments_follow_body_comments: bool,
     ir_line: IrLineFn,
 ) -> Result<Ir, FormatError> {
     let mut body_elements = block_statement_elements(node)?;
@@ -80,12 +81,23 @@ pub(super) fn ir_block_expr_with_prefixed_comments(
     let lines = split_lines(body_elements, "block body")?;
 
     let plan = super::directive::plan(&lines, ctx.ignored_directive());
+    // A comment trailing the closing brace follows every comment inside the
+    // block in source order. Relocate it after the last existing comment line,
+    // while retaining the established leading position for comment-free blocks.
+    let last_comment_line = comments_follow_body_comments.then(|| {
+        lines.iter().rposition(|line| {
+            line.iter()
+                .any(|element| element_contains_ordinary_comment(element, false))
+        })
+    });
+    let last_comment_line = last_comment_line.flatten();
     let mut items: Vec<Ir> = Vec::new();
-    for comment in prefixed_comments {
-        items.push(Ir::text(comment.clone()));
+    if last_comment_line.is_none() {
+        items.extend(prefixed_comments.iter().cloned().map(Ir::text));
     }
     let mut idx = 0usize;
     while idx < lines.len() {
+        let first = idx;
         // A line the author marked `# arity-format skip`/`off` comes back
         // exactly as written, indent included.
         match super::directive::skipped_at(&lines, &plan, idx) {
@@ -97,6 +109,9 @@ pub(super) fn ir_block_expr_with_prefixed_comments(
                 items.push(ir_line(&lines[idx], indent + 1, ctx)?);
                 idx += 1;
             }
+        }
+        if last_comment_line.is_some_and(|line| (first..idx).contains(&line)) {
+            items.extend(prefixed_comments.iter().cloned().map(Ir::text));
         }
     }
     if items.is_empty() && opening_annotation.is_none() {
@@ -119,6 +134,17 @@ pub(super) fn ir_block_expr_with_prefixed_comments(
         Ir::hard_line(),
         Ir::text("}"),
     ]))
+}
+
+fn element_contains_ordinary_comment(element: &SyntaxElement<RLanguage>, in_roxygen: bool) -> bool {
+    match element {
+        NodeOrToken::Token(token) => !in_roxygen && token.kind() == SyntaxKind::COMMENT,
+        NodeOrToken::Node(node) => {
+            let in_roxygen = in_roxygen || node.kind() == SyntaxKind::ROXYGEN_BLOCK;
+            node.children_with_tokens()
+                .any(|child| element_contains_ordinary_comment(&child, in_roxygen))
+        }
+    }
 }
 
 pub(super) fn format_expr_segment(

@@ -788,6 +788,23 @@ pub(super) fn ir_block_expr_with_prefixed_comments(
         indent,
         ctx,
         prefixed_comments,
+        false,
+        ir_line,
+    )
+}
+
+pub(super) fn ir_block_expr_with_trailing_comments(
+    node: &SyntaxNode,
+    indent: usize,
+    ctx: FormatContext,
+    trailing_comments: &[String],
+) -> Result<Ir, FormatError> {
+    super::render::ir_block_expr_with_prefixed_comments(
+        node,
+        indent,
+        ctx,
+        trailing_comments,
+        true,
         ir_line,
     )
 }

@@ -318,15 +318,35 @@ fn collect_binary_chain(
             rhs,
         ])
     } else {
-        Ir::concat([
-            Ir::text(format!(" {op_text}")),
-            comment_suffix(&rhs_comments),
-            Ir::hard_line(),
-            rhs,
-        ])
+        ir_binary_comment_segment(&op_text, &rhs_comments, rhs)
     };
     segments.push(segment);
     Ok((first, segments))
+}
+
+/// A binary-chain continuation whose comments sit between the operator and its
+/// right operand. The chain supplies the structural indent around this segment,
+/// so multiple comments need only remain on distinct forced lines here.
+fn ir_binary_comment_segment(op_text: &str, comments: &[String], rhs: Ir) -> Ir {
+    match comments {
+        [single] => Ir::concat([
+            Ir::text(format!(" {op_text}")),
+            ir_inline_trailing_comment(single),
+            Ir::hard_line(),
+            rhs,
+        ]),
+        many => {
+            let mut parts = Vec::with_capacity(many.len() * 2 + 2);
+            parts.push(Ir::text(format!(" {op_text}")));
+            for comment in many {
+                parts.push(Ir::hard_line());
+                parts.push(Ir::verbatim_forced(comment.clone()));
+            }
+            parts.push(Ir::hard_line());
+            parts.push(rhs);
+            Ir::concat(parts)
+        }
+    }
 }
 
 /// If `elements` is a single `BINARY_EXPR` whose operator is at precedence
