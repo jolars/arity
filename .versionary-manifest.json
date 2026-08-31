@@ -1,26 +1,36 @@
 {
   "manifest-version": 1,
-  "baseline-sha": "940dbb8aa8f8b1a4c7e39a6937c8c1b7d511a081",
+  "baseline-sha": "bdf224de85a1dd4977d79b8675d7ec2945d50162",
   "release-targets": [
     {
       "path": ".",
-      "version": "0.21.0",
-      "tag": "v0.21.0"
+      "version": "0.22.0",
+      "tag": "v0.22.0",
+      "dependencies": [
+        "crates/arity-formatter",
+        "crates/arity-parser"
+      ]
     },
     {
       "path": "crates/arity-formatter",
-      "version": "0.6.0",
-      "tag": "arity-formatter-v0.6.0"
+      "version": "0.7.0",
+      "tag": "arity-formatter-v0.7.0",
+      "dependencies": [
+        "crates/arity-parser"
+      ]
     },
     {
       "path": "crates/arity-parser",
-      "version": "0.5.2",
-      "tag": "arity-parser-v0.5.2"
+      "version": "0.5.3",
+      "tag": "arity-parser-v0.5.3"
     },
     {
       "path": "editors/code",
-      "version": "0.21.0",
-      "tag": "arity-code-v0.21.0"
+      "version": "0.22.0",
+      "tag": "arity-code-v0.22.0",
+      "dependencies": [
+        "."
+      ]
     },
     {
       "path": "editors/zed",
@@ -31,23 +41,33 @@
   "pending-release-targets": [
     {
       "path": ".",
-      "version": "0.21.0",
-      "tag": "v0.21.0"
+      "version": "0.22.0",
+      "tag": "v0.22.0",
+      "dependencies": [
+        "crates/arity-formatter",
+        "crates/arity-parser"
+      ]
     },
     {
       "path": "crates/arity-formatter",
-      "version": "0.6.0",
-      "tag": "arity-formatter-v0.6.0"
+      "version": "0.7.0",
+      "tag": "arity-formatter-v0.7.0",
+      "dependencies": [
+        "crates/arity-parser"
+      ]
+    },
+    {
+      "path": "crates/arity-parser",
+      "version": "0.5.3",
+      "tag": "arity-parser-v0.5.3"
     },
     {
       "path": "editors/code",
-      "version": "0.21.0",
-      "tag": "arity-code-v0.21.0"
-    },
-    {
-      "path": "editors/zed",
-      "version": "0.2.0",
-      "tag": "arity-zed-v0.2.0"
+      "version": "0.22.0",
+      "tag": "arity-code-v0.22.0",
+      "dependencies": [
+        "."
+      ]
     }
   ]
 }

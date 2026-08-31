@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.3](https://github.com/jolars/arity/compare/arity-parser-v0.5.2...arity-parser-v0.5.3) (2026-08-31)
+
+### Bug Fixes
+- **parser:** attach bodies after comments ([`0de7517`](https://github.com/jolars/arity/commit/0de751795955e852db67e989f0e2b9e162d2e9dc))
+
 ## [0.5.2](https://github.com/jolars/arity/compare/arity-parser-v0.5.1...arity-parser-v0.5.2) (2026-08-21)
 
 ### Bug Fixes
