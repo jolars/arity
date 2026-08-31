@@ -19,6 +19,17 @@
 
 ## Formatter
 
+- [ ] Reconsider comment attachment when bracing a bare `if` consequence. For
+  `if (condition) # rationale` followed by a bare consequence, the formatter
+  currently follows air and moves the comment inside the synthetic block,
+  immediately before the consequence. That preserves executable syntax plus
+  comment text and order, but it can change the apparent referent from the
+  condition to the consequence—`sf`'s `# +- 4%` is a concrete example. Decide
+  whether to keep air's behavior, retain the comment on the `if` header, or
+  hoist it above the `if`; then pin the intended attachment and consider whether
+  verification needs a stronger comment invariant. Follow-up to
+  [issue #125](https://github.com/jolars/arity/issues/125).
+
 - [ ] Measure a **line-spanning reflow chunk** by its widest segment, not its
   flattened length. Only a soft-wrapped `\verb{…}` still reaches this — every
   other inline Rd macro joins its wrap (`join_soft_breaks`) — but there

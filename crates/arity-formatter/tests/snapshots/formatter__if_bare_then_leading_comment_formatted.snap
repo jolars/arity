@@ -1,0 +1,20 @@
+---
+source: crates/arity-formatter/tests/formatter.rs
+expression: formatted
+---
+{
+  x <- if (condition) {
+    # before consequence
+    consequence # after consequence
+  } else {
+    alternative
+  }
+
+  y <- if (condition) {
+    # before consequence
+    consequence
+  } else {
+    # before alternative
+    alternative
+  }
+}

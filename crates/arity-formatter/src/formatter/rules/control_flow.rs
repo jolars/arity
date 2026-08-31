@@ -112,7 +112,7 @@ fn if_node_requires_braces(node: &SyntaxNode) -> bool {
 /// inline by [`ir_expr_with_optional_comment`]); only own-line comments are
 /// surfaced as interstitial so the caller can move them onto the `else` branch.
 fn bare_branch_interstitial_comments(elements: &[SyntaxElement<RLanguage>]) -> Vec<String> {
-    let Some(body_idx) = elements.iter().position(|el| !is_trivia(el.kind())) else {
+    let Some(body_idx) = bare_branch_body_index(elements) else {
         return Vec::new();
     };
     let post = &elements[body_idx + 1..];
@@ -133,7 +133,7 @@ fn bare_branch_interstitial_comments(elements: &[SyntaxElement<RLanguage>]) -> V
 /// A same-line trailing comment on the bare body, if any. Used to detect
 /// branches that cannot be inlined safely (the comment would swallow `else`).
 fn bare_branch_trailing_comment(elements: &[SyntaxElement<RLanguage>]) -> Option<String> {
-    let body_idx = elements.iter().position(|el| !is_trivia(el.kind()))?;
+    let body_idx = bare_branch_body_index(elements)?;
     let post = &elements[body_idx + 1..];
     let scan_end = post
         .iter()
@@ -153,7 +153,7 @@ fn bare_branch_trailing_comment(elements: &[SyntaxElement<RLanguage>]) -> Option
 fn elements_without_trailing_own_line_content(
     elements: &[SyntaxElement<RLanguage>],
 ) -> Vec<SyntaxElement<RLanguage>> {
-    let Some(body_idx) = elements.iter().position(|el| !is_trivia(el.kind())) else {
+    let Some(body_idx) = bare_branch_body_index(elements) else {
         return elements.to_vec();
     };
     let after_body = body_idx + 1;
@@ -164,6 +164,15 @@ fn elements_without_trailing_own_line_content(
         return elements.to_vec();
     };
     elements[..after_body + rel_nl].to_vec()
+}
+
+/// Find the expression after any comments between the `if` header and its bare
+/// consequence. Those comments belong with the consequence, but they are not
+/// the body whose trailing content is split around `else`.
+fn bare_branch_body_index(elements: &[SyntaxElement<RLanguage>]) -> Option<usize> {
+    elements
+        .iter()
+        .position(|el| !is_trivia(el.kind()) && el.kind() != SyntaxKind::COMMENT)
 }
 
 fn comments_attach_to_then_block(elements: &[SyntaxElement<RLanguage>]) -> bool {
@@ -352,8 +361,12 @@ fn ir_if_expr_impl(
         {
             interstitial = inter;
             let body_only = elements_without_trailing_own_line_content(&then_elements);
-            let (body_ir, _) = ir_if_branch(&body_only, indent + 1, ctx, &[])?;
-            (synthetic_block(vec![body_ir]), true)
+            let (body_ir, body_is_block) = ir_if_branch(&body_only, indent + 1, ctx, &[])?;
+            if body_is_block {
+                (body_ir, true)
+            } else {
+                (synthetic_block(vec![body_ir]), true)
+            }
         } else {
             ir_if_branch(&then_elements, indent, ctx, &[])?
         }
