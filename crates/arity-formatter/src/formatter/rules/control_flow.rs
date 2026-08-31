@@ -2,9 +2,9 @@ use rowan::{NodeOrToken, SyntaxElement, SyntaxToken};
 
 use super::super::context::FormatContext;
 use super::super::core::{
-    FormatError, ir_block_expr_with_prefixed_comments, ir_block_expr_with_trailing_comments,
-    ir_expr_element, ir_expr_segment, ir_expr_with_optional_comment, is_trivia,
-    snippet_from_elements,
+    FormatError, ir_block_expr_with_prefixed_comments, ir_block_expr_with_surrounding_comments,
+    ir_block_expr_with_trailing_comments, ir_expr_element, ir_expr_segment,
+    ir_expr_with_optional_comment, is_trivia, snippet_from_elements,
 };
 use super::super::ir::Ir;
 use super::super::printer::Printer;
@@ -496,6 +496,19 @@ fn ir_if_branch(
         && let NodeOrToken::Node(node) = &core[0]
         && node.kind() == SyntaxKind::BLOCK_EXPR
     {
+        // Keeping the closing-brace comment as a line suffix would swallow the
+        // `else` appended by the caller. Relocate both sides inside the block,
+        // preserving their order around any comments already in its body.
+        if !combined.is_empty() && trailing.is_some() {
+            let ir = ir_block_expr_with_surrounding_comments(
+                node,
+                indent,
+                ctx,
+                &combined,
+                trailing.as_slice(),
+            )?;
+            return Ok((ir, true));
+        }
         let mut ir = ir_block_expr_with_prefixed_comments(node, indent, ctx, &combined)?;
         if let Some(comment) = trailing {
             ir = Ir::concat([ir, ir_inline_trailing_comment(&comment)]);

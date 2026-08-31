@@ -44,18 +44,19 @@ pub(super) fn block_statement_elements(
     Ok(elements[open_idx + 1..close_idx].to_vec())
 }
 
-/// Build a block expression as IR, optionally prefixing leading comments inside
-/// the braces. The body is always multi-line: each statement (and any leading
-/// prefixed comment) sits on
-/// its own indented line via hard breaks, with the closing brace dedented to the
-/// block's own indent. An empty block with no prefixed comments collapses to
-/// `{}`.
+/// Build a block expression as IR, optionally relocating comments from before
+/// and after the block inside its braces. Prefixed comments precede the body;
+/// trailing comments follow the body's existing comments so their source order
+/// is retained. The body is always multi-line: each statement and relocated
+/// comment sits on its own indented line via hard breaks, with the closing brace
+/// dedented to the block's own indent. An empty block with no relocated comments
+/// collapses to `{}`.
 pub(super) fn ir_block_expr_with_prefixed_comments(
     node: &SyntaxNode,
     indent: usize,
     ctx: FormatContext,
     prefixed_comments: &[String],
-    comments_follow_body_comments: bool,
+    trailing_comments: &[String],
     ir_line: IrLineFn,
 ) -> Result<Ir, FormatError> {
     let mut body_elements = block_statement_elements(node)?;
@@ -84,16 +85,16 @@ pub(super) fn ir_block_expr_with_prefixed_comments(
     // A comment trailing the closing brace follows every comment inside the
     // block in source order. Relocate it after the last existing comment line,
     // while retaining the established leading position for comment-free blocks.
-    let last_comment_line = comments_follow_body_comments.then(|| {
+    let last_comment_line = (!trailing_comments.is_empty()).then(|| {
         lines.iter().rposition(|line| {
             line.iter()
                 .any(|element| element_contains_ordinary_comment(element, false))
         })
     });
     let last_comment_line = last_comment_line.flatten();
-    let mut items: Vec<Ir> = Vec::new();
+    let mut items: Vec<Ir> = prefixed_comments.iter().cloned().map(Ir::text).collect();
     if last_comment_line.is_none() {
-        items.extend(prefixed_comments.iter().cloned().map(Ir::text));
+        items.extend(trailing_comments.iter().cloned().map(Ir::text));
     }
     let mut idx = 0usize;
     while idx < lines.len() {
@@ -111,7 +112,7 @@ pub(super) fn ir_block_expr_with_prefixed_comments(
             }
         }
         if last_comment_line.is_some_and(|line| (first..idx).contains(&line)) {
-            items.extend(prefixed_comments.iter().cloned().map(Ir::text));
+            items.extend(trailing_comments.iter().cloned().map(Ir::text));
         }
     }
     if items.is_empty() && opening_annotation.is_none() {
