@@ -61,6 +61,9 @@ jobs:
       - name: Build mdBook
         run: mdbook build docs
 
+      - name: Publish arity.toml JSON Schema
+        run: install -m 0644 arity.schema.json docs/book/arity.schema.json
+
       # mdBook has no `canonical-site-url` setting (rust-lang/mdBook#2706), so
       # inject a <link rel="canonical"> into every rendered page post-build.
       - name: Inject canonical links

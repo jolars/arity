@@ -178,8 +178,9 @@ tasks:
       - cargo bench --bench format_edits
 
   docs-gen:
-    desc: Regenerate generated mdBook pages (CLI reference + rule docs)
+    desc: Regenerate generated mdBook pages and the arity.toml schema
     cmds:
+      - UPDATE_EXPECTED=1 cargo test --test config_schema schema_is_in_sync_with_config_types
       - cargo run --example docgen
 
   docs-preview:
@@ -195,6 +196,7 @@ tasks:
       - docs-gen
     cmds:
       - mdbook build docs
+      - install -m 0644 arity.schema.json docs/book/arity.schema.json
       - task: docs-canonical
       - task: docs-sitemap
 

@@ -1,0 +1,246 @@
+{
+  "$defs": {
+    "CompatConfig": {
+      "additionalProperties": false,
+      "description": "`[compat]` — the minimum tool versions the project supports, MSRV-style\n(clippy's `msrv`, ruff's `target-version`). Consumed by the version-aware\nlint rules (`r-compat`, `roxygen2-compat`): syntax or documentation\nconstructs needing a *newer* version than the declared floor are flagged.\n\nResolution order, per file: an explicit key here wins; an absent key is\nderived from the enclosing package's `DESCRIPTION` (`Depends: R (>= …)` for\n`r`; `Config/roxygen2/version`, then the legacy `RoxygenNote`, for\n`roxygen2` — see `project::description`); with neither, the version-aware\nrules stay silent (no floor, nothing to flag), so loose scripts see no\nfalse positives.\n\nValues are plain version strings (`\"4.1\"`, `\"7.3.2\"`), not requirement\nspecs — the key *is* the `>=` floor.",
+      "properties": {
+        "r": {
+          "default": null,
+          "description": "Minimum supported R version, e.g. `\"4.1\"`.",
+          "pattern": "^[0-9]+(?:[.-][0-9]+)*$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "roxygen2": {
+          "default": null,
+          "description": "The roxygen2 version the project documents with, e.g. `\"7.3.2\"`.",
+          "pattern": "^[0-9]+(?:[.-][0-9]+)*$",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "FormatConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "default": true,
+          "description": "Whether a package's `DESCRIPTION` is formatted. On by default.\n\nThe off switch exists because arity is not the only tool that writes this\nfile — `usethis` and `roxygen2` do too — and the honest answer to \"arity\nand my package tooling disagree about my `DESCRIPTION`\" has to be\nsomething other than \"stop running `arity format`\".\n\nIt cannot be `extend-exclude`: excludes are shared with the linter, so\nexcluding `DESCRIPTION` to stop formatting would also silence the\npackaging rules, and the language server applies no exclude filter to\nformatting at all.",
+          "type": "boolean"
+        },
+        "indent-width": {
+          "default": 2,
+          "format": "uint32",
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "line-ending": {
+          "$ref": "#/$defs/LineEndingConfig",
+          "description": "The newline style the formatter emits. See [`LineEndingConfig`]."
+        },
+        "line-width": {
+          "default": 80,
+          "format": "uint32",
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "IndexConfig": {
+      "additionalProperties": false,
+      "description": "`[index]` — the R-introspection sidecar.",
+      "properties": {
+        "auto-build": {
+          "default": true,
+          "description": "Let the LSP lazily build indices for referenced-but-unindexed packages.",
+          "type": "boolean"
+        },
+        "cache-dir": {
+          "default": null,
+          "description": "Override the cache directory (otherwise XDG / `$ARITY_CACHE_DIR`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "help": {
+          "default": true,
+          "description": "Harvest help (titles in this phase). When false, only names are stored.",
+          "type": "boolean"
+        },
+        "library-paths": {
+          "default": [],
+          "description": "Explicit R library directories, used when automatic `.libPaths()`\ndiscovery misses (highest-priority source).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "LineEndingConfig": {
+      "description": "The `line-ending` key under `[format]`. A thin, serde-named mirror of\n[`LineEnding`] (the formatter's own type), kept separate so the TOML spelling\n(`kebab-case`) is a config concern, not baked into the formatter API.",
+      "oneOf": [
+        {
+          "const": "auto",
+          "description": "Detect per file from the source; default `\\n` when none is present.",
+          "type": "string"
+        },
+        {
+          "const": "lf",
+          "description": "Always `\\n` (Unix).",
+          "type": "string"
+        },
+        {
+          "const": "crlf",
+          "description": "Always `\\r\\n` (Windows).",
+          "type": "string"
+        },
+        {
+          "const": "native",
+          "description": "`\\n` on Unix, `\\r\\n` on Windows.",
+          "type": "string"
+        }
+      ]
+    },
+    "LintConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "ignore": {
+          "default": [],
+          "description": "Rule IDs to disable. Applied on top of either `select` (subtracts) or\nthe default rule set.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rules": {
+          "$ref": "#/$defs/RulesConfig",
+          "description": "Per-rule option tables (`[lint.rules.<id>]`)."
+        },
+        "select": {
+          "default": null,
+          "description": "Explicit allowlist of rule IDs. When `Some`, only these rules run.\nUnknown rule IDs are reported at lint-time, not at config parse-time.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "RulesConfig": {
+      "additionalProperties": false,
+      "description": "`[lint.rules]` — per-rule option tables, one field per *configurable* rule.\n\nDeliberately typed rather than a `Map<String, Value>` keyed by rule ID: the\n`deny_unknown_fields` convention then makes a mistyped rule ID a parse error\ninstead of a silently-ignored table. Note the asymmetry this creates with\n`select`/`ignore`, where an unknown ID is reported at *lint* time — there the\nIDs are free-form data, here they are schema.\n\nMost rules take no options and so have no field here.",
+      "properties": {
+        "undesirable-function": {
+          "$ref": "#/$defs/UndesirableFunctionConfig",
+          "description": "`[lint.rules.undesirable-function]`"
+        }
+      },
+      "type": "object"
+    },
+    "UndesirableFunctionConfig": {
+      "additionalProperties": false,
+      "description": "`[lint.rules.undesirable-function]` — the function-name policy for the\n`undesirable-function` rule.\n\nThe `functions`/`extend-functions` pair mirrors the top-level\n`exclude`/`extend-exclude` idiom: the base key **replaces** the built-in set\n([`default_undesirable_functions`]), the `extend-` key **adds** to whichever\nset that resolved to. Use [`resolved`] rather than reading either field\ndirectly.\n\n[`resolved`]: UndesirableFunctionConfig::resolved",
+      "properties": {
+        "extend-functions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Entries added on top of `functions`, overriding same-named ones. The\nusual way to extend the built-in set without restating it.",
+          "type": "object"
+        },
+        "functions": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {
+            ".libPaths": "set `R_LIBS` outside the script",
+            "Sys.setenv": "set the environment outside the script",
+            "Sys.setlocale": "set the locale outside the script",
+            "attach": "use `with()` or refer to columns explicitly",
+            "debug": "remove the debugging call",
+            "debugonce": "remove the debugging call",
+            "detach": "avoid modifying the search path",
+            "install.packages": "declare dependencies in DESCRIPTION or renv",
+            "options": "set options in the session, not in library code",
+            "par": "restore graphical parameters with `on.exit()`",
+            "setwd": "use paths relative to the project root",
+            "sink": "use `capture.output()` or an explicit connection",
+            "source": "make the code a package or use `box::use()`",
+            "trace": "remove the debugging call",
+            "undebug": "remove the debugging call",
+            "untrace": "remove the debugging call"
+          },
+          "description": "Function name -> suggested alternative. An empty string means \"no\nalternative, just don't call this\". Replaces the built-in set; `{}`\ntherefore silences the rule entirely.",
+          "type": "object"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "https://arity.cc/arity.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Schema for arity.toml. Generated from Arity's configuration types; do not hand-edit—run `UPDATE_EXPECTED=1 cargo test --test config_schema` instead.",
+  "properties": {
+    "cache": {
+      "default": true,
+      "description": "Enable the persistent result cache (currently the `format --check`\nalready-formatted cache). A top-level key because it will govern the\nlint cache too. The `--no-cache` CLI flag overrides this to `false`.",
+      "type": "boolean"
+    },
+    "compat": {
+      "$ref": "#/$defs/CompatConfig",
+      "description": "Minimum supported tool versions the project targets. A top-level table\n(not under `[lint]`) because it states a project fact, not a lint\noption — the lint rules are merely its first consumer. When a key is\nabsent it is derived from the package `DESCRIPTION` where possible;\nsee [`CompatConfig`]."
+    },
+    "exclude": {
+      "default": [
+        ".git/",
+        "renv/",
+        "revdep/",
+        "cpp11.R",
+        "RcppExports.R",
+        "extendr-wrappers.R",
+        "import-standalone-*.R"
+      ],
+      "description": "Gitignore-style patterns to exclude from file discovery, resolved\nrelative to the directory containing this `arity.toml`. Applies to *both*\n`format` and `lint` (which share one file walk), so it is a top-level\nkey, not nested under `[format]`.\n\nSetting this **replaces** the built-in [`DEFAULT_EXCLUDE`] set (it\ndefaults to that set); use [`extend_exclude`](Self::extend_exclude) to\nadd patterns without dropping the defaults.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "extend-exclude": {
+      "default": [],
+      "description": "Gitignore-style patterns to exclude *in addition to*\n[`exclude`](Self::exclude). Unlike `exclude`, this never replaces the\ndefaults, so it is the right key for project-specific additions.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "format": {
+      "$ref": "#/$defs/FormatConfig"
+    },
+    "index": {
+      "$ref": "#/$defs/IndexConfig"
+    },
+    "lint": {
+      "$ref": "#/$defs/LintConfig"
+    }
+  },
+  "title": "Arity configuration",
+  "type": "object"
+}

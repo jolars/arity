@@ -6,6 +6,41 @@ rejected with an error (so a typo never silently falls back to a default).
 
 Run [`arity init`](cli.md#arity-init) to write a commented starter file.
 
+## Editor support
+
+Arity publishes a [JSON Schema](https://json-schema.org/) for `arity.toml`, so
+editors with TOML support can offer completion, inline documentation, and
+validation while you edit your configuration.
+
+Schema URL : <https://arity.cc/arity.schema.json>
+
+The schema is generated from Arity's configuration types and checked against the
+repository's own `arity.toml`. It therefore stays aligned with the keys, enums,
+constraints, and defaults accepted by the CLI.
+
+Until `arity.toml` is registered with SchemaStore, editors need a manual
+association. With the [Even Better
+TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml)
+extension for VS Code, add this to your user or workspace `settings.json`:
+
+```jsonc
+{
+  "evenBetterToml.schema.associations": {
+    "^(.*/)?arity\\.toml$": "https://arity.cc/arity.schema.json"
+  }
+}
+```
+
+Editors and language servers that recognize TOML schema directives can instead
+put this comment at the top of `arity.toml`:
+
+```toml
+#:schema https://arity.cc/arity.schema.json
+```
+
+Other editors—including Neovim with `taplo-lsp`, Helix, Zed, and IntelliJ—can
+use the same URL through their JSON Schema association settings.
+
 ## Discovery
 
 For a given file, arity looks for `arity.toml` by walking up from the file's
