@@ -202,6 +202,11 @@ ID in `select`/`ignore` is data and so an unknown one is reported when linting
 runs, whereas a rule ID under `[lint.rules]` is schema and an unknown one fails
 at parse time. Rules read their table off `RuleContext::config`.
 
+The published `arity.toml` JSON Schema is generated from these Rust types. After
+changing a configuration key, type, enum, constraint, or default, regenerate
+`arity.schema.json` with `UPDATE_EXPECTED=1 cargo test config_schema`, review
+the diff, and rerun `cargo test config_schema`. Do not edit the JSON by hand.
+
 ## The stdin contract
 
 `-` as the only path makes `format`, `lint`, and `parse` read one buffer from

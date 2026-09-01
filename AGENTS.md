@@ -429,9 +429,9 @@ Scope: `src/rindex/**` and `tests/rindex.rs`; CLI command `arity index`.
 
 ## Configuration and discovery
 
-Scope: `src/config.rs`, `arity.toml`, config tests, and configuration docs.
-Every command honors discovered config; `--config` forces a path and
-`--no-config` ignores config.
+Scope: `src/config.rs`, `src/config/schema.rs`, `arity.toml`,
+`arity.schema.json`, config tests, and configuration docs. Every command honors
+discovered config; `--config` forces a path and `--no-config` ignores config.
 
 - Config structs use `#[serde(deny_unknown_fields, rename_all = "kebab-case")]`.
   Typos are errors. Place keys according to ownership: shared excludes and
@@ -449,7 +449,9 @@ Every command honors discovered config; `--config` forces a path and
 - Missing compat floors derive per file from enclosing DESCRIPTION; with no
   floor, version-aware rules are silent.
 - Schema changes update the dogfood `arity.toml`, hand-written configuration
-  docs, and `tests/config.rs`.
+  docs, and config tests. Regenerate `arity.schema.json` with
+  `UPDATE_EXPECTED=1 cargo test config_schema`, review the diff, and rerun
+  `cargo test config_schema`; never edit the generated schema by hand.
 
 ## Documentation, benchmarks, and profiles
 

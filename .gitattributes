@@ -17,6 +17,9 @@ tests/oracle/** eol=lf
 tests/**/snapshots/**/* eol=lf
 crates/*/tests/snapshots/**/* eol=lf
 
+# Generated from the Rust configuration types and compared byte-for-byte.
+arity.schema.json eol=lf
+
 # Preserve line ending fixtures as-is (CRLF/LF)
 crates/arity-parser/tests/fixtures/parser/crlf_*/* -text
 crates/arity-parser/tests/fixtures/parser/lf_*/* -text

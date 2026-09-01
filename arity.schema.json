@@ -1,5 +1,8 @@
 {
-  "$defs": {
+  "$id": "https://arity.cc/arity.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
     "CompatConfig": {
       "additionalProperties": false,
       "description": "`[compat]` — the minimum tool versions the project supports, MSRV-style\n(clippy's `msrv`, ruff's `target-version`). Consumed by the version-aware\nlint rules (`r-compat`, `roxygen2-compat`): syntax or documentation\nconstructs needing a *newer* version than the declared floor are flagged.\n\nResolution order, per file: an explicit key here wins; an absent key is\nderived from the enclosing package's `DESCRIPTION` (`Depends: R (>= …)` for\n`r`; `Config/roxygen2/version`, then the legacy `RoxygenNote`, for\n`roxygen2` — see `project::description`); with neither, the version-aware\nrules stay silent (no floor, nothing to flag), so loose scripts see no\nfalse positives.\n\nValues are plain version strings (`\"4.1\"`, `\"7.3.2\"`), not requirement\nspecs — the key *is* the `>=` floor.",
@@ -27,6 +30,7 @@
     },
     "FormatConfig": {
       "additionalProperties": false,
+      "description": "Formatter settings from the `[format]` section.",
       "properties": {
         "description": {
           "default": true,
@@ -35,18 +39,22 @@
         },
         "indent-width": {
           "default": 2,
-          "format": "uint32",
+          "description": "Spaces per indentation level, from 1 through 1000.",
           "maximum": 1000,
           "minimum": 1,
           "type": "integer"
         },
         "line-ending": {
-          "$ref": "#/$defs/LineEndingConfig",
+          "allOf": [
+            {
+              "$ref": "#/definitions/LineEndingConfig"
+            }
+          ],
           "description": "The newline style the formatter emits. See [`LineEndingConfig`]."
         },
         "line-width": {
           "default": 80,
-          "format": "uint32",
+          "description": "Target line width, from 1 through 1000 columns.",
           "maximum": 1000,
           "minimum": 1,
           "type": "integer"
@@ -114,6 +122,7 @@
     },
     "LintConfig": {
       "additionalProperties": false,
+      "description": "Linter settings from the `[lint]` section.",
       "properties": {
         "ignore": {
           "default": [],
@@ -124,7 +133,11 @@
           "type": "array"
         },
         "rules": {
-          "$ref": "#/$defs/RulesConfig",
+          "allOf": [
+            {
+              "$ref": "#/definitions/RulesConfig"
+            }
+          ],
           "description": "Per-rule option tables (`[lint.rules.<id>]`)."
         },
         "select": {
@@ -146,7 +159,11 @@
       "description": "`[lint.rules]` — per-rule option tables, one field per *configurable* rule.\n\nDeliberately typed rather than a `Map<String, Value>` keyed by rule ID: the\n`deny_unknown_fields` convention then makes a mistyped rule ID a parse error\ninstead of a silently-ignored table. Note the asymmetry this creates with\n`select`/`ignore`, where an unknown ID is reported at *lint* time — there the\nIDs are free-form data, here they are schema.\n\nMost rules take no options and so have no field here.",
       "properties": {
         "undesirable-function": {
-          "$ref": "#/$defs/UndesirableFunctionConfig",
+          "allOf": [
+            {
+              "$ref": "#/definitions/UndesirableFunctionConfig"
+            }
+          ],
           "description": "`[lint.rules.undesirable-function]`"
         }
       },
@@ -193,10 +210,7 @@
       "type": "object"
     }
   },
-  "$id": "https://arity.cc/arity.schema.json",
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "additionalProperties": false,
-  "description": "Schema for arity.toml. Generated from Arity's configuration types; do not hand-edit—run `UPDATE_EXPECTED=1 cargo test --test config_schema` instead.",
+  "description": "Schema for arity.toml. Generated from Arity's configuration types; do not hand-edit—run `UPDATE_EXPECTED=1 cargo test config_schema` instead.",
   "properties": {
     "cache": {
       "default": true,
@@ -204,7 +218,11 @@
       "type": "boolean"
     },
     "compat": {
-      "$ref": "#/$defs/CompatConfig",
+      "allOf": [
+        {
+          "$ref": "#/definitions/CompatConfig"
+        }
+      ],
       "description": "Minimum supported tool versions the project targets. A top-level table\n(not under `[lint]`) because it states a project fact, not a lint\noption — the lint rules are merely its first consumer. When a key is\nabsent it is derived from the package `DESCRIPTION` where possible;\nsee [`CompatConfig`]."
     },
     "exclude": {
@@ -232,13 +250,28 @@
       "type": "array"
     },
     "format": {
-      "$ref": "#/$defs/FormatConfig"
+      "allOf": [
+        {
+          "$ref": "#/definitions/FormatConfig"
+        }
+      ],
+      "description": "Formatter settings from the `[format]` section."
     },
     "index": {
-      "$ref": "#/$defs/IndexConfig"
+      "allOf": [
+        {
+          "$ref": "#/definitions/IndexConfig"
+        }
+      ],
+      "description": "R package-index settings from the `[index]` section."
     },
     "lint": {
-      "$ref": "#/$defs/LintConfig"
+      "allOf": [
+        {
+          "$ref": "#/definitions/LintConfig"
+        }
+      ],
+      "description": "Linter rule selection and per-rule settings from the `[lint]` section."
     }
   },
   "title": "Arity configuration",

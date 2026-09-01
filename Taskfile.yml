@@ -180,7 +180,7 @@ tasks:
   docs-gen:
     desc: Regenerate generated mdBook pages and the arity.toml schema
     cmds:
-      - UPDATE_EXPECTED=1 cargo test --test config_schema schema_is_in_sync_with_config_types
+      - UPDATE_EXPECTED=1 cargo test config_schema
       - cargo run --example docgen
 
   docs-preview:

@@ -16,7 +16,8 @@ Schema URL : <https://arity.cc/arity.schema.json>
 
 The schema is generated from Arity's configuration types and checked against the
 repository's own `arity.toml`. It therefore stays aligned with the keys, enums,
-constraints, and defaults accepted by the CLI.
+constraints, and defaults accepted by the CLI. The version at the published URL
+tracks the latest Arity release.
 
 Until `arity.toml` is registered with SchemaStore, editors need a manual
 association. With the [Even Better

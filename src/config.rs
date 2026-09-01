@@ -11,7 +11,6 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::file_discovery::{ExcludeError, ExcludeFilter};
@@ -19,13 +18,17 @@ use crate::formatter::{FormatStyle, LineEnding};
 
 pub const CONFIG_FILE_NAME: &str = "arity.toml";
 
+#[cfg(test)]
+mod schema;
+
 const MIN_WIDTH: u32 = 1;
 const MAX_WIDTH: u32 = 1000;
 
 const DEFAULT_LINE_WIDTH: u32 = 80;
 const DEFAULT_INDENT_WIDTH: u32 = 2;
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Config {
     /// Gitignore-style patterns to exclude from file discovery, resolved
@@ -43,10 +46,13 @@ pub struct Config {
     /// defaults, so it is the right key for project-specific additions.
     #[serde(default)]
     pub extend_exclude: Vec<String>,
+    /// Formatter settings from the `[format]` section.
     #[serde(default)]
     pub format: FormatConfig,
+    /// Linter rule selection and per-rule settings from the `[lint]` section.
     #[serde(default)]
     pub lint: LintConfig,
+    /// R package-index settings from the `[index]` section.
     #[serde(default)]
     pub index: IndexConfig,
     /// Minimum supported tool versions the project targets. A top-level table
@@ -91,14 +97,18 @@ pub const DEFAULT_EXCLUDE: &[&str] = &[
     "import-standalone-*.R",
 ];
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
+/// Formatter settings from the `[format]` section.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct FormatConfig {
+    /// Target line width, from 1 through 1000 columns.
     #[serde(default = "default_line_width")]
-    #[schemars(range(min = MIN_WIDTH, max = MAX_WIDTH))]
+    #[cfg_attr(test, schemars(range(min = MIN_WIDTH, max = MAX_WIDTH)))]
     pub line_width: u32,
+    /// Spaces per indentation level, from 1 through 1000.
     #[serde(default = "default_indent_width")]
-    #[schemars(range(min = MIN_WIDTH, max = MAX_WIDTH))]
+    #[cfg_attr(test, schemars(range(min = MIN_WIDTH, max = MAX_WIDTH)))]
     pub indent_width: u32,
     /// The newline style the formatter emits. See [`LineEndingConfig`].
     #[serde(default)]
@@ -132,7 +142,8 @@ impl Default for FormatConfig {
 /// The `line-ending` key under `[format]`. A thin, serde-named mirror of
 /// [`LineEnding`] (the formatter's own type), kept separate so the TOML spelling
 /// (`kebab-case`) is a config concern, not baked into the formatter API.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum LineEndingConfig {
     /// Detect per file from the source; default `\n` when none is present.
@@ -175,7 +186,9 @@ fn default_indent_width() -> u32 {
     DEFAULT_INDENT_WIDTH
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema, Default)]
+/// Linter settings from the `[lint]` section.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct LintConfig {
     /// Explicit allowlist of rule IDs. When `Some`, only these rules run.
@@ -208,7 +221,8 @@ pub struct LintConfig {
 /// IDs are free-form data, here they are schema.
 ///
 /// Most rules take no options and so have no field here.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct RulesConfig {
     /// `[lint.rules.undesirable-function]`
@@ -226,7 +240,8 @@ pub struct RulesConfig {
 /// directly.
 ///
 /// [`resolved`]: UndesirableFunctionConfig::resolved
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct UndesirableFunctionConfig {
     /// Function name -> suggested alternative. An empty string means "no
@@ -327,16 +342,17 @@ fn default_undesirable_functions() -> BTreeMap<String, String> {
 ///
 /// Values are plain version strings (`"4.1"`, `"7.3.2"`), not requirement
 /// specs — the key *is* the `>=` floor.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct CompatConfig {
     /// Minimum supported R version, e.g. `"4.1"`.
     #[serde(default)]
-    #[schemars(regex(pattern = r"^[0-9]+(?:[.-][0-9]+)*$"))]
+    #[cfg_attr(test, schemars(regex(pattern = r"^[0-9]+(?:[.-][0-9]+)*$")))]
     pub r: Option<String>,
     /// The roxygen2 version the project documents with, e.g. `"7.3.2"`.
     #[serde(default)]
-    #[schemars(regex(pattern = r"^[0-9]+(?:[.-][0-9]+)*$"))]
+    #[cfg_attr(test, schemars(regex(pattern = r"^[0-9]+(?:[.-][0-9]+)*$")))]
     pub roxygen2: Option<String>,
 }
 
@@ -445,7 +461,8 @@ impl fmt::Display for CompatVersion {
 }
 
 /// `[index]` — the R-introspection sidecar.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct IndexConfig {
     /// Explicit R library directories, used when automatic `.libPaths()`
