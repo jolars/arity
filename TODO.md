@@ -554,7 +554,8 @@ Tier 1—pure grammar, R is the oracle, no new machinery. None takes a fix:
   listings may truncate beyond that), Title equal to or redundantly containing
   the package name, and the `usethis` placeholder `What the package does...`.
 
-- [ ] `description-text-format`, on the `Description` field: must end in
+- [x] `description-text-format` (packaging; syn; safe fix, default on). On the
+  `Description` field: must end in
   `[.!?]`, must start with a capital, and must not start with the package name,
   the Title, `This package`, `Functions for`, or the existing broader
   `The`/`A`/`In this`/`In the` `package` shapes. Add two narrow lexical clauses:
@@ -563,7 +564,10 @@ Tier 1—pure grammar, R is the oracle, no new machinery. None takes a fix:
   brackets with no whitespace after the colon. Bare `https?://` remains part of
   the same reference-format clause. Angle-bracketing a recognized reference is
   the one **safe fix** in the tier; prose rewrites and quote removal stay
-  report-only until corpus evidence supports them.
+  report-only until corpus evidence supports them. Done; the
+  `bad_Description` oracle signal gates the final-punctuation clause, while the
+  broader CRAN/editorial clauses remain independently pinned because that R
+  signal does not speak to them.
 
 - [ ] `description-date-format`. `Date`, if present, must be ISO 8601
   `yyyy-mm-dd`. Deliberately **not** porting CRAN's "over a month old" and

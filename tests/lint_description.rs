@@ -237,6 +237,225 @@ fn messages(description: &str, rule: &str) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// description-text-format
+// ---------------------------------------------------------------------------
+
+const TEXT_FORMAT: &str = "description-text-format";
+
+fn described_as(value: &str) -> String {
+    COMPLETE_DESCRIPTION.replacen(
+        "Description: Fixture data for arity's own tests.",
+        &format!("Description: {value}"),
+        1,
+    )
+}
+
+fn text_format_hits(text: &str) -> Vec<String> {
+    check_description_document(Path::new("DESCRIPTION"), text, &LintConfig::default())
+        .expect("linting should not error")
+        .iter()
+        .filter(|d| d.rule == TEXT_FORMAT)
+        .map(|d| {
+            let start: usize = d.range.start().into();
+            let end: usize = d.range.end().into();
+            text[start..end].to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn description_text_must_end_in_sentence_punctuation() {
+    let text = described_as("Fixture data for tests");
+    assert_eq!(text_format_hits(&text), ["s"]);
+    assert!(messages(&text, TEXT_FORMAT)[0].contains("end"));
+
+    for value in [
+        "Fixture data.",
+        "Fixture data!",
+        "Fixture data?",
+        "A quoted sentence.'",
+        "A quoted sentence.\"",
+        "A parenthetical sentence.)",
+    ] {
+        assert!(
+            text_format_hits(&described_as(value)).is_empty(),
+            "`{value}` should have an accepted ending",
+        );
+    }
+}
+
+#[test]
+fn description_text_must_start_with_a_capital() {
+    for (value, span) in [
+        ("fixture data.", "f"),
+        ("'quoted text.'", "q"),
+        ("\"quoted text.\"", "q"),
+    ] {
+        assert_eq!(text_format_hits(&described_as(value)), [span]);
+    }
+
+    for value in ["Fixture data.", "Éclair methods.", "'Quoted text.'"] {
+        assert!(
+            text_format_hits(&described_as(value)).is_empty(),
+            "`{value}` should have an accepted initial",
+        );
+    }
+}
+
+#[test]
+fn description_text_rejects_boilerplate_openings() {
+    for (value, span) in [
+        ("testpkg provides useful tools.", "testpkg"),
+        ("A Test Package provides useful tools.", "A Test Package"),
+        ("This package provides useful tools.", "This package"),
+        ("this package provides useful tools.", "this package"),
+        ("Functions for fitting useful models.", "Functions for"),
+        ("The package provides useful tools.", "The package"),
+        ("A package for fitting useful models.", "A package"),
+        ("In this package we fit useful models.", "In this package"),
+        ("In the package we fit useful models.", "In the package"),
+    ] {
+        let text = described_as(value);
+        assert_eq!(text_format_hits(&text), [span], "`{value}`");
+        assert!(messages(&text, TEXT_FORMAT)[0].contains("must not start"));
+    }
+}
+
+#[test]
+fn description_text_allows_specific_non_boilerplate_openings() {
+    for value in [
+        "Package tools for fitting useful models.",
+        "A practical package for fitting useful models.",
+        "Functions that fit useful models.",
+        "Inside the package are useful models.",
+    ] {
+        assert!(
+            text_format_hits(&described_as(value)).is_empty(),
+            "`{value}` should not be treated as boilerplate",
+        );
+    }
+}
+
+#[test]
+fn description_text_rejects_single_quoted_function_identifiers() {
+    let text = described_as("Calls 'case_when()' and 'foo.bar()' for useful work.");
+    assert_eq!(text_format_hits(&text), ["'case_when()'", "'foo.bar()'"]);
+
+    let diagnostics =
+        check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+            .expect("linting should not error");
+    assert!(
+        diagnostics
+            .iter()
+            .filter(|d| d.rule == TEXT_FORMAT)
+            .all(|d| d.fix.is_none()),
+        "quote removal requires an author's judgment",
+    );
+
+    let clean = described_as("Calls case_when() from the 'dplyr' package for useful work.");
+    assert!(text_format_hits(&clean).is_empty());
+}
+
+#[test]
+fn description_text_fixes_bare_references() {
+    let text = described_as(
+        "See https://example.com and doi:10.1000/182 and arXiv:2401.12345 for details.",
+    );
+    assert_eq!(
+        text_format_hits(&text),
+        ["https://example.com", "doi:10.1000/182", "arXiv:2401.12345",]
+    );
+
+    let diagnostics =
+        check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+            .expect("linting should not error");
+    let fixes = diagnostics
+        .iter()
+        .filter(|d| d.rule == TEXT_FORMAT)
+        .map(|d| d.fix.clone().expect("a bare reference has a safe fix"))
+        .collect::<Vec<_>>();
+    let fixed = apply_fixes(&text, &fixes, false).output;
+    assert_eq!(
+        fixed,
+        described_as(
+            "See <https://example.com> and <doi:10.1000/182> and <arXiv:2401.12345> for details.",
+        )
+    );
+}
+
+#[test]
+fn description_text_reference_fixes_are_parseable_and_clean() {
+    for text in [
+        described_as("See https://example.com and doi:10.1000/182 for details."),
+        described_as("See https://example.com and doi:10.1000/182 for details.")
+            .replace('\n', "\r\n"),
+        COMPLETE_DESCRIPTION.replace(
+            "Description: Fixture data for arity's own tests.",
+            "Description: See details at\n    https://example.com for useful work.",
+        ),
+    ] {
+        let diagnostics =
+            check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+                .expect("linting should not error");
+        let fixes = diagnostics
+            .iter()
+            .filter(|d| d.rule == TEXT_FORMAT)
+            .filter_map(|d| d.fix.clone())
+            .collect::<Vec<_>>();
+        assert!(!fixes.is_empty(), "fixture should exercise the safe fix");
+
+        let fixed = apply_fixes(&text, &fixes, false).output;
+        let after =
+            check_description_document(Path::new("DESCRIPTION"), &fixed, &LintConfig::default())
+                .expect("fixed DESCRIPTION should parse");
+        assert!(
+            !after.iter().any(|d| d.rule == TEXT_FORMAT),
+            "fixed output was not clean:\n{fixed}",
+        );
+    }
+}
+
+#[test]
+fn description_text_rejects_whitespace_inside_reference_schemes_without_a_fix() {
+    let text = described_as(
+        "See <doi: 10.1000/182>, <arXiv: 2401.12345>, and <https: //example.com> for details.",
+    );
+    assert_eq!(
+        text_format_hits(&text),
+        [
+            "<doi: 10.1000/182>",
+            "<arXiv: 2401.12345>",
+            "<https: //example.com>",
+        ]
+    );
+
+    let diagnostics =
+        check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+            .expect("linting should not error");
+    assert!(
+        diagnostics
+            .iter()
+            .filter(|d| d.rule == TEXT_FORMAT)
+            .all(|d| d.fix.is_none()),
+        "removing whitespace could change prose, so this case is report-only",
+    );
+}
+
+#[test]
+fn description_text_accepts_angle_bracketed_references() {
+    let text = described_as(
+        "See <http://example.com>, <https://example.com>, <doi:10.1000/182>, and <arXiv:2401.12345> for details.",
+    );
+    assert!(text_format_hits(&text).is_empty());
+
+    let prose = described_as("Uses <doi: prose> and <https: prose> as literal labels.");
+    assert!(
+        text_format_hits(&prose).is_empty(),
+        "scheme-like prose is not a recognizable reference",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // description-encoding
 // ---------------------------------------------------------------------------
 

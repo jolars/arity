@@ -15,12 +15,12 @@
 //! The harness is deliberately two-sided, because arity implements a fraction of
 //! what R checks:
 //!
-//! - **Gated** ([`GATES`]): for a rule arity ships, every finding it reports must
-//!   be backed by one of R's signals on the same case. That is the
-//!   false-positive direction, and it is a hard failure. The reverse direction is
-//!   *not* gated: `description-version-constraint` deliberately says nothing
-//!   about a malformed package *name*, and demanding parity would be demanding a
-//!   rule that does not exist yet.
+//! - **Gated** ([`GATES`]): for a rule arity ships, every finding in the gate's
+//!   R-backed scope must be backed by one of R's signals on the same case. That
+//!   is the false-positive direction, and it is a hard failure. The reverse
+//!   direction is *not* gated: `description-version-constraint` deliberately
+//!   says nothing about a malformed package *name*, and demanding parity would
+//!   be demanding a rule that does not exist yet.
 //! - **Planned** ([`PLANNED`]): a signal no rule covers yet. Counted and listed,
 //!   never failed. That report is the work-list for the DESCRIPTION items in
 //!   `TODO.md`, ordered by how often each signal actually fires.
@@ -55,6 +55,15 @@ struct Gate {
     rule: &'static str,
     signals: &'static [&'static str],
     backing: Backing,
+    findings: Findings,
+}
+
+/// Which findings a gate's R signal actually speaks to.
+enum Findings {
+    /// Every finding from the rule has the same executable backing.
+    All,
+    /// Only one clause of a wider editorial rule has executable R backing.
+    MessageContains(&'static str),
 }
 
 /// What it takes for one of R's signals to back one of arity's findings.
@@ -81,6 +90,7 @@ const GATES: &[Gate] = &[
         rule: "description-version-constraint",
         signals: &["bad_dep_entry", "bad_dep_op", "bad_dep_version"],
         backing: Backing::Entry,
+        findings: Findings::All,
     },
     // R reports the bare package name, and the rule spans the bare package
     // name, so the two are directly comparable. Note R's own exclusions the
@@ -92,6 +102,7 @@ const GATES: &[Gate] = &[
         rule: "description-package-in-multiple-fields",
         signals: &["duplicates"],
         backing: Backing::Entry,
+        findings: Findings::All,
     },
     // R folds "malformed" and "this is a base package's name" into one signal
     // whose detail is its own message, so this one is backed by presence. Note
@@ -102,6 +113,7 @@ const GATES: &[Gate] = &[
         rule: "description-malformed-name",
         signals: &["bad_package"],
         backing: Backing::Signal,
+        findings: Findings::All,
     },
     // The rule's subject spans two checkers: `R CMD check` rejects a version
     // that is not `digits[.-]digits...`, and CRAN's pretest adds the two NOTEs
@@ -122,6 +134,7 @@ const GATES: &[Gate] = &[
             "version_with_large_components",
         ],
         backing: Backing::Entry,
+        findings: Findings::All,
     },
     // Four signals, two checkers, one field: R's regexp looks only at the
     // address half, and CRAN's three NOTEs cover the name half and the
@@ -144,6 +157,7 @@ const GATES: &[Gate] = &[
             "Maintainer_invalid_or_multi_person",
         ],
         backing: Backing::Signal,
+        findings: Findings::All,
     },
     // Thirteen signals, three checkers, two fields — the widest gate here, and
     // presence-backed for the usual reason: most of them are logical flags, and
@@ -184,6 +198,7 @@ const GATES: &[Gate] = &[
             "author_should_be_authors_at_R",
         ],
         backing: Backing::Signal,
+        findings: Findings::All,
     },
     // The three signals cover the two halves of the rule: a missing declaration
     // for text outside R's ISO-8859 set, and non-ASCII field names or values in
@@ -197,6 +212,17 @@ const GATES: &[Gate] = &[
             "fields_with_non_ASCII_values",
         ],
         backing: Backing::Signal,
+        findings: Findings::All,
+    },
+    // `bad_Description` backs exactly the final-punctuation clause. The rule's
+    // remaining clauses come from CRAN's incoming checks and DESCRIPTION prose
+    // conventions, so requiring this one coarse signal for those findings
+    // would confuse a partial executable oracle with the rule's full contract.
+    Gate {
+        rule: "description-text-format",
+        signals: &["bad_Description"],
+        backing: Backing::Signal,
+        findings: Findings::MessageContains("must end"),
     },
 ];
 
@@ -205,7 +231,6 @@ const GATES: &[Gate] = &[
 /// one into [`GATES`] is what "the rule landed" means.
 const PLANNED: &[(&str, &str)] = &[
     ("bad_Title", "description-title-format"),
-    ("bad_Description", "description-text-format"),
     // `bad_authors_at_R_field_*` is otherwise gated; these three are the ones
     // `description-authors-at-r` deliberately leaves to R.
     //
@@ -330,7 +355,7 @@ fn compare(input: &str, signals: &[(String, String)]) -> Result<(), String> {
             .map(|(_, detail)| detail.trim())
             .collect();
 
-        for finding in rule_hits(input, gate.rule) {
+        for finding in rule_hits(input, gate) {
             let backed = match gate.backing {
                 // R reports the offending dependency entry trimmed, and arity
                 // spans the whole entry, so the texts are directly comparable.
@@ -356,14 +381,18 @@ fn is_gated(signal: &str) -> bool {
 }
 
 /// The source text arity spans for each finding of `rule`.
-fn rule_hits(source: &str, rule: &str) -> Vec<String> {
+fn rule_hits(source: &str, gate: &Gate) -> Vec<String> {
     let path = Path::new("DESCRIPTION");
     let Ok(diagnostics) = check_description_document(path, source, &LintConfig::default()) else {
         return Vec::new();
     };
     diagnostics
         .iter()
-        .filter(|d| d.rule == rule)
+        .filter(|d| d.rule == gate.rule)
+        .filter(|d| match gate.findings {
+            Findings::All => true,
+            Findings::MessageContains(needle) => d.message.body.contains(needle),
+        })
         .filter_map(|d| {
             let start = usize::from(d.range.start());
             let end = usize::from(d.range.end());

@@ -6,9 +6,10 @@
 //! value R would compare, and the source range to put the caret on.
 //!
 //! [`Folded`] adds the third thing a rule that reads *into* a value needs: the
-//! source range of a slice of it. `description-authors-at-r` hands the folded
-//! text to the R parser and then has to point at one `person(...)` inside a
-//! field wrapped across five continuation lines.
+//! source range of a slice of it. `description-authors-at-r` points at one
+//! `person(...)` inside a field wrapped across five continuation lines, while
+//! `description-text-format` points at references and lexical defects inside
+//! folded prose.
 
 use rowan::{TextRange, TextSize};
 

@@ -103,6 +103,7 @@ so this page never drifts from the rules' actual behavior.
 - [`description-malformed-name`](#description-malformed-name)
 - [`description-malformed-version`](#description-malformed-version)
 - [`description-malformed-maintainer`](#description-malformed-maintainer)
+- [`description-text-format`](#description-text-format)
 - [`description-encoding`](#description-encoding)
 - [`description-authors-at-r`](#description-authors-at-r)
 - [`description-empty-person`](#description-empty-person)
@@ -2136,6 +2137,70 @@ warning: description-malformed-maintainer
 3 | Maintainer: Doe, Jane <jane@example.com>
   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the maintainer name `Doe, Jane` contains a comma but is not quoted
   = help: Quote the name (`"Doe, Jane" <jane@example.com>`), so the comma does not read as a second maintainer.
+```
+
+### `description-text-format`
+
+Check the package `Description` field against R's sentence-level and CRAN's lexical conventions. The text must begin with a capital and end in `.`, `!`, or `?` (optionally followed by one quote or closing parenthesis). It must not begin by repeating the package name or Title, or with `This package`, `Functions for`, `The package`, `A package`, `In this package`, or `In the package`.
+
+Single-quoted function identifiers such as `'case_when()'` are flagged too. Write function names without single quotes.
+
+HTTP(S) URLs, `doi:10.../...` references, and recognizable `arXiv:` identifiers must be enclosed in angle brackets, with no whitespace after the colon. Arity safely wraps an unambiguous bare reference. All prose changes and quote removal are report-only because they require the author's judgment.
+
+This rule is **enabled by default**.
+
+Boilerplate prose, a quoted function identifier, and a missing final period:
+
+```text
+Package: mypkg
+Title: Model Fitting
+Description: This package calls 'fit_model()'
+```
+
+```text
+warning: description-text-format
+ --> DESCRIPTION:3:14
+  |
+3 | Description: This package calls 'fit_model()'
+  |              ^^^^^^^^^^^^ the `Description` field must not start with `This package`
+  = help: Start with a concise statement of what the package does.
+warning: description-text-format
+ --> DESCRIPTION:3:33
+  |
+3 | Description: This package calls 'fit_model()'
+  |                                 ^^^^^^^^^^^^^ the function identifier `fit_model()` must not be single-quoted
+  = help: Write it as `fit_model()` without quotes.
+warning: description-text-format
+ --> DESCRIPTION:3:44
+  |
+3 | Description: This package calls 'fit_model()'
+  |                                            ^ the `Description` field must end with `.`, `!`, or `?`
+  = help: End the description with sentence punctuation.
+```
+
+A bare URL, for which arity can safely add angle brackets:
+
+```text
+Package: mypkg
+Title: Model Fitting
+Description: See https://example.com for details.
+```
+
+```text
+warning: description-text-format
+ --> DESCRIPTION:3:18
+  |
+3 | Description: See https://example.com for details.
+  |                  ^^^^^^^^^^^^^^^^^^^ the reference `https://example.com` must be enclosed in angle brackets
+  = help: Write it as `<https://example.com>`.
+```
+
+After applying the fix:
+
+```text
+Package: mypkg
+Title: Model Fitting
+Description: See <https://example.com> for details.
 ```
 
 ### `description-encoding`
