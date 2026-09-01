@@ -188,6 +188,32 @@ current machine rather than project facts), broad `library()` placement
 policy, and bare-name `object-overwrite` (substantially overlaps the more
 semantic `shadowed-builtin` and is prone to noise).
 
+### Rule-candidate audit: `DavisVaughan/extrachecks` (2026-09-01)
+
+Audited [extrachecks](https://github.com/DavisVaughan/extrachecks) at
+`a37e1ee87e47e99ba0ed88a4dfe417141ca5d89e`. The repository is a checklist,
+not an R package, so there was no source corpus to lint. Retained only five
+objective candidates from the audit. The three `DESCRIPTION` candidates refine the
+existing `description-title-format` and `description-text-format` entries under
+**More DESCRIPTION rules** rather than creating parallel TODOs.
+
+- [ ] `roxygen-internal-example-call` (documentation; project; no fix): flag an
+  unqualified call from `@examples` to a documented, unexported function in the
+  same package. Confirm exports against the actual NAMESPACE, skip `@noRd`, and
+  exclude bindings introduced inside the extracted example before reporting.
+  A minimal package was verified against R 4.6.1: an unqualified `internal()`
+  makes `R CMD check` fail with "could not find function", while
+  `pkg:::internal()` passes. Keep this report-only initially because adding
+  `pkg:::` and suppressing the topic with `@noRd` are both legitimate repairs.
+
+- [ ] `installed-packages` (performance; ns; no fix): report
+  `utils::installed.packages()` only in statically recognizable
+  package-availability tests, where R's own help recommends `find.package()`,
+  `system.file()`, or `requireNamespace()` instead. Namespace-confirm the call
+  and scope the rule to package projects; a package manager that intentionally
+  enumerates every installed package is not a violation. There is no general
+  fix because the recommended functions answer different questions.
+
 ### `undefined-symbol` false positives (rlang sweep, 2026-08-13)
 
 - [x] **`useDynLib()` binds native routines arity could not enumerate.** They
@@ -524,14 +550,20 @@ Tier 1—pure grammar, R is the oracle, no new machinery. None takes a fix:
 - [ ] `description-title-format`. The parts R and CRAN actually enforce: no
   continuation lines (R-exts says Title *cannot* have any, and
   `Field::value_lines` makes that a one-liner), no trailing period with R's
-  own `et al.`/`...` carve-out, Title equal to or redundantly containing the
-  package name, and the `usethis` placeholder `What the package does...`.
+  own `et al.`/`...` carve-out, no more than 65 Unicode characters (package
+  listings may truncate beyond that), Title equal to or redundantly containing
+  the package name, and the `usethis` placeholder `What the package does...`.
 
 - [ ] `description-text-format`, on the `Description` field: must end in
-  `[.!?]`, must start with a capital, must not start with the package name or
-  `The`/`This`/`A`/`In this`/`In the` `package`, and bare `https?://` and
-  `doi:` must be angle-bracketed. The angle brackets are the one **safe fix**
-  in the tier.
+  `[.!?]`, must start with a capital, and must not start with the package name,
+  the Title, `This package`, `Functions for`, or the existing broader
+  `The`/`A`/`In this`/`In the` `package` shapes. Add two narrow lexical clauses:
+  function-like identifiers such as `'case_when()'` must not be single-quoted,
+  and recognizable `doi:`, `arXiv:`, and `https:` references must use angle
+  brackets with no whitespace after the colon. Bare `https?://` remains part of
+  the same reference-format clause. Angle-bracketing a recognized reference is
+  the one **safe fix** in the tier; prose rewrites and quote removal stay
+  report-only until corpus evidence supports them.
 
 - [ ] `description-date-format`. `Date`, if present, must be ISO 8601
   `yyyy-mm-dd`. Deliberately **not** porting CRAN's "over a month old" and
