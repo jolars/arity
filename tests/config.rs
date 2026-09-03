@@ -124,7 +124,7 @@ fn cli_missing_config_file_errors() {
     let dir = tempdir().unwrap();
     let cfg = dir.path().join("does-not-exist.toml");
 
-    let output = run_cli(["format", "--config", cfg.to_str().unwrap()], LONG_FN_INPUT);
+    let output = run_cli_in_no_stdin(dir.path(), ["format", "--config", cfg.to_str().unwrap()]);
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
