@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.23.0](https://github.com/jolars/arity/compare/v0.22.0...v0.23.0) (2026-09-06)
+
+### Features
+- **config:** publish schema ([`7180652`](https://github.com/jolars/arity/commit/7180652f028a203e43ea2527fdd064fa3301a44f))
+- **lint:** add description text format rule ([`080b46c`](https://github.com/jolars/arity/commit/080b46ceeabc5dedea1907fb96f7a646fa1434b5))
+
+### Bug Fixes
+- bump `rust-version` to 1.89 and CI job ([`6683330`](https://github.com/jolars/arity/commit/6683330fe806effe4ecd0eee4b5dfbda040c3aef))
+
 ## [0.22.0](https://github.com/jolars/arity/compare/v0.21.0...v0.22.0) (2026-08-31)
 
 ### Features
