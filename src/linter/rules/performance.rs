@@ -2,6 +2,7 @@
 
 mod any_duplicated;
 mod any_is_na;
+mod boolean_arithmetic;
 mod call_rewrites;
 mod class_equals;
 mod coalesce;
@@ -14,6 +15,7 @@ mod sort;
 
 pub use any_duplicated::AnyDuplicated;
 pub use any_is_na::AnyIsNa;
+pub use boolean_arithmetic::BooleanArithmetic;
 pub use call_rewrites::{LengthLevels, List2df, MatrixApply, RepLen, SystemFile, WhichGrepl};
 pub use class_equals::ClassEquals;
 pub use coalesce::Coalesce;

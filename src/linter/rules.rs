@@ -193,6 +193,7 @@ fn performance_rules() -> Vec<Box<dyn Rule>> {
         Box::new(performance::SystemFile),
         Box::new(performance::List2df),
         Box::new(performance::LengthLevels),
+        Box::new(performance::BooleanArithmetic),
     ]
 }
 

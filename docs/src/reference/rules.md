@@ -82,6 +82,7 @@ so this page never drifts from the rules' actual behavior.
 - [`system-file`](#system-file)
 - [`list2df`](#list2df)
 - [`length-levels`](#length-levels)
+- [`boolean-arithmetic`](#boolean-arithmetic)
 
 **Documentation**
 
@@ -1610,6 +1611,29 @@ After applying the fix:
 
 ```r
 n <- nlevels(x)
+```
+
+### `boolean-arithmetic`
+
+Flag arithmetic existence tests such as `length(which(p)) == 0` and `sum(p, na.rm = TRUE) > 0` when `any(p, na.rm = TRUE)` states the intent more directly and avoids materializing indices or counting matches. Empty tests use `!any(...)`; positive tests use `any(...)`.
+
+The rule recognizes comparisons against zero or one, including mirrored spellings. A `sum()` argument must be syntactically logical and use `na.rm = TRUE`; a bare `sum(p) == 0` is left alone because `sum()` and `any()` differ when `TRUE` and `NA` coexist. Source calls must resolve to base R. The fix is **unsafe** because classed values can change `Summary` method dispatch.
+
+This rule is **enabled by default**.
+
+Testing whether any condition holds:
+
+```r
+if (length(which(ok)) == 0) stop()
+```
+
+```text
+warning: boolean-arithmetic
+ --> example.R:1:5
+  |
+1 | if (length(which(ok)) == 0) stop()
+  |     ^^^^^^^^^^^^^^^^^^^^^^ counting logical values is less direct than `!any(...)`
+  = help: Use `!any(...)` with `na.rm = TRUE`.
 ```
 
 ## Documentation

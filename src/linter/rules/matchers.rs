@@ -230,6 +230,61 @@ pub enum ConstantComparisonOp {
     In,
 }
 
+/// Whether a comparison of a nonnegative integer count tests for no matches or
+/// at least one match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CountTest {
+    Empty,
+    NonEmpty,
+}
+
+/// Classify a comparison between a nonnegative integer count and literal zero
+/// or one.
+///
+/// `count_on_left` orients the operator so mirrored spellings such as
+/// `0 < count` and `1 > count` receive the same classification as `count > 0`
+/// and `count < 1`. Comparisons that do not express an emptiness/existence test
+/// return `None`.
+pub fn count_test(
+    op: SyntaxKind,
+    literal: &SyntaxElement,
+    count_on_left: bool,
+) -> Option<CountTest> {
+    let bound = numeric_zero_or_one(literal)?;
+    let op = if count_on_left {
+        op
+    } else {
+        match op {
+            SyntaxKind::LESS_THAN => SyntaxKind::GREATER_THAN,
+            SyntaxKind::LESS_THAN_OR_EQUAL => SyntaxKind::GREATER_THAN_OR_EQUAL,
+            SyntaxKind::GREATER_THAN => SyntaxKind::LESS_THAN,
+            SyntaxKind::GREATER_THAN_OR_EQUAL => SyntaxKind::LESS_THAN_OR_EQUAL,
+            other => other,
+        }
+    };
+    match (op, bound) {
+        (SyntaxKind::GREATER_THAN, 0)
+        | (SyntaxKind::GREATER_THAN_OR_EQUAL, 1)
+        | (SyntaxKind::NOT_EQUAL, 0) => Some(CountTest::NonEmpty),
+        (SyntaxKind::EQUAL2, 0)
+        | (SyntaxKind::LESS_THAN_OR_EQUAL, 0)
+        | (SyntaxKind::LESS_THAN, 1) => Some(CountTest::Empty),
+        _ => None,
+    }
+}
+
+fn numeric_zero_or_one(el: &SyntaxElement) -> Option<u8> {
+    let tok = el.as_token()?;
+    if !matches!(tok.kind(), SyntaxKind::INT | SyntaxKind::FLOAT) {
+        return None;
+    }
+    match tok.text() {
+        "0" | "0L" => Some(0),
+        "1" | "1L" => Some(1),
+        _ => None,
+    }
+}
+
 /// A `==`, `!=`, or `%in%` expression with exactly one operand selected by
 /// `is_constant`. The other operand is returned along with whether the constant
 /// was written on the right; `%in%` callers need that direction because it is

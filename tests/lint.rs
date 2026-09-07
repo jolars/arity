@@ -4781,6 +4781,106 @@ fn unsafe_fixed_output(src: &str, rule: &str) -> String {
 }
 
 #[test]
+fn boolean_arithmetic_rewrites_length_which_existence_tests() {
+    let cases = [
+        (
+            "none <- length(which(p)) == 0\n",
+            "none <- !any(p, na.rm = TRUE)\n",
+        ),
+        (
+            "present <- length(which(p)) > 0L\n",
+            "present <- any(p, na.rm = TRUE)\n",
+        ),
+        (
+            "present <- 0 != length(which(df$ok))\n",
+            "present <- any(df$ok, na.rm = TRUE)\n",
+        ),
+        (
+            "none <- 1L > length(which(p))\n",
+            "none <- !any(p, na.rm = TRUE)\n",
+        ),
+    ];
+    for (input, expected) in cases {
+        assert_eq!(unsafe_fixed_output(input, "boolean-arithmetic"), expected);
+    }
+}
+
+#[test]
+fn boolean_arithmetic_rewrites_na_removed_logical_sums() {
+    let cases = [
+        (
+            "none <- sum(x == y, na.rm = TRUE) == 0\n",
+            "none <- !any(x == y, na.rm = TRUE)\n",
+        ),
+        (
+            "present <- sum(!missing, na.rm = TRUE) >= 1L\n",
+            "present <- any(!missing, na.rm = TRUE)\n",
+        ),
+        (
+            "present <- 0L < sum(grepl(pattern, x), na.rm = TRUE)\n",
+            "present <- any(grepl(pattern, x), na.rm = TRUE)\n",
+        ),
+    ];
+    for (input, expected) in cases {
+        assert_eq!(unsafe_fixed_output(input, "boolean-arithmetic"), expected);
+    }
+}
+
+#[test]
+fn boolean_arithmetic_ignores_unproven_or_inexact_shapes() {
+    for src in [
+        "sum(x > 0) == 0\n",                       // `TRUE` plus `NA` diverges
+        "sum(x > 0, na.rm = FALSE) == 0\n",        // missing values still propagate
+        "sum(x, na.rm = TRUE) == 0\n",             // `x` is not known to be logical
+        "sum(x > 0, y > 0, na.rm = TRUE) == 0\n",  // multiple vectors are deferred
+        "length(which(p, arr.ind = TRUE)) == 0\n", // not the exact `which(p)` shape
+        "length(which(p)) == 1\n",                 // not an existence test
+        "length(which(p)) > 1\n",                  // not an existence test
+        "any(p, na.rm = TRUE)\n",                  // already the direct spelling
+    ] {
+        assert!(
+            diagnostics(src)
+                .iter()
+                .all(|d| d.rule != "boolean-arithmetic"),
+            "{src:?} unexpectedly triggered boolean-arithmetic"
+        );
+    }
+}
+
+#[test]
+fn boolean_arithmetic_requires_base_source_callees() {
+    for src in [
+        "which <- function(x) x\nlength(which(p)) == 0\n",
+        "length <- function(x) 0\nlength(which(p)) == 0\n",
+        "sum <- function(...) 0\nsum(x > 0, na.rm = TRUE) == 0\n",
+        "grepl <- function(...) TRUE\nsum(grepl(p, x), na.rm = TRUE) == 0\n",
+    ] {
+        assert!(
+            diagnostics(src)
+                .iter()
+                .all(|d| d.rule != "boolean-arithmetic"),
+            "{src:?} unexpectedly triggered boolean-arithmetic"
+        );
+    }
+}
+
+#[test]
+fn boolean_arithmetic_withholds_unsafe_splices_and_lossy_fixes() {
+    for src in [
+        "any <- function(...) FALSE\nlength(which(p)) == 0\n",
+        "length(which(# keep\n  p)) == 0\n",
+        "(sum(x > 0, na.rm = TRUE) # keep\n  == 0)\n",
+        "length(which(p)) == 0 == flag\n",
+    ] {
+        let d = diagnostics(src)
+            .into_iter()
+            .find(|d| d.rule == "boolean-arithmetic")
+            .unwrap_or_else(|| panic!("expected a boolean-arithmetic finding for {src:?}"));
+        assert!(d.fix.is_none(), "{src:?} should withhold its fix");
+    }
+}
+
+#[test]
 fn string_boundary_rewrites_anchored_grepl() {
     // A leading `^` is a prefix test; a trailing `$` is a suffix test. The
     // subject moves to the first argument and the anchor is stripped from the
@@ -6036,6 +6136,11 @@ fn fixed_output_is_parseable_and_clean() {
         "file.path(system.file(package = \"p\"), \"a\")\n",
         "do.call(cbind.data.frame, x)\n",
         "length(levels(x))\n",
+        // boolean-arithmetic (count tests -> any; unsafe for method dispatch)
+        "none <- length(which(p)) == 0\n",
+        "present <- length(which(p)) > 0\n",
+        "none <- sum(x == y, na.rm = TRUE) == 0\n",
+        "present <- sum(!missing, na.rm = TRUE) >= 1\n",
         // internal-function (no fix — must not perturb the input)
         "x <- stats:::C_cor\n",
         "utils:::.getHelpFile(path)\n",

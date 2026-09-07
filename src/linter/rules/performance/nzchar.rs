@@ -69,10 +69,10 @@ impl Rule for Nzchar {
             return;
         };
         // One side is the `nchar(...)` call, the other a literal `0`/`1`.
-        let (call_el, lit_el, nchar_on_left) = if literal_bound(&rhs).is_some() {
-            (&lhs, &rhs, true)
-        } else if literal_bound(&lhs).is_some() {
-            (&rhs, &lhs, false)
+        let (call_el, test) = if let Some(test) = matchers::count_test(op.kind(), &rhs, true) {
+            (&lhs, test)
+        } else if let Some(test) = matchers::count_test(op.kind(), &lhs, false) {
+            (&rhs, test)
         } else {
             return;
         };
@@ -87,10 +87,7 @@ impl Rule for Nzchar {
         let Some(arg) = matchers::sole_positional(&call) else {
             return;
         };
-        let Some(negate) = classify(op.kind(), literal_bound(lit_el).unwrap(), nchar_on_left)
-        else {
-            return;
-        };
+        let negate = test == matchers::CountTest::Empty;
 
         // Namespace-confirm `nchar` is base R; otherwise the comparison is not a
         // string-length test at all.
@@ -130,44 +127,5 @@ impl Rule for Nzchar {
             .with_suggestion("Use `nzchar(x)` for non-empty, `!nzchar(x)` for empty."),
             fix,
         });
-    }
-}
-
-/// The numeric bound an emptiness comparison can use: `Some(0)` or `Some(1)`
-/// for a bare integer/double literal spelling zero or one, else `None`.
-fn literal_bound(el: &SyntaxElement) -> Option<u8> {
-    let tok = el.as_token()?;
-    if !matches!(tok.kind(), SyntaxKind::INT | SyntaxKind::FLOAT) {
-        return None;
-    }
-    match tok.text() {
-        "0" | "0L" => Some(0),
-        "1" | "1L" => Some(1),
-        _ => None,
-    }
-}
-
-/// Whether the comparison is an emptiness test, and if so whether it tests
-/// *empty* (`Some(true)`, rewrite negates) or *non-empty* (`Some(false)`).
-/// `lit` is the literal bound; `nchar_on_left` orients the operator (the
-/// mirrored `0 < nchar(x)` flips to `nchar(x) > 0`). `nchar()` is never
-/// negative, so `!= 0` and `> 0` coincide, as do `== 0`, `<= 0`, and `< 1`.
-fn classify(op: SyntaxKind, lit: u8, nchar_on_left: bool) -> Option<bool> {
-    use SyntaxKind::*;
-    let op = if nchar_on_left {
-        op
-    } else {
-        match op {
-            LESS_THAN => GREATER_THAN,
-            LESS_THAN_OR_EQUAL => GREATER_THAN_OR_EQUAL,
-            GREATER_THAN => LESS_THAN,
-            GREATER_THAN_OR_EQUAL => LESS_THAN_OR_EQUAL,
-            other => other,
-        }
-    };
-    match (op, lit) {
-        (GREATER_THAN, 0) | (GREATER_THAN_OR_EQUAL, 1) | (NOT_EQUAL, 0) => Some(false),
-        (EQUAL2, 0) | (LESS_THAN_OR_EQUAL, 0) | (LESS_THAN, 1) => Some(true),
-        _ => None,
     }
 }

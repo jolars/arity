@@ -142,10 +142,16 @@ Tier 2—performance/readability transformations that the formatter cannot do:
   are safe, while `matrix-apply` and `list2df` are unsafe because array shape,
   method dispatch, or recycling can change behavior. All fixes preserve retained
   trivia, and `list2df` honors the R 4.0 floor.
-- [ ] `boolean-arithmetic`: recognize `length(which(p)) == 0` and
+- [x] `boolean-arithmetic`: recognize `length(which(p)) == 0` and
   `sum(logical) == 0`-style existence tests and prefer `!any(p)` (plus the
   positive variants). Start with shapes whose NA behavior is provably
   preserved; lintr's broad family needs an oracle matrix before porting.
+  Implemented as a default-on `ns`-tier warning for exact base
+  `length(which(p))` calls and base `sum()` calls over a syntactically logical
+  argument with `na.rm = TRUE`. Empty/non-empty comparisons against zero or one
+  and mirrored spellings are covered; fixes preserve `NA` behavior but are
+  unsafe because `Summary` method dispatch can differ, and are withheld around
+  comments, a shadowed introduced `any`, or a tight negation context.
 - [ ] `list-comparison`: flag direct comparisons of known list-producing calls
   such as `lapply(...) > 1`, which rely on awkward coercion; recommend a typed
   iterator rather than guessing a fix.
