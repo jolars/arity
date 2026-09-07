@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.0](https://github.com/jolars/arity/compare/arity-parser-v0.5.3...arity-parser-v0.6.0) (2026-09-07)
+
+### Features
+- **parser:** expose function formals ([`9333512`](https://github.com/jolars/arity/commit/93335128b924b8f98a57100dfe8a0cda0b83dcbd))
+- **parser:** add NAMESPACE syntax surface ([`d26d8c4`](https://github.com/jolars/arity/commit/d26d8c441be6aab08000a581c4c4780fa524977c))
+
 ## [0.5.3](https://github.com/jolars/arity/compare/arity-parser-v0.5.2...arity-parser-v0.5.3) (2026-08-31)
 
 ### Bug Fixes
