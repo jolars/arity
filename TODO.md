@@ -2,6 +2,14 @@
 
 ## Parser
 
+- [ ] Add a lossless, typed `NAMESPACE` syntax surface to `arity-parser`.
+  Preserve directive and argument ranges, trivia, malformed constructs, and
+  unsupported directives, and report recoverable diagnostics. Refactor
+  `rindex::harvest::parse_namespace` to consume this surface, but keep
+  export/import, S3, native-registration, and `exportPattern()` interpretation
+  above the parser. Downstream static tools such as Polydoc should be able to
+  use it without depending on the full `arity` crate.
+
 - [ ] Comment-aware suppression placement edge cases: a **lint** directive
   inside `R_CALL_ARGUMENTS` between `( ... , <directive> , next_arg )` needs
   special handling so it attaches to `next_arg` instead of the whole argument
@@ -10,7 +18,14 @@
   already handles most cases.) The **format** half of this is closed: the
   formatter acts on statement lists only, and `misplaced-suppression` reports a
   format directive that lands anywhere else.
+
 ## AST wrappers
+
+- [ ] Expose function formals as structured typed AST entries rather than only
+  names. Each entry should retain its name token, full formal range, and
+  optional default-value syntax and range. Keep `FunctionExpr::params()` as a
+  names-only convenience if useful. This lets downstream source extractors such
+  as Polydoc recover signatures without re-walking the raw CST.
 
 - [ ] *Optional polish:* migrate the remaining individual lint rules to call the
   wrappers directly where it reads better than the `matchers` free-fns
