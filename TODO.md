@@ -1221,14 +1221,28 @@ rounds, distributions overlapping.
   looks like when workers park on a serial region, so it points at the serial
   region rather than at contention.
 
-- [ ] **Four sequential disk passes, 3.15 ms, one walk's worth of information.**
-  `collect_source_files` walks the tree; then `excluded_package_sources` and
-  `discover_packages` each re-list every `R/` and re-read every `DESCRIPTION`;
-  then pass 1 reads every file. The last round removed the *duplicated work
-  inside* those passes (one root walk per directory instead of per file, one
-  `DESCRIPTION` read instead of two) but left the pass structure alone. Feeding
-  all four from a single walk is the structural fix, and the largest serial item
-  left.
+- [x] **The four sequential disk passes were not a useful hotspot.** A coherent
+  discovery snapshot was built and fed to both `excluded_package_sources` and
+  salsa workspace setup, eliminating their duplicate package-metadata reads.
+  `strace` confirmed that the candidate removed two `getdents64` calls and three
+  `openat` calls on `tidyr/R`, but 30 quiet runs on one pinned core were flat:
+  41.089 -> 41.090 ms median (+0.003%), and 40.099 -> 40.150 ms minimum
+  (+0.13%). The experiment was removed. The old 3.15 ms attribution conflated
+  removable metadata reads with the source-buffer opens and ignore-aware walk
+  that a lint run still has to perform; merging their control flow does not
+  remove that I/O. Do not repeat this without new cold-filesystem evidence.
+
+- [ ] **Consider a filesystem snapshot only as a broader ownership cleanup.**
+  The rejected batch-only shortcut was not easier to maintain: it added a
+  transient metadata model, a second salsa workspace-installation path, and
+  special error plumbing while leaving the other discovery consumers alone. A
+  future refactor is worthwhile only if one snapshot becomes the shared
+  authority for file discovery, excluded package scope, package metadata, and
+  source buffers. It must preserve their deliberately different inclusion
+  policies, deterministic read errors and UTF-8 skips, parallel source reads,
+  and the LSP's watched-file refresh lifecycle. Until that design removes
+  ownership boundaries rather than duplicating them, the current passes are
+  clearer despite their redundant syscalls.
 
 - [x] **Render re-read from disk what pass 1 already had.** Each report with
   diagnostics now retains the analyzed `Arc<str>` (clean reports retain no
