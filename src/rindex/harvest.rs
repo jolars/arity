@@ -18,6 +18,9 @@ use std::path::{Path, PathBuf};
 
 use smol_str::SmolStr;
 
+use crate::namespace::{
+    Argument as NamespaceArgument, Directive as NamespaceDirective, DirectiveKind,
+};
 use crate::rindex::deparse;
 use crate::rindex::lazyload::{self, LazyLoadDb};
 use crate::rindex::libpaths::LibrarySearch;
@@ -451,16 +454,19 @@ pub fn parse_namespace(namespace: &str, object_names: &[&str]) -> NamespaceInfo 
     let mut info = NamespaceInfo::default();
     let mut patterns: Vec<regex::Regex> = Vec::new();
 
-    for directive in NamespaceDirectives::new(namespace) {
-        match directive.name {
-            "export" | "exportMethods" | "exportClasses" => {
-                info.exports.extend(directive.values());
+    for directive in crate::namespace::parse(namespace).document().directives() {
+        match directive.kind() {
+            DirectiveKind::Export
+            | DirectiveKind::ExportClass
+            | DirectiveKind::ExportClasses
+            | DirectiveKind::ExportMethods => {
+                info.exports.extend(directive_values(&directive));
             }
-            "S3method" => {
+            DirectiveKind::S3Method => {
                 // `S3method(generic, class)` registers the method `generic.class`;
                 // the three-arg form `S3method(generic, class, method)` binds the
                 // explicitly named `method` instead.
-                let args: Vec<String> = directive.values().collect();
+                let args: Vec<String> = directive_values(&directive).collect();
                 let method = match args.as_slice() {
                     [_, _, method] => Some(method.clone()),
                     [generic, class] => Some(format!("{generic}.{class}")),
@@ -471,34 +477,38 @@ pub fn parse_namespace(namespace: &str, object_names: &[&str]) -> NamespaceInfo 
                     info.s3_methods.insert(method);
                 }
             }
-            "exportPattern" | "exportClassPattern" => {
-                for arg in directive.values() {
+            DirectiveKind::ExportPattern | DirectiveKind::ExportClassPattern => {
+                for arg in directive_values(&directive) {
                     if let Some(re) = compile_r_pattern(&arg) {
                         patterns.push(re);
                     }
                 }
             }
-            "importFrom" | "importClassesFrom" | "importMethodsFrom" => {
+            DirectiveKind::ImportFrom
+            | DirectiveKind::ImportClassFrom
+            | DirectiveKind::ImportClassesFrom
+            | DirectiveKind::ImportMethodsFrom => {
                 // `importFrom(pkg, a, b, ...)`: the first arg is the package, the
                 // rest are the imported names. The S4 forms have the same shape
                 // and reference `pkg` just as surely; their names go into the
                 // same set, which can only ever *suppress* an
                 // `undefined-symbol` — the conservative direction.
-                let mut args = directive.values();
+                let mut args = directive_values(&directive);
                 if let Some(package) = args.next() {
                     info.imported_from_packages.insert(package);
                     info.imported_names.extend(args);
                 }
             }
-            "import" => {
+            DirectiveKind::Import => {
                 // R drops `except` and treats every remaining argument as a
                 // package, so only the *positional* arguments name packages. A
                 // kept `except = c(a, b)` would enter the set as a package no
                 // index can enumerate.
-                info.imported_packages.extend(directive.positional());
+                info.imported_packages
+                    .extend(directive_positional_values(&directive));
             }
-            "useDynLib" => parse_use_dyn_lib(directive, &mut info),
-            _ => {}
+            DirectiveKind::UseDynLib => parse_use_dyn_lib(&directive, &mut info),
+            DirectiveKind::Unsupported => {}
         }
     }
 
@@ -519,20 +529,23 @@ pub fn parse_namespace(namespace: &str, object_names: &[&str]) -> NamespaceInfo 
 /// names a routine bound under its own name, and `alias = routine` binds the
 /// alias. `.registration` and `.fixes` are options, so they are the two keywords
 /// that do not name a binding.
-fn parse_use_dyn_lib(directive: NamespaceDirective, info: &mut NamespaceInfo) {
+fn parse_use_dyn_lib(directive: &NamespaceDirective, info: &mut NamespaceInfo) {
     let mut fixes: Option<DynLibFixes> = None;
     let mut registration = false;
     let mut seen_dll = false;
-    for arg in directive.args {
-        match arg.name.as_deref() {
-            Some(".registration") => registration |= is_r_true(&arg.value),
-            Some(".fixes") => fixes = Some(parse_fixes(&arg.value)),
+    for arg in directive.arguments() {
+        let Some(value) = namespace_argument_value(&arg) else {
+            continue;
+        };
+        match arg.name().as_deref() {
+            Some(".registration") => registration |= is_r_true(&value),
+            Some(".fixes") => fixes = Some(parse_fixes(&value)),
             Some(alias) => {
                 info.dynlib_routines.insert(alias.to_string());
             }
             None if !seen_dll => seen_dll = true,
             None => {
-                info.dynlib_routines.insert(arg.value);
+                info.dynlib_routines.insert(value);
             }
         }
     }
@@ -585,176 +598,28 @@ fn compile_r_pattern(pattern: &str) -> Option<regex::Regex> {
     regex::Regex::new(pattern).ok()
 }
 
-struct NamespaceDirective {
-    name: &'static str,
-    args: Vec<NamespaceArg>,
+/// Every argument's interpreted value, named or not. Interpretation stays in
+/// the root crate: the parser owns only the argument's syntax and range.
+fn directive_values(directive: &NamespaceDirective) -> impl Iterator<Item = String> + '_ {
+    directive
+        .arguments()
+        .filter_map(|argument| namespace_argument_value(&argument))
 }
 
-impl NamespaceDirective {
-    /// Every argument's value, named or not.
-    fn values(self) -> impl Iterator<Item = String> {
-        self.args.into_iter().map(|arg| arg.value)
-    }
-
-    /// Only the *positional* arguments' values. `import(pkg, except = ...)`
-    /// names packages positionally and options by keyword, so this is how the
-    /// two are told apart after the fact.
-    fn positional(self) -> impl Iterator<Item = String> {
-        self.args
-            .into_iter()
-            .filter(|arg| arg.name.is_none())
-            .map(|arg| arg.value)
-    }
+/// Only positional argument values. `import(pkg, except = ...)` names packages
+/// positionally and options by keyword.
+fn directive_positional_values(
+    directive: &NamespaceDirective,
+) -> impl Iterator<Item = String> + '_ {
+    directive
+        .arguments()
+        .filter(|argument| argument.name().is_none())
+        .filter_map(|argument| namespace_argument_value(&argument))
 }
 
-/// One argument of a NAMESPACE directive.
-struct NamespaceArg {
-    /// The keyword, for `name = value`.
-    name: Option<String>,
-    value: String,
-}
-
-/// Iterator over the recognized top-level NAMESPACE directives. Tolerant of
-/// comments, conditionals, and whitespace; only the directives we care about
-/// are surfaced.
-struct NamespaceDirectives<'a> {
-    rest: &'a str,
-}
-
-const RECOGNIZED: &[&str] = &[
-    "exportPattern",
-    "exportClassPattern",
-    "exportClasses",
-    "exportMethods",
-    "export",
-    "importFrom",
-    "importClassesFrom",
-    "importMethodsFrom",
-    "import",
-    "S3method",
-    "useDynLib",
-];
-
-impl<'a> NamespaceDirectives<'a> {
-    fn new(text: &'a str) -> Self {
-        NamespaceDirectives { rest: text }
-    }
-}
-
-impl Iterator for NamespaceDirectives<'_> {
-    type Item = NamespaceDirective;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // Find the next recognized keyword followed by '('.
-        let mut best: Option<(usize, &'static str)> = None;
-        for &kw in RECOGNIZED {
-            if let Some(idx) = find_call(self.rest, kw)
-                && best.is_none_or(|(b, _)| idx < b)
-            {
-                best = Some((idx, kw));
-            }
-        }
-        let (idx, kw) = best?;
-        let after_kw = idx + kw.len();
-        // Position of '(' (skip spaces).
-        let paren_rel = self.rest[after_kw..].find('(')?;
-        let open = after_kw + paren_rel;
-        let close = matching_paren(self.rest, open)?;
-        let inner = &self.rest[open + 1..close];
-        self.rest = &self.rest[close + 1..];
-        Some(NamespaceDirective {
-            name: kw,
-            args: parse_args(inner),
-        })
-    }
-}
-
-/// Find `keyword` occurring as a call head (followed, after optional spaces, by
-/// `(`) and not as a substring of a longer identifier.
-fn find_call(text: &str, keyword: &str) -> Option<usize> {
-    let mut from = 0;
-    while let Some(rel) = text[from..].find(keyword) {
-        let idx = from + rel;
-        let before_ok = idx == 0
-            || !text[..idx]
-                .chars()
-                .next_back()
-                .map(is_ident_char)
-                .unwrap_or(false);
-        let after = &text[idx + keyword.len()..];
-        let after_ok = after.trim_start().starts_with('(');
-        // Reject if the char right after is an identifier char (e.g. matching
-        // `export` inside `exportPattern`).
-        let next_is_ident = after.chars().next().map(is_ident_char).unwrap_or(false);
-        if before_ok && after_ok && !next_is_ident {
-            return Some(idx);
-        }
-        from = idx + keyword.len();
-    }
-    None
-}
-
-fn is_ident_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '.' || c == '_'
-}
-
-fn matching_paren(text: &str, open: usize) -> Option<usize> {
-    let bytes = text.as_bytes();
-    let mut depth = 0i32;
-    let mut in_str: Option<u8> = None;
-    let mut i = open;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if let Some(q) = in_str {
-            if c == b'\\' {
-                i += 2;
-                continue;
-            }
-            if c == q {
-                in_str = None;
-            }
-        } else {
-            match c {
-                b'"' | b'\'' | b'`' => in_str = Some(c),
-                b'(' => depth += 1,
-                b')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(i);
-                    }
-                }
-                _ => {}
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Parse the comma-separated arguments of a directive, unquoting string
-/// literals and interpreting R string escapes. Keyword arguments
-/// (`name = value`) are reduced to their value.
-fn parse_args(inner: &str) -> Vec<NamespaceArg> {
-    let mut args = Vec::new();
-    for raw in split_top_level_commas(inner) {
-        let raw = raw.trim();
-        if raw.is_empty() {
-            continue;
-        }
-        // Split a leading `name =` off things like `pattern = "..."`. The
-        // keyword is kept rather than discarded: `import(pkg, except = ...)`
-        // needs it to tell a package from an option.
-        let (name, value) = match raw.split_once('=') {
-            Some((lhs, rhs)) if !lhs.trim_end().ends_with(['<', '>', '!']) => {
-                (Some(lhs.trim().to_string()), rhs.trim())
-            }
-            _ => (None, raw),
-        };
-        if let Some(value) = unquote(value) {
-            args.push(NamespaceArg { name, value });
-        }
-    }
-    args
+fn namespace_argument_value(argument: &NamespaceArgument) -> Option<String> {
+    let value = argument.value()?;
+    unquote(value.to_string().trim())
 }
 
 fn split_top_level_commas(inner: &str) -> Vec<&str> {
@@ -1061,6 +926,34 @@ mod tests {
     }
 
     #[test]
+    fn ignores_directive_spellings_outside_namespace_positions() {
+        let ns = r#"
+            # export(in_comment)
+            custom("export(in_string)", c(export(in_argument)))
+            if (requireNamespace("pkg") && export(in_condition)) export(real)
+            pkg::export(in_qualified_call)
+        "#;
+        let info = parse_namespace(ns, &[]);
+        assert_eq!(info.exports, ["real".to_string()].into());
+    }
+
+    #[test]
+    fn reads_directives_from_both_conditional_branches() {
+        let ns = r#"
+            if (getRversion() >= "4.0.0") {
+                export(new_api)
+            } else {
+                export(old_api)
+            }
+        "#;
+        let info = parse_namespace(ns, &[]);
+        assert_eq!(
+            info.exports,
+            ["new_api".to_string(), "old_api".to_string()].into()
+        );
+    }
+
+    #[test]
     fn parses_import_directives() {
         let ns = "import(rlang)\nimportFrom(dplyr, filter, select)\nexport(foo)\n";
         let info = parse_namespace(ns, &[]);
@@ -1177,6 +1070,17 @@ mod tests {
             info.imported_names,
             ["dgCMatrix".to_string(), "crossprod".to_string()].into()
         );
+    }
+
+    #[test]
+    fn singular_s4_aliases_match_their_plural_forms() {
+        let info = parse_namespace(
+            "exportClass(OldClass)\nimportClassFrom(methods, oldClass)\n",
+            &[],
+        );
+        assert_eq!(info.exports, ["OldClass".to_string()].into());
+        assert_eq!(info.imported_from_packages, ["methods".to_string()].into());
+        assert_eq!(info.imported_names, ["oldClass".to_string()].into());
     }
 
     #[test]

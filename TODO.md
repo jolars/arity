@@ -2,7 +2,7 @@
 
 ## Parser
 
-- [ ] Add a lossless, typed `NAMESPACE` syntax surface to `arity-parser`.
+- [x] Add a lossless, typed `NAMESPACE` syntax surface to `arity-parser`.
   Preserve directive and argument ranges, trivia, malformed constructs, and
   unsupported directives, and report recoverable diagnostics. Refactor
   `rindex::harvest::parse_namespace` to consume this surface, but keep
