@@ -9,6 +9,9 @@ crates/*/tests/fixtures/**/*.R eol=lf
 # line ending would shift every range in the tree.
 crates/*/tests/fixtures/dcf/**/*.dcf eol=lf
 
+# NAMESPACE fixture snapshots also pin byte offsets.
+crates/*/tests/fixtures/namespace/** eol=lf
+
 # Oracle corpus + baselines must use LF so format/projector baselines (which
 # are blessed on LF) stay byte-identical on every platform, Windows included.
 tests/oracle/** eol=lf
