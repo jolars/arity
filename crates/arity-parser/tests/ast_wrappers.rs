@@ -24,6 +24,13 @@ fn element_text(el: &SyntaxElement) -> String {
     }
 }
 
+macro_rules! range_text {
+    ($source:expr, $range:expr $(,)?) => {{
+        let range = $range;
+        &$source[usize::from(range.start())..usize::from(range.end())]
+    }};
+}
+
 fn first_binary(src: &str) -> BinaryExpr {
     let parsed = parse(src);
     assert!(
@@ -154,6 +161,112 @@ fn casts_core_expression_wrappers() {
     assert!(saw_binary);
     assert!(saw_for);
     assert!(saw_function);
+}
+
+#[test]
+fn function_formals_expose_source_ranges_and_defaults() {
+    let source = "function(required, `a b`, scalar = 1, choice = c(\"a\", \"b\"), commented = # why\n  4, ...) NULL";
+    let function = first_node::<FunctionExpr>(source);
+    let formals = function.formals();
+
+    assert_eq!(
+        formals
+            .iter()
+            .map(|formal| formal.name())
+            .collect::<Vec<_>>(),
+        ["required", "`a b`", "scalar", "choice", "commented", "..."]
+    );
+    assert_eq!(
+        formals
+            .iter()
+            .map(|formal| range_text!(source, formal.name_token().text_range()))
+            .collect::<Vec<_>>(),
+        ["required", "`a b`", "scalar", "choice", "commented", "..."]
+    );
+    assert_eq!(
+        formals
+            .iter()
+            .map(|formal| range_text!(source, formal.text_range()))
+            .collect::<Vec<_>>(),
+        [
+            "required",
+            "`a b`",
+            "scalar = 1",
+            "choice = c(\"a\", \"b\")",
+            "commented = # why\n  4",
+            "...",
+        ]
+    );
+    assert_eq!(
+        formals
+            .iter()
+            .map(|formal| { formal.default().map(|default| default.to_string()) })
+            .collect::<Vec<_>>(),
+        [
+            None,
+            None,
+            Some("1".to_string()),
+            Some("c(\"a\", \"b\")".to_string()),
+            Some("4".to_string()),
+            None,
+        ]
+    );
+    assert_eq!(
+        formals
+            .iter()
+            .map(|formal| {
+                formal
+                    .default_range()
+                    .map(|range| range_text!(source, range))
+            })
+            .collect::<Vec<_>>(),
+        [
+            None,
+            None,
+            Some("1"),
+            Some("c(\"a\", \"b\")"),
+            Some("4"),
+            None
+        ]
+    );
+
+    let params = function.params();
+    assert_eq!(
+        params
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect::<Vec<_>>(),
+        ["required", "`a b`", "scalar", "choice", "commented", "..."]
+    );
+}
+
+#[test]
+fn function_formals_remain_total_for_malformed_slots() {
+    let source = "function(x =, , y) 1";
+    let parsed = parse(source);
+    assert!(!parsed.diagnostics.is_empty());
+    let function = parsed
+        .cst
+        .descendants()
+        .find_map(FunctionExpr::cast)
+        .expect("a function");
+    let formals = function.formals();
+
+    assert_eq!(
+        formals
+            .iter()
+            .map(|formal| formal.name())
+            .collect::<Vec<_>>(),
+        ["x", "y"]
+    );
+    assert_eq!(
+        formals
+            .iter()
+            .map(|formal| range_text!(source, formal.text_range()))
+            .collect::<Vec<_>>(),
+        ["x =", "y"]
+    );
+    assert!(formals.iter().all(|formal| formal.default().is_none()));
 }
 
 #[test]

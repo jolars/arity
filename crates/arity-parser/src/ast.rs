@@ -8,7 +8,7 @@ pub mod tokens;
 pub use expr::{Expr, HasArgList};
 
 pub use nodes::{
-    Arg, ArgList, AssignmentExpr, BinaryExpr, BlockExpr, CallExpr, ForExpr, ForExprParts,
+    Arg, ArgList, AssignmentExpr, BinaryExpr, BlockExpr, CallExpr, ForExpr, ForExprParts, Formal,
     FunctionExpr, IfExpr, NamespaceAccess, Param, ParenExpr, RepeatExpr, Root, RoxygenBlock,
     RoxygenParagraph, RoxygenSection, RoxygenTag, Subset2Expr, SubsetExpr, UnaryExpr, WhileExpr,
     WhileExprParts,

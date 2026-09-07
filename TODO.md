@@ -21,7 +21,7 @@
 
 ## AST wrappers
 
-- [ ] Expose function formals as structured typed AST entries rather than only
+- [x] Expose function formals as structured typed AST entries rather than only
   names. Each entry should retain its name token, full formal range, and
   optional default-value syntax and range. Keep `FunctionExpr::params()` as a
   names-only convenience if useful. This lets downstream source extractors such

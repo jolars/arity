@@ -322,10 +322,9 @@ impl FunctionExpr {
             })
     }
 
-    /// Iterate the parameters of the function. Each entry yields the parameter
-    /// name and the range of its name token. Default-value tokens are skipped
-    /// (function param defaults are raw tokens in the param list, not nodes).
-    pub fn params(&self) -> Vec<Param> {
+    /// The function's formal arguments in source order, including their
+    /// optional default-value syntax and exact source ranges.
+    pub fn formals(&self) -> Vec<Formal> {
         let elements: Vec<_> = self.syntax().children_with_tokens().collect();
         let Some(lparen_idx) = self.lparen_index() else {
             return Vec::new();
@@ -333,47 +332,24 @@ impl FunctionExpr {
         let Some(rparen_idx) = self.rparen_index() else {
             return Vec::new();
         };
-        let mut params = Vec::new();
-        let mut depth = 0usize;
-        let mut at_param_start = true;
-        let mut i = lparen_idx + 1;
-        while i < rparen_idx {
-            let element = &elements[i];
-            match element.kind() {
-                SyntaxKind::LPAREN
-                | SyntaxKind::LBRACK
-                | SyntaxKind::LBRACK2
-                | SyntaxKind::LBRACE => {
-                    depth += 1;
-                    at_param_start = false;
-                }
-                SyntaxKind::RPAREN
-                | SyntaxKind::RBRACK
-                | SyntaxKind::RBRACK2
-                | SyntaxKind::RBRACE => {
-                    depth = depth.saturating_sub(1);
-                    at_param_start = false;
-                }
-                SyntaxKind::COMMA if depth == 0 => {
-                    at_param_start = true;
-                }
-                SyntaxKind::IDENT if depth == 0 && at_param_start => {
-                    if let SyntaxElement::Token(token) = element {
-                        params.push(Param {
-                            name: SmolStr::new(token.text()),
-                            name_token: token.clone(),
-                        });
-                    }
-                    at_param_start = false;
-                }
-                SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT => {}
-                _ => {
-                    at_param_start = false;
-                }
-            }
-            i += 1;
-        }
-        params
+
+        split_function_formals(&elements[lparen_idx + 1..rparen_idx])
+            .into_iter()
+            .filter_map(formal_from_elements)
+            .collect()
+    }
+
+    /// The function's parameters as a names-only compatibility projection.
+    /// Use [`Self::formals`] when default syntax or full formal ranges are
+    /// needed.
+    pub fn params(&self) -> Vec<Param> {
+        self.formals()
+            .into_iter()
+            .map(|formal| Param {
+                name: formal.name,
+                name_token: formal.name_token,
+            })
+            .collect()
     }
 
     /// The function body — the expression that follows the `)`. May be any
@@ -388,6 +364,107 @@ impl FunctionExpr {
             .find(|e| !is_trivia(e.kind()) && e.kind() != SyntaxKind::COMMENT)
             .cloned()
     }
+}
+
+/// One function formal, retaining its name, complete source range, and
+/// optional default-value syntax.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Formal {
+    name: SmolStr,
+    name_token: SyntaxToken<RLanguage>,
+    range: TextRange,
+    default: Option<SyntaxElement<RLanguage>>,
+}
+
+impl Formal {
+    /// The formal's name as written, including backticks for a non-syntactic
+    /// name.
+    pub fn name(&self) -> SmolStr {
+        self.name.clone()
+    }
+
+    /// The name token and its exact source range.
+    pub fn name_token(&self) -> SyntaxToken<RLanguage> {
+        self.name_token.clone()
+    }
+
+    /// The whole formal range, excluding its comma and surrounding trivia.
+    pub fn text_range(&self) -> TextRange {
+        self.range
+    }
+
+    /// The default-value syntax, whether a token atom or compound node.
+    pub fn default(&self) -> Option<SyntaxElement<RLanguage>> {
+        self.default.clone()
+    }
+
+    /// The exact source range of [`Self::default`].
+    pub fn default_range(&self) -> Option<TextRange> {
+        self.default.as_ref().map(SyntaxElement::text_range)
+    }
+}
+
+fn split_function_formals(
+    elements: &[SyntaxElement<RLanguage>],
+) -> Vec<&[SyntaxElement<RLanguage>]> {
+    let mut formals = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0usize;
+
+    for (index, element) in elements.iter().enumerate() {
+        match element.kind() {
+            SyntaxKind::LPAREN | SyntaxKind::LBRACK | SyntaxKind::LBRACK2 | SyntaxKind::LBRACE => {
+                depth += 1
+            }
+            SyntaxKind::RPAREN | SyntaxKind::RBRACK | SyntaxKind::RBRACK2 | SyntaxKind::RBRACE => {
+                depth = depth.saturating_sub(1)
+            }
+            SyntaxKind::COMMA if depth == 0 => {
+                formals.push(&elements[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    formals.push(&elements[start..]);
+    formals
+}
+
+fn formal_from_elements(elements: &[SyntaxElement<RLanguage>]) -> Option<Formal> {
+    let name_index = elements
+        .iter()
+        .position(|element| !is_trivia(element.kind()) && element.kind() != SyntaxKind::COMMENT)?;
+    let SyntaxElement::Token(name_token) = &elements[name_index] else {
+        return None;
+    };
+    if name_token.kind() != SyntaxKind::IDENT {
+        return None;
+    }
+
+    let eq_index = elements[name_index + 1..]
+        .iter()
+        .position(|element| element.kind() == SyntaxKind::ASSIGN_EQ)
+        .map(|index| name_index + 1 + index);
+    let default = eq_index.and_then(|index| {
+        elements[index + 1..]
+            .iter()
+            .find(|element| !is_trivia(element.kind()) && element.kind() != SyntaxKind::COMMENT)
+            .filter(|element| crate::ast::Expr::cast((*element).clone()).is_some())
+            .cloned()
+    });
+    let end = default
+        .as_ref()
+        .map(SyntaxElement::text_range)
+        .map(TextRange::end)
+        .or_else(|| eq_index.map(|index| elements[index].text_range().end()))
+        .unwrap_or_else(|| name_token.text_range().end());
+
+    Some(Formal {
+        name: SmolStr::new(name_token.text()),
+        name_token: name_token.clone(),
+        range: TextRange::new(name_token.text_range().start(), end),
+        default,
+    })
 }
 
 #[derive(Debug, Clone)]
