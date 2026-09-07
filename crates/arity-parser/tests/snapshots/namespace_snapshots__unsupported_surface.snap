@@ -1,0 +1,9 @@
+---
+source: crates/arity-parser/tests/namespace_snapshots.rs
+expression: "format_surface(&input, &output.document())"
+---
+directive Unsupported Some("customDirective") 0..38 "customDirective(foo, option = c(a, b))"
+  argument None 16..19 "foo" value=Some("foo")
+  argument Some("option") 21..37 "option = c(a, b)" value=Some("c(a, b)")
+directive Export Some("export") 39..60 "export(still_visible)"
+  argument None 46..59 "still_visible" value=Some("still_visible")

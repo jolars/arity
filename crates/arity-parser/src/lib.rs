@@ -15,6 +15,8 @@
 //!   mould.
 //! - [`dcf`] — a second, independent grammar: a lossless CST for DCF, the
 //!   format of R's `DESCRIPTION`.
+//! - [`namespace`] — a typed, lossless view of R package `NAMESPACE` files,
+//!   built on the R CST without evaluating conditional directives.
 //!
 //! The parser preserves all source text: `reconstruct(&parse(text).syntax())`
 //! is always `text`.
@@ -22,5 +24,6 @@
 pub mod ast;
 pub mod dcf;
 pub mod directive;
+pub mod namespace;
 pub mod parser;
 pub mod syntax;

@@ -1,0 +1,11 @@
+---
+source: crates/arity-parser/tests/namespace_snapshots.rs
+expression: "format_surface(&input, &output.document())"
+---
+directive Export Some("export") 34..49 "export(new_api)"
+  argument None 41..48 "new_api" value=Some("new_api")
+directive Export Some("export") 61..76 "export(old_api)"
+  argument None 68..75 "old_api" value=Some("old_api")
+directive UseDynLib Some("useDynLib") 79..122 "dll <- useDynLib(pkg, .registration = TRUE)"
+  argument None 96..99 "pkg" value=Some("pkg")
+  argument Some(".registration") 101..121 ".registration = TRUE" value=Some("TRUE")

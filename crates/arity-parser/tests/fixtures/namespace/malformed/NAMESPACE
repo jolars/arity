@@ -1,0 +1,4 @@
+42
+export(before)
+for (x in xs) export(not_a_namespace_container)
+export(after)

@@ -1,0 +1,6 @@
+if (getRversion() >= "4.0.0") {
+  export(new_api)
+} else {
+  export(old_api)
+}
+dll <- useDynLib(pkg, .registration = TRUE)

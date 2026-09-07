@@ -1,0 +1,10 @@
+---
+source: crates/arity-parser/tests/namespace_snapshots.rs
+expression: "format_surface(&input, &output.document())"
+---
+malformed 0..2 "42"
+directive Export Some("export") 3..17 "export(before)"
+  argument None 10..16 "before" value=Some("before")
+malformed 18..65 "for (x in xs) export(not_a_namespace_container)"
+directive Export Some("export") 66..79 "export(after)"
+  argument None 73..78 "after" value=Some("after")

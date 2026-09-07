@@ -1,0 +1,16 @@
+---
+source: crates/arity-parser/tests/namespace_snapshots.rs
+expression: "format!(\"{:#?}\", output.diagnostics)"
+---
+[
+    ParseDiagnostic {
+        message: "expected a NAMESPACE directive",
+        start: 0,
+        end: 2,
+    },
+    ParseDiagnostic {
+        message: "expected a NAMESPACE directive",
+        start: 18,
+        end: 65,
+    },
+]

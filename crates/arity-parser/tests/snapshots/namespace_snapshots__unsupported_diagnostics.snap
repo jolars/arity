@@ -1,0 +1,11 @@
+---
+source: crates/arity-parser/tests/namespace_snapshots.rs
+expression: "format!(\"{:#?}\", output.diagnostics)"
+---
+[
+    ParseDiagnostic {
+        message: "unsupported NAMESPACE directive",
+        start: 0,
+        end: 15,
+    },
+]

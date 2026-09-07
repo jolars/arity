@@ -1,0 +1,2 @@
+customDirective(foo, option = c(a, b))
+export(still_visible)

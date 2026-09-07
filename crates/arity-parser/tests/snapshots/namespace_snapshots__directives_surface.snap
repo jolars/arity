@@ -1,0 +1,41 @@
+---
+source: crates/arity-parser/tests/namespace_snapshots.rs
+expression: "format_surface(&input, &output.document())"
+---
+directive Export Some("export") 67..85 "export(foo, \"bar\")"
+  argument None 74..77 "foo" value=Some("foo")
+  argument None 79..84 "\"bar\"" value=Some("\"bar\"")
+directive ExportPattern Some("exportPattern") 86..108 "exportPattern(\"^[^.]\")"
+  argument None 100..107 "\"^[^.]\"" value=Some("\"^[^.]\"")
+directive ExportClassPattern Some("exportClassPattern") 109..137 "exportClassPattern(\"^Class\")"
+  argument None 128..136 "\"^Class\"" value=Some("\"^Class\"")
+directive ExportClass Some("exportClass") 138..159 "exportClass(OldClass)"
+  argument None 150..158 "OldClass" value=Some("OldClass")
+directive ExportClasses Some("exportClasses") 160..183 "exportClasses(NewClass)"
+  argument None 174..182 "NewClass" value=Some("NewClass")
+directive ExportMethods Some("exportMethods") 184..203 "exportMethods(show)"
+  argument None 198..202 "show" value=Some("show")
+directive Import Some("import") 204..249 "import(stats, utils, except = c(filter, lag))"
+  argument None 211..216 "stats" value=Some("stats")
+  argument None 218..223 "utils" value=Some("utils")
+  argument Some("except") 225..248 "except = c(filter, lag)" value=Some("c(filter, lag)")
+directive ImportFrom Some("importFrom") 250..276 "importFrom(stats, predict)"
+  argument None 261..266 "stats" value=Some("stats")
+  argument None 268..275 "predict" value=Some("predict")
+directive ImportClassFrom Some("importClassFrom") 277..311 "importClassFrom(methods, oldClass)"
+  argument None 293..300 "methods" value=Some("methods")
+  argument None 302..310 "oldClass" value=Some("oldClass")
+directive ImportClassesFrom Some("importClassesFrom") 312..348 "importClassesFrom(methods, newClass)"
+  argument None 330..337 "methods" value=Some("methods")
+  argument None 339..347 "newClass" value=Some("newClass")
+directive ImportMethodsFrom Some("importMethodsFrom") 349..381 "importMethodsFrom(methods, show)"
+  argument None 367..374 "methods" value=Some("methods")
+  argument None 376..380 "show" value=Some("show")
+directive UseDynLib Some("useDynLib") 382..441 "useDynLib(pkg, .registration = TRUE, .fixes = c(\"C_\", \"_\"))"
+  argument None 392..395 "pkg" value=Some("pkg")
+  argument Some(".registration") 397..417 ".registration = TRUE" value=Some("TRUE")
+  argument Some(".fixes") 419..440 ".fixes = c(\"C_\", \"_\")" value=Some("c(\"C_\", \"_\")")
+directive S3Method Some("S3method") 442..488 "S3method(stats::predict, thing, predict_thing)"
+  argument None 451..465 "stats::predict" value=Some("stats::predict")
+  argument None 467..472 "thing" value=Some("thing")
+  argument None 474..487 "predict_thing" value=Some("predict_thing")
