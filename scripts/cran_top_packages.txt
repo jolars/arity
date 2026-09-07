@@ -33,6 +33,7 @@ ModelMetrics
 PKI
 QuickJSR
 R.cache
+R.matlab
 R.methodsS3
 R.oo
 R.utils
@@ -464,6 +465,7 @@ shinytest2
 shinythemes
 showtext
 showtextdb
+signal
 sitmo
 slam
 slider
@@ -490,6 +492,7 @@ statmod
 stringdist
 stringi
 stringr
+strucchange
 styler
 survey
 survival
@@ -499,6 +502,7 @@ sys
 sysfonts
 systemfonts
 tensorA
+tensorflow
 terra
 tesseract
 testthat
