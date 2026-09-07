@@ -205,12 +205,30 @@ jobs:
     if: ${{ needs.versionary.outputs.release_created == 'true' && startsWith(needs.versionary.outputs.tag_name, 'v') }}
     uses: ./.github/workflows/packages.yml
     with:
-      upload: "true"
+      upload: true
       tag: ${{ needs.versionary.outputs.tag_name }}
     permissions:
       contents: write
       id-token: write # mint the OIDC token for keyless provenance signing
       attestations: write # store the build provenance attestation
+
+  dispatch-npm:
+    name: Dispatch npm Publishing
+    needs: [versionary, build-release-assets]
+    if: ${{ needs.versionary.outputs.release_created == 'true' && startsWith(needs.versionary.outputs.tag_name, 'v') }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch npm workflow at release tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.versionary.outputs.tag_name }}
+        run: |
+          gh workflow run publish-npm.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$TAG" \
+            -f tag="$TAG"
 
   publish-extensions:
     name: Publish Editor Extensions

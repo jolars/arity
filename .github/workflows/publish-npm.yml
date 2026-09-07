@@ -2,142 +2,59 @@ name: Publish npm
 
 # Publishes the unscoped `arity-cli` package and the eight `@arity-cli/<platform>`
 # binary packages with OIDC provenance. Each package's name must already exist
-# and have a trusted publisher configured before CI can publish it -- so adding a
-# NEW target requires a one-time manual `npm publish` of a placeholder for that
-# name first (npm has no name reservation, and trusted publishing can only be set
-# up on a package that already exists).
+# and have a trusted publisher configured before CI can publish it—so adding a
+# new target requires a one-time manual `npm publish` of a placeholder first.
+#
+# Release binaries are built once by `packages.yml`. After those assets are
+# complete, `build-and-test.yml` dispatches this workflow at the Versionary tag.
+# The npm packages therefore contain the exact GitHub release binaries.
 
 on:
   workflow_dispatch:
     inputs:
-      dry-run:
-        description: "Build and assemble packages but do not publish"
+      tag:
+        description: "Release tag whose binaries should be published"
+        required: true
+        type: string
+      dry_run:
+        description: "Assemble packages but do not publish"
         type: boolean
         default: false
-  push:
-    tags:
-      - "v*"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  CARGO_TERM_COLOR: always
+  group: ${{ github.workflow }}-${{ inputs.tag }}
+  cancel-in-progress: false
 
 jobs:
-  build-binaries:
-    name: Build binary ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            npm_name: linux-x64-gnu
-            binary: arity
-            glibc: "2.17"
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
-            npm_name: linux-arm64-gnu
-            binary: arity
-            glibc: "2.17"
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            npm_name: linux-x64-musl
-            binary: arity
-            musl: true
-          - target: aarch64-unknown-linux-musl
-            os: ubuntu-24.04-arm
-            npm_name: linux-arm64-musl
-            binary: arity
-            musl: true
-          - target: x86_64-apple-darwin
-            os: macos-15-intel
-            npm_name: darwin-x64
-            binary: arity
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            npm_name: darwin-arm64
-            binary: arity
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            npm_name: win32-x64
-            binary: arity.exe
-          - target: aarch64-pc-windows-msvc
-            os: windows-11-arm
-            npm_name: win32-arm64
-            binary: arity.exe
+  validate-release:
+    name: Validate release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
     steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: npm-${{ matrix.target }}
-          cache-bin: "false"
-          prefix-key: "v1-rust"
-
-      - name: Install musl tools
-        if: matrix.musl
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-
-      # Pin the glibc symbol-version floor (link-time only; the binary still
-      # uses the host's glibc at runtime) so it runs on distros older than the
-      # CI runner.
-      - name: Install Zig
-        if: matrix.glibc
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.14.1
-
-      - name: Install cargo-zigbuild
-        if: matrix.glibc
-        run: cargo install --locked cargo-zigbuild
-
-      - name: Build binary (zigbuild)
-        if: matrix.glibc
-        run: cargo zigbuild --release --bin arity --target ${{ matrix.target }}.${{ matrix.glibc }}
-
-      - name: Build binary
-        if: ${{ !matrix.glibc }}
-        run: cargo build --release --bin arity --target ${{ matrix.target }}
-
-      # Regression guard: fail if the binary ever requires a glibc newer than
-      # the declared floor.
-      - name: Verify glibc floor
-        if: matrix.glibc
+      - name: Validate requested release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          bin="target/${{ matrix.target }}/release/${{ matrix.binary }}"
-          max=$(objdump -T "$bin" 2>/dev/null \
-            | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' \
-            | sed 's/GLIBC_//' | sort -V | tail -n1 || true)
-          echo "Highest required glibc symbol: ${max:-none}"
-          if [ -n "$max" ] && [ "$(printf '%s\n%s\n' "$max" "${{ matrix.glibc }}" | sort -V | tail -n1)" != "${{ matrix.glibc }}" ]; then
-            echo "::error::arity requires glibc $max, above the ${{ matrix.glibc }} floor"
+          if [[ "$TAG" != v* ]]; then
+            echo "::error::npm packages can only be published for a primary v* release"
             exit 1
           fi
-
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: binary-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/${{ matrix.binary }}
-          if-no-files-found: error
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
   publish-platform-packages:
     name: Publish @arity-cli/${{ matrix.npm_name }}
-    needs: build-binaries
+    needs: validate-release
     runs-on: ubuntu-latest
     environment: release
     permissions:
+      contents: read
       id-token: write
     strategy:
       fail-fast: false
@@ -149,62 +66,95 @@ jobs:
             cpu: x64
             libc: glibc
             binary: arity
+            archive_ext: tar.gz
           - target: aarch64-unknown-linux-gnu
             npm_name: linux-arm64-gnu
             os: linux
             cpu: arm64
             libc: glibc
             binary: arity
+            archive_ext: tar.gz
           - target: x86_64-unknown-linux-musl
             npm_name: linux-x64-musl
             os: linux
             cpu: x64
             libc: musl
             binary: arity
+            archive_ext: tar.gz
           - target: aarch64-unknown-linux-musl
             npm_name: linux-arm64-musl
             os: linux
             cpu: arm64
             libc: musl
             binary: arity
+            archive_ext: tar.gz
           - target: x86_64-apple-darwin
             npm_name: darwin-x64
             os: darwin
             cpu: x64
             binary: arity
+            archive_ext: tar.gz
           - target: aarch64-apple-darwin
             npm_name: darwin-arm64
             os: darwin
             cpu: arm64
             binary: arity
+            archive_ext: tar.gz
           - target: x86_64-pc-windows-msvc
             npm_name: win32-x64
             os: win32
             cpu: x64
             binary: arity.exe
+            archive_ext: zip
           - target: aarch64-pc-windows-msvc
             npm_name: win32-arm64
             os: win32
             cpu: arm64
             binary: arity.exe
+            archive_ext: zip
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate-release.outputs.tag }}
 
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - name: Download binary
-        uses: actions/download-artifact@v8
-        with:
-          name: binary-${{ matrix.target }}
-          path: binary
+      - name: Download release binary
+        env:
+          ARCHIVE_EXT: ${{ matrix.archive_ext }}
+          BINARY: ${{ matrix.binary }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.validate-release.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          asset="arity-$TARGET.$ARCHIVE_EXT"
+          mkdir release binary
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$asset" --pattern "$asset.sha256" --dir release
+          (cd release && sha256sum --check "$asset.sha256")
+
+          if [ "$ARCHIVE_EXT" = zip ]; then
+            unzip -j "release/$asset" "$BINARY" -d binary
+          else
+            tar -xzf "release/$asset" -C binary "./$BINARY"
+          fi
+          test -f "binary/$BINARY"
 
       - name: Read package version
         id: version
+        env:
+          TAG: ${{ needs.validate-release.outputs.tag }}
         run: |
+          set -euo pipefail
           version=$(node -p "require('./npm/arity-cli/package.json').version")
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::npm version $version does not match release tag $TAG"
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Assemble package
@@ -240,7 +190,7 @@ jobs:
             fs.writeFileSync(path, JSON.stringify(json, null, 2) + "\n");
           ' "$pkg_dir/package.json"
 
-          # Substitute __NAME__ in README
+          # Substitute __NAME__ in README.
           sed -i "s|__NAME__|${{ matrix.npm_name }}|g" "$pkg_dir/README.md"
 
           echo "--- package.json ---"
@@ -255,8 +205,10 @@ jobs:
 
       - name: Publish to npm
         working-directory: staging/${{ matrix.npm_name }}
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          if [ "${{ inputs.dry-run }}" = "true" ]; then
+          if [ "$DRY_RUN" = true ]; then
             npm publish --provenance --access public --dry-run
           else
             npm publish --provenance --access public
@@ -264,18 +216,32 @@ jobs:
 
   publish-main:
     name: Publish arity-cli
-    needs: publish-platform-packages
+    needs: [validate-release, publish-platform-packages]
     runs-on: ubuntu-latest
     environment: release
     permissions:
+      contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate-release.outputs.tag }}
 
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+
+      - name: Verify package version
+        env:
+          TAG: ${{ needs.validate-release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./npm/arity-cli/package.json').version")
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::npm version $version does not match release tag $TAG"
+            exit 1
+          fi
 
       - name: Assemble main package
         run: |
@@ -292,8 +258,10 @@ jobs:
 
       - name: Publish to npm
         working-directory: staging/arity-cli
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          if [ "${{ inputs.dry-run }}" = "true" ]; then
+          if [ "$DRY_RUN" = true ]; then
             npm publish --provenance --access public --dry-run
           else
             npm publish --provenance --access public

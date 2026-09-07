@@ -6,8 +6,8 @@ on:
       upload:
         description: "Upload to release (requires a release to exist)"
         required: false
-        default: "false"
-        type: string
+        default: false
+        type: boolean
       tag:
         description: "Release tag to upload to (only if upload is true)"
         required: false
@@ -17,11 +17,8 @@ on:
       upload:
         description: "Upload to release (requires a release to exist)"
         required: false
-        default: "false"
-        type: choice
-        options:
-          - "true"
-          - "false"
+        default: false
+        type: boolean
       tag:
         description: "Release tag to upload to (only if upload is true)"
         required: false
@@ -200,19 +197,19 @@ jobs:
       # Sign a build provenance attestation for the archive, verifiable with
       # `gh attestation verify`. Only on real release uploads.
       - name: Attest build provenance (Unix)
-        if: inputs.upload == 'true' && runner.os != 'Windows'
+        if: inputs.upload && runner.os != 'Windows'
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: arity-${{ matrix.target }}.tar.gz
 
       - name: Attest build provenance (Windows)
-        if: inputs.upload == 'true' && runner.os == 'Windows'
+        if: inputs.upload && runner.os == 'Windows'
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: arity-${{ matrix.target }}.zip
 
       - name: Upload binary to release
-        if: inputs.upload == 'true'
+        if: inputs.upload
         shell: bash
         run: |
           TAG="${{ inputs.tag }}"
@@ -233,7 +230,7 @@ jobs:
       # per-target build outputs) so each release carries the exact installer
       # that shipped with it.
       - name: Upload installer scripts to release
-        if: inputs.upload == 'true' && matrix.target == 'x86_64-unknown-linux-gnu'
+        if: inputs.upload && matrix.target == 'x86_64-unknown-linux-gnu'
         shell: bash
         run: |
           TAG="${{ inputs.tag }}"
@@ -250,7 +247,7 @@ jobs:
   checksums:
     name: Publish SHA256SUMS
     needs: build-binaries
-    if: inputs.upload == 'true'
+    if: inputs.upload
     runs-on: ubuntu-latest
     permissions:
       contents: write
