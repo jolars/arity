@@ -145,10 +145,10 @@ impl ExcludeFilter {
     /// `canonicalize` returns a `\\?\`-verbatim path that nothing else in the
     /// process produces — so *every* absolute walk path missed.
     ///
-    /// Covers the spellings [`root_spellings`] can **derive from the root**. The
-    /// reverse — a candidate reached through a symlink the root does not name —
-    /// would need a `canonicalize` per entry, which is a syscall per file to fix
-    /// a case that needs an explicitly symlinked path on the command line.
+    /// Covers the spellings [`root_spellings`] can derive from the root. Walks
+    /// reached through another symlink resolve their starting path once in
+    /// [`collect`], then translate entry paths for matching without filesystem
+    /// calls per entry.
     ///
     /// Relativizing here rather than teaching the matcher about spellings keeps
     /// this in one place: what a pattern is anchored to is this filter's
@@ -272,9 +272,28 @@ fn collect(
             // (e.g. `renv/`) is never descended into, matching gitignore
             // semantics. The filter is cloned into the `'static` closure.
             let filter = exclude.clone();
+            // An input such as macOS's `/var/...` can alias the canonical
+            // pattern root. Resolve that spelling once for matching while
+            // keeping the walk's original paths for diagnostics. Paths already
+            // under a known root retain their lexical exclusion semantics.
+            let canonical_root = if filter.matcher.is_some()
+                && !filter.roots.iter().any(|root| path.starts_with(root))
+            {
+                path.canonicalize().ok()
+            } else {
+                None
+            };
+            let walk_root = path.clone();
             builder.filter_entry(move |entry| {
                 let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
-                !filter.is_excluded(entry.path(), is_dir)
+                let normalized = canonical_root.as_ref().and_then(|root| {
+                    entry
+                        .path()
+                        .strip_prefix(&walk_root)
+                        .ok()
+                        .map(|relative| root.join(relative))
+                });
+                !filter.is_excluded(normalized.as_deref().unwrap_or(entry.path()), is_dir)
             });
             for entry in builder.build() {
                 match entry {
@@ -581,6 +600,55 @@ mod tests {
         let filter = ExcludeFilter::new(&link, &["tests/fixtures/".to_string()]).unwrap();
         let files = collect_r_files(std::slice::from_ref(&canonical), &filter).unwrap();
         assert_eq!(files, vec![canonical.join("keep.R")]);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_anchored_pattern_holds_when_the_walk_uses_a_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let real = dir.path().join("real");
+        touch(&real.join("keep.R"));
+        touch(&real.join("src/keep.R"));
+        touch(&real.join("src/generated/skip.R"));
+        touch(&real.join("other/generated/keep.R"));
+        let link = dir.path().join("link");
+        symlink(&real, &link).unwrap();
+        let canonical = real.canonicalize().unwrap();
+        let filter = ExcludeFilter::new(&canonical, &["/src/generated/".to_string()]).unwrap();
+
+        let files = collect_r_files(std::slice::from_ref(&link), &filter).unwrap();
+        assert_eq!(
+            files,
+            vec![
+                link.join("keep.R"),
+                link.join("other/generated/keep.R"),
+                link.join("src/keep.R"),
+            ]
+        );
+
+        // A walk starting below the pattern root must keep the same anchor.
+        let files = collect_r_files(&[link.join("src")], &filter).unwrap();
+        assert_eq!(files, vec![link.join("src/keep.R")]);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_walk_under_the_pattern_root_keeps_its_symlink_spelling() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let real = root.join("real");
+        touch(&real.join("keep.R"));
+        touch(&real.join("generated/skip.R"));
+        let link = root.join("link");
+        symlink(&real, &link).unwrap();
+        let filter = ExcludeFilter::new(&root, &["/link/generated/".to_string()]).unwrap();
+
+        let files = collect_r_files(std::slice::from_ref(&link), &filter).unwrap();
+        assert_eq!(files, vec![link.join("keep.R")]);
     }
 
     #[test]

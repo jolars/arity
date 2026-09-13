@@ -338,6 +338,37 @@ fn cli_env_config_excludes_are_relative_to_the_working_directory() {
 }
 
 #[test]
+#[cfg(unix)]
+fn cli_env_config_excludes_hold_when_the_walk_uses_a_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let dir = tempdir().unwrap();
+    let project = dir.path().join("project");
+    fs::create_dir_all(project.join(".git")).unwrap();
+    fs::create_dir(project.join("generated")).unwrap();
+    fs::write(project.join("generated/bad.R"), "x==NA\n").unwrap();
+    fs::write(project.join("main.R"), "x <- 1\n").unwrap();
+    let link = dir.path().join("link");
+    symlink(&project, &link).unwrap();
+    let config = dir.path().join("user.toml");
+    fs::write(
+        &config,
+        "exclude = [\"/generated/\"]\n[lint]\nselect = [\"equals-na\"]\n",
+    )
+    .unwrap();
+
+    for target in [".", "../link", link.to_str().unwrap()] {
+        for args in [
+            vec!["format", "--check", "--no-cache", target],
+            vec!["lint", target],
+        ] {
+            let output = run_cli_with_env_config(&link, &config, &args, "");
+            assert!(output.status.success(), "{args:?}: {output:?}");
+        }
+    }
+}
+
+#[test]
 fn cli_config_and_no_config_conflict() {
     let dir = tempdir().unwrap();
     let cfg = dir.path().join("custom.toml");
