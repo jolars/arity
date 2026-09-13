@@ -19,6 +19,9 @@ use std::time::Duration;
 use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
 use serde_json::{Value, json};
 
+#[path = "lsp_protocol/config_env.rs"]
+mod config_env;
+
 /// Generous so slow CI never trips it; short enough that a genuinely wedged
 /// server fails the test instead of hanging the suite.
 const TIMEOUT: Duration = Duration::from_secs(10);

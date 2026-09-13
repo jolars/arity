@@ -18,6 +18,43 @@ use crate::formatter::{FormatStyle, LineEnding};
 
 pub const CONFIG_FILE_NAME: &str = "arity.toml";
 
+/// The file selected by configuration resolution, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigSource {
+    /// An explicit `--config` file, whose directory anchors exclude patterns.
+    Explicit(PathBuf),
+    /// A project config discovered by walking ancestor directories.
+    Discovered(PathBuf),
+    /// The `ARITY_CONFIG` fallback, which has no project location.
+    Env(PathBuf),
+    /// Built-in defaults, with no config file loaded.
+    None,
+}
+
+impl ConfigSource {
+    /// The selected file's path, including a user fallback, for diagnostics.
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Self::Explicit(path) | Self::Discovered(path) | Self::Env(path) => Some(path),
+            Self::None => None,
+        }
+    }
+
+    /// The project directory for relative excludes; user configs have none.
+    fn project_anchor(&self) -> Option<&Path> {
+        match self {
+            Self::Explicit(path) | Self::Discovered(path) => path.parent(),
+            Self::Env(_) | Self::None => None,
+        }
+    }
+}
+
+pub(crate) fn env_config_path() -> Option<PathBuf> {
+    std::env::var_os("ARITY_CONFIG")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
 #[cfg(test)]
 mod schema;
 
@@ -632,40 +669,46 @@ impl Config {
         Ok(None)
     }
 
-    /// CLI resolution. Returns the final config plus the source path of the
-    /// loaded file (for diagnostics), if any. CLI flag overrides for the
-    /// formatter knobs are applied by the caller after this returns.
+    /// Resolve an explicit file, a discovered project config, then the
+    /// `ARITY_CONFIG` fallback, in that order. `no_config` ignores all files.
+    /// Returns the config and its source so consumers can anchor excludes.
+    /// CLI formatter overrides are applied by the caller after this returns.
     pub fn resolve(
         explicit: Option<&Path>,
         no_config: bool,
         anchor: &Path,
-    ) -> Result<(Self, Option<PathBuf>), ConfigError> {
+    ) -> Result<(Self, ConfigSource), ConfigError> {
         if no_config {
-            return Ok((Self::default(), None));
+            return Ok((Self::default(), ConfigSource::None));
         }
         if let Some(path) = explicit {
             let config = Self::load_from(path)?;
-            return Ok((config, Some(path.to_path_buf())));
+            return Ok((config, ConfigSource::Explicit(path.to_path_buf())));
         }
-        match Self::discover(anchor)? {
-            Some((path, config)) => Ok((config, Some(path))),
-            None => Ok((Self::default(), None)),
+        if let Some((path, config)) = Self::discover(anchor)? {
+            return Ok((config, ConfigSource::Discovered(path)));
         }
+        if let Some(path) = env_config_path() {
+            // A typo in an explicitly named fallback must not silently select defaults.
+            let config = Self::load_from(&path)?;
+            return Ok((config, ConfigSource::Env(path)));
+        }
+        Ok((Self::default(), ConfigSource::None))
     }
 
     /// Build the file-discovery [`ExcludeFilter`] from this config's `exclude` +
     /// `extend-exclude` (plus any `extra` patterns, e.g. CLI `--exclude`).
-    /// Patterns are rooted at the directory containing the loaded config file
-    /// (`source`), or at `anchor` when there is no config file. This is the single
-    /// source of truth for turning a resolved config into an exclude filter, shared
-    /// by the CLI walks, the LSP workspace seed, and `arity index` discovery.
+    /// Patterns are rooted at the directory containing an explicit or discovered
+    /// project config, or at `anchor` for the user fallback and defaults. This is
+    /// the single source of truth for turning a resolved config into an exclude
+    /// filter, shared by CLI walks, the LSP workspace seed, and `arity index`.
     pub fn exclude_filter(
         &self,
-        source: Option<&Path>,
+        source: &ConfigSource,
         anchor: &Path,
         extra: &[String],
     ) -> Result<ExcludeFilter, ExcludeError> {
-        let root = source.and_then(Path::parent).unwrap_or(anchor);
+        let root = source.project_anchor().unwrap_or(anchor);
         let mut patterns = self.exclude.clone();
         patterns.extend(self.extend_exclude.iter().cloned());
         patterns.extend(extra.iter().cloned());
@@ -784,7 +827,9 @@ mod tests {
             exclude: vec!["vendor/".to_string()],
             ..Config::default()
         };
-        let filter = config.exclude_filter(None, root, &[]).unwrap();
+        let filter = config
+            .exclude_filter(&ConfigSource::None, root, &[])
+            .unwrap();
         let files = crate::file_discovery::collect_r_files(&[root.to_path_buf()], &filter).unwrap();
         let names: Vec<_> = files
             .iter()
@@ -810,7 +855,7 @@ mod tests {
             ..Config::default()
         };
         let filter = config
-            .exclude_filter(None, root, &["cli/".to_string()])
+            .exclude_filter(&ConfigSource::None, root, &["cli/".to_string()])
             .unwrap();
         let files = crate::file_discovery::collect_r_files(&[root.to_path_buf()], &filter).unwrap();
         let names: Vec<_> = files
@@ -1343,7 +1388,7 @@ mod tests {
         .unwrap();
         let (config, source) = Config::resolve(None, true, dir.path()).expect("resolve");
         assert_eq!(config, Config::default());
-        assert!(source.is_none());
+        assert_eq!(source, ConfigSource::None);
     }
 
     #[test]
@@ -1360,7 +1405,7 @@ mod tests {
         let (config, source) =
             Config::resolve(Some(&explicit), false, dir.path()).expect("resolve");
         assert_eq!(config.format.line_width, 40);
-        assert_eq!(source.as_deref(), Some(explicit.as_path()));
+        assert_eq!(source, ConfigSource::Explicit(explicit));
     }
 
     #[test]
@@ -1373,6 +1418,6 @@ mod tests {
         .unwrap();
         let (config, source) = Config::resolve(None, false, dir.path()).expect("resolve");
         assert_eq!(config.format.line_width, 50);
-        assert!(source.is_some());
+        assert!(matches!(source, ConfigSource::Discovered(_)));
     }
 }

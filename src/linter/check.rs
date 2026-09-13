@@ -603,7 +603,7 @@ pub fn ensure_workspace_for(db: &mut IncrementalDatabase, path: &Path, active: S
 pub fn resolve_exclude_at(anchor: &Path) -> ExcludeFilter {
     match crate::config::Config::resolve(None, false, anchor) {
         Ok((config, source)) => config
-            .exclude_filter(source.as_deref(), anchor, &[])
+            .exclude_filter(&source, anchor, &[])
             .unwrap_or_else(|_| ExcludeFilter::none()),
         Err(_) => ExcludeFilter::none(),
     }

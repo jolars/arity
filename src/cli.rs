@@ -17,11 +17,11 @@ const STYLES: Styles = Styles::styled()
 #[command(styles = STYLES)]
 #[command(arg_required_else_help = true)]
 pub struct Cli {
-    /// Path to an explicit `arity.toml` (skips discovery)
+    /// Path to an explicit `arity.toml` (skips discovery and `ARITY_CONFIG`)
     #[arg(long, value_name = "PATH", global = true, conflicts_with = "no_config")]
     pub config: Option<PathBuf>,
 
-    /// Ignore any discovered `arity.toml` and use built-in defaults
+    /// Ignore all config files, including `ARITY_CONFIG`, and use built-in defaults
     #[arg(long, global = true)]
     pub no_config: bool,
 

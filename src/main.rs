@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use arity::cli::{Cli, ColorChoice, Commands, LintOutput};
-use arity::config::{Config, ConfigError, LintConfig};
+use arity::config::{Config, ConfigError, ConfigSource, LintConfig};
 use arity::file_discovery::{ExcludeFilter, collect_r_files};
 use arity::formatter::{
     FormatCache, FormatStyle, Formatted, check_paths_with_style_cached,
@@ -46,7 +46,7 @@ const MAX_FIX_ITERATIONS: usize = 10;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let config_source = ConfigSource {
+    let config_source = ConfigOptions {
         explicit: cli.config.clone(),
         no_config: cli.no_config,
     };
@@ -166,12 +166,16 @@ struct IndexCliOptions {
     quiet: bool,
 }
 
-fn run_index(paths: Vec<PathBuf>, opts: IndexCliOptions, config_source: &ConfigSource) -> ExitCode {
+fn run_index(
+    paths: Vec<PathBuf>,
+    opts: IndexCliOptions,
+    config_source: &ConfigOptions,
+) -> ExitCode {
     let anchor = match cwd_anchor() {
         Ok(anchor) => anchor,
         Err(code) => return code,
     };
-    let (config, config_path) = match load_config_with_source(config_source, &anchor) {
+    let (config, resolved_source) = match load_config_with_source(config_source, &anchor) {
         Ok(pair) => pair,
         Err(err) => {
             eprintln!("error: {err}");
@@ -187,7 +191,7 @@ fn run_index(paths: Vec<PathBuf>, opts: IndexCliOptions, config_source: &ConfigS
 
     // Honor `exclude`/`extend-exclude` so `arity index` never harvests packages
     // referenced only from generated or vendored sources the user opted out of.
-    let exclude = match build_exclude_filter(&config, config_path.as_deref(), &anchor, &[]) {
+    let exclude = match build_exclude_filter(&config, &resolved_source, &anchor, &[]) {
         Ok(exclude) => exclude,
         Err(code) => return code,
     };
@@ -353,7 +357,7 @@ fn run_init(force: bool, out: OutputOptions) -> ExitCode {
     }
 }
 
-struct ConfigSource {
+struct ConfigOptions {
     explicit: Option<PathBuf>,
     no_config: bool,
 }
@@ -377,13 +381,11 @@ struct LintOverrides {
     ignore: Vec<String>,
 }
 
-/// Resolve the config and return it alongside the loaded file's path (if any),
-/// needed to root exclude patterns relative to the directory containing
-/// `arity.toml`.
+/// Resolve the config and its source so exclude patterns use the right anchor.
 fn load_config_with_source(
-    source: &ConfigSource,
+    source: &ConfigOptions,
     anchor: &Path,
-) -> Result<(Config, Option<PathBuf>), ConfigError> {
+) -> Result<(Config, ConfigSource), ConfigError> {
     Config::resolve(source.explicit.as_deref(), source.no_config, anchor)
 }
 
@@ -396,15 +398,15 @@ struct ExcludeOptions {
 
 /// Build the file-discovery exclude filter from the resolved config plus any
 /// `--exclude` CLI patterns. Patterns resolve relative to the directory holding
-/// `arity.toml` (or `anchor` when there is no config file).
+/// a project config (or `anchor` for the user fallback and defaults).
 fn build_exclude_filter(
     config: &Config,
-    config_path: Option<&Path>,
+    config_source: &ConfigSource,
     anchor: &Path,
     cli_excludes: &[String],
 ) -> Result<ExcludeFilter, ExitCode> {
     config
-        .exclude_filter(config_path, anchor, cli_excludes)
+        .exclude_filter(config_source, anchor, cli_excludes)
         .map_err(|err| {
             eprintln!("error: {err}");
             ExitCode::from(2)
@@ -450,12 +452,12 @@ struct FormatSetup {
 /// scope for the `format` command from a single config load. Prints and returns
 /// an exit code on error.
 fn resolve_format_setup(
-    source: &ConfigSource,
+    source: &ConfigOptions,
     overrides: &FormatOverrides,
     cli_excludes: &[String],
     anchor: &Path,
 ) -> Result<FormatSetup, ExitCode> {
-    let (config, config_path) = load_config_with_source(source, anchor).map_err(|err| {
+    let (config, resolved_source) = load_config_with_source(source, anchor).map_err(|err| {
         eprintln!("error: {err}");
         ExitCode::from(2)
     })?;
@@ -463,7 +465,7 @@ fn resolve_format_setup(
         eprintln!("error: {err}");
         ExitCode::from(2)
     })?;
-    let exclude = build_exclude_filter(&config, config_path.as_deref(), anchor, cli_excludes)?;
+    let exclude = build_exclude_filter(&config, &resolved_source, anchor, cli_excludes)?;
     let cache = FormatCacheSetup {
         enabled: config.cache,
         dir: config.index.cache_dir.clone(),
@@ -628,7 +630,7 @@ fn run_format(
     modes: FormatModes,
     overrides: FormatOverrides,
     excludes: ExcludeOptions,
-    config_source: &ConfigSource,
+    config_source: &ConfigOptions,
     out: OutputOptions,
 ) -> ExitCode {
     let anchor = match cwd_anchor() {
@@ -987,7 +989,7 @@ struct LintInvocation {
 
 fn run_lint(
     invocation: LintInvocation,
-    config_source: &ConfigSource,
+    config_source: &ConfigOptions,
     out: OutputOptions,
 ) -> ExitCode {
     let LintInvocation {
@@ -1002,7 +1004,7 @@ fn run_lint(
         Ok(anchor) => anchor,
         Err(code) => return code,
     };
-    let (mut config, config_path) = match load_config_with_source(config_source, &anchor) {
+    let (mut config, resolved_source) = match load_config_with_source(config_source, &anchor) {
         Ok(loaded) => loaded,
         Err(err) => {
             eprintln!("error: {err}");
@@ -1026,11 +1028,11 @@ fn run_lint(
         Inputs::Paths(paths) => paths,
     };
 
-    let exclude =
-        match build_exclude_filter(&config, config_path.as_deref(), &anchor, &excludes.patterns) {
-            Ok(exclude) => exclude.with_force_exclude(excludes.force),
-            Err(code) => return code,
-        };
+    let exclude = match build_exclude_filter(&config, &resolved_source, &anchor, &excludes.patterns)
+    {
+        Ok(exclude) => exclude.with_force_exclude(excludes.force),
+        Err(code) => return code,
+    };
 
     if fix_opts.fix
         && let Some(code) =

@@ -7,10 +7,10 @@ Arity: a language server, formatter, and linter for R
 ## Options
 
 `--config <PATH>`
-:   Path to an explicit `arity.toml` (skips discovery)
+:   Path to an explicit `arity.toml` (skips discovery and `ARITY_CONFIG`)
 
 `--no-config`
-:   Ignore any discovered `arity.toml` and use built-in defaults
+:   Ignore all config files, including `ARITY_CONFIG`, and use built-in defaults
 
 `--color <WHEN>`
 :   When to use color in output

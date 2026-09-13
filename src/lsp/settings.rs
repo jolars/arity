@@ -13,7 +13,7 @@ pub(crate) struct ResolvedSettings {
 
 /// Formatter knobs the editor can push via `initializationOptions` (at startup)
 /// or `workspace/didChangeConfiguration` (later). These are the *fallback*: a
-/// discovered `arity.toml` is authoritative and ignores them entirely. Fields
+/// project or user config is authoritative and ignores them entirely. Fields
 /// are `Option` so an unset key leaves the built-in default in place.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -70,7 +70,7 @@ impl EditorSettings {
     }
 }
 
-/// Resolve the [`FormatStyle`] for a document: a discovered `arity.toml`
+/// Resolve the [`FormatStyle`] for a document: a project or user config
 /// (`config_present`) wins outright; otherwise editor-pushed settings apply over
 /// the built-in defaults.
 pub(crate) fn resolve_format_style(

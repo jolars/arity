@@ -204,9 +204,16 @@ fn config_fingerprint(anchor: &Path) -> Option<Vec<(PathBuf, Option<ConfigFileSt
         let stamp = config_file_stamp(&candidate);
         let found = stamp.is_some();
         fingerprint.push((candidate, stamp));
-        if found || dir.join(".git").exists() {
+        if found {
+            return Some(fingerprint);
+        }
+        if dir.join(".git").exists() {
             break;
         }
+    }
+    if let Some(path) = crate::config::env_config_path() {
+        let stamp = config_file_stamp(&path);
+        fingerprint.push((path, stamp));
     }
     Some(fingerprint)
 }
@@ -1708,7 +1715,7 @@ impl GlobalState {
 
         let (config, source) = Config::resolve(None, false, &anchor)
             .map_err(|err| ConfigResolveError::Config(err.to_string()))?;
-        let style = resolve_format_style(&config, source.is_some(), &self.editor_settings);
+        let style = resolve_format_style(&config, source.path().is_some(), &self.editor_settings);
         let mut index = config.index;
         // Network egress is a per-user/per-machine consent decision, so the sidecar
         // URL comes from the environment, never the shared, committed arity.toml.

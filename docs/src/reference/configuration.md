@@ -49,10 +49,38 @@ directory through its ancestors, stopping at the first `arity.toml` it finds or
 at a directory containing a `.git` entry (the repository root), whichever comes
 first.
 
+If no project config is found, arity loads the file named by the `ARITY_CONFIG`
+environment variable. This lets you keep a user config at a custom location,
+such as a synced drive. Project configs take precedence and replace the user
+config entirely; files from different discovery steps are not merged.
+
+Relative `ARITY_CONFIG` paths resolve from the process's working directory. An
+absolute path is recommended for editor settings. An unset or empty value uses
+the built-in defaults when no project config is found. A missing or invalid
+fallback file is a configuration error.
+
 On the command line:
 
-- `--config <PATH>` loads an explicit file and skips discovery.
-- `--no-config` ignores any discovered file and uses the built-in defaults.
+- `--config <PATH>` loads an explicit file and skips project discovery and
+  `ARITY_CONFIG`.
+- `--no-config` ignores all config files, including `ARITY_CONFIG`, and uses the
+  built-in defaults.
+
+In VS Code or Positron, set the variable in your user `settings.json`, then run
+**Arity: Restart Server**:
+
+```json
+{
+  "arity.serverEnv": {
+    "ARITY_CONFIG": "P:/Softwares/arity.toml"
+  }
+}
+```
+
+Exclude patterns in a project config or an explicit `--config` file resolve
+relative to that file's directory. The `ARITY_CONFIG` fallback has no project
+location, so its patterns resolve relative to the working directory for CLI
+walks, or the directory being scanned in the language server.
 
 ## Top-level keys
 
@@ -61,7 +89,7 @@ file walk).
 
   | Key              | Type             | Default      | Description                                                                                                                                                                                                      |
   | ---------------- | ---------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `exclude`        | array of strings | built-in set | [gitignore-style](https://git-scm.com/docs/gitignore) patterns to skip, resolved relative to the directory containing `arity.toml`. Setting it **replaces** the built-in set (below).                            |
+  | `exclude`        | array of strings | built-in set | [gitignore-style](https://git-scm.com/docs/gitignore) patterns to skip, anchored according to the [config source](#discovery). Setting it **replaces** the built-in set (below).                                 |
   | `extend-exclude` | array of strings | `[]`         | Like `exclude`, but **added to** `exclude` rather than replacing it. Use this to skip extra paths while keeping the built-in defaults.                                                                           |
   | `cache`          | boolean          | `true`       | Enable the persistent result cache (currently the `format --check` already-formatted cache; the cache directory follows `[index] cache-dir`/`$ARITY_CACHE_DIR`). The `--no-cache` CLI flag overrides it per run. |
 

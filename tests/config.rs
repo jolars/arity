@@ -163,6 +163,180 @@ fn cli_config_discovered_from_cwd() {
     assert!(stdout.contains("function(\n"), "got:\n{stdout}");
 }
 
+fn run_cli_with_env_config(
+    cwd: &Path,
+    config: &Path,
+    args: &[&str],
+    input: &str,
+) -> std::process::Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_arity"))
+        .args(args)
+        .current_dir(cwd)
+        .env("ARITY_CONFIG", config)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn arity");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    child.wait_with_output().expect("wait for arity")
+}
+
+#[test]
+fn cli_env_config_fallback_and_precedence() {
+    let dir = tempdir().unwrap();
+    let project = dir.path().join("project");
+    fs::create_dir_all(project.join(".git")).unwrap();
+    let config = dir.path().join("user.toml");
+    fs::write(&config, "[format]\nline-width = 30\nindent-width = 4\n").unwrap();
+
+    for path in [config.as_path(), Path::new("../user.toml")] {
+        let output = run_cli_with_env_config(&project, path, &["format", "-"], LONG_FN_INPUT);
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("function(\n    aaaaa,"), "{stdout}");
+    }
+
+    let inline = "x <- function(aaaaa, bbbbb, ccccc, ddddd) 1\n";
+    for args in [
+        vec!["format", "--no-config"],
+        vec!["format", "--line-width", "80"],
+    ] {
+        let output = run_cli_with_env_config(&project, &config, &args, LONG_FN_INPUT);
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), inline);
+    }
+
+    // An empty value is the same as leaving the fallback unset.
+    let output = run_cli_with_env_config(&project, Path::new(""), &["format"], LONG_FN_INPUT);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), inline);
+
+    let explicit = project.join("explicit.toml");
+    fs::write(&explicit, "[format]\nline-width = 80\n").unwrap();
+    let missing = dir.path().join("missing.toml");
+    for path in [&config, &missing] {
+        let output = run_cli_with_env_config(
+            &project,
+            path,
+            &["format", "--config", explicit.to_str().unwrap()],
+            LONG_FN_INPUT,
+        );
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), inline);
+    }
+
+    // A project config replaces the fallback, including its unspecified keys.
+    fs::write(project.join("arity.toml"), "[format]\nline-width = 30\n").unwrap();
+    for path in [&config, &missing] {
+        let output = run_cli_with_env_config(&project, path, &["format"], LONG_FN_INPUT);
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("function(\n  aaaaa,"), "{stdout}");
+    }
+}
+
+#[test]
+fn cli_env_config_errors_are_reported_unless_disabled() {
+    let dir = tempdir().unwrap();
+    fs::create_dir(dir.path().join(".git")).unwrap();
+    let config = dir.path().join("user.toml");
+    for contents in [
+        None,
+        Some("[format]\nline-widht = 30\n"),
+        Some("[format]\nline-width = 0\n"),
+    ] {
+        if let Some(contents) = contents {
+            fs::write(&config, contents).unwrap();
+        }
+        let output = run_cli_with_env_config(dir.path(), &config, &["format"], LONG_FN_INPUT);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("user.toml"),
+            "{output:?}"
+        );
+
+        let output = run_cli_with_env_config(
+            dir.path(),
+            &config,
+            &["format", "--no-config"],
+            LONG_FN_INPUT,
+        );
+        assert!(output.status.success(), "{output:?}");
+    }
+}
+
+#[test]
+fn cli_env_config_does_not_hide_invalid_project_config() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("arity.toml"), "[format]\nline-widht = 80\n").unwrap();
+    let config = dir.path().join("user.toml");
+    fs::write(&config, "").unwrap();
+    let output = run_cli_with_env_config(dir.path(), &config, &["format"], LONG_FN_INPUT);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("arity.toml"),
+        "{output:?}"
+    );
+}
+
+#[test]
+fn cli_env_config_excludes_are_relative_to_the_working_directory() {
+    let dir = tempdir().unwrap();
+    let project = dir.path().join("project");
+    fs::create_dir_all(project.join(".git")).unwrap();
+    fs::create_dir(project.join("generated")).unwrap();
+    fs::write(project.join("generated/bad.R"), "x==NA\n").unwrap();
+    fs::write(project.join("main.R"), "x <- 1\n").unwrap();
+    let config = dir.path().join("user.toml");
+    fs::write(
+        &config,
+        "exclude = [\"/generated/\"]\n[lint]\nselect = [\"equals-na\"]\n",
+    )
+    .unwrap();
+
+    for args in [
+        vec!["format", "--check", "--no-cache", "."],
+        vec!["format", "--check", "--no-cache", project.to_str().unwrap()],
+        vec!["lint", "."],
+        vec!["lint", project.to_str().unwrap()],
+    ] {
+        let output = run_cli_with_env_config(&project, &config, &args, "");
+        assert!(output.status.success(), "{output:?}");
+    }
+
+    // Naming the same file explicitly gives it a project anchor instead.
+    let output = run_cli_with_env_config(
+        &project,
+        &config,
+        &[
+            "lint",
+            "--config",
+            config.to_str().unwrap(),
+            project.to_str().unwrap(),
+        ],
+        "",
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("generated"),
+        "{output:?}"
+    );
+
+    fs::write(project.join("main.R"), "x == NA\n").unwrap();
+    let output = run_cli_with_env_config(&project, &config, &["lint", "."], "");
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("equals-na"), "{output:?}");
+    assert!(!stderr.contains("generated"), "{output:?}");
+}
+
 #[test]
 fn cli_config_and_no_config_conflict() {
     let dir = tempdir().unwrap();
@@ -638,7 +812,11 @@ fn the_repos_own_config_shields_its_fixture_descriptions() {
         .expect("config loads")
         .expect("the repo has an arity.toml");
     let exclude = config
-        .exclude_filter(Some(&config_path), root, &[])
+        .exclude_filter(
+            &arity::config::ConfigSource::Discovered(config_path),
+            root,
+            &[],
+        )
         .expect("exclude patterns compile");
 
     let found = arity::file_discovery::collect_source_files(&[root.to_path_buf()], &exclude)

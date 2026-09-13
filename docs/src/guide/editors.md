@@ -15,7 +15,11 @@ cursor-context refactor that writes a roxygen2 skeleton for the function you are
 on; see the [code action reference](../reference/code-actions.md).
 
 Configuration is read from an `arity.toml` discovered from each file's directory
-(see the [configuration reference](../reference/configuration.md)).
+or, if no project config is found, from the file named by `ARITY_CONFIG` (see
+the [configuration reference](../reference/configuration.md#discovery)). The
+server rechecks config files on subsequent formatting requests and document
+edits, including a user config outside the workspace. A missing or invalid
+`ARITY_CONFIG` file causes formatting to be refused until the config is fixed.
 
 ## DESCRIPTION files
 
@@ -63,6 +67,19 @@ Marketplace](https://marketplace.visualstudio.com/) or [Open
 VSX](https://open-vsx.org/). It bundles the `arity` binary (falling back to a
 download) and starts the language server automatically for R files. Editors that
 support VS Code extensions, such as Positron, work the same way.
+
+To use a custom user config, add this to your user `settings.json`, then run
+**Arity: Restart Server**:
+
+```json
+{
+  "arity.serverEnv": {
+    "ARITY_CONFIG": "P:/Softwares/arity.toml"
+  }
+}
+```
+
+Use an absolute path. Project configs take precedence over this fallback.
 
 ### Using only some features
 
