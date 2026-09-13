@@ -139,7 +139,7 @@
             "type": "string"
           },
           "default": {},
-          "description": "Environment variables merged into the Arity language server process."
+          "markdownDescription": "Environment variables merged into the Arity language server process. Set `ARITY_CONFIG` to an absolute config file path to use when no project config is found. Run **Arity: Restart Server** after changing this setting."
         },
         "arity.extraPath": {
           "type": "array",

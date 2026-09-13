@@ -139,13 +139,30 @@ Arity registers itself as the default formatter for `[r]` files.
   explicitly set).
 - `arity.githubRepo`: GitHub repo for downloads (default: `"jolars/arity"`).
 - `arity.serverArgs`: extra args after `arity lsp`.
-- `arity.serverEnv`: extra environment variables.
+- `arity.serverEnv`: extra environment variables. Set `ARITY_CONFIG` to an
+  absolute config file path to use when no project config is found. Run **Arity:
+  Restart Server** after changing this setting.
 - `arity.extraPath`: extra PATH entries prepended for the language server
   process.
 - `arity.logLevel`: log level for the language server, mapped to `RUST_LOG`
   (`off`, `error`, `warn`, `info`, `debug`, `trace`; unset by default).
   `arity.serverEnv.RUST_LOG` overrides this if both are set.
 - `arity.trace.server`: LSP trace level (`off`, `messages`, `verbose`).
+
+To keep your user config at a custom location, add this to your user
+`settings.json`:
+
+```json
+{
+  "arity.serverEnv": {
+    "ARITY_CONFIG": "P:/Softwares/arity.toml"
+  }
+}
+```
+
+Project configs take precedence and are not merged with the user config. A
+missing or invalid `ARITY_CONFIG` file causes formatting to be refused until the
+config is fixed.
 
 ## Security and trust
 
