@@ -328,6 +328,7 @@ multcompView
 munsell
 mvtnorm
 nanonext
+ncdf4
 nleqslv
 nlme
 nloptr
