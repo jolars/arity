@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.24.0](https://github.com/jolars/arity/compare/v0.23.0...v0.24.0) (2026-09-15)
+
+### Features
+- **config:** support `ARITY_CONFIG` fallback ([`d801991`](https://github.com/jolars/arity/commit/d801991de444f6db9e5fb5f6c8de6170bed0ec4b)), closes [#135](https://github.com/jolars/arity/issues/135)
+
+### Bug Fixes
+- **lint:** attach skips to the next argument ([`4cd65a4`](https://github.com/jolars/arity/commit/4cd65a491a40536f48c45d95852bceaf0b6b2a79))
+- **deps:** bump rustls ([`d4b93f9`](https://github.com/jolars/arity/commit/d4b93f97586852ae40fa7a76a06933f31580490d))
+- **discovery:** honor excludes through symlinked roots ([`a5efd8e`](https://github.com/jolars/arity/commit/a5efd8e4532e1d645d4e20dde5591ff538bf53c9))
+
 ## [0.23.0](https://github.com/jolars/arity/compare/v0.22.0...v0.23.0) (2026-09-07)
 
 ### Features
