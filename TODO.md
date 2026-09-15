@@ -10,14 +10,12 @@
   above the parser. Downstream static tools such as Polydoc should be able to
   use it without depending on the full `arity` crate.
 
-- [ ] Comment-aware suppression placement edge cases: a **lint** directive
-  inside `R_CALL_ARGUMENTS` between `( ... , <directive> , next_arg )` needs
-  special handling so it attaches to `next_arg` instead of the whole argument
-  list — over-broad rather than inert, so no rule reports it. (Jarl solved this
-  by overriding biome's `place_comment`; arity's next-non-trivia-sibling walk
-  already handles most cases.) The **format** half of this is closed: the
-  formatter acts on statement lists only, and `misplaced-suppression` reports a
-  format directive that lands anywhere else.
+- [x] Comment-aware suppression placement edge cases: a **lint** directive
+  between call or subscript arguments attaches only to the next argument,
+  skipping commas and comment-only argument nodes. Attachment stops at the end
+  of the argument list, leaving a trailing directive dangling. The **format**
+  half is also closed: the formatter acts on statement lists only, and
+  `misplaced-suppression` reports a format directive that lands anywhere else.
 
 ## AST wrappers
 

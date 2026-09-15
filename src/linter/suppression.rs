@@ -16,8 +16,10 @@
 //! to the linter: where a directive attaches, and which findings it removes.
 //!
 //! Implementation note: the comment-to-node attachment for a node-level
-//! suppression is "next non-trivia sibling", computed during the walk. This
-//! avoids the rowan/biome `place_comment` indirection jarl had to write.
+//! suppression is "next non-trivia sibling", computed during the walk. In
+//! argument lists, commas and comment-only arguments are skipped, and attachment
+//! stops at the end of the list. This avoids the rowan/biome `place_comment`
+//! indirection jarl had to write.
 //!
 //! Every recognized directive is also recorded in [`SuppressionMap::directives`]
 //! — *including* the ones that suppress nothing (an unknown rule ID, a directive
@@ -35,6 +37,8 @@ use std::collections::HashMap;
 
 use rowan::{NodeOrToken, TextRange, TextSize};
 
+use crate::ast::kinds::is_trivia;
+use crate::ast::{Arg, AstNode};
 use crate::dcf;
 use crate::directive::{self, Parsed, RuleScope};
 use crate::syntax::{SyntaxKind, SyntaxNode};
@@ -432,83 +436,41 @@ fn next_dcf_line(mut lines: impl Iterator<Item = dcf::SyntaxNode>) -> Option<dcf
 fn next_meaningful_sibling(
     tok: &rowan::SyntaxToken<crate::syntax::RLanguage>,
 ) -> Option<TextRange> {
-    // The "next sibling" is the next non-trivia, non-comment element after
-    // this token within its parent node. We expand outward if the parent is
-    // itself trivia-only — e.g. a comment between top-level statements lives
-    // under ROOT, and the next sibling is the next top-level expression.
-    let mut current_token = tok.clone();
+    let mut current = NodeOrToken::Token(tok.clone());
     loop {
-        let parent = current_token.parent()?;
-        let mut found = None;
-        let mut past_self = false;
-        for el in parent.children_with_tokens() {
-            match &el {
-                NodeOrToken::Token(t) if *t == current_token => {
-                    past_self = true;
-                    continue;
-                }
-                _ => {}
-            }
-            if !past_self {
+        let parent = current.parent()?;
+        let in_arguments = parent.kind() == SyntaxKind::ARG_LIST;
+        let mut next = current.next_sibling_or_token();
+        while let Some(el) = next {
+            next = el.next_sibling_or_token();
+            if is_trivia(el.kind())
+                || el.kind() == SyntaxKind::COMMENT
+                || (in_arguments && el.kind() == SyntaxKind::COMMA)
+            {
                 continue;
             }
-            match &el {
-                NodeOrToken::Token(t)
-                    if matches!(
-                        t.kind(),
-                        SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT
-                    ) =>
-                {
-                    continue;
-                }
-                NodeOrToken::Node(child) => {
-                    found = Some(child.text_range());
-                    break;
-                }
-                NodeOrToken::Token(t) => {
-                    found = Some(t.text_range());
-                    break;
-                }
-            }
-        }
-        if let Some(range) = found {
-            return Some(range);
-        }
-        // No sibling after this token in `parent`. Bubble up: look for the
-        // next non-trivia sibling of `parent` itself.
-        let parent_node = parent.clone();
-        let grand = parent_node.parent()?;
-        let mut past_parent = false;
-        for el in grand.children_with_tokens() {
-            match &el {
-                NodeOrToken::Node(n) if *n == parent_node => {
-                    past_parent = true;
-                    continue;
-                }
-                _ => {}
-            }
-            if !past_parent {
+            // Comments between arguments have their own ARG nodes. Skip those,
+            // but keep genuinely empty arguments, which are slots, not trivia.
+            if in_arguments
+                && let Some(arg) = el.as_node().cloned().and_then(Arg::cast)
+                && !arg.syntax().text_range().is_empty()
+                && !arg.is_named()
+                && arg
+                    .value()
+                    .is_none_or(|value| value.kind() == SyntaxKind::ROXYGEN_BLOCK)
+            {
                 continue;
             }
-            match &el {
-                NodeOrToken::Token(t)
-                    if matches!(
-                        t.kind(),
-                        SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT
-                    ) =>
-                {
-                    continue;
-                }
-                NodeOrToken::Node(child) => return Some(child.text_range()),
-                NodeOrToken::Token(t) => return Some(t.text_range()),
-            }
+            return Some(el.text_range());
         }
-        // Try one level higher.
-        current_token = grand.first_token()?;
-        // Prevent infinite loops.
-        if grand == parent {
+        // A trailing directive must not escape its list and suppress an outer
+        // argument. It has no target, so the meta rules can report it as dangling.
+        if in_arguments {
             return None;
         }
+        // Keep the exhausted node as the cursor: restarting from an ancestor's
+        // first token can revisit code before the directive and widen its scope.
+        current = NodeOrToken::Node(parent);
     }
 }
 
@@ -557,6 +519,62 @@ mod tests {
         // x assignment is at 42..48, y at 49..55.
         assert!(m.is_suppressed("unused-binding", TextRange::new(42.into(), 48.into())));
         assert!(!m.is_suppressed("unused-binding", TextRange::new(49.into(), 55.into())));
+    }
+
+    #[test]
+    fn argument_suppression_covers_exactly_the_next_argument() {
+        for (src, expected) in [
+            (
+                "f(# arity-lint skip browser: first\n browser(), 1)",
+                "browser()",
+            ),
+            (
+                "f(1, # arity-lint skip browser: next\n, named = browser(), 2)",
+                "named = browser()",
+            ),
+            (
+                "f(1 # arity-lint skip browser: next\n, browser(), 2)",
+                "browser()",
+            ),
+            (
+                "f(1, # arity-lint skip browser: next\n# explanation\n#' more\nbrowser(), 2)",
+                "browser()",
+            ),
+            ("f(1, # arity-lint skip browser: atom\n, T, 2)", "T"),
+            (
+                "f(value = # arity-lint skip browser: value\n browser(), 2)",
+                "browser()",
+            ),
+        ] {
+            let parsed = parse(src);
+            assert!(
+                parsed.diagnostics.is_empty(),
+                "{src}: {:?}",
+                parsed.diagnostics
+            );
+            assert_eq!(parsed.cst.text().to_string(), src);
+            let map = SuppressionMap::build(&parsed.cst);
+            let start = src.rfind(expected).unwrap();
+            assert_eq!(
+                only(&map).coverage,
+                Coverage::Range(TextRange::new(
+                    TextSize::try_from(start).unwrap(),
+                    TextSize::try_from(start + expected.len()).unwrap(),
+                )),
+                "{src}"
+            );
+        }
+    }
+
+    #[test]
+    fn argument_suppression_does_not_skip_a_missing_argument() {
+        let src = "f(1, # arity-lint skip browser: empty slot\n,, browser())";
+        let map = map_of(src);
+        let comma = TextSize::try_from(src.find(",,").unwrap() + 1).unwrap();
+        assert_eq!(
+            only(&map).coverage,
+            Coverage::Range(TextRange::empty(comma))
+        );
     }
 
     #[test]

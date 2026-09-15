@@ -39,6 +39,22 @@ x <- 1 # arity-lint skip browser: applies to the NEXT statement, not this one
 browser()
 ```
 
+Inside a call or subscript, a lint `skip` between arguments applies only to the
+next argument, including any expressions nested inside it. Commas and comments
+between the directive and that argument do not change its target:
+
+```r
+list(
+  browser(),
+  # arity-lint skip browser: intentional debugging hook
+  hook = browser(),
+  browser()
+)
+```
+
+Only `hook = browser()` is suppressed. If no argument follows before the closing
+delimiter, the directive is dangling and `outdated-suppression` reports it.
+
 For the formatter, `skip` hands the marked statement back **byte for byte** —
 its own column, its interior alignment, its blank lines. Nothing about its
 layout is decided, which is the whole point:

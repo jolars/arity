@@ -7233,6 +7233,107 @@ fn canonical_spelling_suppresses_on_the_next_statement() {
 }
 
 #[test]
+fn lint_skip_in_arguments_suppresses_only_the_next_argument() {
+    for directive in [
+        "# arity-lint skip browser: next argument",
+        "# arity-ignore browser: next argument",
+        "# arity-lint skip: next argument",
+        "# arity skip: next argument",
+    ] {
+        for gap in [
+            "\n",
+            "\n, ",
+            "\n# explanation\n",
+            "\n, #' explanation\n",
+            "\r\n, # explanation\r\n",
+        ] {
+            for (open, close) in [("f(", ")"), ("x[", "]"), ("x[[", "]]")] {
+                let src = format!(
+                    "{open}browser(), {directive}{gap}\
+                     kept = list(browser(), browser()), browser(){close}\nbrowser()\n"
+                );
+                let parsed = arity::parser::parse(&src);
+                assert!(
+                    parsed.diagnostics.is_empty(),
+                    "{src}: {:?}",
+                    parsed.diagnostics
+                );
+                assert_eq!(parsed.cst.text().to_string(), src);
+                let d = diagnostics_selecting(&src, &["browser", "outdated-suppression"]);
+                let expected: Vec<_> = src.match_indices("browser()").map(|(i, _)| i).collect();
+                assert_eq!(
+                    d.iter()
+                        .map(|d| (d.rule, usize::from(d.range.start())))
+                        .collect::<Vec<_>>(),
+                    vec![
+                        ("browser", expected[0]),
+                        ("browser", expected[3]),
+                        ("browser", expected[4])
+                    ],
+                    "{src}: {d:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn lint_skip_in_arguments_keeps_other_rules_enabled() {
+    let src = "f(1, # arity-lint skip browser: next argument\n, list(browser(), T), browser())\n";
+    let d = diagnostics_selecting(
+        src,
+        &["browser", "true-false-symbol", "outdated-suppression"],
+    );
+    assert_eq!(
+        d.iter().map(|d| d.rule).collect::<Vec<_>>(),
+        vec!["true-false-symbol", "browser"]
+    );
+}
+
+#[test]
+fn lint_skip_in_arguments_stacks_directives_on_the_same_argument() {
+    let src = "f(1, # arity-lint skip browser: next argument\n\
+        # arity-lint skip true-false-symbol: same argument\n\
+        , list(browser(), T), browser(), T)\n";
+    let d = diagnostics_selecting(
+        src,
+        &["browser", "true-false-symbol", "outdated-suppression"],
+    );
+    assert_eq!(
+        d.iter().map(|d| d.rule).collect::<Vec<_>>(),
+        vec!["browser", "true-false-symbol"]
+    );
+    assert_eq!(
+        usize::from(d[0].range.start()),
+        src.rfind("browser()").unwrap()
+    );
+    assert_eq!(usize::from(d[1].range.start()), src.rfind('T').unwrap());
+}
+
+#[test]
+fn lint_skip_at_end_of_arguments_is_dangling() {
+    for tail in ["\n", "\n,", "\n# explanation\n", "\n#' explanation\n"] {
+        let src = format!(
+            "f(browser(), g(browser(), # arity-lint skip browser: no next argument{tail}), browser())\nbrowser()\n"
+        );
+        let d = diagnostics_selecting(&src, &["browser", "outdated-suppression"]);
+        assert_eq!(
+            d.iter().filter(|d| d.rule == "browser").count(),
+            4,
+            "{src}: {d:?}"
+        );
+        assert_eq!(
+            d.iter()
+                .filter(|d| d.rule == "outdated-suppression")
+                .count(),
+            1,
+            "{src}: {d:?}"
+        );
+        assert_eq!(meta_rules(&src, "outdated-suppression").len(), 1, "{src}");
+    }
+}
+
+#[test]
 fn canonical_file_spelling_suppresses_everywhere() {
     let src = "# arity-lint skip-file browser: generated\nbrowser()\nbrowser()\n";
     assert!(rule_diags(src, "browser").is_empty(), "{src}");
