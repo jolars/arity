@@ -92,6 +92,10 @@ harness = false
 name = "profile"
 harness = false
 
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
 # The profiler's build. `release` is what ships, and it is built for size and
 # speed, not for being observable: no debug info means perf can only resolve
 # what the symbol table happens to keep, and inlined frames vanish entirely.
