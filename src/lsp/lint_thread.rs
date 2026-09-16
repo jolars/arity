@@ -24,6 +24,12 @@ pub(crate) enum LintMsg {
     // Boxed: `LintRequest` is much larger than the other variant, so boxing keeps
     // the enum (and every channel slot) small.
     Request(Box<LintRequest>),
+    /// A closed DESCRIPTION must lose its queued buffer before disk facts are
+    /// restored, or a pending fan-out lint can reinstall the unsaved text.
+    CloseDescription {
+        uri: Uri,
+        path: PathBuf,
+    },
     /// Seed the explicit workspace file-set from the discovered roots (sent once
     /// at startup). Handled on the lint thread, the sole db writer.
     SeedWorkspace {
@@ -307,6 +313,13 @@ impl LintWorker {
     fn handle_lint_msg(&mut self, msg: LintMsg) {
         match msg {
             LintMsg::Request(req) => self.enqueue(*req),
+            LintMsg::CloseDescription { uri, path } => {
+                self.pending.remove(&uri);
+                self.on_watched_files(WatchedFilesBatch {
+                    meta_changed: vec![(path, WatchedKind::Description)],
+                    ..Default::default()
+                });
+            }
             LintMsg::SeedWorkspace { roots } => self.seed_workspace(roots),
             LintMsg::RenameFiles { renames } => self.rename_files(renames),
             LintMsg::WatchedFiles { batch } => self.on_watched_files(batch),
@@ -1052,6 +1065,82 @@ pub(crate) fn now_unix_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn closing_description_discards_a_queued_unsaved_buffer() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("DESCRIPTION");
+        let disk = "Package: testpkg\n";
+        let dirty = "Package: testpkg\nImports: dplyr\n";
+        std::fs::write(&path, disk).expect("DESCRIPTION");
+        std::fs::create_dir(dir.path().join("R")).expect("R directory");
+        let uri = uri::from_path(&path).expect("file URI");
+        let pool = TaskPool::new("test-close-read", 1);
+        let mut worker = LintWorker {
+            db: IncrementalDatabase::default(),
+            index_install: None,
+            index_attempts: HashSet::new(),
+            remote_install: None,
+            remote_attempts: HashSet::new(),
+            out_tx: crossbeam_channel::unbounded().0,
+            build_tx: crossbeam_channel::unbounded().0,
+            remote_tx: crossbeam_channel::unbounded().0,
+            done_tx: crossbeam_channel::unbounded().0,
+            inflight: Some(InflightAnalyze {
+                uri: uri_named("a.R"),
+                version: 1,
+            }),
+            pending: HashMap::new(),
+            read_spawner: pool.spawner(),
+            index_pool: TaskPool::new("test-close-index", 1),
+            resolved_rules: None,
+            position_encoding: PositionEncoding::Utf16,
+        };
+        let (file, _) = worker.db.upsert_description(dir.path(), dirty);
+        let request = |text: &str, version| {
+            LintMsg::Request(Box::new(LintRequest {
+                uri: uri.clone(),
+                path: path.clone(),
+                buffer: Arc::new(TextBuffer::new(text)),
+                edits: Vec::new(),
+                version,
+                kind: DocumentKind::Description,
+                lint_config: LintConfig::default(),
+                index_config: IndexConfig {
+                    auto_build: false,
+                    cache_dir: Some(dir.path().join("cache")),
+                    ..Default::default()
+                },
+            }))
+        };
+        worker.handle_lint_msg(request(dirty, 2));
+
+        // The R analysis holds the slot while a fan-out lint of the dirty
+        // DESCRIPTION waits. Closing must invalidate that queued buffer before
+        // it gets another chance to overwrite the restored disk contents.
+        worker.try_dispatch();
+        worker.handle_lint_msg(LintMsg::CloseDescription {
+            uri: uri.clone(),
+            path: path.clone(),
+        });
+        assert_eq!(file.text(&worker.db).as_ref(), disk);
+        assert_eq!(worker.inflight.as_ref().unwrap().uri, uri_named("a.R"));
+
+        worker.inflight = None;
+        worker.try_dispatch();
+        assert_eq!(
+            file.text(&worker.db).as_ref(),
+            disk,
+            "a queued lint must not resurrect the closed buffer"
+        );
+
+        // Reopening starts a new version sequence; the discarded request must
+        // not shadow the new buffer just because its version was higher.
+        let reopened = "Package: testpkg\nImports: tidyr\n";
+        worker.handle_lint_msg(request(reopened, 1));
+        worker.try_dispatch();
+        assert_eq!(file.text(&worker.db).as_ref(), reopened);
+    }
 
     /// The watcher reports a create, an edit, and a delete as the same event, so
     /// the decision has to be read off the disk state, not off the event.

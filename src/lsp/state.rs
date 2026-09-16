@@ -1392,18 +1392,15 @@ impl GlobalState {
                     // A closed `DESCRIPTION` buffer stops being authoritative:
                     // put the on-disk facts back, or an unsaved dependency list
                     // outlives the editor session and keeps gating every R
-                    // diagnostic in the package. This is exactly what a watched
-                    // on-disk edit already does, so reuse that path rather than
-                    // inventing a second message for it.
+                    // diagnostic in the package. The lint thread must also drop
+                    // queued work that could reinstall the closed buffer.
                     if let Some(doc) = &closed
                         && doc.kind == DocumentKind::Description
                         && let Some(path) = uri::to_path(&uri)
                     {
-                        let _ = self.lint_tx.send(LintMsg::WatchedFiles {
-                            batch: WatchedFilesBatch {
-                                meta_changed: vec![(path, WatchedKind::Description)],
-                                ..Default::default()
-                            },
+                        let _ = self.lint_tx.send(LintMsg::CloseDescription {
+                            uri: uri.clone(),
+                            path,
                         });
                     }
                     // Resolve any parked pulls with an empty report so they don't
@@ -2521,17 +2518,11 @@ mod cancellation_gate {
         ));
 
         match rig.try_lint_msg() {
-            Some(LintMsg::WatchedFiles { batch }) => {
-                let expected = uri::to_path(&uri).expect("a file uri");
-                assert_eq!(
-                    batch.meta_changed,
-                    vec![(expected, WatchedKind::Description)]
-                );
+            Some(LintMsg::CloseDescription { uri: closed, path }) => {
+                assert_eq!(closed, uri);
+                assert_eq!(path, uri::to_path(&uri).expect("a file uri"));
             }
-            other => panic!(
-                "expected a watched-files refresh, got {:?}",
-                other.is_some()
-            ),
+            other => panic!("expected a DESCRIPTION close, got {:?}", other.is_some()),
         }
     }
 
