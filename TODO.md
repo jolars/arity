@@ -233,79 +233,6 @@ existing `description-title-format` and `description-text-format` entries under
   enumerates every installed package is not a violation. There is no general
   fix because the recommended functions answer different questions.
 
-### `undefined-symbol` false positives (rlang sweep, 2026-08-13)
-
-- [x] **`useDynLib()` binds native routines arity could not enumerate.** They
-  live in the C sources, so a reference outside a `.Call` head — passed as a
-  value (`capture_arg = ffi_enquo`) or compared
-  (`identical(capture_arg, ffi_enquo)`) — was a false positive. Closed by
-  *harvesting*, not by suppressing: `src/project/native.rs` reads the
-  `R_CallMethodDef`/`R_CMethodDef`/`R_FortranMethodDef`/`R_ExternalMethodDef`
-  tables out of `src/` (recursively — rlang's is in `src/internal/internal.c`),
-  handling both the string-literal shape and the stringifying `CALLDEF(fn, n)`
-  macro, and `parse_namespace` learned `useDynLib`, so explicitly named routines,
-  `alias = routine`, and `.fixes` all resolve too. Disk-derived in
-  `discover_packages`, frozen into the interned `Project`, folded into each
-  package member's `visible` set by `ProjectScope::build` (which stays pure).
-  Blanket suppression under `.registration = TRUE` was the rejected alternative:
-  it would silence `undefined-symbol` across the whole package. 9 findings
-  dropped in rlang (`R/nse-defuse.R`, `R/hash.R`), none added; harvest verified
-  exact against rlang, checkmate, bit, Matrix, and data.table. Known limits: a
-  registration shape the scanner does not recognize leaves its false positives in
-  place (the reporting direction), and an entry behind `#ifdef` is harvested
-  whether or not this build compiles it (suppress-only). Costs ~7 ms of `src/`
-  I/O per package discovery, and nothing at all for a package with no
-  `useDynLib`.
-
-- [x] **rlang's defusing operators are unquote-aware.** `quo`/`quos`/`expr`/`exprs`
-  joined the base four in `quoting_callee_kind` (`semantic/builder.rs`), and the
-  mask now has holes in it: `unquote_operand` matches `!!`/`!!!`/`{{ }}`
-  structurally (no dedicated `SyntaxKind` — a doubled unary `!`, a doubly nested
-  `BLOCK_EXPR` around a lone symbol) and `walk_evaluated` lifts every mask over
-  the operand, so an unresolved name there is still reported. `bquote`'s
-  `.()`/`..()` got the same treatment. `enquo`/`enexpr`/`ensym` are deliberately
-  *not* masked — their argument must name a formal, so it already resolves, and
-  masking would only discard the true positive `enquo(typo)`. Two deliberate
-  limits: a base `quote()` clears the escape, so `expr(quote(!!x))` masks where
-  rlang would unquote; and `!!` under a data-masking verb (`mutate(df, !!x)`)
-  still masks. Both suppress only. `enter_quote_mask` also fixed the qualified
-  path, which masked without raising `quote_depth` — `base::quote({n <- 1})` used
-  to record `n` as a binding while the bare spelling did not.
-
-### False positives (eulerr sweep, 2026-08-14)
-
-- [x] **`unused-binding` missed a closure's read of a reassigned name.** Past the
-  frame boundary `reads_reached` (`semantic/builder.rs`) returned only the *first*
-  same-name binding, so in `fit <- 1; print(fit); fit <- 2; h <- function()
-  print(fit)` the second `fit` looked unread — and its unsafe fix would have
-  deleted the assignment `h()` actually reads. A closure body carries no textual
-  ordering relative to the enclosing frame, so every candidate there is now
-  marked, matching the conservatism the in-frame branch already applied to a
-  reassignment. One finding dropped in eulerr, none added.
-
-- [x] **`coalesce` fired on the definition of `%||%` itself**, advising that the
-  operator be defined as a call to itself. A local polyfill is routine below the
-  R 4.4 floor the rule's own fix warns about. Exempt via `defines_coalesce_operator`.
-
-- [x] **NSE argument to a package-local function.** eulerr's `euler()`/`venn()` do
-  `by <- substitute(by)`, so `euler(dat, by = list(sex, age))` never evaluates
-  `sex`/`age` in the caller — but all 21 remaining `undefined-symbol` findings in
-  eulerr were exactly that. Package-local calls now follow a conservative
-  contract: `file_promise_seeds` projects range-free formal-use evidence,
-  `project_promises` propagates eager behavior through package wrappers, and the
-  rule checks an actual argument only when its matched formal is proven eager.
-  Capture, opaque forwarding, unused promises, duplicate definitions, and
-  ambiguous argument matching suppress instead. This avoids package-specific
-  function lists and deliberately spends false negatives to keep false positives
-  rare. `tests/salsa_incremental.rs` pins both backdating and invalidation when
-  the promise contract changes. Reproducer: `R/euler.R:272` against
-  `tests/testthat/test-plotting.R:672`.
-
-- Deliberately **not** changed: `duplicated-arguments` on `list(b = 1, b = 2)`.
-  Legal R (two elements, both named `b`), so it is the same shape as the `c()`
-  exemption in 6f0db6d — but unlike `c()` it is usually a typo, and 6f0db6d chose
-  to keep flagging it. Revisit only with a survey showing the noise is real.
-
 ### Roxygen topic rules
 
 The rlang `roxygen-param` false positive is fixed, and topic resolution now
@@ -333,11 +260,6 @@ no pin or allowlist entry moved. What remains:
   `resolves_to_base`-confirmed + shadow-checked, graduating the call-rewrite
   rules Unsafe -> Safe and suppressing FPs where `any`/`is.na` etc. are
   user-redefined. (`true-false-symbol` already shipped shadow-checked.)
-
-- [x] **Give the driver's per-file context a struct.** Done: `FileContext`
-  (`src/linter/rules.rs`) carries `project`/`resolution`/`package`/`topics`, and
-  both `#[allow(clippy::too_many_arguments)]`s are gone. `run_dcf_rules` is
-  untouched — six parameters, a different set of inputs.
 
 ### `futureverse/future` linter sweep (2026-08-19)
 
