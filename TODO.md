@@ -60,6 +60,29 @@
 
 ## Linter
 
+- [ ] Report calls to deprecated or defunct functions defined in project
+  source. Start with unconditional, base-resolved `.Deprecated()` and
+  `.Defunct()` calls at function entry, and extract literal replacement names
+  when available. Carry the metadata through single-file semantics and
+  range-free project projections so diagnostics follow resolved function
+  identities, including across files. Respect shadowing of both the marker
+  and the deprecated function; do not infer whole-function deprecation from
+  conditional, quoted, or nested calls. Add positive and negative fixtures,
+  including cross-file resolution and incremental updates. Report at the use
+  site with a replacement suggestion when known; no general autofix.
+
+- [ ] Extend deprecation detection to installed dependencies during package
+  indexing. Inspect closure bodies statically for `.Deprecated()` and
+  `.Defunct()`, preserving the expression structure associated with compiled
+  bodies that `rindex::rds` currently discards. Store status and optional
+  replacement metadata with the indexed package version, and feed it into the
+  same diagnostics for resolved bare and namespace-qualified calls. Never
+  execute R; missing or unreadable metadata stays unknown. Pin compiled and
+  uncompiled package fixtures. Once the base R markers work, extend detection
+  to explicit `lifecycle::deprecate_*()` calls, with documentation annotations
+  as supplementary coverage. Keep argument-specific deprecations separate
+  from whole-function status, and superseded APIs opt-in.
+
 - [x] `deprecated-suppression` flags the **deprecated `# arity-ignore`
   spellings** and rewrites them to `# arity-lint skip` / `# arity-lint
   skip-file`. Keyed off `Spelling::Deprecated`; `Safe` fix over the parsed
