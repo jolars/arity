@@ -96,7 +96,9 @@
     };
   }
 
-  function spec(points) {
+  function spec(payload) {
+    var lsp = !Array.isArray(payload);
+    var points = lsp ? payload.points : payload;
     var dark = isDark();
     var fg = dark ? "#c8c9db" : "#333333";
     var grid = dark ? "#3b3f5c" : "#dddddd";
@@ -106,12 +108,14 @@
 
     return {
       $schema: "https://vega.github.io/schema/vega-lite/v5.json",
-      description:
-        "Dot plot of speed relative to arity. Each dot is one input " +
-        "processed by one tool; the vertical axis is mean time as a " +
-        "ratio to arity on a log scale, with arity on a dashed baseline " +
-        "at 1, faster tools below and slower tools above. See the data table " +
-        "for the underlying numbers.",
+      description: lsp
+        ? payload.ratio_title +
+          ". Lower values use less time or memory. See the data table for measurements and sample details."
+        : "Dot plot of speed relative to arity. Each dot is one input " +
+          "processed by one tool; the vertical axis is mean time as a " +
+          "ratio to arity on a log scale, with arity on a dashed baseline " +
+          "at 1, faster tools below and slower tools above. See the data table " +
+          "for the underlying numbers.",
       width: "container",
       height: 340,
       data: { values: points },
@@ -137,25 +141,33 @@
             y: {
               field: "ratio",
               type: "quantitative",
-              title: "Time relative to arity",
+              title: lsp ? payload.ratio_title : "Time relative to arity",
               scale: { type: "log", domain: domain, nice: false },
               axis: logAxis(domain, fg),
             },
             color: {
               field: "document",
               type: "nominal",
-              title: "Input",
+              title: lsp ? "Measurement" : "Input",
               sort: documents,
             },
-            tooltip: [
-              { field: "document", title: "Input" },
-              { field: "tool", title: "Tool" },
-              { field: "mean_ms", title: "Mean (ms)", format: ".3f" },
-              { field: "ratio_label", title: "Relative" },
-              { field: "min_ms", title: "Min (ms)", format: ".3f" },
-              { field: "max_ms", title: "Max (ms)", format: ".3f" },
-              { field: "stddev_ms", title: "Std dev (ms)", format: ".3f" },
-            ],
+            tooltip: lsp
+              ? [
+                  { field: "document", title: "Measurement" },
+                  { field: "tool", title: "Server" },
+                  { field: "value", title: payload.value_title, format: ".3f" },
+                  { field: "ratio_label", title: "Relative" },
+                  { field: "detail", title: "Details" },
+                ]
+              : [
+                  { field: "document", title: "Input" },
+                  { field: "tool", title: "Tool" },
+                  { field: "mean_ms", title: "Mean (ms)", format: ".3f" },
+                  { field: "ratio_label", title: "Relative" },
+                  { field: "min_ms", title: "Min (ms)", format: ".3f" },
+                  { field: "max_ms", title: "Max (ms)", format: ".3f" },
+                  { field: "stddev_ms", title: "Std dev (ms)", format: ".3f" },
+                ],
           },
         },
       ],
@@ -209,7 +221,8 @@
         console.error("bench-charts: bad data payload", err);
         return;
       }
-      if (!Array.isArray(points) || !points.length) {
+      var rows = Array.isArray(points) ? points : points.points;
+      if (!Array.isArray(rows) || !rows.length) {
         return;
       }
       container.__benchPoints = points;

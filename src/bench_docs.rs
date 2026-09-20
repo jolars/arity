@@ -19,6 +19,10 @@
 //! (e.g. `styler`, `jarl`) to the benchmark artifact therefore needs no change
 //! here; nor does adding a section or chart.
 
+mod lsp;
+
+pub use lsp::render_lsp_partial;
+
 use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};

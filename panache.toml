@@ -12,6 +12,7 @@ extend-exclude = [
   "docs/src/reference/rules.md",
   "docs/src/guide/benchmarks_meta.md",
   "docs/src/guide/benchmarks_results.md",
+  "docs/src/guide/benchmarks_lsp.md",
   "docs/src/version.md",
   # mdBook's SUMMARY.md is structural (one chapter per line); prose reflow breaks it.
   "docs/src/SUMMARY.md",

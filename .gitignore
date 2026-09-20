@@ -54,3 +54,6 @@ devenv.local.yaml
 /docs/book
 roxygen2-ref
 /.lighthouse
+
+# Python benchmark harness bytecode
+/benches/__pycache__/

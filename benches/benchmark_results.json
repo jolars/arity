@@ -2,109 +2,1677 @@
   "schema_version": 2,
   "meta": {
     "generated_at": "2026-09-16T17:40:41Z",
-    "host": {"os": "linux", "arch": "x86_64", "cpu": "AMD Ryzen 9 7900 12-Core Processor"},
+    "host": {
+      "os": "linux",
+      "arch": "x86_64",
+      "cpu": "AMD Ryzen 9 7900 12-Core Processor"
+    },
     "backend": "hyperfine",
     "min_runs": 3,
     "tools": {
-      "arity": {"version": "0.23.0"},
-      "air": {"version": "0.11.0"},
-      "jarl": {"version": "0.5.0"},
-      "styler": {"version": "1.11.0"},
-      "lintr": {"version": "3.3.0.1"}
+      "arity": {
+        "version": "0.23.0"
+      },
+      "air": {
+        "version": "0.11.0"
+      },
+      "jarl": {
+        "version": "0.5.0"
+      },
+      "styler": {
+        "version": "1.11.0"
+      },
+      "lintr": {
+        "version": "3.3.0.1"
+      }
     }
   },
   "sections": [
     {
-      "id":"formatter",
-      "title":"Formatter",
-      "charts":[
+      "id": "formatter",
+      "title": "Formatter",
+      "charts": [
         {
-          "id":"formatter-files",
-          "title":"Single files",
-          "caption":"Formatting speed on single files relative to arity, one dot per document: the largest source file of each benchmarked package, then two synthetic corpus tiers. The vertical axis is mean wall-clock time as a ratio to arity on a log scale, so arity lies on the dashed baseline at 1; faster tools fall below it and slower tools rise above. Hover a dot for the exact figures.",
-          "documents":[
-            {"id":"MASS-file","name":"MASS/polr.R","size_bytes":19787,"lines":534},
-            {"id":"tidyr-file","name":"tidyr/pivot-wide.R","size_bytes":23349,"lines":807},
-            {"id":"small","name":"small","size_bytes":147122,"lines":9896},
-            {"id":"large","name":"large","size_bytes":1765464,"lines":118752}
+          "id": "formatter-files",
+          "title": "Single files",
+          "caption": "Formatting speed on single files relative to arity, one dot per document: the largest source file of each benchmarked package, then two synthetic corpus tiers. The vertical axis is mean wall-clock time as a ratio to arity on a log scale, so arity lies on the dashed baseline at 1; faster tools fall below it and slower tools rise above. Hover a dot for the exact figures.",
+          "documents": [
+            {
+              "id": "MASS-file",
+              "name": "MASS/polr.R",
+              "size_bytes": 19787,
+              "lines": 534
+            },
+            {
+              "id": "tidyr-file",
+              "name": "tidyr/pivot-wide.R",
+              "size_bytes": 23349,
+              "lines": 807
+            },
+            {
+              "id": "small",
+              "name": "small",
+              "size_bytes": 147122,
+              "lines": 9896
+            },
+            {
+              "id": "large",
+              "name": "large",
+              "size_bytes": 1765464,
+              "lines": 118752
+            }
           ],
-          "results":[
-            {"document":"MASS-file","tool":"arity","mean_ms":4.8415,"stddev_ms":0.6281,"min_ms":3.6281,"max_ms":9.1041},
-            {"document":"MASS-file","tool":"air","mean_ms":8.2043,"stddev_ms":0.5961,"min_ms":7.0727,"max_ms":12.0133},
-            {"document":"MASS-file","tool":"styler","mean_ms":3164.6802,"stddev_ms":122.3425,"min_ms":3060.0818,"max_ms":3299.2111},
-            {"document":"tidyr-file","tool":"arity","mean_ms":4.4597,"stddev_ms":0.6419,"min_ms":3.2025,"max_ms":10.6042},
-            {"document":"tidyr-file","tool":"air","mean_ms":5.6126,"stddev_ms":0.6007,"min_ms":4.5239,"max_ms":9.8578},
-            {"document":"tidyr-file","tool":"styler","mean_ms":1737.5110,"stddev_ms":29.3376,"min_ms":1718.2032,"max_ms":1771.2710},
-            {"document":"small","tool":"arity","mean_ms":6.2978,"stddev_ms":0.9860,"min_ms":4.8161,"max_ms":14.9822},
-            {"document":"small","tool":"air","mean_ms":29.8889,"stddev_ms":1.6604,"min_ms":26.5463,"max_ms":34.6716},
-            {"document":"small","tool":"styler","mean_ms":13353.8912,"stddev_ms":307.7941,"min_ms":13063.7314,"max_ms":13676.7144},
-            {"document":"large","tool":"arity","mean_ms":45.0165,"stddev_ms":14.3207,"min_ms":36.5220,"max_ms":107.3092},
-            {"document":"large","tool":"air","mean_ms":332.7182,"stddev_ms":3.7626,"min_ms":325.1847,"max_ms":337.4778}
+          "results": [
+            {
+              "document": "MASS-file",
+              "tool": "arity",
+              "mean_ms": 4.8415,
+              "stddev_ms": 0.6281,
+              "min_ms": 3.6281,
+              "max_ms": 9.1041
+            },
+            {
+              "document": "MASS-file",
+              "tool": "air",
+              "mean_ms": 8.2043,
+              "stddev_ms": 0.5961,
+              "min_ms": 7.0727,
+              "max_ms": 12.0133
+            },
+            {
+              "document": "MASS-file",
+              "tool": "styler",
+              "mean_ms": 3164.6802,
+              "stddev_ms": 122.3425,
+              "min_ms": 3060.0818,
+              "max_ms": 3299.2111
+            },
+            {
+              "document": "tidyr-file",
+              "tool": "arity",
+              "mean_ms": 4.4597,
+              "stddev_ms": 0.6419,
+              "min_ms": 3.2025,
+              "max_ms": 10.6042
+            },
+            {
+              "document": "tidyr-file",
+              "tool": "air",
+              "mean_ms": 5.6126,
+              "stddev_ms": 0.6007,
+              "min_ms": 4.5239,
+              "max_ms": 9.8578
+            },
+            {
+              "document": "tidyr-file",
+              "tool": "styler",
+              "mean_ms": 1737.511,
+              "stddev_ms": 29.3376,
+              "min_ms": 1718.2032,
+              "max_ms": 1771.271
+            },
+            {
+              "document": "small",
+              "tool": "arity",
+              "mean_ms": 6.2978,
+              "stddev_ms": 0.986,
+              "min_ms": 4.8161,
+              "max_ms": 14.9822
+            },
+            {
+              "document": "small",
+              "tool": "air",
+              "mean_ms": 29.8889,
+              "stddev_ms": 1.6604,
+              "min_ms": 26.5463,
+              "max_ms": 34.6716
+            },
+            {
+              "document": "small",
+              "tool": "styler",
+              "mean_ms": 13353.8912,
+              "stddev_ms": 307.7941,
+              "min_ms": 13063.7314,
+              "max_ms": 13676.7144
+            },
+            {
+              "document": "large",
+              "tool": "arity",
+              "mean_ms": 45.0165,
+              "stddev_ms": 14.3207,
+              "min_ms": 36.522,
+              "max_ms": 107.3092
+            },
+            {
+              "document": "large",
+              "tool": "air",
+              "mean_ms": 332.7182,
+              "stddev_ms": 3.7626,
+              "min_ms": 325.1847,
+              "max_ms": 337.4778
+            }
           ]
         },
         {
-          "id":"formatter-projects",
-          "title":"Projects",
-          "caption":"Formatting speed on real R packages (the tidyr and MASS source trees) relative to arity, on the same log-ratio axis.",
-          "documents":[
-            {"id":"tidyr","name":"tidyr","size_bytes":245685,"lines":8774},
-            {"id":"MASS","name":"MASS","size_bytes":214820,"lines":5951}
+          "id": "formatter-projects",
+          "title": "Projects",
+          "caption": "Formatting speed on real R packages (the tidyr and MASS source trees) relative to arity, on the same log-ratio axis.",
+          "documents": [
+            {
+              "id": "tidyr",
+              "name": "tidyr",
+              "size_bytes": 245685,
+              "lines": 8774
+            },
+            {
+              "id": "MASS",
+              "name": "MASS",
+              "size_bytes": 214820,
+              "lines": 5951
+            }
           ],
-          "results":[
-            {"document":"tidyr","tool":"arity","mean_ms":23.7209,"stddev_ms":2.1579,"min_ms":20.9512,"max_ms":37.4993},
-            {"document":"tidyr","tool":"air","mean_ms":36.1422,"stddev_ms":1.1100,"min_ms":33.7529,"max_ms":39.3543},
-            {"document":"MASS","tool":"arity","mean_ms":33.3608,"stddev_ms":1.7100,"min_ms":31.1454,"max_ms":42.0423},
-            {"document":"MASS","tool":"air","mean_ms":63.3019,"stddev_ms":1.8568,"min_ms":59.7950,"max_ms":67.5271}
+          "results": [
+            {
+              "document": "tidyr",
+              "tool": "arity",
+              "mean_ms": 23.7209,
+              "stddev_ms": 2.1579,
+              "min_ms": 20.9512,
+              "max_ms": 37.4993
+            },
+            {
+              "document": "tidyr",
+              "tool": "air",
+              "mean_ms": 36.1422,
+              "stddev_ms": 1.11,
+              "min_ms": 33.7529,
+              "max_ms": 39.3543
+            },
+            {
+              "document": "MASS",
+              "tool": "arity",
+              "mean_ms": 33.3608,
+              "stddev_ms": 1.71,
+              "min_ms": 31.1454,
+              "max_ms": 42.0423
+            },
+            {
+              "document": "MASS",
+              "tool": "air",
+              "mean_ms": 63.3019,
+              "stddev_ms": 1.8568,
+              "min_ms": 59.795,
+              "max_ms": 67.5271
+            }
           ]
         }
       ]
     },
     {
-      "id":"linter",
-      "title":"Linter",
-      "charts":[
+      "id": "linter",
+      "title": "Linter",
+      "charts": [
         {
-          "id":"linter-files",
-          "title":"Single files",
-          "caption":"Linting speed on single files relative to arity, one dot per document, on the same log-ratio axis as the formatter charts.",
-          "documents":[
-            {"id":"MASS-file","name":"MASS/polr.R","size_bytes":19787,"lines":534},
-            {"id":"tidyr-file","name":"tidyr/pivot-wide.R","size_bytes":23349,"lines":807},
-            {"id":"small","name":"small","size_bytes":147122,"lines":9896},
-            {"id":"large","name":"large","size_bytes":1765464,"lines":118752}
+          "id": "linter-files",
+          "title": "Single files",
+          "caption": "Linting speed on single files relative to arity, one dot per document, on the same log-ratio axis as the formatter charts.",
+          "documents": [
+            {
+              "id": "MASS-file",
+              "name": "MASS/polr.R",
+              "size_bytes": 19787,
+              "lines": 534
+            },
+            {
+              "id": "tidyr-file",
+              "name": "tidyr/pivot-wide.R",
+              "size_bytes": 23349,
+              "lines": 807
+            },
+            {
+              "id": "small",
+              "name": "small",
+              "size_bytes": 147122,
+              "lines": 9896
+            },
+            {
+              "id": "large",
+              "name": "large",
+              "size_bytes": 1765464,
+              "lines": 118752
+            }
           ],
-          "results":[
-            {"document":"MASS-file","tool":"arity","mean_ms":33.1615,"stddev_ms":1.8477,"min_ms":29.7368,"max_ms":39.1127},
-            {"document":"MASS-file","tool":"jarl","mean_ms":12.9628,"stddev_ms":0.5789,"min_ms":11.9096,"max_ms":16.1438},
-            {"document":"MASS-file","tool":"lintr","mean_ms":1065.3256,"stddev_ms":5.5348,"min_ms":1058.9672,"max_ms":1069.0634},
-            {"document":"tidyr-file","tool":"arity","mean_ms":30.8709,"stddev_ms":1.7786,"min_ms":27.8587,"max_ms":41.4557},
-            {"document":"tidyr-file","tool":"jarl","mean_ms":10.6234,"stddev_ms":0.6517,"min_ms":9.5503,"max_ms":14.3922},
-            {"document":"tidyr-file","tool":"lintr","mean_ms":902.9177,"stddev_ms":10.5485,"min_ms":893.4831,"max_ms":914.3067},
-            {"document":"small","tool":"arity","mean_ms":30.1509,"stddev_ms":1.0012,"min_ms":28.3004,"max_ms":33.7130},
-            {"document":"small","tool":"jarl","mean_ms":31.1111,"stddev_ms":1.2710,"min_ms":28.9500,"max_ms":34.1700},
-            {"document":"small","tool":"lintr","mean_ms":13989.4429,"stddev_ms":1890.3543,"min_ms":11809.6553,"max_ms":15178.5032},
-            {"document":"large","tool":"arity","mean_ms":728.6282,"stddev_ms":252.8363,"min_ms":572.0615,"max_ms":1020.3157},
-            {"document":"large","tool":"jarl","mean_ms":492.3987,"stddev_ms":28.2576,"min_ms":471.9990,"max_ms":547.0819}
+          "results": [
+            {
+              "document": "MASS-file",
+              "tool": "arity",
+              "mean_ms": 33.1615,
+              "stddev_ms": 1.8477,
+              "min_ms": 29.7368,
+              "max_ms": 39.1127
+            },
+            {
+              "document": "MASS-file",
+              "tool": "jarl",
+              "mean_ms": 12.9628,
+              "stddev_ms": 0.5789,
+              "min_ms": 11.9096,
+              "max_ms": 16.1438
+            },
+            {
+              "document": "MASS-file",
+              "tool": "lintr",
+              "mean_ms": 1065.3256,
+              "stddev_ms": 5.5348,
+              "min_ms": 1058.9672,
+              "max_ms": 1069.0634
+            },
+            {
+              "document": "tidyr-file",
+              "tool": "arity",
+              "mean_ms": 30.8709,
+              "stddev_ms": 1.7786,
+              "min_ms": 27.8587,
+              "max_ms": 41.4557
+            },
+            {
+              "document": "tidyr-file",
+              "tool": "jarl",
+              "mean_ms": 10.6234,
+              "stddev_ms": 0.6517,
+              "min_ms": 9.5503,
+              "max_ms": 14.3922
+            },
+            {
+              "document": "tidyr-file",
+              "tool": "lintr",
+              "mean_ms": 902.9177,
+              "stddev_ms": 10.5485,
+              "min_ms": 893.4831,
+              "max_ms": 914.3067
+            },
+            {
+              "document": "small",
+              "tool": "arity",
+              "mean_ms": 30.1509,
+              "stddev_ms": 1.0012,
+              "min_ms": 28.3004,
+              "max_ms": 33.713
+            },
+            {
+              "document": "small",
+              "tool": "jarl",
+              "mean_ms": 31.1111,
+              "stddev_ms": 1.271,
+              "min_ms": 28.95,
+              "max_ms": 34.17
+            },
+            {
+              "document": "small",
+              "tool": "lintr",
+              "mean_ms": 13989.4429,
+              "stddev_ms": 1890.3543,
+              "min_ms": 11809.6553,
+              "max_ms": 15178.5032
+            },
+            {
+              "document": "large",
+              "tool": "arity",
+              "mean_ms": 728.6282,
+              "stddev_ms": 252.8363,
+              "min_ms": 572.0615,
+              "max_ms": 1020.3157
+            },
+            {
+              "document": "large",
+              "tool": "jarl",
+              "mean_ms": 492.3987,
+              "stddev_ms": 28.2576,
+              "min_ms": 471.999,
+              "max_ms": 547.0819
+            }
           ]
         },
         {
-          "id":"linter-projects",
-          "title":"Projects",
-          "caption":"Linting speed on real R packages (the tidyr and MASS source trees) relative to arity, on the same log-ratio axis.",
-          "documents":[
-            {"id":"tidyr","name":"tidyr","size_bytes":245685,"lines":8774},
-            {"id":"MASS","name":"MASS","size_bytes":214820,"lines":5951}
+          "id": "linter-projects",
+          "title": "Projects",
+          "caption": "Linting speed on real R packages (the tidyr and MASS source trees) relative to arity, on the same log-ratio axis.",
+          "documents": [
+            {
+              "id": "tidyr",
+              "name": "tidyr",
+              "size_bytes": 245685,
+              "lines": 8774
+            },
+            {
+              "id": "MASS",
+              "name": "MASS",
+              "size_bytes": 214820,
+              "lines": 5951
+            }
           ],
-          "results":[
-            {"document":"tidyr","tool":"arity","mean_ms":32.1305,"stddev_ms":1.6109,"min_ms":28.5647,"max_ms":37.8632},
-            {"document":"tidyr","tool":"jarl","mean_ms":13.8226,"stddev_ms":0.9254,"min_ms":12.2326,"max_ms":19.1293},
-            {"document":"tidyr","tool":"lintr","mean_ms":9238.4568,"stddev_ms":61.0105,"min_ms":9186.3826,"max_ms":9305.5851},
-            {"document":"MASS","tool":"arity","mean_ms":35.8673,"stddev_ms":1.9851,"min_ms":30.9940,"max_ms":40.1854},
-            {"document":"MASS","tool":"jarl","mean_ms":20.5610,"stddev_ms":2.0127,"min_ms":16.7284,"max_ms":28.7741},
-            {"document":"MASS","tool":"lintr","mean_ms":9519.1274,"stddev_ms":80.0788,"min_ms":9438.2252,"max_ms":9598.3566}
+          "results": [
+            {
+              "document": "tidyr",
+              "tool": "arity",
+              "mean_ms": 32.1305,
+              "stddev_ms": 1.6109,
+              "min_ms": 28.5647,
+              "max_ms": 37.8632
+            },
+            {
+              "document": "tidyr",
+              "tool": "jarl",
+              "mean_ms": 13.8226,
+              "stddev_ms": 0.9254,
+              "min_ms": 12.2326,
+              "max_ms": 19.1293
+            },
+            {
+              "document": "tidyr",
+              "tool": "lintr",
+              "mean_ms": 9238.4568,
+              "stddev_ms": 61.0105,
+              "min_ms": 9186.3826,
+              "max_ms": 9305.5851
+            },
+            {
+              "document": "MASS",
+              "tool": "arity",
+              "mean_ms": 35.8673,
+              "stddev_ms": 1.9851,
+              "min_ms": 30.994,
+              "max_ms": 40.1854
+            },
+            {
+              "document": "MASS",
+              "tool": "jarl",
+              "mean_ms": 20.561,
+              "stddev_ms": 2.0127,
+              "min_ms": 16.7284,
+              "max_ms": 28.7741
+            },
+            {
+              "document": "MASS",
+              "tool": "lintr",
+              "mean_ms": 9519.1274,
+              "stddev_ms": 80.0788,
+              "min_ms": 9438.2252,
+              "max_ms": 9598.3566
+            }
           ]
         }
       ]
     }
-  ]
+  ],
+  "lsp": {
+    "schema_version": 1,
+    "meta": {
+      "generated_at": "2026-09-20T20:34:06.405999+00:00",
+      "host": {
+        "os": "Linux",
+        "arch": "x86_64",
+        "cpu": "AMD Ryzen 9 7900 12-Core Processor",
+        "memory_gb": 61
+      },
+      "runs": 3,
+      "quiet_seconds": 5,
+      "settle_timeout_seconds": 120,
+      "edit_count": 1000,
+      "latency_runs": 20,
+      "latency_warmups": 2,
+      "sample_interval_seconds": 0.15,
+      "edit_poll_seconds": 0.01
+    },
+    "corpus": {
+      "name": "tidyr v1.3.2",
+      "repo": "https://github.com/tidyverse/tidyr.git",
+      "revision": "bfdfc359b90b5f1432eb9de21cd03d9c11893137"
+    },
+    "session": {
+      "project": "tidyr",
+      "files": [
+        "R/pivot-wide.R",
+        "R/separate-wider.R",
+        "R/pivot-long.R",
+        "R/import-standalone-types-check.R",
+        "R/chop.R"
+      ],
+      "file_count": 5,
+      "disk_bytes": 82838,
+      "opened_bytes": 82999,
+      "edited_file": "R/pivot-wide.R"
+    },
+    "servers": [
+      {
+        "key": "arity",
+        "label": "Arity",
+        "doing": "static R analysis and native package indexing",
+        "version": "arity 0.23.0",
+        "command": [
+          "arity",
+          "--no-config",
+          "lsp"
+        ],
+        "runs": [
+          {
+            "run": 1,
+            "milestones": {
+              "baseline": {
+                "rss_mb": 25.6,
+                "pss_mb": 23.8,
+                "processes": 1
+              },
+              "settled": {
+                "rss_mb": 330.6,
+                "pss_mb": 328.8,
+                "processes": 1
+              },
+              "edited": {
+                "rss_mb": 391.2,
+                "pss_mb": 389.3,
+                "processes": 1
+              },
+              "peak": {
+                "rss_mb": 417.5,
+                "pss_mb": 415.6,
+                "processes": 1
+              }
+            },
+            "init_seconds": 0.016038,
+            "workspace_ready_seconds": 0.152227,
+            "documents_ready_seconds": 0.31631,
+            "edit_work_seconds": 2.447251,
+            "baseline_seconds": 5.12,
+            "settled_seconds": 10.42,
+            "edit_seconds": 7.56,
+            "total_seconds": 18.2,
+            "diagnostic_mode": "pull",
+            "text_sync": "incremental",
+            "diagnostics_published": 0,
+            "diagnostic_requests": 10,
+            "definition_requests": 1000,
+            "samples": 120,
+            "request_latencies": [
+              {
+                "key": "document_symbol",
+                "label": "Document symbols",
+                "method": "textDocument/documentSymbol",
+                "targets": 3,
+                "empty_results": 0,
+                "samples": 60,
+                "median_ms": 1.456,
+                "p95_ms": 1.951,
+                "result_count_min": 66,
+                "result_count_median": 81.0,
+                "result_count_max": 120,
+                "payload_bytes_min": 12975,
+                "payload_bytes_median": 16042.0,
+                "payload_bytes_max": 23793
+              },
+              {
+                "key": "hover",
+                "label": "Hover",
+                "method": "textDocument/hover",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 0.656,
+                "p95_ms": 0.805,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "payload_bytes_min": 811,
+                "payload_bytes_median": 811.0,
+                "payload_bytes_max": 811
+              },
+              {
+                "key": "definition",
+                "label": "Go to definition",
+                "method": "textDocument/definition",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 1.13,
+                "p95_ms": 1.246,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 166,
+                "payload_bytes_median": 166.0,
+                "payload_bytes_max": 166
+              },
+              {
+                "key": "references",
+                "label": "Find references",
+                "method": "textDocument/references",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 1.112,
+                "p95_ms": 1.324,
+                "result_count_min": 2,
+                "result_count_median": 2.0,
+                "result_count_max": 2,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 335,
+                "payload_bytes_median": 335.0,
+                "payload_bytes_max": 335
+              },
+              {
+                "key": "rename",
+                "label": "Rename",
+                "method": "textDocument/rename",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 1.074,
+                "p95_ms": 1.224,
+                "result_count_min": 2,
+                "result_count_median": 2.0,
+                "result_count_max": 2,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 317,
+                "payload_bytes_median": 317.0,
+                "payload_bytes_max": 317
+              },
+              {
+                "key": "edit_definition",
+                "label": "Edit to definition",
+                "method": "textDocument/definition",
+                "targets": 1,
+                "empty_results": 0,
+                "stale_responses": 0,
+                "samples": 1000,
+                "median_ms": 2.237,
+                "p95_ms": 3.358,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 166,
+                "payload_bytes_median": 166.0,
+                "payload_bytes_max": 166
+              }
+            ]
+          },
+          {
+            "run": 2,
+            "milestones": {
+              "baseline": {
+                "rss_mb": 25.6,
+                "pss_mb": 23.8,
+                "processes": 1
+              },
+              "settled": {
+                "rss_mb": 344.7,
+                "pss_mb": 342.8,
+                "processes": 1
+              },
+              "edited": {
+                "rss_mb": 368.4,
+                "pss_mb": 366.5,
+                "processes": 1
+              },
+              "peak": {
+                "rss_mb": 386.3,
+                "pss_mb": 384.4,
+                "processes": 2
+              }
+            },
+            "init_seconds": 0.001879,
+            "workspace_ready_seconds": 0.152161,
+            "documents_ready_seconds": 0.336303,
+            "edit_work_seconds": 2.854012,
+            "baseline_seconds": 5.1,
+            "settled_seconds": 10.41,
+            "edit_seconds": 7.82,
+            "total_seconds": 18.43,
+            "diagnostic_mode": "pull",
+            "text_sync": "incremental",
+            "diagnostics_published": 0,
+            "diagnostic_requests": 10,
+            "definition_requests": 1000,
+            "samples": 122,
+            "request_latencies": [
+              {
+                "key": "document_symbol",
+                "label": "Document symbols",
+                "method": "textDocument/documentSymbol",
+                "targets": 3,
+                "empty_results": 0,
+                "samples": 60,
+                "median_ms": 1.382,
+                "p95_ms": 2.045,
+                "result_count_min": 66,
+                "result_count_median": 81.0,
+                "result_count_max": 120,
+                "payload_bytes_min": 12975,
+                "payload_bytes_median": 16042.0,
+                "payload_bytes_max": 23793
+              },
+              {
+                "key": "hover",
+                "label": "Hover",
+                "method": "textDocument/hover",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 0.667,
+                "p95_ms": 0.778,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "payload_bytes_min": 811,
+                "payload_bytes_median": 811.0,
+                "payload_bytes_max": 811
+              },
+              {
+                "key": "definition",
+                "label": "Go to definition",
+                "method": "textDocument/definition",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 0.987,
+                "p95_ms": 1.341,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 166,
+                "payload_bytes_median": 166.0,
+                "payload_bytes_max": 166
+              },
+              {
+                "key": "references",
+                "label": "Find references",
+                "method": "textDocument/references",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 0.966,
+                "p95_ms": 1.263,
+                "result_count_min": 2,
+                "result_count_median": 2.0,
+                "result_count_max": 2,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 335,
+                "payload_bytes_median": 335.0,
+                "payload_bytes_max": 335
+              },
+              {
+                "key": "rename",
+                "label": "Rename",
+                "method": "textDocument/rename",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 1.082,
+                "p95_ms": 1.499,
+                "result_count_min": 2,
+                "result_count_median": 2.0,
+                "result_count_max": 2,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 317,
+                "payload_bytes_median": 317.0,
+                "payload_bytes_max": 317
+              },
+              {
+                "key": "edit_definition",
+                "label": "Edit to definition",
+                "method": "textDocument/definition",
+                "targets": 1,
+                "empty_results": 0,
+                "stale_responses": 0,
+                "samples": 1000,
+                "median_ms": 2.609,
+                "p95_ms": 4.107,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 166,
+                "payload_bytes_median": 166.0,
+                "payload_bytes_max": 166
+              }
+            ]
+          },
+          {
+            "run": 3,
+            "milestones": {
+              "baseline": {
+                "rss_mb": 25.8,
+                "pss_mb": 24.0,
+                "processes": 1
+              },
+              "settled": {
+                "rss_mb": 326.6,
+                "pss_mb": 324.7,
+                "processes": 1
+              },
+              "edited": {
+                "rss_mb": 374.5,
+                "pss_mb": 372.6,
+                "processes": 1
+              },
+              "peak": {
+                "rss_mb": 401.5,
+                "pss_mb": 399.6,
+                "processes": 2
+              }
+            },
+            "init_seconds": 0.002231,
+            "workspace_ready_seconds": 0.152277,
+            "documents_ready_seconds": 0.337746,
+            "edit_work_seconds": 2.609499,
+            "baseline_seconds": 5.1,
+            "settled_seconds": 10.41,
+            "edit_seconds": 7.72,
+            "total_seconds": 18.37,
+            "diagnostic_mode": "pull",
+            "text_sync": "incremental",
+            "diagnostics_published": 0,
+            "diagnostic_requests": 10,
+            "definition_requests": 1000,
+            "samples": 121,
+            "request_latencies": [
+              {
+                "key": "document_symbol",
+                "label": "Document symbols",
+                "method": "textDocument/documentSymbol",
+                "targets": 3,
+                "empty_results": 0,
+                "samples": 60,
+                "median_ms": 1.719,
+                "p95_ms": 2.162,
+                "result_count_min": 66,
+                "result_count_median": 81.0,
+                "result_count_max": 120,
+                "payload_bytes_min": 12975,
+                "payload_bytes_median": 16042.0,
+                "payload_bytes_max": 23793
+              },
+              {
+                "key": "hover",
+                "label": "Hover",
+                "method": "textDocument/hover",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 0.684,
+                "p95_ms": 0.881,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "payload_bytes_min": 811,
+                "payload_bytes_median": 811.0,
+                "payload_bytes_max": 811
+              },
+              {
+                "key": "definition",
+                "label": "Go to definition",
+                "method": "textDocument/definition",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 1.217,
+                "p95_ms": 1.43,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 166,
+                "payload_bytes_median": 166.0,
+                "payload_bytes_max": 166
+              },
+              {
+                "key": "references",
+                "label": "Find references",
+                "method": "textDocument/references",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 1.153,
+                "p95_ms": 1.275,
+                "result_count_min": 2,
+                "result_count_median": 2.0,
+                "result_count_max": 2,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 335,
+                "payload_bytes_median": 335.0,
+                "payload_bytes_max": 335
+              },
+              {
+                "key": "rename",
+                "label": "Rename",
+                "method": "textDocument/rename",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 1.01,
+                "p95_ms": 1.277,
+                "result_count_min": 2,
+                "result_count_median": 2.0,
+                "result_count_max": 2,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 317,
+                "payload_bytes_median": 317.0,
+                "payload_bytes_max": 317
+              },
+              {
+                "key": "edit_definition",
+                "label": "Edit to definition",
+                "method": "textDocument/definition",
+                "targets": 1,
+                "empty_results": 0,
+                "stale_responses": 0,
+                "samples": 1000,
+                "median_ms": 2.413,
+                "p95_ms": 3.618,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 166,
+                "payload_bytes_median": 166.0,
+                "payload_bytes_max": 166
+              }
+            ]
+          }
+        ],
+        "aggregate": {
+          "milestones": {
+            "baseline": {
+              "rss_mb": 25.6,
+              "pss_mb": 23.8,
+              "processes": 1
+            },
+            "settled": {
+              "rss_mb": 330.6,
+              "pss_mb": 328.8,
+              "processes": 1
+            },
+            "edited": {
+              "rss_mb": 374.5,
+              "pss_mb": 372.6,
+              "processes": 1
+            },
+            "peak": {
+              "rss_mb": 401.5,
+              "pss_mb": 399.6,
+              "processes": 2
+            }
+          },
+          "timings": {
+            "init_seconds": 0.002231,
+            "workspace_ready_seconds": 0.152227,
+            "documents_ready_seconds": 0.336303,
+            "edit_work_seconds": 2.609499,
+            "baseline_seconds": 5.1,
+            "settled_seconds": 10.41,
+            "edit_seconds": 7.72,
+            "total_seconds": 18.37
+          },
+          "request_latencies": [
+            {
+              "key": "document_symbol",
+              "label": "Document symbols",
+              "method": "textDocument/documentSymbol",
+              "targets": 3,
+              "empty_results": 0,
+              "stale_responses": 0,
+              "samples": 180,
+              "median_ms": 1.522,
+              "p95_ms": 2.13,
+              "result_count_min": 66,
+              "result_count_median": 81.0,
+              "result_count_max": 120,
+              "payload_bytes_min": 12975,
+              "payload_bytes_median": 16042.0,
+              "payload_bytes_max": 23793
+            },
+            {
+              "key": "hover",
+              "label": "Hover",
+              "method": "textDocument/hover",
+              "targets": 1,
+              "empty_results": 0,
+              "stale_responses": 0,
+              "samples": 60,
+              "median_ms": 0.672,
+              "p95_ms": 0.823,
+              "result_count_min": 1,
+              "result_count_median": 1.0,
+              "result_count_max": 1,
+              "payload_bytes_min": 811,
+              "payload_bytes_median": 811.0,
+              "payload_bytes_max": 811
+            },
+            {
+              "key": "definition",
+              "label": "Go to definition",
+              "method": "textDocument/definition",
+              "targets": 1,
+              "empty_results": 0,
+              "stale_responses": 0,
+              "samples": 60,
+              "median_ms": 1.128,
+              "p95_ms": 1.347,
+              "result_count_min": 1,
+              "result_count_median": 1.0,
+              "result_count_max": 1,
+              "result_files_min": 1,
+              "result_files_median": 1.0,
+              "result_files_max": 1,
+              "payload_bytes_min": 166,
+              "payload_bytes_median": 166.0,
+              "payload_bytes_max": 166
+            },
+            {
+              "key": "references",
+              "label": "Find references",
+              "method": "textDocument/references",
+              "targets": 1,
+              "empty_results": 0,
+              "stale_responses": 0,
+              "samples": 60,
+              "median_ms": 1.093,
+              "p95_ms": 1.324,
+              "result_count_min": 2,
+              "result_count_median": 2.0,
+              "result_count_max": 2,
+              "result_files_min": 1,
+              "result_files_median": 1.0,
+              "result_files_max": 1,
+              "payload_bytes_min": 335,
+              "payload_bytes_median": 335.0,
+              "payload_bytes_max": 335
+            },
+            {
+              "key": "rename",
+              "label": "Rename",
+              "method": "textDocument/rename",
+              "targets": 1,
+              "empty_results": 0,
+              "stale_responses": 0,
+              "samples": 60,
+              "median_ms": 1.055,
+              "p95_ms": 1.395,
+              "result_count_min": 2,
+              "result_count_median": 2.0,
+              "result_count_max": 2,
+              "result_files_min": 1,
+              "result_files_median": 1.0,
+              "result_files_max": 1,
+              "payload_bytes_min": 317,
+              "payload_bytes_median": 317.0,
+              "payload_bytes_max": 317
+            },
+            {
+              "key": "edit_definition",
+              "label": "Edit to definition",
+              "method": "textDocument/definition",
+              "targets": 1,
+              "empty_results": 0,
+              "stale_responses": 0,
+              "samples": 3000,
+              "median_ms": 2.419,
+              "p95_ms": 3.701,
+              "result_count_min": 1,
+              "result_count_median": 1.0,
+              "result_count_max": 1,
+              "result_files_min": 1,
+              "result_files_median": 1.0,
+              "result_files_max": 1,
+              "payload_bytes_min": 166,
+              "payload_bytes_median": 166.0,
+              "payload_bytes_max": 166
+            }
+          ],
+          "samples": 121
+        }
+      },
+      {
+        "key": "languageserver",
+        "label": "languageserver",
+        "doing": "R-backed analysis and lintr diagnostics",
+        "version": "languageserver 0.3.18; R 4.6.1; lintr 3.3.0.1",
+        "command": [
+          "Rscript",
+          "--vanilla",
+          "-e",
+          "languageserver::run()"
+        ],
+        "runs": [
+          {
+            "run": 1,
+            "milestones": {
+              "baseline": {
+                "rss_mb": 1048.7,
+                "pss_mb": 899.2,
+                "processes": 9
+              },
+              "settled": {
+                "rss_mb": 1769.0,
+                "pss_mb": 1526.2,
+                "processes": 14
+              },
+              "edited": {
+                "rss_mb": 866.9,
+                "pss_mb": 823.6,
+                "processes": 3
+              },
+              "peak": {
+                "rss_mb": 2022.3,
+                "pss_mb": 1779.7,
+                "processes": 15
+              }
+            },
+            "init_seconds": 1.056373,
+            "workspace_ready_seconds": 4.834899,
+            "documents_ready_seconds": 1.692701,
+            "edit_work_seconds": 46.887944,
+            "baseline_seconds": 9.77,
+            "settled_seconds": 16.41,
+            "edit_seconds": 55.09,
+            "total_seconds": 76.59,
+            "diagnostic_mode": "push",
+            "text_sync": "full",
+            "diagnostics_published": 42,
+            "diagnostic_requests": 0,
+            "definition_requests": 1005,
+            "samples": 447,
+            "request_latencies": [
+              {
+                "key": "document_symbol",
+                "label": "Document symbols",
+                "method": "textDocument/documentSymbol",
+                "targets": 3,
+                "empty_results": 0,
+                "samples": 60,
+                "median_ms": 29.43,
+                "p95_ms": 38.356,
+                "result_count_min": 6,
+                "result_count_median": 13.0,
+                "result_count_max": 17,
+                "payload_bytes_min": 1217,
+                "payload_bytes_median": 2661.0,
+                "payload_bytes_max": 3477
+              },
+              {
+                "key": "hover",
+                "label": "Hover",
+                "method": "textDocument/hover",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 19.52,
+                "p95_ms": 21.518,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "payload_bytes_min": 1880,
+                "payload_bytes_median": 1880.0,
+                "payload_bytes_max": 1880
+              },
+              {
+                "key": "definition",
+                "label": "Go to definition",
+                "method": "textDocument/definition",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 18.512,
+                "p95_ms": 21.081,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 166,
+                "payload_bytes_median": 166.0,
+                "payload_bytes_max": 166
+              },
+              {
+                "key": "references",
+                "label": "Find references",
+                "method": "textDocument/references",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 46.835,
+                "p95_ms": 51.124,
+                "result_count_min": 2,
+                "result_count_median": 2.0,
+                "result_count_max": 2,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 335,
+                "payload_bytes_median": 335.0,
+                "payload_bytes_max": 335
+              },
+              {
+                "key": "rename",
+                "label": "Rename",
+                "method": "textDocument/rename",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 46.943,
+                "p95_ms": 50.045,
+                "result_count_min": 2,
+                "result_count_median": 2.0,
+                "result_count_max": 2,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 317,
+                "payload_bytes_median": 317.0,
+                "payload_bytes_max": 317
+              },
+              {
+                "key": "edit_definition",
+                "label": "Edit to definition",
+                "method": "textDocument/definition",
+                "targets": 1,
+                "empty_results": 0,
+                "stale_responses": 5,
+                "samples": 1000,
+                "median_ms": 39.442,
+                "p95_ms": 94.999,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 166,
+                "payload_bytes_median": 166.0,
+                "payload_bytes_max": 166
+              }
+            ]
+          },
+          {
+            "run": 2,
+            "milestones": {
+              "baseline": {
+                "rss_mb": 1048.5,
+                "pss_mb": 899.1,
+                "processes": 9
+              },
+              "settled": {
+                "rss_mb": 1768.6,
+                "pss_mb": 1526.2,
+                "processes": 14
+              },
+              "edited": {
+                "rss_mb": 873.3,
+                "pss_mb": 830.1,
+                "processes": 3
+              },
+              "peak": {
+                "rss_mb": 2028.1,
+                "pss_mb": 1785.7,
+                "processes": 16
+              }
+            },
+            "init_seconds": 0.920004,
+            "workspace_ready_seconds": 4.356267,
+            "documents_ready_seconds": 1.857476,
+            "edit_work_seconds": 47.099987,
+            "baseline_seconds": 9.34,
+            "settled_seconds": 16.2,
+            "edit_seconds": 55.12,
+            "total_seconds": 76.17,
+            "diagnostic_mode": "push",
+            "text_sync": "full",
+            "diagnostics_published": 43,
+            "diagnostic_requests": 0,
+            "definition_requests": 1005,
+            "samples": 444,
+            "request_latencies": [
+              {
+                "key": "document_symbol",
+                "label": "Document symbols",
+                "method": "textDocument/documentSymbol",
+                "targets": 3,
+                "empty_results": 0,
+                "samples": 60,
+                "median_ms": 28.505,
+                "p95_ms": 34.981,
+                "result_count_min": 6,
+                "result_count_median": 13.0,
+                "result_count_max": 17,
+                "payload_bytes_min": 1217,
+                "payload_bytes_median": 2661.0,
+                "payload_bytes_max": 3477
+              },
+              {
+                "key": "hover",
+                "label": "Hover",
+                "method": "textDocument/hover",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 19.483,
+                "p95_ms": 20.518,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "payload_bytes_min": 1880,
+                "payload_bytes_median": 1880.0,
+                "payload_bytes_max": 1880
+              },
+              {
+                "key": "definition",
+                "label": "Go to definition",
+                "method": "textDocument/definition",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 18.479,
+                "p95_ms": 19.16,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 166,
+                "payload_bytes_median": 166.0,
+                "payload_bytes_max": 166
+              },
+              {
+                "key": "references",
+                "label": "Find references",
+                "method": "textDocument/references",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 45.759,
+                "p95_ms": 48.139,
+                "result_count_min": 2,
+                "result_count_median": 2.0,
+                "result_count_max": 2,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 335,
+                "payload_bytes_median": 335.0,
+                "payload_bytes_max": 335
+              },
+              {
+                "key": "rename",
+                "label": "Rename",
+                "method": "textDocument/rename",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 48.324,
+                "p95_ms": 52.035,
+                "result_count_min": 2,
+                "result_count_median": 2.0,
+                "result_count_max": 2,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 317,
+                "payload_bytes_median": 317.0,
+                "payload_bytes_max": 317
+              },
+              {
+                "key": "edit_definition",
+                "label": "Edit to definition",
+                "method": "textDocument/definition",
+                "targets": 1,
+                "empty_results": 0,
+                "stale_responses": 5,
+                "samples": 1000,
+                "median_ms": 39.754,
+                "p95_ms": 97.137,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 166,
+                "payload_bytes_median": 166.0,
+                "payload_bytes_max": 166
+              }
+            ]
+          },
+          {
+            "run": 3,
+            "milestones": {
+              "baseline": {
+                "rss_mb": 1048.6,
+                "pss_mb": 899.1,
+                "processes": 9
+              },
+              "settled": {
+                "rss_mb": 1768.7,
+                "pss_mb": 1526.2,
+                "processes": 14
+              },
+              "edited": {
+                "rss_mb": 866.4,
+                "pss_mb": 823.2,
+                "processes": 3
+              },
+              "peak": {
+                "rss_mb": 2021.4,
+                "pss_mb": 1778.9,
+                "processes": 15
+              }
+            },
+            "init_seconds": 0.923724,
+            "workspace_ready_seconds": 4.507918,
+            "documents_ready_seconds": 1.992721,
+            "edit_work_seconds": 47.194862,
+            "baseline_seconds": 9.49,
+            "settled_seconds": 16.6,
+            "edit_seconds": 54.92,
+            "total_seconds": 76.36,
+            "diagnostic_mode": "push",
+            "text_sync": "full",
+            "diagnostics_published": 44,
+            "diagnostic_requests": 0,
+            "definition_requests": 1006,
+            "samples": 450,
+            "request_latencies": [
+              {
+                "key": "document_symbol",
+                "label": "Document symbols",
+                "method": "textDocument/documentSymbol",
+                "targets": 3,
+                "empty_results": 0,
+                "samples": 60,
+                "median_ms": 28.97,
+                "p95_ms": 35.361,
+                "result_count_min": 6,
+                "result_count_median": 13.0,
+                "result_count_max": 17,
+                "payload_bytes_min": 1217,
+                "payload_bytes_median": 2661.0,
+                "payload_bytes_max": 3477
+              },
+              {
+                "key": "hover",
+                "label": "Hover",
+                "method": "textDocument/hover",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 19.148,
+                "p95_ms": 21.313,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "payload_bytes_min": 1880,
+                "payload_bytes_median": 1880.0,
+                "payload_bytes_max": 1880
+              },
+              {
+                "key": "definition",
+                "label": "Go to definition",
+                "method": "textDocument/definition",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 17.776,
+                "p95_ms": 18.861,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 166,
+                "payload_bytes_median": 166.0,
+                "payload_bytes_max": 166
+              },
+              {
+                "key": "references",
+                "label": "Find references",
+                "method": "textDocument/references",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 45.495,
+                "p95_ms": 48.121,
+                "result_count_min": 2,
+                "result_count_median": 2.0,
+                "result_count_max": 2,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 335,
+                "payload_bytes_median": 335.0,
+                "payload_bytes_max": 335
+              },
+              {
+                "key": "rename",
+                "label": "Rename",
+                "method": "textDocument/rename",
+                "targets": 1,
+                "empty_results": 0,
+                "samples": 20,
+                "median_ms": 46.068,
+                "p95_ms": 47.89,
+                "result_count_min": 2,
+                "result_count_median": 2.0,
+                "result_count_max": 2,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 317,
+                "payload_bytes_median": 317.0,
+                "payload_bytes_max": 317
+              },
+              {
+                "key": "edit_definition",
+                "label": "Edit to definition",
+                "method": "textDocument/definition",
+                "targets": 1,
+                "empty_results": 0,
+                "stale_responses": 6,
+                "samples": 1000,
+                "median_ms": 39.818,
+                "p95_ms": 96.623,
+                "result_count_min": 1,
+                "result_count_median": 1.0,
+                "result_count_max": 1,
+                "result_files_min": 1,
+                "result_files_median": 1.0,
+                "result_files_max": 1,
+                "payload_bytes_min": 166,
+                "payload_bytes_median": 166.0,
+                "payload_bytes_max": 166
+              }
+            ]
+          }
+        ],
+        "aggregate": {
+          "milestones": {
+            "baseline": {
+              "rss_mb": 1048.6,
+              "pss_mb": 899.1,
+              "processes": 9
+            },
+            "settled": {
+              "rss_mb": 1768.7,
+              "pss_mb": 1526.2,
+              "processes": 14
+            },
+            "edited": {
+              "rss_mb": 866.9,
+              "pss_mb": 823.6,
+              "processes": 3
+            },
+            "peak": {
+              "rss_mb": 2022.3,
+              "pss_mb": 1779.7,
+              "processes": 15
+            }
+          },
+          "timings": {
+            "init_seconds": 0.923724,
+            "workspace_ready_seconds": 4.507918,
+            "documents_ready_seconds": 1.857476,
+            "edit_work_seconds": 47.099987,
+            "baseline_seconds": 9.49,
+            "settled_seconds": 16.41,
+            "edit_seconds": 55.09,
+            "total_seconds": 76.36
+          },
+          "request_latencies": [
+            {
+              "key": "document_symbol",
+              "label": "Document symbols",
+              "method": "textDocument/documentSymbol",
+              "targets": 3,
+              "empty_results": 0,
+              "stale_responses": 0,
+              "samples": 180,
+              "median_ms": 28.929,
+              "p95_ms": 36.145,
+              "result_count_min": 6,
+              "result_count_median": 13.0,
+              "result_count_max": 17,
+              "payload_bytes_min": 1217,
+              "payload_bytes_median": 2661.0,
+              "payload_bytes_max": 3477
+            },
+            {
+              "key": "hover",
+              "label": "Hover",
+              "method": "textDocument/hover",
+              "targets": 1,
+              "empty_results": 0,
+              "stale_responses": 0,
+              "samples": 60,
+              "median_ms": 19.401,
+              "p95_ms": 21.518,
+              "result_count_min": 1,
+              "result_count_median": 1.0,
+              "result_count_max": 1,
+              "payload_bytes_min": 1880,
+              "payload_bytes_median": 1880.0,
+              "payload_bytes_max": 1880
+            },
+            {
+              "key": "definition",
+              "label": "Go to definition",
+              "method": "textDocument/definition",
+              "targets": 1,
+              "empty_results": 0,
+              "stale_responses": 0,
+              "samples": 60,
+              "median_ms": 18.165,
+              "p95_ms": 19.827,
+              "result_count_min": 1,
+              "result_count_median": 1.0,
+              "result_count_max": 1,
+              "result_files_min": 1,
+              "result_files_median": 1.0,
+              "result_files_max": 1,
+              "payload_bytes_min": 166,
+              "payload_bytes_median": 166.0,
+              "payload_bytes_max": 166
+            },
+            {
+              "key": "references",
+              "label": "Find references",
+              "method": "textDocument/references",
+              "targets": 1,
+              "empty_results": 0,
+              "stale_responses": 0,
+              "samples": 60,
+              "median_ms": 45.763,
+              "p95_ms": 50.124,
+              "result_count_min": 2,
+              "result_count_median": 2.0,
+              "result_count_max": 2,
+              "result_files_min": 1,
+              "result_files_median": 1.0,
+              "result_files_max": 1,
+              "payload_bytes_min": 335,
+              "payload_bytes_median": 335.0,
+              "payload_bytes_max": 335
+            },
+            {
+              "key": "rename",
+              "label": "Rename",
+              "method": "textDocument/rename",
+              "targets": 1,
+              "empty_results": 0,
+              "stale_responses": 0,
+              "samples": 60,
+              "median_ms": 47.178,
+              "p95_ms": 51.622,
+              "result_count_min": 2,
+              "result_count_median": 2.0,
+              "result_count_max": 2,
+              "result_files_min": 1,
+              "result_files_median": 1.0,
+              "result_files_max": 1,
+              "payload_bytes_min": 317,
+              "payload_bytes_median": 317.0,
+              "payload_bytes_max": 317
+            },
+            {
+              "key": "edit_definition",
+              "label": "Edit to definition",
+              "method": "textDocument/definition",
+              "targets": 1,
+              "empty_results": 0,
+              "stale_responses": 16,
+              "samples": 3000,
+              "median_ms": 39.674,
+              "p95_ms": 96.456,
+              "result_count_min": 1,
+              "result_count_median": 1.0,
+              "result_count_max": 1,
+              "result_files_min": 1,
+              "result_files_median": 1.0,
+              "result_files_max": 1,
+              "payload_bytes_min": 166,
+              "payload_bytes_median": 166.0,
+              "payload_bytes_max": 166
+            }
+          ],
+          "samples": 447
+        }
+      }
+    ]
+  }
 }

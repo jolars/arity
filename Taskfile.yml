@@ -157,6 +157,12 @@ tasks:
     cmds:
       - ./scripts/bench.sh
 
+  bench-lsp:
+    desc: Compare Arity and languageserver latency and memory on Linux
+    aliases: ["bench:lsp"]
+    cmds:
+      - python3 benches/lsp.py {{.CLI_ARGS}}
+
   profile:
     desc: 'Profile one phase with perf and print a phase split (opt-in, local; e.g. task profile -- --mode lint --path pkg/R)'
     cmds:

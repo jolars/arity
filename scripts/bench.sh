@@ -445,6 +445,22 @@ emit_chart() {
     printf '        }%s\n' "$trailing"
 }
 
+# Preserve the independently measured LSP session when refreshing CLI timings.
+# Python is needed only once an LSP artifact exists; the CLI-only fallback stays usable.
+LSP_JSON=""
+if [ -f "$JSON_OUT" ] && grep -q '"lsp"[[:space:]]*:' "$JSON_OUT"; then
+    if ! have python3; then
+        log "error: python3 is required to preserve existing LSP measurements"
+        exit 1
+    fi
+    LSP_JSON=$(python3 - "$JSON_OUT" <<'PY_LSP'
+import json
+import sys
+with open(sys.argv[1]) as source:
+    print(json.dumps(json.load(source)["lsp"]))
+PY_LSP
+    )
+fi
 mkdir -p "$(dirname "$JSON_OUT")"
 {
     printf '{\n'
@@ -490,8 +506,11 @@ mkdir -p "$(dirname "$JSON_OUT")"
         ""
     printf '      ]\n    }\n'
 
-    printf '  ]\n'
-    printf '}\n'
+    printf '  ]'
+    if [ -n "$LSP_JSON" ]; then
+        printf ',\n  "lsp": %s' "$LSP_JSON"
+    fi
+    printf '\n}\n'
 } > "$JSON_OUT"
 
 log ">> Wrote $JSON_OUT"

@@ -1,7 +1,8 @@
 # Performance
 
-Wall-clock speed of `arity` against other R tooling, measured with [hyperfine].
-Two operations are covered:
+Arity is measured against other R tools in two suites: command-line speed,
+measured with [hyperfine], and language-server latency and memory, measured
+through LSP over stdio. The command-line suite covers two operations:
 
 - the **formatter**, compared against [`air`](https://github.com/posit-dev/air)
   and [`styler`](https://styler.r-lib.org/);
@@ -19,9 +20,11 @@ inside an R process, so a large part of their time on small inputs is
 interpreter startup rather than real work. Treat the *ratios*, not the absolute
 milliseconds, as the takeaway.
 
-The figures below are regenerated manually with `task bench` and committed as a
-machine-readable artifact (`benches/benchmark_results.json`); they are never
-re-measured when this site is built or in CI.
+The figures below come from the committed machine-readable artifact
+`benches/benchmark_results.json`. Run `task bench` to refresh command-line
+measurements or `task bench-lsp` to refresh language-server measurements, then
+`task docs-gen` to update this page. Each suite preserves the other's results.
+Neither suite runs when the site is built or in CI.
 
 [hyperfine]: https://github.com/sharkdp/hyperfine
 
@@ -95,3 +98,88 @@ projects. The `arity` baseline sits on the dashed line at 1 in every chart;
 faster tools fall below it, slower tools rise above.
 
 {{#include benchmarks_results.md}}
+
+## Language-server latency and memory
+
+This Linux-only suite compares Arity with
+[`languageserver`](https://github.com/REditorSupport/languageserver), following
+Panache's LSP benchmark. It starts three fresh processes per server in
+alternating order, opens the five largest tracked R files in `tidyr` v1.3.2 at a
+pinned commit, and performs 1,000 edits in the largest file. The checkout stays
+unchanged: benchmark bindings and edits exist only in the open buffer.
+
+### What the session measures
+
+**Startup and workload** covers process launch through the `initialize`
+response, workspace readiness after initialization, readiness after opening the
+files, and the complete edit workload. Both servers must publish diagnostics for
+the opened files before warm requests begin. Readiness is estimated from
+process-tree CPU use: the start of a five-second window below 5% of one core,
+sampled every 150 ms. The deliberate settling wait is excluded from readiness
+times. These estimates do not prove that all background work has finished.
+
+**Request latency** covers document symbols in the three largest open files,
+hover on `mean()`, and definition, references, and rename on a local function
+call appended to the largest buffer. Rename edits are returned but never
+applied. Each target gets two warmups and 20 measured serial round trips per
+process. Median and p95 pool samples across processes; the tables and tooltips
+also report sample counts, empty responses, returned items, and result sizes. An
+empty response measures response overhead and does not establish equivalent
+feature behavior.
+
+**Edit to definition** times a change notification through the following correct
+definition response. Each edit switches a call between two functions with
+equal-length names and declarations on different lines. The runner checks that
+the response points to the newly selected declaration. It polls every 10 ms
+after stale or empty replies, counting those replies and including the wait in
+the measurement. A server that never returns the correct location fails the run.
+Arity receives incremental changes; `languageserver` receives full documents, as
+each advertises during initialization. All 1,000 edits are measured, without
+discarded warmups. This measures navigation after an edit; it does not measure
+time to diagnostics for each keystroke. The complete edit workload excludes the
+final diagnostic and settling waits.
+
+**Resident memory** is sampled for the server and its descendants after
+initialization, after opening files, after edits, and at the sampled peak. RSS
+counts shared pages in each process; PSS apportions them and appears in the
+tables and tooltips. Values use MiB, and each point is the median across fresh
+processes. Short-lived peaks or child processes between samples can be missed.
+The peak RSS, peak PSS, and peak process count can occur at different times.
+
+The servers perform different work and use different diagnostics and package
+indexes. These are measurements of the same editor workload, not a claim of
+feature equivalence. Both retain their default analysis settings. Arity runs
+with `--no-config`; R runs with `--vanilla`; each process gets fresh XDG config
+and cache directories. Arity's remote index URL is unset. Installed R packages
+and their help files remain available, so results depend on that library as well
+as the host. Operating-system file caches are not cleared, and neither server is
+pinned to one CPU core.
+
+### Run the comparison
+
+The development shell includes Python, R, and `languageserver`. The runner
+requires Linux `/proc`, Git, Cargo, and those tools. It builds Arity in release
+mode, checks out the pinned corpus under `target/bench-lsp/corpus/`, and saves
+server stderr under `target/bench-lsp/logs/`.
+
+```sh
+task bench-lsp
+task docs-gen
+```
+
+For a short harness check that leaves the published results alone:
+
+```sh
+task bench-lsp -- --runs 1 --edits 10 --latency-runs 2 \
+  --out target/bench-lsp/trial.json
+```
+
+Use `--arity /path/to/arity` to measure an existing release binary,
+`--rscript /path/to/Rscript` to select an R installation, and `--help` for
+workload and timeout options. A failed request, missing diagnostics, incorrect
+definition that remains stale until the timeout, or settling timeout aborts the
+run without replacing the artifact. Harness correctness tests run with
+`python3 -m unittest discover -s benches -p 'test_lsp.py'`; they do not run the
+servers or assert performance thresholds.
+
+{{#include benchmarks_lsp.md}}

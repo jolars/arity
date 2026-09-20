@@ -49,6 +49,14 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --verbose
 
+  benchmark-harness:
+    if: github.event_name != 'schedule'
+    name: LSP benchmark harness tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 -m unittest discover -s benches -p 'test_lsp.py'
+
   msrv:
     if: github.event_name != 'schedule'
     name: Minimum Rust 1.89

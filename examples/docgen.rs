@@ -14,7 +14,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use arity::bench_docs::render_partials;
+use arity::bench_docs::{render_lsp_partial, render_partials};
 use arity::linter::docs::render_rules_page;
 
 fn main() -> io::Result<()> {
@@ -41,6 +41,10 @@ fn generate_benchmarks() -> io::Result<()> {
     let guide_dir = Path::new("docs/src/guide");
     let json = fs::read_to_string("benches/benchmark_results.json").ok();
     let (meta, results) = render_partials(json.as_deref());
+    write_if_changed(
+        &guide_dir.join("benchmarks_lsp.md"),
+        &render_lsp_partial(json.as_deref()),
+    )?;
     write_if_changed(&guide_dir.join("benchmarks_meta.md"), &meta)?;
     write_if_changed(&guide_dir.join("benchmarks_results.md"), &results)?;
     Ok(())

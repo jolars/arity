@@ -171,3 +171,81 @@ fn missing_or_bad_json_degrades_to_a_note() {
         "bad json should degrade: {meta_bad}"
     );
 }
+
+#[test]
+fn lsp_partial_uses_its_own_metadata_and_exposes_work_counts() {
+    use arity::bench_docs::render_lsp_partial;
+    use serde_json::json;
+
+    let aggregate = json!({
+        "timings": {"init_seconds": 0.1},
+        "milestones": {"settled": {"rss_mb": 20.0, "pss_mb": 15.0, "processes": 2}},
+        "request_latencies": [{
+            "key": "hover", "label": "Hover </script>", "median_ms": 2.0,
+            "p95_ms": 4.0, "samples": 60, "empty_results": 3,
+            "result_count_min": 0, "result_count_max": 1,
+            "payload_bytes_min": 4, "payload_bytes_max": 100,
+            "stale_responses": 7
+        }]
+    });
+    let mut slower = aggregate.clone();
+    slower["milestones"]["settled"]["rss_mb"] = json!(40.0);
+    slower["request_latencies"][0]["median_ms"] = json!(6.0);
+    let artifact = json!({"lsp": {
+        "meta": {
+            "generated_at": "2026-09-20", "host": {"os": "Linux", "arch": "x86_64", "cpu": "LSP CPU"},
+            "runs": 3, "edit_count": 1000, "latency_runs": 20, "latency_warmups": 2,
+            "quiet_seconds": 5.0, "sample_interval_seconds": 0.15
+        },
+        "corpus": {"name": "tidyr", "revision": "abc"},
+        "session": {"files": ["R/file.R"], "opened_bytes": 2000},
+        "servers": [
+            {"key": "arity", "version": "arity test", "aggregate": aggregate},
+            {"key": "another-server", "version": "server test", "aggregate": slower}
+        ]
+    }});
+    let body = render_lsp_partial(Some(&artifact.to_string()));
+    assert!(body.contains("LSP CPU"));
+    assert!(body.contains("2026-09-20"));
+    assert!(body.contains("R/file.R"));
+    assert!(body.contains("p95: 4.000 ms; samples: 60; empty: 3"));
+    assert!(body.contains("stale responses: 7"));
+    assert!(body.contains("PSS: 15.0 MiB"));
+    assert!(body.contains("2.00× arity"));
+    assert!(body.contains("3.00× arity"));
+    assert!(body.contains("Hover &lt;/script&gt;"));
+    assert!(!body.contains("Hover </script>"));
+    assert_eq!(body.matches("<table>").count(), 3);
+    assert_eq!(body.matches("</script>").count(), 3);
+    // Each inline payload remains valid JSON after escaping HTML-sensitive text.
+    for block in body.split("class=\"bench-data\">").skip(1) {
+        let data = block.split("</script>").next().unwrap();
+        serde_json::from_str::<serde_json::Value>(data).expect("chart JSON");
+    }
+}
+
+#[test]
+fn missing_lsp_measurements_do_not_reuse_cli_numbers() {
+    use arity::bench_docs::render_lsp_partial;
+    for input in [None, Some("not json"), Some(SAMPLE)] {
+        let body = render_lsp_partial(input);
+        assert!(body.contains("unavailable"));
+        assert!(body.contains("task bench-lsp"));
+    }
+}
+
+#[test]
+fn committed_benchmark_partials_match_the_artifact() {
+    use arity::bench_docs::render_lsp_partial;
+    let json = include_str!("../benches/benchmark_results.json");
+    let (meta, results) = render_partials(Some(json));
+    assert_eq!(meta, include_str!("../docs/src/guide/benchmarks_meta.md"));
+    assert_eq!(
+        results,
+        include_str!("../docs/src/guide/benchmarks_results.md")
+    );
+    assert_eq!(
+        render_lsp_partial(Some(json)),
+        include_str!("../docs/src/guide/benchmarks_lsp.md")
+    );
+}
