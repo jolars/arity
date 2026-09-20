@@ -34,49 +34,66 @@
     return out;
   }
 
-  // Tick values for the log ratio axis, in decreasing order of preference:
-  // exact powers of ten, then a 1-2-5 ladder. The first ladder placing at least
-  // three ticks inside the data's range wins; a wide chart therefore reads
-  // 1, 10, 100 and a narrow one 1, 2, 5 rather than either extreme.
-  //
-  // Candidates are clipped to the data range, not to a decade boundary, so
-  // every tick returned is guaranteed to fall inside whatever domain the scale
-  // ends up with. Returns undefined when even the finer ladder is too sparse
-  // (all tools within a hair of arity); the scale then picks its own ticks,
-  // which "~f" still renders as plain decimals.
-  function logTicks(points) {
-    var ratios = points
+  // Whole decades keep the log scale easy to read; a small margin keeps dots
+  // at the domain boundaries clear of the plot edges.
+  function logDomain(points, field) {
+    var values = points
       .map(function (p) {
-        return p.ratio;
+        return p[field];
       })
-      .filter(function (r) {
-        return r > 0;
+      .filter(function (value) {
+        return Number.isFinite(value) && value > 0;
       });
-    if (!ratios.length) {
-      return undefined;
+    var lo = Math.floor(Math.log10(Math.min.apply(null, values.concat([1]))));
+    var hi = Math.ceil(Math.log10(Math.max.apply(null, values.concat([1]))));
+    if (lo === hi) {
+      lo--;
+      hi++;
     }
-    var lo = Math.min.apply(null, ratios);
-    var hi = Math.max.apply(null, ratios);
-    var ladders = [[1], [1, 2, 5]];
-    for (var i = 0; i < ladders.length; i++) {
-      var ticks = [];
-      for (
-        var e = Math.floor(Math.log10(lo));
-        e <= Math.ceil(Math.log10(hi));
-        e++
-      ) {
-        for (var m = 0; m < ladders[i].length; m++) {
-          var v = ladders[i][m] * Math.pow(10, e);
-          if (v >= lo && v <= hi) {
-            ticks.push(v);
-          }
+    return [Math.pow(10, lo) / 1.1, Math.pow(10, hi) * 1.1];
+  }
+
+  // Match ggplot2's log ticks: long at powers of ten, medium at five, and
+  // short at the other subdivisions. Only powers of ten receive labels.
+  function logAxis(domain, color) {
+    var ticks = [];
+    var major = [];
+    var middle = [];
+    for (
+      var e = Math.floor(Math.log10(domain[0]));
+      e <= Math.ceil(Math.log10(domain[1]));
+      e++
+    ) {
+      for (var m = 1; m < 10; m++) {
+        var value = m * Math.pow(10, e);
+        if (value >= domain[0] && value <= domain[1]) {
+          ticks.push(value);
+          if (m === 1) major.push(value);
+          if (m === 5) middle.push(value);
         }
       }
-      if (ticks.length >= 3) {
-        return ticks;
-      }
     }
-    return undefined;
+    var isMajor = "indexof(" + JSON.stringify(major) + ", datum.value) >= 0";
+    var isMiddle = "indexof(" + JSON.stringify(middle) + ", datum.value) >= 0";
+    return {
+      values: ticks,
+      labelExpr: isMajor + " ? format(datum.value, ',~g') : ''",
+      labelOverlap: false,
+      labelPadding: 4,
+      tickColor: color,
+      tickSize: {
+        condition: [
+          { test: isMajor, value: 9 },
+          { test: isMiddle, value: 6 },
+        ],
+        value: 3,
+      },
+      grid: true,
+      gridOpacity: {
+        condition: { test: isMajor + " && datum.value !== 1", value: 1 },
+        value: 0,
+      },
+    };
   }
 
   function spec(points) {
@@ -85,6 +102,7 @@
     var grid = dark ? "#3b3f5c" : "#dddddd";
     var tools = orderedUnique(points, "tool");
     var documents = orderedUnique(points, "document");
+    var domain = logDomain(points, "ratio");
 
     return {
       $schema: "https://vega.github.io/schema/vega-lite/v5.json",
@@ -120,15 +138,8 @@
               field: "ratio",
               type: "quantitative",
               title: "Time relative to arity",
-              scale: { type: "log" },
-              axis: {
-                // Plain-decimal tick labels (100, 10, 1, 0.5, …); "~f" trims
-                // trailing zeros. The default "~s" formatting turns sub-1
-                // ratios into SI-prefixed labels ("500m", "200m") and large
-                // ones into "1k", which read as units rather than ratios.
-                values: logTicks(points),
-                format: "~f",
-              },
+              scale: { type: "log", domain: domain, nice: false },
+              axis: logAxis(domain, fg),
             },
             color: {
               field: "document",
