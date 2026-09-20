@@ -23,6 +23,11 @@ crates/*/tests/snapshots/**/* eol=lf
 # Generated from the Rust configuration types and compared byte-for-byte.
 arity.schema.json eol=lf
 
+# Generated benchmark partials are compared byte-for-byte with renderer output.
+docs/src/guide/benchmarks_meta.md eol=lf
+docs/src/guide/benchmarks_results.md eol=lf
+docs/src/guide/benchmarks_lsp.md eol=lf
+
 # Preserve line ending fixtures as-is (CRLF/LF)
 crates/arity-parser/tests/fixtures/parser/crlf_*/* -text
 crates/arity-parser/tests/fixtures/parser/lf_*/* -text
