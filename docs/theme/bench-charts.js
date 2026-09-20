@@ -1,4 +1,4 @@
-// Renders the benchmark dot plot(s) on the Benchmarks page with Vega-Lite.
+// Renders benchmark time ratios and memory bars with Vega-Lite.
 //
 // Data is injected by the docs generator (`arity::bench_docs`, via
 // `examples/docgen.rs`) as an inline
@@ -10,7 +10,7 @@
 // Chart: x = tool, y = time relative to arity (log scale, baseline = 1),
 // color = document (corpus tier or project), one dot per (document, tool), with
 // a hover tooltip. One such chart per (operation, scope): formatter/linter x
-// single-files/projects.
+// single-files/projects. Memory uses grouped bars of absolute MiB on a linear axis.
 (function () {
   "use strict";
 
@@ -106,7 +106,7 @@
     var documents = orderedUnique(points, "document");
     var domain = logDomain(points, "ratio");
 
-    return {
+    var chart = {
       $schema: "https://vega.github.io/schema/vega-lite/v5.json",
       description: lsp
         ? payload.ratio_title +
@@ -184,6 +184,39 @@
         legend: { labelColor: fg, titleColor: fg },
       },
     };
+    if (lsp && payload.kind === "bar") {
+      chart.description =
+        "Grouped bar chart of median resident memory in MiB at each session stage. " +
+        "Each server has its own bar on a linear axis starting at zero. " +
+        "See the data table for PSS, process counts, and relative memory use.";
+      delete chart.layer;
+      chart.mark = { type: "bar" };
+      chart.encoding = {
+        x: {
+          field: "document",
+          type: "nominal",
+          title: "Stage",
+          sort: documents,
+          axis: { labelAngle: 0 },
+        },
+        xOffset: { field: "tool", type: "nominal", sort: tools },
+        y: {
+          field: "value",
+          type: "quantitative",
+          title: payload.value_title,
+          scale: { type: "linear", zero: true },
+        },
+        color: { field: "tool", type: "nominal", title: "Server", sort: tools },
+        tooltip: [
+          { field: "document", title: "Stage" },
+          { field: "tool", title: "Server" },
+          { field: "value", title: payload.value_title, format: ".1f" },
+          { field: "ratio_label", title: "Relative" },
+          { field: "detail", title: "Details" },
+        ],
+      };
+    }
+    return chart;
   }
 
   function renderInto(container, points) {

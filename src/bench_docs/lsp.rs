@@ -82,6 +82,13 @@ struct Latency {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ChartKind {
+    Ratio,
+    Bar,
+}
+
+#[derive(Serialize)]
 struct Point {
     document: String,
     tool: String,
@@ -189,6 +196,7 @@ fn render(b: &Measurements) -> String {
         "Startup and workload",
         "Median (ms)",
         "Time relative to arity",
+        ChartKind::Ratio,
         runtime,
     ));
 
@@ -227,6 +235,7 @@ fn render(b: &Measurements) -> String {
         "Request latency",
         "Median (ms)",
         "Latency relative to arity",
+        ChartKind::Ratio,
         latency,
     ));
 
@@ -260,6 +269,7 @@ fn render(b: &Measurements) -> String {
         "Resident memory",
         "Median RSS (MiB)",
         "Memory relative to arity",
+        ChartKind::Bar,
         memory,
     ));
     format!("{}\n", out.trim_end())
@@ -291,14 +301,29 @@ fn push_point(
     });
 }
 
-fn chart(title: &str, value_title: &str, ratio_title: &str, points: Vec<Point>) -> String {
+fn chart(
+    title: &str,
+    value_title: &str,
+    ratio_title: &str,
+    kind: ChartKind,
+    points: Vec<Point>,
+) -> String {
     let payload = serde_json::json!({
         "points": points, "value_title": value_title, "ratio_title": ratio_title,
+        "kind": kind,
     });
+    let caption = match kind {
+        ChartKind::Ratio => format!(
+            "{ratio_title}. Hover a point for measurements and sample details. Lower values use less time."
+        ),
+        ChartKind::Bar => format!(
+            "{value_title} at each session stage, with one bar per server on a linear scale starting at zero. Hover a bar for relative memory use, PSS, and process counts."
+        ),
+    };
     // Corpus and version strings can contain HTML; JSON lives in a script element.
     let json = payload.to_string().replace('<', "\\u003c");
     let mut out = format!(
-        "### {title}\n\n<div class=\"bench-chart-block\">\n<figure class=\"bench-figure\">\n<div class=\"bench-chart\"></div>\n<script type=\"application/json\" class=\"bench-data\">{json}</script>\n<figcaption>{ratio_title}. Hover a point for measurements and sample details. Lower values use less time or memory.</figcaption>\n</figure>\n<details class=\"bench-table\"><summary>Data table</summary>\n<table>\n<thead><tr><th>Measurement</th><th>Server</th><th>{value_title}</th><th>Relative</th><th>Details</th></tr></thead>\n<tbody>\n"
+        "### {title}\n\n<div class=\"bench-chart-block\">\n<figure class=\"bench-figure\">\n<div class=\"bench-chart\"></div>\n<script type=\"application/json\" class=\"bench-data\">{json}</script>\n<figcaption>{caption}</figcaption>\n</figure>\n<details class=\"bench-table\"><summary>Data table</summary>\n<table>\n<thead><tr><th>Measurement</th><th>Server</th><th>{value_title}</th><th>Relative</th><th>Details</th></tr></thead>\n<tbody>\n"
     );
     for point in points {
         let _ = writeln!(

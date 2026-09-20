@@ -142,9 +142,10 @@ final diagnostic and settling waits.
 **Resident memory** is sampled for the server and its descendants after
 initialization, after opening files, after edits, and at the sampled peak. RSS
 counts shared pages in each process; PSS apportions them and appears in the
-tables and tooltips. Values use MiB, and each point is the median across fresh
-processes. Short-lived peaks or child processes between samples can be missed.
-The peak RSS, peak PSS, and peak process count can occur at different times.
+tables and tooltips. The grouped bars show median RSS in MiB across fresh
+processes, with one bar per server at each stage and a linear axis starting at
+zero. Short-lived peaks or child processes between samples can be missed. The
+peak RSS, peak PSS, and peak process count can occur at different times.
 
 The servers perform different work and use different diagnostics and package
 indexes. These are measurements of the same editor workload, not a claim of
