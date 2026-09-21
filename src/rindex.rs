@@ -6,8 +6,13 @@
 //! and help live in serialized *lazy-load databases* (`.rdb`/`.rdx`) plus
 //! `.rds` index files. This module reads those formats natively:
 //!
-//! - [`rds`] — a minimal reader for R's RDS serialization format.
-//! - [`lazyload`] — decode named objects out of an `.rdb`/`.rdx` pair.
+//! - [`lazyload`] — a compatibility adapter over `rd-rds`'s bounded index and
+//!   record readers. Index-only harvesting never opens the companion `.rdb`.
+//! - [`rd`] — Arity's presentation of canonical `rd-ast` nodes, populated by
+//!   `rd-helpdb`, plus the existing public renderer for legacy objects.
+//! - [`rds`] and [`deparse`] — retained for code records and default expressions
+//!   until the shared inspection API can expose those expressions. Production
+//!   metadata, help, and attach-vector reading do not use this decoder.
 //!
 //! built on top of those:
 //!

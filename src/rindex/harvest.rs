@@ -16,6 +16,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use rd_helpdb::{HelpTopicIndex, HelpTopicText, PackageHelpDb};
 use smol_str::SmolStr;
 
 use crate::namespace::{
@@ -25,7 +26,7 @@ use crate::rindex::deparse;
 use crate::rindex::lazyload::{self, LazyLoadDb};
 use crate::rindex::libpaths::LibrarySearch;
 use crate::rindex::rd;
-use crate::rindex::rds::{self, Rkind, Robj};
+use crate::rindex::rds::{Rkind, Robj};
 use crate::rindex::schema::{
     Formal, HelpDoc, PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind,
 };
@@ -55,7 +56,7 @@ type Result<T> = std::result::Result<T, HarvestError>;
 
 #[derive(Debug, Clone, Copy)]
 pub struct HarvestOptions {
-    /// Harvest help (titles in this phase). When false, `help` is left `None`.
+    /// Harvest help metadata and bodies. When false, no help files are read.
     pub help: bool,
 }
 
@@ -118,29 +119,20 @@ pub fn harvest_package_in(
     let exports = resolve_package_exports(pkg_dir, &object_names);
     let lazydata = read_lazydata_names(pkg_dir);
 
-    let help_index = if opts.help {
-        read_help_index(pkg_dir)
-    } else {
-        AliasHelp::default()
-    };
+    let help = HelpFiles::when_enabled(opts.help, || HelpFiles::open(pkg_dir, &package));
 
-    // Open the lazy-load DB to fetch object values (formals + kind refinement).
-    // `.ok()` is deliberate: a package may ship only a `.rdx` (no `.rdb`), in
-    // which case we keep the cheap-tier defaults rather than failing the harvest.
-    let db = LazyLoadDb::open(&pkg_dir.join("R").join(format!("{package}.rdx"))).ok();
-    // The help DB (full Rd bodies) lives separately; many packages ship it, some
-    // don't. `.ok()` keeps title-only behavior when it's absent.
-    let help_db = if opts.help {
-        LazyLoadDb::open(&pkg_dir.join("help").join(format!("{package}.rdx"))).ok()
-    } else {
-        None
-    };
+    // Missing code records leave explicit exports and metadata usable.
+    let db = LazyLoadDb::open(&pkg_dir.join("R").join(format!("{package}.rdx")))
+        .inspect_err(|error| {
+            log::debug!("{}: code database unavailable: {error}", pkg_dir.display())
+        })
+        .ok();
 
     let export_set: BTreeSet<&str> = exports.iter().map(String::as_str).collect();
     let mut symbols: Vec<SymbolEntry> = exports
         .iter()
         .map(|name| {
-            let help = build_help(&help_index, help_db.as_ref(), name);
+            let help = build_help(&help, name);
             let (kind, formals) = refine_symbol(db.as_ref(), name);
             SymbolEntry {
                 name: SmolStr::new(name),
@@ -161,7 +153,7 @@ pub fn harvest_package_in(
         if export_set.contains(name.as_str()) {
             continue;
         }
-        let help = build_help(&help_index, help_db.as_ref(), name);
+        let help = build_help(&help, name);
         symbols.push(SymbolEntry {
             name: SmolStr::new(name),
             kind: SymbolKind::Data,
@@ -210,7 +202,7 @@ fn detect_attaches(db: Option<&LazyLoadDb>, package: &str, search: &LibrarySearc
     }
     let installed = |member: &str| search.find_package(member).is_some();
     for var in ATTACH_SET_VARS {
-        if let Ok(obj) = db.fetch(var)
+        if let Ok(obj) = db.fetch_shared(var)
             && let Some(members) = validate_attach_set(&obj, package, &installed)
         {
             return members;
@@ -224,16 +216,19 @@ fn detect_attaches(db: Option<&LazyLoadDb>, package: &str, search: &LibrarySearc
 /// package names (self and duplicates dropped). Any NA rejects the whole set
 /// (see [`validate_attach_names`] for the rest of the rules).
 fn validate_attach_set(
-    obj: &Robj,
+    obj: &rd_rds::RObject,
     package: &str,
     installed: &dyn Fn(&str) -> bool,
 ) -> Option<Vec<SmolStr>> {
-    let strs = obj.as_str_vec()?;
-    let names: Vec<&str> = strs
+    let rd_rds::RValue::Character(strings) = obj.value() else {
+        return None;
+    };
+    let names = strings
         .iter()
-        .map(|s| s.as_deref())
+        .map(|s| s.as_str()?.ok())
         .collect::<Option<Vec<_>>>()?;
-    validate_attach_names(&names, package, installed)
+    let borrowed: Vec<_> = names.iter().map(|s| s.as_ref()).collect();
+    validate_attach_names(&borrowed, package, installed)
 }
 
 /// Validate candidate attach-set member `names`, all-or-nothing: `Some` only
@@ -295,7 +290,11 @@ fn resolve_package_exports(pkg_dir: &Path, object_names: &[String]) -> Vec<Strin
 /// Read the lazy-load object names from `R/{pkg}.rdx`, if present.
 fn read_object_names(pkg_dir: &Path, package: &str) -> Vec<String> {
     let rdx = pkg_dir.join("R").join(format!("{package}.rdx"));
-    lazyload::read_index_names(&rdx).unwrap_or_default()
+    lazyload::read_index_names(&rdx)
+        .inspect_err(|error| {
+            log::debug!("{}: names unavailable: {error}", rdx.display());
+        })
+        .unwrap_or_default()
 }
 
 /// Read lazy-data (`LazyData`) object names from `data/Rdata.rdx`, if present.
@@ -304,7 +303,11 @@ fn read_object_names(pkg_dir: &Path, package: &str) -> Vec<String> {
 /// `.rdb` decode). The file uses the fixed `Rdata` stem, not `{pkg}`.
 fn read_lazydata_names(pkg_dir: &Path) -> Vec<String> {
     let rdx = pkg_dir.join("data").join("Rdata.rdx");
-    lazyload::read_index_names(&rdx).unwrap_or_default()
+    lazyload::read_index_names(&rdx)
+        .inspect_err(|error| {
+            log::debug!("{}: names unavailable: {error}", rdx.display());
+        })
+        .unwrap_or_default()
 }
 
 /// Classify an exported object and, for closures, read its formals. Falls back
@@ -315,8 +318,12 @@ fn refine_symbol(db: Option<&LazyLoadDb>, name: &str) -> (SymbolKind, Option<Vec
     let Some(db) = db else {
         return (SymbolKind::Function, None);
     };
-    let Ok(obj) = db.fetch(name) else {
-        return (SymbolKind::Function, None);
+    let obj = match db.fetch(name) {
+        Ok(obj) => obj,
+        Err(error) => {
+            log::debug!("code binding {name:?} unavailable: {error}");
+            return (SymbolKind::Function, None);
+        }
     };
     match &obj.kind {
         Rkind::Closure { formals, .. } => (SymbolKind::Function, Some(extract_formals(formals))),
@@ -693,102 +700,158 @@ fn unquote(value: &str) -> Option<String> {
 // Help index (Meta/Rd.rds) — alias → (title, help-page key)
 // ---------------------------------------------------------------------------
 
-/// What `Meta/Rd.rds` tells us about an alias: its page title and the help-DB
-/// key (the `File` column minus `.Rd`) under which the full Rd body is stored.
-#[derive(Clone, Default)]
-struct AliasEntry {
-    title: Option<String>,
-    page: Option<String>,
-}
-
-#[derive(Default)]
-struct AliasHelp {
-    /// alias → entry.
-    map: std::collections::HashMap<String, AliasEntry>,
-}
-
-impl AliasHelp {
-    fn entry_for(&self, name: &str) -> Option<&AliasEntry> {
-        self.map.get(name)
-    }
-}
-
-fn read_help_index(pkg_dir: &Path) -> AliasHelp {
-    let path = pkg_dir.join("Meta").join("Rd.rds");
-    let Ok(bytes) = std::fs::read(&path) else {
-        return AliasHelp::default();
-    };
-    let Ok(rd) = rds::read_rds(&bytes) else {
-        return AliasHelp::default();
-    };
-    parse_rd_index(&rd).unwrap_or_default()
-}
-
-/// Parse the `Meta/Rd.rds` data frame into an alias → entry map. `Aliases` (the
-/// keying column) is required; `Title` and `File` are best-effort. The help-DB
-/// key is the `File` value with its `.Rd` suffix stripped.
-fn parse_rd_index(rd: &Robj) -> Option<AliasHelp> {
-    let names = rd.names()?;
-    let cols = rd.as_list()?;
-    let col = |label: &str| {
-        names
-            .iter()
-            .position(|c| *c == Some(label))
-            .and_then(|i| cols.get(i))
-    };
-    let alias_idx = names.iter().position(|c| *c == Some("Aliases"))?;
-    let aliases = cols.get(alias_idx)?.as_list()?; // list column
-    let titles = col("Title").and_then(|c| c.as_str_vec());
-    let files = col("File").and_then(|c| c.as_str_vec());
-
-    let mut map = std::collections::HashMap::new();
-    for (i, alias_cell) in aliases.iter().enumerate() {
-        let title = titles
-            .and_then(|t| t.get(i))
-            .and_then(|t| t.as_deref())
-            .map(str::to_string);
-        let page = files
-            .and_then(|f| f.get(i))
-            .and_then(|f| f.as_deref())
-            .map(|f| f.strip_suffix(".Rd").unwrap_or(f).to_string());
-        if let Rkind::Str(alias_vec) = &alias_cell.kind {
-            for a in alias_vec.iter().flatten() {
-                map.entry(a.clone()).or_insert_with(|| AliasEntry {
-                    title: title.clone(),
-                    page: page.clone(),
-                });
+fn read_help_index(pkg_dir: &Path) -> Option<HelpTopicIndex> {
+    match HelpTopicIndex::read_installed(pkg_dir) {
+        Ok(index) => {
+            if let Some(index) = &index {
+                for (row, entry) in index.entries().enumerate() {
+                    for (field, value) in [("title", &entry.title), ("file", &entry.file)] {
+                        if let HelpTopicText::Invalid(reason) = value {
+                            log::debug!(
+                                "{}: help metadata row {row} {field}: {reason}",
+                                pkg_dir.display()
+                            );
+                        }
+                    }
+                }
             }
+            index
+        }
+        Err(error) => {
+            log::debug!("{}: help metadata unavailable: {error}", pkg_dir.display());
+            None
         }
     }
-    Some(AliasHelp { map })
 }
 
 /// Assemble a symbol's [`HelpDoc`]: the title from `Meta/Rd.rds`, the body
 /// (description/usage/arguments) from the help lazy-load DB page, if any. A page
 /// that fails to decode degrades to title-only; a symbol no Rd documents yields
 /// `None`.
-fn build_help(index: &AliasHelp, db: Option<&LazyLoadDb>, name: &str) -> Option<HelpDoc> {
-    let entry = index.entry_for(name)?;
+fn build_help(help: &HelpFiles, name: &str) -> Option<HelpDoc> {
+    let entry = help.index.as_ref()?.find_alias(name)?;
     let sections = entry
-        .page
-        .as_deref()
-        .zip(db)
-        .and_then(|(page, db)| db.fetch(page).ok())
-        .map(|page_obj| rd::render_page(&page_obj))
+        .topic_key()
+        .zip(help.database.as_ref())
+        .and_then(|(key, database)| match database.document(key) {
+            Ok(document) => {
+                let rendered = rd::render_document(&document);
+                for issue in rendered.issues {
+                    log::debug!(
+                        "{}: topic {key:?}, omitted {} at {:?}",
+                        help.package_dir.display(),
+                        issue.field,
+                        issue.path
+                    );
+                }
+                Some(rendered.sections)
+            }
+            Err(error) => {
+                log::debug!(
+                    "{}: topic {key:?} unavailable: {error}",
+                    help.package_dir.display()
+                );
+                None
+            }
+        })
         .unwrap_or_default();
-    let doc = rd::into_help_doc(entry.title.clone(), sections);
+    let doc = rd::into_help_doc(entry.title.as_str().map(str::to_owned), sections);
     (doc != HelpDoc::default()).then_some(doc)
+}
+
+#[derive(Default)]
+struct HelpFiles {
+    index: Option<HelpTopicIndex>,
+    database: Option<HelpDatabase>,
+    package_dir: PathBuf,
+}
+
+impl HelpFiles {
+    fn when_enabled(enabled: bool, load: impl FnOnce() -> Self) -> Self {
+        if enabled { load() } else { Self::default() }
+    }
+
+    fn open(package_dir: &Path, package: &str) -> Self {
+        let index = read_help_index(package_dir);
+        let database = HelpDatabase::open(package_dir, package)
+            .map_err(|error| {
+                log::debug!(
+                    "{}: compiled help unavailable: {error}",
+                    package_dir.display()
+                );
+            })
+            .ok();
+        Self {
+            index,
+            database,
+            package_dir: package_dir.to_owned(),
+        }
+    }
+}
+
+enum HelpDatabase {
+    Package(PackageHelpDb),
+    // The public harvester also accepts renamed directories. The package view
+    // assumes basename == Package, so those paths need explicit shared access.
+    Explicit(rd_rds::lazyload::LazyLoadDb),
+}
+
+impl HelpDatabase {
+    fn open(package_dir: &Path, package: &str) -> std::result::Result<Self, String> {
+        if package_dir.file_name().and_then(|s| s.to_str()) == Some(package) {
+            PackageHelpDb::open(package_dir)
+                .map(Self::Package)
+                .map_err(|e| e.to_string())
+        } else {
+            let help = package_dir.join("help");
+            rd_rds::lazyload::LazyLoadDb::open(
+                help.join(format!("{package}.rdx")),
+                help.join(format!("{package}.rdb")),
+            )
+            .map(Self::Explicit)
+            .map_err(|e| e.to_string())
+        }
+    }
+
+    fn document(&self, key: &str) -> std::result::Result<rd_ast::RdDocument, String> {
+        let object = match self {
+            Self::Package(db) => db.raw_topic(key).map_err(|e| e.to_string())?,
+            Self::Explicit(db) => {
+                let record = db.read(key).map_err(|e| e.to_string())?;
+                rd_rds::parse(record.decompressed_bytes()).map_err(|e| e.to_string())?
+            }
+        };
+        rd_ast::lower_r_object(&object).map_err(|e| e.to_string())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn str_vec(names: &[Option<&str>]) -> Robj {
-        Robj {
-            kind: Rkind::Str(names.iter().map(|n| n.map(String::from)).collect()),
-            attr: Vec::new(),
-        }
+    #[test]
+    fn disabled_help_does_not_open_metadata_or_records() {
+        let help = HelpFiles::when_enabled(false, || panic!("help files must not be read"));
+        assert!(help.index.is_none());
+        assert!(help.database.is_none());
+    }
+
+    fn str_vec(names: &[Option<&str>]) -> rd_rds::RObject {
+        let values = names
+            .iter()
+            .map(|name| match name {
+                Some(name) => rd_rds::RStr::new(
+                    name.as_bytes(),
+                    rd_rds::REncoding::Utf8,
+                    rd_rds::NativeEncodingSource::Unknown,
+                ),
+                None => rd_rds::RStr::Na,
+            })
+            .collect();
+        rd_rds::RObject::from_parts(
+            rd_rds::RValue::Character(values),
+            rd_rds::Attributes::default(),
+        )
     }
 
     #[test]
@@ -800,10 +863,7 @@ mod tests {
 
     #[test]
     fn attach_set_rejects_non_character_objects() {
-        let obj = Robj {
-            kind: Rkind::Opaque,
-            attr: Vec::new(),
-        };
+        let obj = rd_rds::RObject::from_parts(rd_rds::RValue::Null, rd_rds::Attributes::default());
         assert!(validate_attach_set(&obj, "tidyverse", &|_| true).is_none());
     }
 

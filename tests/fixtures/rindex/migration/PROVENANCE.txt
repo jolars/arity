@@ -1,0 +1,5 @@
+R version 4.6.1 (2026-06-24)
+LC_CTYPE: C.UTF-8
+Serialization: XDR version 3; gzip RDS indexes; zlib records.
+Source: scripts/make_reader_migration_fixtures.R; synthetic MIT fixtures.
+Every intact record is checked with R's lazyLoadDBfetch.

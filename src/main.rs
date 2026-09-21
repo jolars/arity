@@ -46,6 +46,10 @@ const MAX_FIX_ITERATIONS: usize = 10;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    // Extraction recovery stays silent unless the user requests diagnostics.
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("off"))
+        .target(env_logger::Target::Stderr)
+        .try_init();
     let config_source = ConfigOptions {
         explicit: cli.config.clone(),
         no_config: cli.no_config,

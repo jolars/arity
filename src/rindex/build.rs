@@ -155,6 +155,24 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    #[test]
+    fn attach_probe_preflight_needs_only_the_index() {
+        let temp = tempfile::tempdir().unwrap();
+        let index = temp.path().join("metatoy.rdx");
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/rindex/metatoy/R/metatoy.rdx");
+        std::fs::copy(fixture, &index).unwrap();
+        assert!(!index.with_extension("rdb").exists());
+        assert!(
+            lazyload::read_index_names(&index)
+                .unwrap()
+                .iter()
+                .any(|name| name == ".onAttach")
+        );
+        std::fs::write(&index, b"corrupt index").unwrap();
+        assert!(lazyload::read_index_names(&index).is_err());
+    }
+
     fn fixture_lib() -> LibrarySearch {
         // Point a LibrarySearch at the checked-in fixtures, whose layout is
         // `tests/fixtures/rindex/<pkg>/...`.

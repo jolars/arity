@@ -1,0 +1,235 @@
+---
+source: tests/rindex_migration.rs
+expression: "serde_json::to_string_pretty(&pages).unwrap()"
+---
+[
+  [
+    "aliases",
+    {
+      "title": "Aliases",
+      "description": "magrittr provides a series of aliases which can be more pleasant to use when composing chains using the `%>%` operator."
+    }
+  ],
+  [
+    "compound",
+    {
+      "title": "Assignment pipe",
+      "description": "Pipe an object forward into a function or call expression and update the `lhs` object with the resulting value.",
+      "usage": "lhs %<>% rhs",
+      "arguments": [
+        {
+          "name": "lhs",
+          "description": "An object which serves both as the initial value and as target."
+        },
+        {
+          "name": "rhs",
+          "description": "a function call using the magrittr semantics."
+        }
+      ]
+    }
+  ],
+  [
+    "debug_fseq",
+    {
+      "title": "Debugging function for functional sequences.",
+      "description": "This is a utility function for marking functions in a functional sequence for debbuging.",
+      "usage": "debug_fseq(fseq, ...)\n\nundebug_fseq(fseq)",
+      "arguments": [
+        {
+          "name": "fseq",
+          "description": "a functional sequence."
+        },
+        {
+          "name": "...",
+          "description": "indices of functions to debug."
+        }
+      ]
+    }
+  ],
+  [
+    "debug_pipe",
+    {
+      "title": "Debugging function for magrittr pipelines.",
+      "description": "This function is a wrapper around `browser`, which makes it easier to debug at certain places in a magrittr pipe chain.",
+      "usage": "debug_pipe(x)",
+      "arguments": [
+        {
+          "name": "x",
+          "description": "a value"
+        }
+      ]
+    }
+  ],
+  [
+    "exposition",
+    {
+      "title": "Exposition pipe",
+      "description": "Expose the names in `lhs` to the `rhs` expression. This is useful when functions do not have a built-in data argument.",
+      "usage": "lhs %$% rhs",
+      "arguments": [
+        {
+          "name": "lhs",
+          "description": "A list, environment, or a data.frame."
+        },
+        {
+          "name": "rhs",
+          "description": "An expression where the names in lhs is available."
+        }
+      ]
+    }
+  ],
+  [
+    "faq-pipe-gender",
+    {
+      "title": "FAQ: What is the gender of the pipe?",
+      "description": "In Magritte's original quote \"Ceci n'est pas une pipe,\" the word \"pipe\" is feminine. However the magrittr package quotes it as \"Ceci n'est pas un pipe,\" with a masculine \"pipe.\" This lighthearted misappropriation is intentional. Whereas the object represented in Magritte's painting (a pipe that you can smoke) is feminine in the French language, a computer pipe (which is an Anglicism in French) is masculine."
+    }
+  ],
+  [
+    "freduce",
+    {
+      "title": "Apply a list of functions sequentially",
+      "description": "This function applies the first function to `value`, then the next function to the result of the previous function call, etc.",
+      "usage": "freduce(value, function_list)",
+      "arguments": [
+        {
+          "name": "value",
+          "description": "initial value."
+        },
+        {
+          "name": "function_list",
+          "description": "a list of functions."
+        }
+      ]
+    }
+  ],
+  [
+    "fseq",
+    {
+      "title": "Extract function(s) from a functional sequence.",
+      "description": "Functional sequences can be subset using single or double brackets. A single-bracket subset results in a new functional sequence, and a double-bracket subset results in a single function.",
+      "usage": "[[fseq(x, ...)\n\n[fseq(x, ...)",
+      "arguments": [
+        {
+          "name": "x",
+          "description": "A functional sequence"
+        },
+        {
+          "name": "...",
+          "description": "index/indices. For double brackets, the index must be of length 1."
+        }
+      ]
+    }
+  ],
+  [
+    "functions",
+    {
+      "title": "Extract the function list from a functional sequence.",
+      "description": "This can be used to extract the list of functions inside a functional sequence created with a chain like `. %>% foo %>% bar`.",
+      "usage": "functions(fseq)",
+      "arguments": [
+        {
+          "name": "fseq",
+          "description": "A functional sequence ala magrittr."
+        }
+      ]
+    }
+  ],
+  [
+    "magrittr-package",
+    {
+      "title": "magrittr - Ceci n'est pas un pipe",
+      "description": "The magrittr package offers a set of operators which promote semantics that will improve your code by\n\nstructuring sequences of data operations left-to-right (as opposed to from the inside and out), avoiding nested function calls, minimizing the need for local variables and function definitions, and making it easy to add steps anywhere in the sequence of operations.\n\nThe operators pipe their left-hand side values forward into expressions that appear on the right-hand side, i.e. one can replace `f(x)` with `x %>% f`, where `%>%` is the (main) pipe-operator."
+    }
+  ],
+  [
+    "pipe",
+    {
+      "title": "Pipe",
+      "description": "Pipe an object forward into a function or call expression.",
+      "usage": "lhs %>% rhs",
+      "arguments": [
+        {
+          "name": "lhs",
+          "description": "A value or the magrittr placeholder."
+        },
+        {
+          "name": "rhs",
+          "description": "A function call using the magrittr semantics."
+        }
+      ]
+    }
+  ],
+  [
+    "pipe-eager",
+    {
+      "title": "Eager pipe",
+      "description": "Whereas `%>%` is lazy and only evaluates the piped expressions when needed, `%!>%` is eager and evaluates the piped input at each step. This produces more intuitive behaviour when functions are called for their side effects, such as displaying a message.\n\nNote that you can also solve this by making your function strict. Call `force()` on the first argument in your function to force sequential evaluation, even with the lazy `%>%` pipe. See the examples section.",
+      "usage": "lhs %!>% rhs",
+      "arguments": [
+        {
+          "name": "lhs",
+          "description": "A value or the magrittr placeholder."
+        },
+        {
+          "name": "rhs",
+          "description": "A function call using the magrittr semantics."
+        }
+      ]
+    }
+  ],
+  [
+    "pipe_eager_lexical",
+    {
+      "title": "Lazy and eager pipes",
+      "description": "Assign these pipe variants to an infix symbol like `%>%`.",
+      "usage": "pipe_eager_lexical(lhs, rhs)\n\npipe_lazy_masking(lhs, rhs)\n\npipe_nested(lhs, rhs)",
+      "arguments": [
+        {
+          "name": "lhs",
+          "description": "A value or the magrittr placeholder."
+        },
+        {
+          "name": "rhs",
+          "description": "A function call using the magrittr semantics."
+        }
+      ]
+    }
+  ],
+  [
+    "print.fseq",
+    {
+      "title": "Print method for functional sequence.",
+      "description": "Print method for functional sequence.",
+      "usage": "printfseq(x, ...)",
+      "arguments": [
+        {
+          "name": "x",
+          "description": "A functional sequence object"
+        },
+        {
+          "name": "...",
+          "description": "not used."
+        }
+      ]
+    }
+  ],
+  [
+    "tee",
+    {
+      "title": "Tee pipe",
+      "description": "Pipe a value forward into a function- or call expression and return the original value instead of the result. This is useful when an expression is used for its side-effect, say plotting or printing.",
+      "usage": "lhs %T>% rhs",
+      "arguments": [
+        {
+          "name": "lhs",
+          "description": "A value or the magrittr placeholder."
+        },
+        {
+          "name": "rhs",
+          "description": "A function call using the magrittr semantics."
+        }
+      ]
+    }
+  ]
+]
