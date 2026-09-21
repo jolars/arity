@@ -75,6 +75,7 @@ abind
 ade4
 ape
 aplot
+archdata
 arrow
 askpass
 assertthat
@@ -84,6 +85,7 @@ backports
 base64enc
 bayesplot
 bayestestR
+bbmle
 bdsmatrix
 bigD
 bit
@@ -428,6 +430,7 @@ rjson
 rlang
 rmarkdown
 robustbase
+rootSolve
 roxygen2
 rpart
 rpart.plot
