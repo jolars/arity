@@ -19,7 +19,7 @@ pub struct Page {
     pub path: PathBuf,
     /// URL path relative to the site base, with `index.html` collapsed to its
     /// directory: `index.html` -> ``, `guide/index.html` -> `guide/`,
-    /// `guide/x.html` -> `guide/x.html`.
+    /// `guide/x.html` -> `guide/x.html`. The introductory chapter aliases `index.html`.
     pub loc: String,
 }
 
@@ -37,7 +37,7 @@ pub fn normalize_base(base_url: &str) -> String {
 pub fn collect_pages(book_dir: &Path) -> Vec<Page> {
     let mut pages = Vec::new();
     collect_html(book_dir, book_dir, &mut pages);
-    pages.sort_by(|a, b| a.loc.cmp(&b.loc));
+    pages.sort_by(|a, b| a.loc.cmp(&b.loc).then_with(|| a.path.cmp(&b.path)));
     pages
 }
 
@@ -62,9 +62,14 @@ fn collect_html(root: &Path, dir: &Path, pages: &mut Vec<Page>) {
         if is_redirect(&path) {
             continue;
         }
-        let loc = match rel.strip_suffix("index.html") {
-            Some(prefix) => prefix.to_string(),
-            None => rel,
+        // mdBook publishes the first chapter at both URLs. Keep both files so
+        // the injector updates each, but give them the same public identity.
+        let loc = match rel.as_str() {
+            "introduction.html" => String::new(),
+            _ => match rel.strip_suffix("index.html") {
+                Some(prefix) => prefix.to_string(),
+                None => rel,
+            },
         };
         pages.push(Page { path, loc });
     }

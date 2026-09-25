@@ -1,5 +1,58 @@
-/* Center the logo on the introduction page. */
+/* System fonts keep text metrics stable while the page loads. */
+:root {
+  --mono-font: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+body {
+  font-family: system-ui, sans-serif;
+}
+
+html:not(.js) #mdbook-sidebar-toggle {
+  display: none;
+}
+
 .arity-logo {
-  display: block;
-  margin: 0 auto 1rem;
+  width: 164px;
+  height: auto;
+  padding-left: 10px;
+  padding-bottom: 10px;
+}
+
+.navy {
+  --links: #76c7f4;
+  --sidebar-active: #76c7f4;
+}
+
+.content a:not(.header):not(.mobile-nav-chapters) {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+/* Highlighting adds these dimensions after parsing. Reserve them at first paint. */
+:not(pre):not(.header) > code {
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+}
+
+.menu-bar .right-buttons a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 44px;
+  padding: 0;
+}
+
+button.chapter-fold-toggle {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--links);
+  outline-offset: 2px;
 }

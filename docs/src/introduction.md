@@ -1,6 +1,6 @@
 # Arity
 
-<img src="./images/logo.png" alt="" class="right" style="width: 164px; padding-left: 10px; padding-bottom: 10px" />
+<img src="./images/logo.png" alt="" width="512" height="512" class="right arity-logo" />
 
 Arity is a language server, formatter, and linter for the R language. It is
 built in Rust on a lossless, incremental parser, providing a fast, deterministic

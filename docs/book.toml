@@ -13,9 +13,7 @@ default-theme = "light"
 preferred-dark-theme = "navy"
 additional-css = ["theme/arity.css", "theme/bench-charts.css"]
 additional-js = [
-    "theme/vendor/vega.min.js",
-    "theme/vendor/vega-lite.min.js",
-    "theme/vendor/vega-embed.min.js",
+    "theme/arity.js",
     "theme/bench-charts.js",
 ]
 

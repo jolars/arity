@@ -3,9 +3,8 @@
 // Data is injected by the docs generator (`arity::bench_docs`, via
 // `examples/docgen.rs`) as an inline
 // `<script type="application/json" class="bench-data">` next to a
-// `<div class="bench-chart">`. The Vega runtime is vendored under theme/vendor/
-// and loaded before this file via book.toml's `additional-js`, so nothing is
-// fetched at view time.
+// `<div class="bench-chart">`. The Vega runtime is vendored under docs/src/vendor/
+// and loaded from the book's vendor/ directory only when charts are present.
 //
 // Chart: x = tool, y = time relative to arity (log scale, baseline = 1),
 // color = document (corpus tier or project), one dot per (document, tool), with
@@ -13,6 +12,18 @@
 // single-files/projects. Memory uses grouped bars of absolute MiB on a linear axis.
 (function () {
   "use strict";
+
+  const vendorRoot = new URL("../vendor/", document.currentScript.src);
+
+  function loadScript(name) {
+    return new Promise(function (resolve, reject) {
+      const script = document.createElement("script");
+      script.src = new URL(name, vendorRoot).href;
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
 
   // mdBook keeps the active theme as a class on <html>; these three are dark.
   function isDark() {
@@ -122,7 +133,7 @@
       layer: [
         // Baseline at 1.0 (arity); everything below is faster, above slower.
         {
-          mark: { type: "rule", strokeDash: [4, 4], color: grid },
+          mark: { type: "rule", strokeDash: [4, 4], color: grid, aria: false },
           encoding: { y: { datum: 1, type: "quantitative" } },
         },
         {
@@ -236,9 +247,22 @@
       });
   }
 
-  function init() {
+  async function init() {
     var blocks = document.querySelectorAll(".bench-chart-block");
     if (!blocks.length) {
+      return;
+    }
+    try {
+      // The libraries depend on one another, so preserve their load order.
+      await loadScript("vega.min.js");
+      await loadScript("vega-lite.min.js");
+      await loadScript("vega-embed.min.js");
+    } catch (err) {
+      // Measurements remain available if a runtime cannot be loaded.
+      document.querySelectorAll(".bench-table").forEach(function (table) {
+        table.open = true;
+      });
+      console.error("bench-charts: failed to load the chart runtime", err);
       return;
     }
     blocks.forEach(function (block) {

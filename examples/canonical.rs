@@ -1,4 +1,4 @@
-//! Post-build canonical-URL injector for the arity docs.
+//! Post-build canonical and Open Graph URL injector for the arity docs.
 //!
 //! mdBook has no `canonical-site-url` setting (see
 //! <https://github.com/rust-lang/mdBook/pull/2706>), so rendered pages ship
@@ -15,9 +15,11 @@
 //! `<loc>` (both go through `postbuild::collect_pages`), so a page's canonical
 //! link and its sitemap entry always agree.
 //!
-//! The injection is idempotent: a page that already carries a `rel="canonical"`
-//! link is left untouched, so re-running over an already-processed tree is a
-//! no-op.
+//! Each missing identity tag is inserted independently, so re-running over an
+//! already-processed tree is a no-op.
+
+#[path = "util/metadata.rs"]
+mod metadata;
 
 #[path = "util/postbuild.rs"]
 mod postbuild;
@@ -43,20 +45,10 @@ fn main() {
             eprintln!("warning: could not read {}", page.path.display());
             continue;
         };
-        // Idempotent: never add a second canonical link.
-        if html.contains("rel=\"canonical\"") {
-            continue;
-        }
-        let Some(pos) = html.find("</head>") else {
-            eprintln!("warning: no </head> in {}, skipping", page.path.display());
+        let url = format!("{base}{}", page.loc);
+        let Some(out) = metadata::insert_metadata(&html, &url) else {
             continue;
         };
-        let href = escape_attr(&format!("{base}{}", page.loc));
-        let tag = format!("    <link rel=\"canonical\" href=\"{href}\">\n");
-        let mut out = String::with_capacity(html.len() + tag.len());
-        out.push_str(&html[..pos]);
-        out.push_str(&tag);
-        out.push_str(&html[pos..]);
         if let Err(e) = std::fs::write(&page.path, out) {
             eprintln!("failed to write {}: {e}", page.path.display());
             std::process::exit(1);
@@ -64,12 +56,7 @@ fn main() {
         injected += 1;
     }
     eprintln!(
-        "injected canonical links into {injected}/{} pages",
+        "injected canonical and Open Graph URLs into {injected}/{} pages",
         pages.len()
     );
-}
-
-/// Escape the characters that are unsafe inside a double-quoted HTML attribute.
-fn escape_attr(s: &str) -> String {
-    s.replace('&', "&amp;").replace('"', "&quot;")
 }

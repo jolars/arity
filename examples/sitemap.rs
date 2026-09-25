@@ -32,7 +32,9 @@ fn main() {
 
     let book_dir = Path::new(&book_dir);
     let base = normalize_base(&base_url);
-    let pages = collect_pages(book_dir);
+    let mut pages = collect_pages(book_dir);
+    // Aliases need metadata on each file but only one sitemap entry.
+    pages.dedup_by(|a, b| a.loc == b.loc);
 
     let mut out = String::new();
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
