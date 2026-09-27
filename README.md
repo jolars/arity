@@ -11,6 +11,7 @@ Code](https://vsmarketplacebadges.dev/version-short/jolars.arity.svg?logo=vsix)]
 version](https://badge.fury.io/py/arity.svg?icon=si%3Apython)](https://pypi.org/project/arity/)
 [![npm
 version](https://badge.fury.io/js/@arity-cli%2Farity-cli.svg?icon=si%3Anpm)](https://www.npmjs.com/package/arity-cli)
+[![CRAN](https://www.r-pkg.org/badges/version/arity)](https://CRAN.R-project.org/package=arity)
 
 Arity is a language server, formatter, and linter for the R programming
 language, built on a lossless, incremental parser. It provides a fast,
@@ -30,6 +31,8 @@ and IDEs.
 
 Arity is available from several sources:
 
+- **CRAN**: `install.packages("arity")` in R (formatter bindings; see [R package
+  usage](https://arity.cc/getting-started.html#r-package-cran))
 - **crates.io**: `cargo install arity`
 - **Homebrew**: `brew install jolars/tap/arity`
 - **npm**: `npm install -g arity-cli` (bundles a prebuilt binary)
@@ -103,6 +106,9 @@ semantic tokens, folding, and call hierarchy.
 The Arity extension for VS Code/Open VSX (and Positron) bundles the binary and
 starts the server automatically. For Neovim, Helix, and other editors, see the
 [editor setup guide](https://arity.cc/guide/editors.html).
+
+In RStudio, use the R package to format saved files from the console; see
+[RStudio setup](https://arity.cc/guide/editors.html#rstudio).
 
 ## Pre-Commit Hook
 

@@ -1,5 +1,8 @@
 # Editor Setup
 
+For formatting inside RStudio, see the [RStudio section](#rstudio). The other
+editor integrations below use Arity's language server.
+
 Arity ships a language server, started with `arity lsp` (stdio, JSON-RPC). It
 offers formatting, diagnostics with quick fixes, hover, completion, signature
 help, go-to-definition and find-references, rename, document and workspace
@@ -59,6 +62,19 @@ format-selection generally) will not touch a `DESCRIPTION`.
 Editors need to be told to send the file, since most do not recognize
 `DESCRIPTION` on their own. The VS Code extension does this for you; for the
 rest, see the sections below.
+
+## RStudio
+
+Install the [R package from CRAN](../getting-started.md#r-package-cran), then
+save your R script and format it from RStudio's console:
+
+```r
+arity::format_file("R/example.R")
+```
+
+This rewrites the saved file on disk. Use `arity::format_text()` to format a
+string and return the formatted text instead. Pass formatting options as
+function arguments; the R package does not read `arity.toml`.
 
 ## VS Code/Positron
 
