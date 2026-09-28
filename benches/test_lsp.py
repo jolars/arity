@@ -1,5 +1,9 @@
 import importlib.util
+import io
 import json
+import socket
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -363,6 +367,311 @@ class AggregationTests(unittest.TestCase):
         self.assertEqual(aggregate["timings"]["edit_seconds"], 4.1)
         self.assertEqual(aggregate["timings"]["documents_ready_seconds"], 0.234567)
         self.assertEqual(aggregate["samples"], 51)
+
+
+class TransportTests(unittest.TestCase):
+    def test_tcp_reader_acknowledges_fragmented_headers_and_reads_exact_body(self):
+        from lsp_servers import TcpReader
+
+        sock = Mock()
+        sock.makefile.return_value = io.BytesIO(
+            b'Content-Length: 15\r\n\r\n{"result":"\xce\xbb"}'
+        )
+        reader = TcpReader(sock)
+        self.assertEqual(reader.readline(), b"Content-Length: 15\r\n")
+        self.assertEqual(reader.readline(), b"\r\n")
+        self.assertEqual(reader.read(15), '{"result":"λ"}'.encode())
+        self.assertEqual(sock.setsockopt.call_count, 3)
+        sock.setsockopt.assert_called_with(socket.IPPROTO_TCP, socket.TCP_QUICKACK, 1)
+        reader.close()
+
+    def test_client_handles_fragmented_tcp_responses_and_disconnect(self):
+        harness = load_harness()
+        from lsp_servers import TcpReader
+
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        sock = socket.create_connection(listener.getsockname())
+        peer, _ = listener.accept()
+        self.addCleanup(listener.close)
+        self.addCleanup(sock.close)
+        self.addCleanup(peer.close)
+        server = Mock()
+        writer = sock.makefile("wb")
+        reader = TcpReader(sock)
+        self.addCleanup(writer.close)
+        self.addCleanup(reader.close)
+        server.connect.return_value = writer, reader
+        client = harness.Client(server, timeout=1)
+        # Split a UTF-8 code point across writes to exercise byte framing.
+        payload = '{"id":1,"result":"λ"}'.encode()
+        peer.sendall(b"Content-Length: %d\r\n\r\n" % len(payload) + payload[:-2])
+        peer.sendall(payload[-2:])
+        response = client.request("test", {}, timeout=2)
+        self.assertEqual(response["result"], "λ")
+        peer.shutdown(socket.SHUT_RDWR)
+        client.reader.join(timeout=2)
+        self.assertFalse(client.reader.is_alive())
+        self.assertIsNone(client.request("test", {}, timeout=0))
+
+    def test_stdio_spawn_failure_closes_log(self):
+        from lsp_servers import StdioServer
+
+        log = Mock()
+        with (
+            patch("lsp_servers.open", return_value=log),
+            patch("lsp_servers.subprocess.Popen", side_effect=OSError("missing")),
+            self.assertRaisesRegex(OSError, "missing"),
+        ):
+            StdioServer(["missing"], ".", {}, "log")
+        log.close.assert_called_once()
+
+    def test_stopping_stdio_unblocks_the_reader_and_closes_the_log(self):
+        harness = load_harness()
+        from lsp_servers import StdioServer
+
+        with tempfile.TemporaryDirectory() as directory:
+            server = StdioServer(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                directory,
+                None,
+                str(Path(directory) / "stderr.log"),
+            )
+            client = harness.Client(server, timeout=1)
+            try:
+                self.assertIsNone(client.request("initialize", {}, timeout=0.01))
+            finally:
+                client.kill()
+            self.assertIsNotNone(server.proc.poll())
+            self.assertFalse(client.reader.is_alive())
+            self.assertTrue(server.stderr_file.closed)
+            client.kill()
+
+    def test_ark_handshake_connects_only_to_its_announced_port(self):
+        from lsp_servers import ArkServer
+
+        kernel = Mock()
+        kernel.get_iopub_msg.side_effect = [
+            {"msg_type": "status"},
+            {
+                "msg_type": "comm_msg",
+                "content": {
+                    "comm_id": "other",
+                    "data": {"msg_type": "server_started", "content": {"port": 2345}},
+                },
+            },
+            {
+                "msg_type": "comm_msg",
+                "content": {
+                    "comm_id": "mine",
+                    "data": {"msg_type": "server_started", "content": {"port": 3456}},
+                },
+            },
+        ]
+        proc = Mock(stdin=None, stdout=None)
+        proc.poll.return_value = None
+        sock = Mock()
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "lsp_servers.ark_dependencies",
+                return_value=(
+                    Mock(return_value=kernel),
+                    Mock(return_value=("/connection.json", {})),
+                ),
+            ),
+            patch("lsp_servers.subprocess.Popen", return_value=proc) as spawn,
+            patch("lsp_servers.socket.create_connection", return_value=sock) as connect,
+            patch("lsp_servers.threading.Thread"),
+            patch("lsp_servers.uuid.uuid4", return_value=Mock(hex="mine")),
+            patch("lsp_servers.os.killpg"),
+        ):
+            server = ArkServer(
+                ["ark", "--connection_file", "{connection_file}"],
+                directory,
+                {},
+                str(Path(directory) / "log"),
+                directory,
+            )
+            kernel.start_channels.assert_not_called()
+            spawn.assert_called_once()
+            self.assertEqual(
+                spawn.call_args.args[0],
+                ["ark", "--connection_file", "/connection.json"],
+            )
+            self.assertEqual(spawn.call_args.kwargs["stdin"], subprocess.DEVNULL)
+            try:
+                server.connect(timeout=1)
+                self.assertEqual(connect.call_args.args[0], ("127.0.0.1", 3456))
+                kernel.session.send.assert_called_once_with(
+                    kernel.shell_channel.socket,
+                    "comm_open",
+                    {
+                        "comm_id": "mine",
+                        "target_name": "positron.lsp",
+                        "data": {"ip_address": "127.0.0.1"},
+                    },
+                )
+                sock.setsockopt.assert_called_with(
+                    socket.IPPROTO_TCP, socket.TCP_NODELAY, 1
+                )
+            finally:
+                server.kill()
+            kernel.stop_channels.assert_called_once()
+
+    def test_ark_startup_timeout_is_bounded(self):
+        from lsp_servers import ArkServer
+
+        server = ArkServer.__new__(ArkServer)
+        server.proc = Mock()
+        server.proc.poll.return_value = None
+        server.kernel = Mock()
+        with (
+            patch("lsp_servers.time.monotonic", side_effect=[10, 11]),
+            self.assertRaisesRegex(RuntimeError, "startup timed out"),
+        ):
+            server.connect(timeout=0.5)
+        server.kernel.wait_for_ready.assert_not_called()
+
+    def test_ark_accepts_both_startup_envelopes_and_ignores_other_comms(self):
+        from lsp_servers import ark_port
+
+        def message(data, comm_id="mine"):
+            return {
+                "msg_type": "comm_msg",
+                "content": {"comm_id": comm_id, "data": data},
+            }
+
+        for envelope in [
+            {"msg_type": "server_started", "content": {"port": 1234}},
+            {"method": "server_started", "params": {"port": 1234}},
+        ]:
+            self.assertEqual(ark_port(message(envelope), "mine"), 1234)
+            self.assertIsNone(ark_port(message(envelope, "other"), "mine"))
+        self.assertIsNone(ark_port({"msg_type": "status"}, "mine"))
+        for port in [None, True, 0, 65536, "1234"]:
+            with self.assertRaisesRegex(RuntimeError, "port"):
+                ark_port(
+                    message({"msg_type": "server_started", "content": {"port": port}}),
+                    "mine",
+                )
+        with self.assertRaisesRegex(RuntimeError, "closed"):
+            ark_port({"msg_type": "comm_close", "content": {"comm_id": "mine"}}, "mine")
+
+    def test_ark_cleanup_closes_channels_and_socket_even_after_kernel_exit(self):
+        from lsp_servers import ArkServer
+
+        server = ArkServer.__new__(ArkServer)
+        server.closed = False
+        server.streams = ()
+        server.proc = Mock(pid=123, stdin=None, stdout=None)
+        server.proc.poll.return_value = 0
+        server.stderr_file = Mock()
+        server.kernel = Mock()
+        server.sock = Mock()
+        server.drain_stop = threading.Event()
+        server.drain_thread = Mock()
+        with patch("lsp_servers.os.killpg") as killpg:
+            server.kill()
+        killpg.assert_called_once()
+        server.kernel.stop_channels.assert_called_once()
+        server.sock.shutdown.assert_called_once_with(socket.SHUT_RDWR)
+        server.sock.close.assert_called_once()
+        server.stderr_file.close.assert_called_once()
+        self.assertTrue(server.drain_stop.is_set())
+
+    def test_ark_startup_failure_is_cleaned_up_before_client_exists(self):
+        harness = load_harness()
+        server = Mock()
+        server.connect.side_effect = RuntimeError("kernel timed out")
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(harness, "ArkServer", return_value=server),
+            patch.object(harness, "Sampler") as sampler,
+            self.assertRaisesRegex(RuntimeError, "kernel timed out"),
+        ):
+            harness.run_session(
+                ("ark", ["ark"]),
+                1,
+                Path(directory),
+                [],
+                1,
+                1,
+                0.5,
+                directory,
+                1,
+                0,
+            )
+        sampler.return_value.start.assert_called_once()
+        server.kill.assert_called_once()
+
+    def test_quiet_wait_rejects_a_disconnected_lsp_in_a_live_kernel(self):
+        harness = load_harness()
+        client = Mock(alive=False)
+        client.proc.poll.return_value = None
+        sampler = Mock(error=None, started_at=0)
+        sampler.quiet_since.return_value = 1
+        with self.assertRaisesRegex(RuntimeError, "disconnected"):
+            harness.wait_until_quiet(client, sampler, 0.5, 1, "startup", 0)
+
+    def test_ark_dependency_is_optional_and_error_is_actionable(self):
+        from lsp_servers import ark_dependencies
+
+        with (
+            patch.dict(sys.modules, {"jupyter_client": None}),
+            self.assertRaisesRegex(RuntimeError, "jupyter_client"),
+        ):
+            ark_dependencies()
+
+
+class ReadinessTests(unittest.TestCase):
+    def test_ark_checks_every_buffer_without_waiting_for_unchanged_diagnostics(self):
+        harness = load_harness()
+        client = Mock()
+        client.request.return_value = {"result": []}
+        uris = [f"file:///{n}.R" for n in range(5)]
+        harness.await_documents(client, "ark", False, dict.fromkeys(uris, 1), 2)
+        client.wait_diagnostics.assert_not_called()
+        symbols = [
+            args
+            for args, _ in client.request.call_args_list
+            if args[0] == "textDocument/documentSymbol"
+        ]
+        self.assertEqual([args[1]["textDocument"]["uri"] for args in symbols], uris)
+        client.request.return_value = {"error": {"message": "failed"}}
+        with self.assertRaisesRegex(RuntimeError, "failed"):
+            harness.await_documents(client, "ark", False, dict.fromkeys(uris, 1), 2)
+
+    def test_existing_servers_still_require_diagnostics_and_propagate_timeouts(self):
+        harness = load_harness()
+        client = Mock()
+        client.wait_diagnostics.side_effect = RuntimeError("diagnostics timed out")
+        with self.assertRaisesRegex(RuntimeError, "diagnostics timed out"):
+            harness.await_documents(
+                client, "languageserver", False, {"a": 2}, 2, after=5
+            )
+        client.wait_diagnostics.assert_called_once_with({"a": 2}, 2, after=5)
+        client.request.assert_not_called()
+
+    def test_ark_uses_rscript_resolved_library_paths(self):
+        from lsp_servers import r_runtime
+
+        with patch(
+            "lsp_servers.subprocess.check_output",
+            return_value="/r/home\nR version 4.6.1\n/lib/one\n/lib/two\n",
+        ):
+            runtime = r_runtime("/wrapped/Rscript")
+        self.assertEqual(
+            runtime["env"],
+            {
+                "R_HOME": "/r/home",
+                "R_LIBS_SITE": "/lib/one:/lib/two",
+                "R_LIBS": "",
+                "R_LIBS_USER": "",
+            },
+        )
+        self.assertEqual(runtime["library_paths"], ["/lib/one", "/lib/two"])
 
 
 class OutputTests(unittest.TestCase):

@@ -1,4 +1,5 @@
 {
+  config,
   pkgs,
   ...
 }:
@@ -20,6 +21,8 @@
     pkgs.biome
     pkgs.prettier
     pkgs.air-formatter
+    # Match the embedded R kernel's libraries to the languageserver benchmark.
+    (pkgs.ark.override { R = config.languages.r.package; })
     pkgs.ruff
     pkgs.shfmt
     pkgs.wasm-pack
@@ -67,6 +70,7 @@
         pkgs.python3.withPackages (
           ps: with ps; [
             openai
+            jupyter-client
           ]
         )
       );

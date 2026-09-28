@@ -158,7 +158,7 @@ tasks:
       - ./scripts/bench.sh
 
   bench-lsp:
-    desc: Compare Arity and languageserver latency and memory on Linux
+    desc: Compare Arity, languageserver, and optional Ark latency and memory on Linux
     aliases: ["bench:lsp"]
     cmds:
       - python3 benches/lsp.py {{.CLI_ARGS}}

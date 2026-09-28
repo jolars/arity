@@ -2,7 +2,7 @@
 
 Arity is measured against other R tools in two suites: command-line speed,
 measured with [hyperfine], and language-server latency and memory, measured
-through LSP over stdio. The command-line suite covers two operations:
+through LSP over stdio or TCP. The command-line suite covers two operations:
 
 - the **formatter**, compared against [`air`](https://github.com/posit-dev/air)
   and [`styler`](https://styler.r-lib.org/);
@@ -102,21 +102,34 @@ faster tools fall below it, slower tools rise above.
 ## Language-server latency and memory
 
 This Linux-only suite compares Arity with
-[`languageserver`](https://github.com/REditorSupport/languageserver), following
-Panache's LSP benchmark. It starts three fresh processes per server in
-alternating order, opens the five largest tracked R files in `tidyr` v1.3.2 at a
-pinned commit, and performs 1,000 edits in the largest file. The checkout stays
-unchanged: benchmark bindings and edits exist only in the open buffer.
+[`languageserver`](https://github.com/REditorSupport/languageserver) and, when
+installed, [Ark](https://github.com/posit-dev/ark). It follows Panache's LSP
+benchmark. It starts three fresh processes per server in rotating order, opens
+the five largest tracked R files in `tidyr` v1.3.2 at a pinned commit, and
+performs 1,000 edits in the largest file. The checkout stays unchanged:
+benchmark bindings and edits exist only in the open buffer.
 
 ### What the session measures
 
 **Startup and workload** covers process launch through the `initialize`
 response, workspace readiness after initialization, readiness after opening the
-files, and the complete edit workload. Both servers must publish diagnostics for
-the opened files before warm requests begin. Readiness is estimated from
+files, and the complete edit workload. Arity and `languageserver` must publish
+diagnostics for the opened files before warm requests begin. Ark suppresses
+initially empty and unchanged diagnostic sets, so diagnostic notifications
+cannot establish its readiness. All servers must answer document-symbol requests
+for each opened buffer, followed by a quiet period. Readiness is estimated from
 process-tree CPU use: the start of a five-second window below 5% of one core,
 sampled every 150 ms. The deliberate settling wait is excluded from readiness
-times. These estimates do not prove that all background work has finished.
+times. These estimates do not prove that all background work has finished or
+that Ark has completed diagnostics for the latest version. The artifact records
+each server's readiness method.
+
+Ark starts as a headless Jupyter R kernel. Its startup measurement includes the
+kernel handshake and opening the embedded language server over loopback TCP.
+Positron is not required. Arity and `languageserver` use stdio. The TCP client
+uses `TCP_NODELAY` and Linux `TCP_QUICKACK` to avoid delayed acknowledgments
+stalling responses whose headers and bodies arrive separately. Each server's
+transport is recorded in the artifact.
 
 **Request latency** covers document symbols in the three largest open files,
 hover on `mean()`, and definition, references, and rename on a local function
@@ -133,11 +146,11 @@ equal-length names and declarations on different lines. The runner checks that
 the response points to the newly selected declaration. It polls every 10 ms
 after stale or empty replies, counting those replies and including the wait in
 the measurement. A server that never returns the correct location fails the run.
-Arity receives incremental changes; `languageserver` receives full documents, as
-each advertises during initialization. All 1,000 edits are measured, without
-discarded warmups. This measures navigation after an edit; it does not measure
-time to diagnostics for each keystroke. The complete edit workload excludes the
-final diagnostic and settling waits.
+Arity and Ark receive incremental changes; `languageserver` receives full
+documents, as each advertises during initialization. All 1,000 edits are
+measured, without discarded warmups. This measures navigation after an edit; it
+does not measure time to diagnostics for each keystroke. The complete edit
+workload excludes the final readiness checks and settling waits.
 
 **Resident memory** is sampled for the server and its descendants after
 initialization, after opening files, after edits, and at the sampled peak. RSS
@@ -145,23 +158,38 @@ counts shared pages in each process; PSS apportions them and appears in the
 tables and tooltips. The grouped bars show median RSS in MiB across fresh
 processes, with one bar per server at each stage and a linear axis starting at
 zero. Short-lived peaks or child processes between samples can be missed. The
-peak RSS, peak PSS, and peak process count can occur at different times.
+peak RSS, peak PSS, and peak process count can occur at different times. Ark's
+figures include its embedded R session and descendants. The Python client and
+Jupyter launcher are outside the sampled process tree.
 
 The servers perform different work and use different diagnostics and package
 indexes. These are measurements of the same editor workload, not a claim of
-feature equivalence. Both retain their default analysis settings. Arity runs
-with `--no-config`; R runs with `--vanilla`; each process gets fresh XDG config
-and cache directories. Arity's remote index URL is unset. Installed R packages
-and their help files remain available, so results depend on that library as well
-as the host. Operating-system file caches are not cleared, and neither server is
-pinned to one CPU core.
+feature equivalence. The servers retain their default analysis settings. Arity
+runs with `--no-config`; R runs with `--vanilla`; each process gets fresh XDG
+config and cache directories. Arity's remote index URL is unset. Installed R
+packages and their help files remain available, so results depend on that
+library as well as the host. Operating-system file caches are not cleared, and
+servers are not pinned to one CPU core.
+
+Ark uses the R installation and resolved library paths reported by the selected
+`Rscript`. Its version, R home, library paths, and source-fetching environment
+setting are recorded in the artifact. Ark can download package sources on cache
+misses, so startup and settling times can include network work. Each session
+gets a fresh XDG cache, including Ark's source cache. Ark 0.1.252 does not
+support `OAK_SOURCE_FETCHING_ENABLED`; setting it does not prevent that release
+from fetching sources. Newer builds may honor it, so preserve the recorded
+setting when reproducing a run. The harness does not download or modify Ark
+itself.
 
 ### Run the comparison
 
-The development shell includes Python, R, and `languageserver`. The runner
-requires Linux `/proc`, Git, Cargo, and those tools. It builds Arity in release
-mode, checks out the pinned corpus under `target/bench-lsp/corpus/`, and saves
-server stderr under `target/bench-lsp/logs/`.
+The development shell includes Python, R, `languageserver`, Ark from nixpkgs,
+and `jupyter_client` with its `pyzmq` dependency. Outside that shell, Ark is
+discovered on `PATH`; without it, the runner compares Arity and
+`languageserver`. Only the Ark backend requires `jupyter_client`. The runner
+requires Linux `/proc`, Git, Cargo, and the selected servers. It builds Arity in
+release mode, checks out the pinned corpus under `target/bench-lsp/corpus/`, and
+saves server stderr under `target/bench-lsp/logs/`.
 
 ```sh
 task bench-lsp
@@ -176,11 +204,16 @@ task bench-lsp -- --runs 1 --edits 10 --latency-runs 2 \
 ```
 
 Use `--arity /path/to/arity` to measure an existing release binary,
-`--rscript /path/to/Rscript` to select an R installation, and `--help` for
-workload and timeout options. A failed request, missing diagnostics, incorrect
-definition that remains stale until the timeout, or settling timeout aborts the
-run without replacing the artifact. Harness correctness tests run with
-`python3 -m unittest discover -s benches -p 'test_lsp.py'`; they do not run the
-servers or assert performance thresholds.
+`--rscript /path/to/Rscript` to select an R installation, and
+`--ark /path/to/ark` to select an Ark R kernel executable. Use `--no-ark` to
+omit Ark even when it is installed. Run `--help` for workload and timeout
+options. If Ark is available but its Python dependencies are missing, the runner
+reports the missing dependency instead of silently omitting Ark.
+
+A failed request, missing required diagnostics, an incorrect definition that
+remains stale until the timeout, a disconnected server, or a settling timeout
+aborts the run without replacing the artifact. Harness correctness tests run
+with `python3 -m unittest discover -s benches -p 'test_lsp.py'`; they do not run
+the servers or assert performance thresholds.
 
 {{#include benchmarks_lsp.md}}

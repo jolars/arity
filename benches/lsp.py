@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Measure latency, runtime, and resident memory in an R LSP session.
 
-The harness launches each server over stdio, samples its complete process tree
-from ``/proc``, and records four milestones: initialized baseline, files-opened
-settled state, post-edit settled state, and the sampled peak. It intentionally
-uses no third-party Python packages so an Arity development shell can run it
-without additional setup. Adapted from Panache's ``benches/lsp_memory.py``.
+The harness samples each server's complete process tree from ``/proc`` and
+records four milestones: initialized baseline, files-opened settled state,
+post-edit settled state, and the sampled peak. Arity and languageserver use
+stdio and Python's standard library. Ark uses TCP and requires jupyter_client.
+Adapted from Panache's ``benches/lsp_memory.py``.
 """
 
 import argparse
@@ -15,7 +15,6 @@ import math
 import os
 import platform
 import shutil
-import signal
 import statistics
 import subprocess
 import tempfile
@@ -23,6 +22,8 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+from lsp_servers import ArkServer, StdioServer, ark_dependencies, r_runtime
 
 CLK_TCK = os.sysconf("SC_CLK_TCK")
 IDLE_CPU_FRACTION = 0.05
@@ -32,6 +33,7 @@ SAMPLE_INTERVAL_SECONDS = 0.15
 SERVER_META = {
     "arity": ("Arity", "static R analysis and native package indexing"),
     "languageserver": ("languageserver", "R-backed analysis and lintr diagnostics"),
+    "ark": ("Ark", "R kernel with embedded language server and Oak analysis"),
 }
 ROOT = Path(__file__).resolve().parents[1]
 CORPUS_REPO = "https://github.com/tidyverse/tidyr.git"
@@ -185,21 +187,10 @@ class Sampler(threading.Thread):
 
 
 class Client:
-    def __init__(self, command, cwd, env, stderr_path):
-        self.stderr_file = open(stderr_path, "wb")  # noqa: SIM115
-        self.proc = subprocess.Popen(
-            command,
-            cwd=cwd,
-            env=env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=self.stderr_file,
-            start_new_session=True,
-        )
-        if self.proc.stdin is None or self.proc.stdout is None:
-            raise RuntimeError("failed to open language-server stdio")
-        self.stdin = self.proc.stdin
-        self.stdout = self.proc.stdout
+    def __init__(self, server, timeout):
+        self.server = server
+        self.proc = server.proc
+        self.stdin, self.stdout = server.connect(timeout)
         self.next_id = 1
         self.write_lock = threading.Lock()
         self.responses = {}
@@ -210,14 +201,21 @@ class Client:
         self.reader.start()
 
     def _read_loop(self):
+        try:
+            self._read_messages()
+        except (OSError, ValueError):
+            pass
+        finally:
+            with self.state:
+                self.alive = False
+                self.state.notify_all()
+
+    def _read_messages(self):
         while True:
             length = None
             while True:
                 line = self.stdout.readline()
                 if not line:
-                    with self.state:
-                        self.alive = False
-                        self.state.notify_all()
                     return
                 line = line.strip()
                 if not line:
@@ -251,8 +249,7 @@ class Client:
         payload = json.dumps(message).encode()
         with self.write_lock:
             try:
-                self.stdin.write(b"Content-Length: %d\r\n\r\n" % len(payload))
-                self.stdin.write(payload)
+                self.stdin.write(b"Content-Length: %d\r\n\r\n" % len(payload) + payload)
                 self.stdin.flush()
             except (BrokenPipeError, ValueError, OSError):
                 pass
@@ -261,6 +258,7 @@ class Client:
         self._send({"jsonrpc": "2.0", "method": method, "params": params})
 
     def request(self, method, params, timeout):
+        self.server.check()
         with self.state:
             request_id = self.next_id
             self.next_id += 1
@@ -304,27 +302,18 @@ class Client:
                 self.state.wait(min(1.0, remaining))
 
     def shutdown(self):
-        if self.proc.poll() is None:
-            response = self.request("shutdown", None, timeout=15)
-            if response is not None and "error" not in response:
-                self.notify("exit", None)
-                try:
-                    self.proc.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    pass
-        self.kill()
+        try:
+            if self.proc.poll() is None:
+                response = self.request("shutdown", None, timeout=15)
+                if response is not None and "error" not in response:
+                    self.notify("exit", None)
+                    self.server.shutdown()
+        finally:
+            self.kill()
 
     def kill(self):
-        # The session leader may have exited while workers still hold its pipes open.
-        try:
-            os.killpg(self.proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        self.proc.wait(timeout=5)
-        self.stdin.close()
+        self.server.kill()
         self.reader.join(timeout=5)
-        self.stdout.close()
-        self.stderr_file.close()
 
 
 CAPABILITIES = {
@@ -366,6 +355,9 @@ def wait_until_quiet(client, sampler, quiet_seconds, timeout, phase, not_before)
             raise RuntimeError(
                 f"server exited during {phase} (rc={client.proc.returncode})"
             )
+        if not client.alive:
+            raise RuntimeError(f"language server disconnected during {phase}")
+        client.server.check()
         quiet_since = sampler.quiet_since(quiet_seconds, not_before)
         if quiet_since is not None:
             return sampler.started_at + quiet_since
@@ -429,23 +421,21 @@ def pull_diagnostics(client, uris, timeout):
         )
 
 
-def exercise_shared_requests(client, uris):
-    for uri in uris[:3]:
+def await_documents(client, key, pull, versions, timeout, after=0):
+    if pull:
+        pull_diagnostics(client, versions, timeout)
+    elif key != "ark":
+        # Ark suppresses unchanged sets, including initially empty diagnostics.
+        # Its readiness uses successful requests and CPU settling instead.
+        client.wait_diagnostics(versions, timeout, after=after)
+    for uri in versions:
         require_response(
             client.request(
                 "textDocument/documentSymbol",
                 {"textDocument": {"uri": uri}},
-                timeout=60,
+                timeout=timeout,
             ),
             "textDocument/documentSymbol",
-        )
-        require_response(
-            client.request(
-                "textDocument/hover",
-                {"textDocument": {"uri": uri}, "position": {"line": 0, "character": 0}},
-                timeout=60,
-            ),
-            "textDocument/hover",
         )
 
 
@@ -665,24 +655,30 @@ def run_session(
     stderr_dir,
     latency_runs,
     latency_warmups,
+    ark_env=None,
 ):
     key, command = spec
     print(f"==> speed and memory: {key} (run {run_number})", flush=True)
     stderr_path = Path(stderr_dir) / f"{key}-run-{run_number}.stderr.log"
     client = None
+    server = None
     sampler = None
     with tempfile.TemporaryDirectory(prefix=f"arity-lsp-{key}-") as state_dir:
         try:
             env = isolated_environment(state_dir)
+            if key == "ark":
+                env.update(ark_env or {})
+                env["RUST_LOG"] = "warn"
             started_at = time.monotonic()
-            client = Client(
-                command,
-                cwd=str(project),
-                env=env,
-                stderr_path=str(stderr_path),
-            )
-            sampler = Sampler(client.proc.pid)
+            if key == "ark":
+                server = ArkServer(
+                    command, str(project), env, str(stderr_path), state_dir
+                )
+            else:
+                server = StdioServer(command, str(project), env, str(stderr_path))
+            sampler = Sampler(server.proc.pid)
             sampler.start()
+            client = Client(server, timeout=settle_timeout)
 
             initialized = require_response(
                 client.request(
@@ -744,11 +740,7 @@ def run_session(
                     },
                 )
 
-            if pull:
-                pull_diagnostics(client, uris, settle_timeout)
-            else:
-                client.wait_diagnostics(dict.fromkeys(uris, 1), settle_timeout)
-            exercise_shared_requests(client, uris)
+            await_documents(client, key, pull, dict.fromkeys(uris, 1), settle_timeout)
             documents_ready = wait_until_quiet(
                 client,
                 sampler,
@@ -779,12 +771,14 @@ def run_session(
                 )
             )
             edit_work_seconds = round(time.monotonic() - edit_started_at, 6)
-            if pull:
-                pull_diagnostics(client, uris, settle_timeout)
-            else:
-                client.wait_diagnostics(
-                    {uris[0]: edits + 1}, settle_timeout, after=before_edits
-                )
+            await_documents(
+                client,
+                key,
+                pull,
+                {uris[0]: edits + 1},
+                settle_timeout,
+                after=before_edits,
+            )
             wait_until_quiet(
                 client,
                 sampler,
@@ -802,6 +796,10 @@ def run_session(
             milestones["peak"] = sampler.peak()
             result = {
                 "run": run_number,
+                "transport": server.transport,
+                "readiness": "requests-and-cpu"
+                if key == "ark" and not pull
+                else "diagnostics-requests-and-cpu",
                 "milestones": milestones,
                 "init_seconds": init_seconds,
                 "workspace_ready_seconds": workspace_ready_seconds,
@@ -814,7 +812,7 @@ def run_session(
                 "diagnostic_mode": "pull" if pull else "push",
                 "text_sync": "full" if sync_kind == 1 else "incremental",
                 "diagnostics_published": client.count_published_diagnostics(),
-                "diagnostic_requests": len(uris) * 2 if pull else 0,
+                "diagnostic_requests": len(uris) + 1 if pull else 0,
                 "definition_requests": edits + request_latencies[-1]["stale_responses"],
                 "samples": len(sampler.samples),
                 "request_latencies": request_latencies,
@@ -832,6 +830,7 @@ def run_session(
             )
             client.shutdown()
             client = None
+            server = None
             return result
         finally:
             if sampler is not None and sampler.is_alive():
@@ -839,6 +838,8 @@ def run_session(
                 sampler.join(timeout=2)
             if client is not None:
                 client.kill()
+            elif server is not None:
+                server.kill()
 
 
 # --- aggregation and output ------------------------------------------------
@@ -1016,6 +1017,13 @@ def main():
         "--arity", type=Path, help="use an existing release binary instead of building"
     )
     parser.add_argument("--rscript", default="Rscript")
+    ark_group = parser.add_mutually_exclusive_group()
+    ark_group.add_argument(
+        "--ark", help="Ark R kernel executable (default: discover ark on PATH)"
+    )
+    ark_group.add_argument(
+        "--no-ark", action="store_true", help="omit Ark even when installed"
+    )
     parser.add_argument("--cache", type=Path, default=ROOT / "target/bench-lsp/corpus")
     parser.add_argument("--open-files", type=int, default=5)
     parser.add_argument("--runs", type=int, default=3)
@@ -1058,6 +1066,30 @@ def main():
         ],
         text=True,
     ).strip()
+    ark = None
+    runtime = None
+    ark_version = None
+    if not args.no_ark:
+        ark = shutil.which(args.ark or "ark")
+        if args.ark and ark is None:
+            parser.error(f"Ark executable not found: {args.ark}")
+        if ark is not None:
+            ark = str(Path(ark).resolve())
+            try:
+                ark_dependencies()
+                ark_version = subprocess.check_output(
+                    [ark, "--version"], text=True, stderr=subprocess.STDOUT, timeout=10
+                ).strip()
+                if not ark_version.startswith("Ark "):
+                    parser.error(f"expected Posit's Ark R kernel, got: {ark_version}")
+                runtime = r_runtime(args.rscript)
+            except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+                parser.error(str(error))
+        else:
+            print(
+                "==> Ark not found on PATH; comparing Arity and languageserver",
+                flush=True,
+            )
     if args.arity is None:
         subprocess.run(
             ["cargo", "build", "--release", "--bin", "arity"], cwd=ROOT, check=True
@@ -1083,12 +1115,30 @@ def main():
         ("arity", [str(arity), "--no-config", "lsp"]),
         ("languageserver", [args.rscript, "--vanilla", "-e", "languageserver::run()"]),
     ]
+    if ark is not None:
+        specs.append(
+            (
+                "ark",
+                [
+                    ark,
+                    "--connection_file",
+                    "{connection_file}",
+                    "--session-mode",
+                    "console",
+                    "--",
+                    "--vanilla",
+                    "--quiet",
+                ],
+            )
+        )
+        versions["ark"] = f"{ark_version}; {runtime['version']}"
     keys = [key for key, _ in specs]
 
     runs_by_server = {key: [] for key in keys}
     session_index = 0
     for repetition in range(args.runs):
-        order = specs if repetition % 2 == 0 else list(reversed(specs))
+        offset = repetition % len(specs)
+        order = specs[offset:] + specs[:offset]
         for spec in order:
             session_index += 1
             key = spec[0]
@@ -1104,6 +1154,7 @@ def main():
                     stderr_dir,
                     args.latency_runs,
                     args.latency_warmups,
+                    ark_env=runtime["env"] if runtime else None,
                 )
             )
             if session_index < args.runs * len(specs):
@@ -1120,6 +1171,20 @@ def main():
                 "doing": doing,
                 "version": versions.get(key, "unknown"),
                 "command": [Path(command[0]).name, *command[1:]],
+                "transport": runs[0]["transport"],
+                "readiness": runs[0]["readiness"],
+                **(
+                    {
+                        "r_runtime": {k: v for k, v in runtime.items() if k != "env"},
+                        "source_fetching": "server-default",
+                        "source_fetching_env": os.environ.get(
+                            "OAK_SOURCE_FETCHING_ENABLED"
+                        ),
+                        "cache": "fresh XDG directories per session",
+                    }
+                    if key == "ark"
+                    else {}
+                ),
                 "runs": public_record(runs),
                 "aggregate": aggregate_runs(runs),
             }
