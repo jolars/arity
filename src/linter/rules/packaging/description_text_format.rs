@@ -144,10 +144,12 @@ fn check_opening(ctx: &DcfRuleContext<'_>, description: &Folded, sink: &mut Vec<
     let bad_prefix = package
         .as_deref()
         .filter(|prefix| starts_with_phrase(prose, prefix, false))
+        .map(|prefix| (prefix, false))
         .or_else(|| {
             title
                 .as_deref()
                 .filter(|prefix| starts_with_phrase(prose, prefix, true))
+                .map(|prefix| (prefix, true))
         })
         .or_else(|| {
             [
@@ -160,15 +162,27 @@ fn check_opening(ctx: &DcfRuleContext<'_>, description: &Folded, sink: &mut Vec<
             ]
             .into_iter()
             .find(|prefix| starts_with_phrase(prose, prefix, true))
+            .map(|prefix| (prefix, false))
         });
 
-    if let Some(prefix) = bad_prefix {
+    if let Some((prefix, repeats_title)) = bad_prefix {
         let start = quote_len;
         let end = start + prefix.len();
+        let (message, help) = if repeats_title {
+            (
+                "the `Description` field begins by repeating the `Title` field".to_string(),
+                "Rephrase the opening to describe the package without repeating its title.",
+            )
+        } else {
+            (
+                format!("the `Description` field must not start with `{prefix}`"),
+                "Start with a concise statement of what the package does.",
+            )
+        };
         sink.push(diagnostic(
             description.map(text_range(start, end)),
-            format!("the `Description` field must not start with `{prefix}`"),
-            "Start with a concise statement of what the package does.",
+            message,
+            help,
             None,
         ));
         return;

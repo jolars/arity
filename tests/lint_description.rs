@@ -306,7 +306,6 @@ fn description_text_must_start_with_a_capital() {
 fn description_text_rejects_boilerplate_openings() {
     for (value, span) in [
         ("testpkg provides useful tools.", "testpkg"),
-        ("A Test Package provides useful tools.", "A Test Package"),
         ("This package provides useful tools.", "This package"),
         ("this package provides useful tools.", "this package"),
         ("Functions for fitting useful models.", "Functions for"),
@@ -318,6 +317,43 @@ fn description_text_rejects_boilerplate_openings() {
         let text = described_as(value);
         assert_eq!(text_format_hits(&text), [span], "`{value}`");
         assert!(messages(&text, TEXT_FORMAT)[0].contains("must not start"));
+    }
+}
+
+#[test]
+fn description_text_explains_repeated_title() {
+    for (title, description, span) in [
+        (
+            "A Test Package",
+            "A Test Package provides useful tools.",
+            "A Test Package",
+        ),
+        (
+            "Format Markdown, Quarto, and R Markdown Documents",
+            "Format Markdown, Quarto, and R Markdown documents with the\n    'Panache' formatter.",
+            "Format Markdown, Quarto, and R Markdown documents",
+        ),
+    ] {
+        let text =
+            described_as(description).replace("Title: A Test Package", &format!("Title: {title}"));
+        let diagnostics =
+            check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+                .expect("linting should not error");
+        let findings: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.rule == TEXT_FORMAT)
+            .collect();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(text_format_hits(&text), [span]);
+        assert_eq!(
+            findings[0].message.body,
+            "the `Description` field begins by repeating the `Title` field",
+        );
+        assert_eq!(
+            findings[0].message.suggestion.as_deref(),
+            Some("Rephrase the opening to describe the package without repeating its title."),
+        );
+        assert!(findings[0].fix.is_none());
     }
 }
 
