@@ -140,6 +140,15 @@ also report sample counts, empty responses, returned items, and result sizes. An
 empty response measures response overhead and does not establish equivalent
 feature behavior.
 
+Document-symbol samples query unchanged buffers after readiness checks and
+warmups, so they include any per-document caches. They do not measure the first
+outline after an edit.
+
+The outlines also differ in scope. On this corpus, Arity includes many local
+assignments absent from Ark's results. Larger outlines cost more to serialize
+and transfer, so compare returned-item counts and payload sizes alongside
+latency.
+
 **Edit to definition** times a change notification through the following correct
 definition response. Each edit switches a call between two functions with
 equal-length names and declarations on different lines. The runner checks that

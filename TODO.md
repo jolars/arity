@@ -968,6 +968,24 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
 
 ### Performance
 
+- [x] **Reuse document-symbol outlines for unchanged buffers.** The LSP retains
+  a typed outline per open buffer and serializes it on the read pool without
+  another database snapshot. Edits replace the cache cell, so an old in-flight
+  read cannot populate the new buffer's cache. Cold outlines prune CST branches
+  without semantic bindings, and assignment operand accessors no longer collect
+  child vectors.
+
+  On the three largest tidyr benchmark files, 4,500 pinned release-LSP requests
+  per implementation showed a 1.23x median speedup and a 1.28x minimum speedup.
+  First requests after edits showed no material regression. JSON construction
+  now accounts for about 39% of sampled CPU time on repeated requests.
+
+  **Do not repeat the JSON-value cache experiment without new evidence.**
+  Caching `serde_json::Value` instead of the typed outline improved the median
+  only 1.8%, worsened the minimum 0.8%, and made edit-to-symbol median latency
+  0.9% worse while retaining a larger object graph. Keep the typed cache; the
+  JSON construction and transport costs need a different approach.
+
 - [x] **Maintain the line index across edits instead of rebuilding it.** Done.
   An open document is now an `Arc<TextBuffer>` (`src/text/buffer.rs`) holding
   the text next to a `LineIndex` that `apply_edit` *splices* per edit, shared
