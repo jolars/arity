@@ -1,4 +1,5 @@
 use super::*;
+use crate::semantic::Binding;
 
 /// Build the outline from cached syntax and semantics when they match the live
 /// buffer, falling back to fresh analysis on a cache miss or cancellation.
@@ -45,15 +46,14 @@ fn document_symbols_from_model(
     line_index: &LineIndex,
     encoding: PositionEncoding,
 ) -> Vec<DocumentSymbol> {
-    // Name keyed by the defining identifier's span: an assignment is a symbol iff
-    // its target token range is a key here. Using the model's name (not the raw
-    // token text) yields the unquoted form for backtick/string targets.
-    let bindings: HashMap<TextRange, SmolStr> = model
+    // Source order lets the walk skip subtrees without eligible bindings. The
+    // model visits assignment values before targets, so its order can differ.
+    let mut bindings: Vec<_> = model
         .bindings()
         .iter()
         .filter(|b| matches!(b.kind, BindingKind::Local | BindingKind::Implicit))
-        .map(|b| (b.def_range, b.name.clone()))
         .collect();
+    bindings.sort_unstable_by_key(|b| b.def_range.start());
     let mut symbols = Vec::new();
     collect_document_symbols(root, &bindings, line_index, &mut symbols, encoding);
     symbols
@@ -61,20 +61,32 @@ fn document_symbols_from_model(
 
 /// Walk `node`'s child nodes, emitting a [`DocumentSymbol`] for each assignment
 /// whose target is a known binding (recursing into its value for nested symbols)
-/// and descending through every other node. Descending into non-binding nodes is
-/// what lets a binding nested in an `if`/`for`/`{}` (none of which introduce a
-/// symbol of their own) surface at the right level instead of being dropped.
-pub(crate) fn collect_document_symbols(
+/// and descending through other nodes that contain eligible bindings. This lets
+/// bindings nested in an `if`/`for`/`{}` (none of which introduce a symbol of their
+/// own) surface at the right level instead of being dropped.
+fn collect_document_symbols(
     node: &SyntaxNode,
-    bindings: &HashMap<TextRange, SmolStr>,
+    mut bindings: &[&Binding],
     line_index: &LineIndex,
     out: &mut Vec<DocumentSymbol>,
     encoding: PositionEncoding,
 ) {
     for child in node.children() {
-        match document_symbol_for(&child, bindings, line_index, encoding) {
+        if bindings.is_empty() {
+            break;
+        }
+        let range = child.text_range();
+        let start = bindings.partition_point(|b| b.def_range.start() < range.start());
+        bindings = &bindings[start..];
+        let end = bindings.partition_point(|b| b.def_range.start() < range.end());
+        let (within, remaining) = bindings.split_at(end);
+        bindings = remaining;
+        if within.is_empty() {
+            continue;
+        }
+        match document_symbol_for(&child, within, line_index, encoding) {
             Some(symbol) => out.push(symbol),
-            None => collect_document_symbols(&child, bindings, line_index, out, encoding),
+            None => collect_document_symbols(&child, within, line_index, out, encoding),
         }
     }
 }
@@ -85,15 +97,22 @@ pub(crate) fn collect_document_symbols(
 /// value is a function/lambda, else `VARIABLE`. Children are the symbols nested in
 /// the value side.
 #[expect(deprecated, reason = "DocumentSymbol::deprecated is a required field")]
-pub(crate) fn document_symbol_for(
+fn document_symbol_for(
     node: &SyntaxNode,
-    bindings: &HashMap<TextRange, SmolStr>,
+    bindings: &[&Binding],
     line_index: &LineIndex,
     encoding: PositionEncoding,
 ) -> Option<DocumentSymbol> {
     let assign = AssignmentExpr::cast(node.clone())?;
     let name_token = assign.target_name_token()?;
-    let name = bindings.get(&name_token.text_range())?;
+    let name_range = name_token.text_range();
+    let binding_index = bindings
+        .binary_search_by_key(&name_range.start(), |b| b.def_range.start())
+        .ok()?;
+    let binding = bindings[binding_index];
+    if binding.def_range != name_range {
+        return None;
+    }
     let value = assign.value_element();
     let is_function =
         matches!(&value, Some(NodeOrToken::Node(n)) if FunctionExpr::can_cast(n.kind()));
@@ -106,7 +125,7 @@ pub(crate) fn document_symbol_for(
     }
 
     Some(DocumentSymbol {
-        name: name.to_string(),
+        name: binding.name.to_string(),
         detail: None,
         kind: if is_function {
             LspSymbolKind::FUNCTION
@@ -124,6 +143,89 @@ pub(crate) fn document_symbol_for(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn document_symbols_preserve_source_order_nesting_and_spans() {
+        let outer = "outer <- function(param = (default <- 1)) {\n\
+            for (i in 1:2) { if (param) `café` <<- i }\n\
+            x[idx <- 1] <- 2\n\
+            { inner <- 3 } -> right\n\
+            \"名\" <- 4\n\
+        }";
+        let text = format!("#' 😀 Documentation.\nquote(hidden <- 0)\n{outer}\nlast <- 5\n");
+        let expected = [
+            (0, "outer", "outer", outer, LspSymbolKind::FUNCTION),
+            (
+                1,
+                "default",
+                "default",
+                "default <- 1",
+                LspSymbolKind::VARIABLE,
+            ),
+            (
+                1,
+                "`café`",
+                "`café`",
+                "`café` <<- i",
+                LspSymbolKind::VARIABLE,
+            ),
+            (1, "idx", "idx", "idx <- 1", LspSymbolKind::VARIABLE),
+            (
+                1,
+                "right",
+                "right",
+                "{ inner <- 3 } -> right",
+                LspSymbolKind::VARIABLE,
+            ),
+            (2, "inner", "inner", "inner <- 3", LspSymbolKind::VARIABLE),
+            (1, "名", "\"名\"", "\"名\" <- 4", LspSymbolKind::VARIABLE),
+            (0, "last", "last", "last <- 5", LspSymbolKind::VARIABLE),
+        ];
+        fn flatten<'a>(
+            symbols: &'a [DocumentSymbol],
+            depth: usize,
+            out: &mut Vec<(usize, &'a DocumentSymbol)>,
+        ) {
+            for symbol in symbols {
+                out.push((depth, symbol));
+                if let Some(children) = &symbol.children {
+                    flatten(children, depth + 1, out);
+                }
+            }
+        }
+
+        let index = LineIndex::new(&text);
+        for encoding in [PositionEncoding::Utf8, PositionEncoding::Utf16] {
+            let symbols = compute_document_symbols(&text, encoding);
+            let mut actual = Vec::new();
+            flatten(&symbols, 0, &mut actual);
+            assert_eq!(actual.len(), expected.len(), "{actual:#?}");
+            for ((depth, symbol), (want_depth, name, token, statement, kind)) in
+                actual.into_iter().zip(expected)
+            {
+                assert_eq!(
+                    (depth, symbol.name.as_str(), symbol.kind),
+                    (want_depth, name, kind)
+                );
+                let start = text.find(statement).unwrap();
+                let name_start = start + statement.rfind(token).unwrap();
+                assert_eq!(
+                    symbol.range,
+                    Range::new(
+                        index.byte_to_position(start, encoding),
+                        index.byte_to_position(start + statement.len(), encoding),
+                    ),
+                );
+                assert_eq!(
+                    symbol.selection_range,
+                    Range::new(
+                        index.byte_to_position(name_start, encoding),
+                        index.byte_to_position(name_start + token.len(), encoding),
+                    ),
+                );
+            }
+        }
+    }
 
     #[test]
     fn cached_document_symbols_match_fresh_analysis_after_edits() {
