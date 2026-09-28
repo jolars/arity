@@ -1,5 +1,30 @@
 use super::*;
 
+/// Reuse the snapshot's syntax and semantics only while they describe the live
+/// buffer. A missing file, stale text, or cancelled read falls back to fresh
+/// analysis. The callback borrows the cached model without cloning it.
+pub(crate) fn with_document_semantics<T>(
+    snapshot: &Analysis,
+    path: &Path,
+    buffer: &TextBuffer,
+    compute: impl Fn(&SyntaxNode, &SemanticModel) -> T,
+) -> T {
+    let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        let file = snapshot.lookup_file(path)?;
+        if !snapshot.file_text_is(file, &buffer.text_arc()) {
+            return None;
+        }
+        let root = snapshot.parsed_tree(file);
+        Some(compute(&root, snapshot.semantic_model(file)))
+    }));
+    if let Ok(Some(result)) = cached {
+        return result;
+    }
+    let root = parse(buffer.text()).cst;
+    let model = SemanticModel::build(&root);
+    compute(&root, &model)
+}
+
 /// A read-only request the lint thread services by cloning its salsa db and
 /// running the work off-thread on the read pool. Each variant carries a shared
 /// handle to the live buffer and the main loop's `out` channel, so the worker replies with an
@@ -95,6 +120,12 @@ pub(crate) enum ReadJob {
         id: RequestId,
         /// `(old, new)` filesystem path pairs for the files being renamed.
         renames: Vec<(PathBuf, PathBuf)>,
+        out: Sender<Outbound>,
+    },
+    DocumentSymbol {
+        id: RequestId,
+        path: PathBuf,
+        buffer: Arc<TextBuffer>,
         out: Sender<Outbound>,
     },
     WorkspaceSymbol {
@@ -268,6 +299,16 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             let result = will_rename_via_db(&snapshot, &renames, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
+        ReadJob::DocumentSymbol {
+            id,
+            path,
+            buffer,
+            out,
+        } => {
+            let symbols = document_symbols_via_db(&snapshot, &path, &buffer, encoding);
+            let result = DocumentSymbolResponse::Nested(symbols);
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
+        }
         ReadJob::WorkspaceSymbol { id, query, out } => {
             let symbols = workspace_symbols_via_db(&snapshot, &query, encoding);
             let response = WorkspaceSymbolResponse::Nested(symbols);
@@ -387,4 +428,70 @@ pub(crate) fn finalize_rename(mut changes: HashMap<Uri, Vec<TextEdit>>) -> Optio
         changes: Some(changes),
         ..Default::default()
     })
+}
+
+#[cfg(test)]
+mod document_semantics_tests {
+    use super::*;
+
+    #[test]
+    fn matching_buffers_reuse_the_semantic_model() {
+        let buffer = buf("f <- function(x) { y <- x; y }\nf(1)\n");
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(test_path(), buffer.text_arc());
+        let snapshot = db.snapshot();
+        let cached = snapshot.semantic_model(file);
+        db.clear_query_log();
+
+        // Equal text in a separate allocation must take the same path as the
+        // shared live buffer; pointer identity alone cannot establish staleness.
+        for live in [&buffer, &buf(buffer.text())] {
+            with_document_semantics(&snapshot, test_path(), live, |root, model| {
+                assert_eq!(root.text().to_string(), live.text());
+                assert!(std::ptr::eq(model, cached), "reuse the cached model");
+            });
+        }
+        assert!(db.query_log().is_empty());
+    }
+
+    #[test]
+    fn stale_and_missing_models_use_the_live_buffer() {
+        let buffer = buf("# shifted 😀\nf <- function(x) { y <- x; y }\nf(1)\n");
+        let expected = SemanticModel::build(&parse(buffer.text()).cst);
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(test_path(), "old <- 1\n");
+        let _ = db.semantic_model(file);
+        let empty = IncrementalDatabase::default();
+        for snapshot in [db.snapshot(), empty.snapshot()] {
+            with_document_semantics(&snapshot, test_path(), &buffer, |root, model| {
+                assert_eq!(root.text().to_string(), buffer.text());
+                assert_eq!(model, &expected);
+            });
+        }
+    }
+
+    #[test]
+    fn cancelled_document_read_retries_with_fresh_semantics() {
+        let buffer = buf("x <- 1\nx\n");
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(test_path(), buffer.text_arc());
+        let snapshot = db.snapshot();
+        let cached = snapshot.semantic_model(file);
+        let calls = std::cell::Cell::new(0);
+
+        let result = with_document_semantics(&snapshot, test_path(), &buffer, |root, model| {
+            calls.set(calls.get() + 1);
+            if calls.get() == 1 {
+                assert!(std::ptr::eq(model, cached));
+                // Inject the unwind at the read boundary without racing a
+                // writer or relying on thread scheduling in the test.
+                std::panic::resume_unwind(Box::new(salsa::Cancelled::PendingWrite));
+            }
+            assert!(!std::ptr::eq(model, cached));
+            assert_eq!(model, cached);
+            root.text().to_string()
+        });
+        assert_eq!(result, buffer.text());
+        assert_eq!(calls.get(), 2);
+    }
 }

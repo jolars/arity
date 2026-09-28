@@ -40,11 +40,13 @@
 //! finish-during-cancel race).
 //!
 //! Read-only requests reuse the lint thread's cached work rather than re-parsing:
-//! - **Formatting and hover** are sent to the lint thread as [`ReadJob`]s; it
-//!   mints a short-lived db clone and runs the job on the read pool ([`run_read`]),
-//!   formatting/hovering off the cached parse tree when the tracked buffer still
-//!   matches the live text. A clone outstanding when the lint thread writes trips
-//!   [`salsa::Cancelled`]; both that and a cache miss fall back to a fresh parse,
+//! - **Formatting, hover, navigation, and document symbols** are sent to the lint
+//!   thread as [`ReadJob`]s; it mints a short-lived db clone and runs the job on
+//!   the read pool ([`run_read`]),
+//!   reusing the cached parse tree and, for navigation and document symbols, the
+//!   semantic model when the tracked buffer still matches the live text. A clone
+//!   outstanding when the lint thread writes trips [`salsa::Cancelled`]; both
+//!   that and a cache miss fall back to fresh analysis,
 //!   so reads are always correct, only sometimes warm.
 //! - **Code actions** are served from the findings of the most recent lint
 //!   (cached per URI by version in the main loop), with no parse or lint at all

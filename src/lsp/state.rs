@@ -763,9 +763,8 @@ impl GlobalState {
     }
 
     /// `textDocument/documentSymbol`: the file's function and variable bindings
-    /// as a hierarchical outline. Pure and single-file (no workspace lookup), so
-    /// like document highlight it runs straight on the read pool rather than
-    /// through the lint thread. See [`compute_document_symbols`].
+    /// as a hierarchical outline, reusing the lint thread's cached syntax and
+    /// semantics on the read pool. See [`document_symbols_via_db`].
     fn on_document_symbol(&mut self, req: Request) {
         let id = req.id.clone();
         let Ok((_, params)) = req.extract::<DocumentSymbolParams>(DocumentSymbolRequest::METHOD)
@@ -778,20 +777,21 @@ impl GlobalState {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
+        let path = uri::to_path(&uri)
+            .unwrap_or_else(|| PathBuf::from(DocumentKind::R.placeholder_file_name()));
         self.register_read(id.clone(), Some((uri, version)));
-        let out = self.out_tx.clone();
-        let encoding = self.position_encoding;
-        self.read_spawner.spawn(move || {
-            let symbols = compute_document_symbols_in(&buffer, encoding);
-            let response = DocumentSymbolResponse::Nested(symbols);
-            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, response)));
+        self.dispatch_read(ReadJob::DocumentSymbol {
+            id,
+            path,
+            buffer,
+            out: self.out_tx.clone(),
         });
     }
 
     /// `textDocument/foldingRange`: foldable regions (brace blocks, multi-line
     /// argument/parameter lists, parenthesized expressions, and comment runs).
     /// A pure CST walk with no semantic model, so it runs straight on the read
-    /// pool like `on_document_symbol`.
+    /// pool like document highlight.
     fn on_folding_range(&mut self, req: Request) {
         let id = req.id.clone();
         let Ok((_, params)) = req.extract::<FoldingRangeParams>(FoldingRangeRequest::METHOD) else {
@@ -1264,6 +1264,7 @@ impl GlobalState {
                 ReadJob::References { id, out, .. } => (id, out),
                 ReadJob::Rename { id, out, .. } => (id, out),
                 ReadJob::WillRenameFiles { id, out, .. } => (id, out),
+                ReadJob::DocumentSymbol { id, out, .. } => (id, out),
                 ReadJob::WorkspaceSymbol { id, out, .. } => (id, out),
                 ReadJob::PrepareCallHierarchy { id, out, .. } => (id, out),
                 ReadJob::IncomingCalls { id, out, .. } => (id, out),

@@ -1521,6 +1521,45 @@ fn cancel_request_returns_request_cancelled() {
 }
 
 #[test]
+fn document_symbols_follow_live_edits_and_support_untitled_buffers() {
+    for uri in [doc_uri(), "untitled:document-symbols"] {
+        let mut h = Harness::start_push();
+        for (version, text) in [
+            (1, "f <- function(x) { y <- x; y }\n"),
+            (2, "# 😀\ng <- function(x) { z <- x; z }\n"),
+        ] {
+            if version == 1 {
+                h.did_open(uri, text, version);
+            } else {
+                h.did_change(uri, text, version);
+            }
+            let expected = serde_json::to_value(arity::lsp::compute_document_symbols(
+                text,
+                arity::text::PositionEncoding::Utf16,
+            ))
+            .unwrap();
+            // Request immediately, while the lint thread may still have the
+            // previous version, then repeat once the first read has completed.
+            let id = h.request(
+                "textDocument/documentSymbol",
+                json!({
+                    "textDocument": { "uri": uri },
+                }),
+            );
+            assert_eq!(h.recv_response(&id).response_result.unwrap(), expected);
+            let id = h.request(
+                "textDocument/documentSymbol",
+                json!({
+                    "textDocument": { "uri": uri },
+                }),
+            );
+            assert_eq!(h.recv_response(&id).response_result.unwrap(), expected);
+        }
+        h.shutdown();
+    }
+}
+
+#[test]
 fn stale_read_returns_content_modified() {
     // A read computed against v1 that is superseded by a v2 edit before it
     // replies must not deliver a stale result: the main loop returns

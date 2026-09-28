@@ -1,5 +1,18 @@
 use super::*;
 
+/// Build the outline from cached syntax and semantics when they match the live
+/// buffer, falling back to fresh analysis on a cache miss or cancellation.
+pub(crate) fn document_symbols_via_db(
+    snapshot: &Analysis,
+    path: &Path,
+    buffer: &TextBuffer,
+    encoding: PositionEncoding,
+) -> Vec<DocumentSymbol> {
+    with_document_semantics(snapshot, path, buffer, |root, model| {
+        document_symbols_from_model(root, model, buffer.line_index(), encoding)
+    })
+}
+
 /// The document-symbol outline for `text`: every function and variable binding,
 /// nested to mirror the source. Pure (parses `text` itself) and unit-testable;
 /// single-file, so it never consults the workspace.
@@ -23,6 +36,15 @@ pub(crate) fn compute_document_symbols_in(
     let text = buffer.text();
     let root = parse(text).cst;
     let model = SemanticModel::build(&root);
+    document_symbols_from_model(&root, &model, buffer.line_index(), encoding)
+}
+
+fn document_symbols_from_model(
+    root: &SyntaxNode,
+    model: &SemanticModel,
+    line_index: &LineIndex,
+    encoding: PositionEncoding,
+) -> Vec<DocumentSymbol> {
     // Name keyed by the defining identifier's span: an assignment is a symbol iff
     // its target token range is a key here. Using the model's name (not the raw
     // token text) yields the unquoted form for backtick/string targets.
@@ -32,9 +54,8 @@ pub(crate) fn compute_document_symbols_in(
         .filter(|b| matches!(b.kind, BindingKind::Local | BindingKind::Implicit))
         .map(|b| (b.def_range, b.name.clone()))
         .collect();
-    let line_index = buffer.line_index();
     let mut symbols = Vec::new();
-    collect_document_symbols(&root, &bindings, line_index, &mut symbols, encoding);
+    collect_document_symbols(root, &bindings, line_index, &mut symbols, encoding);
     symbols
 }
 
@@ -98,4 +119,56 @@ pub(crate) fn document_symbol_for(
         selection_range: text_range_to_lsp_range(line_index, name_token.text_range(), encoding),
         children: (!children.is_empty()).then_some(children),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cached_document_symbols_match_fresh_analysis_after_edits() {
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(test_path(), "old <- 0\n");
+        let _ = db.semantic_model(file);
+        // The cached tree may use the package's markdown mode while the cold
+        // helper uses the loose-file default. Neither can change the outline.
+        db.set_roxygen_markdown(file, true);
+        for text in [
+            "#' A **documented** function.\n`f f` <- function(x) {\n  y <- x\n  if (x) z <- y\n}\n",
+            "label <- '😀'; 1 -> café\nf <- function(x) { x <<- 1; y <- x }\n",
+            "f <- function(x) { y <- x;\n",
+            "print(1)\n",
+        ] {
+            let buffer = buf(text);
+            for encoding in [PositionEncoding::Utf8, PositionEncoding::Utf16] {
+                let expected = compute_document_symbols(text, encoding);
+                assert_eq!(
+                    document_symbols_via_db(&db.snapshot(), test_path(), &buffer, encoding),
+                    expected,
+                    "stale cache",
+                );
+                assert_eq!(
+                    document_symbols_via_db(
+                        &IncrementalDatabase::default().snapshot(),
+                        test_path(),
+                        &buffer,
+                        encoding,
+                    ),
+                    expected,
+                    "missing file",
+                );
+            }
+            db.set_file_text(file, buffer.text_arc());
+            let _ = db.semantic_model(file);
+            db.clear_query_log();
+            for encoding in [PositionEncoding::Utf8, PositionEncoding::Utf16] {
+                assert_eq!(
+                    document_symbols_via_db(&db.snapshot(), test_path(), &buffer, encoding),
+                    compute_document_symbols(text, encoding),
+                    "warm cache",
+                );
+            }
+            assert!(db.query_log().is_empty());
+        }
+    }
 }

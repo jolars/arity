@@ -1,8 +1,8 @@
 use super::*;
 
 /// Resolve go-to-definition for the name at `position`. The current file is
-/// always parsed from the live `text` (definition is a deliberate, infrequent
-/// action, so the parse is cheap relative to the round-trip). An intra-file
+/// read from cached syntax and semantics when they match the live buffer, with
+/// a fresh analysis on a cache miss or cancellation. An intra-file
 /// binding wins and reports a `Location` back into `uri`. Otherwise a bare
 /// top-level name falls back to the workspace index ([`Analysis::workspace_def_sites`]),
 /// reporting the sibling file(s) it is defined in. Namespaced (`pkg::name`) and
@@ -23,55 +23,54 @@ pub(crate) fn definition_via_db(
             .position_to_byte(position, encoding)
             .min(text.len()) as u32,
     );
-    let root = parse(text).cst;
-    let model = SemanticModel::build(&root);
+    with_document_semantics(snapshot, path, buffer, |root, model| {
+        // Intra-file: the cursor names a local binding (or sits on its definition).
+        if let Some(def_range) = definition_local_range(root, model, offset) {
+            let location = Location {
+                uri: uri.clone(),
+                range: text_range_to_lsp_range(line_index, def_range, encoding),
+            };
+            return Some(GotoDefinitionResponse::Scalar(location));
+        }
 
-    // Intra-file: the cursor names a local binding (or sits on its definition).
-    if let Some(def_range) = definition_local_range(&root, &model, offset) {
-        let location = Location {
-            uri: uri.clone(),
-            range: text_range_to_lsp_range(line_index, def_range, encoding),
-        };
-        return Some(GotoDefinitionResponse::Scalar(location));
-    }
-
-    // Cross-file: a bare top-level name defined in a sibling workspace file. A
-    // namespaced name is a package export with no in-tree source location.
-    let token = pick_name_token(&root, offset)?;
-    if token.kind() != SyntaxKind::IDENT
-        || matches!(
-            symbol_query_at(&root, offset),
-            Some(SymbolQuery::Namespaced { .. })
-        )
-    {
-        return None;
-    }
-    let name = SmolStr::new(token.text());
-    let locations = salsa::Cancelled::catch(AssertUnwindSafe(|| {
-        snapshot
-            .workspace_def_sites(&name)
-            .into_iter()
-            .filter(|(def_path, _)| def_path != path)
-            .filter_map(|(def_path, range)| {
-                let file = snapshot.lookup_file(&def_path)?;
-                let target_uri = uri::from_path(&def_path)?;
-                let target_index = snapshot.line_index(file);
-                Some(Location {
-                    uri: target_uri,
-                    range: text_range_to_lsp_range(target_index, range, encoding),
+        // Cross-file: a bare top-level name defined in a sibling workspace file. A
+        // namespaced name is a package export with no in-tree source location.
+        let token = pick_name_token(root, offset)?;
+        if token.kind() != SyntaxKind::IDENT
+            || matches!(
+                symbol_query_at(root, offset),
+                Some(SymbolQuery::Namespaced { .. })
+            )
+        {
+            return None;
+        }
+        let name = SmolStr::new(token.text());
+        let locations = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+            snapshot
+                .workspace_def_sites(&name)
+                .into_iter()
+                .filter(|(def_path, _)| def_path != path)
+                .filter_map(|(def_path, range)| {
+                    let file = snapshot.lookup_file(&def_path)?;
+                    let target_uri = uri::from_path(&def_path)?;
+                    let target_index = snapshot.line_index(file);
+                    Some(Location {
+                        uri: target_uri,
+                        range: text_range_to_lsp_range(target_index, range, encoding),
+                    })
                 })
-            })
-            .collect::<Vec<_>>()
-    }))
-    .unwrap_or_default();
+                .collect::<Vec<_>>()
+        }))
+        .unwrap_or_default();
 
-    match locations.len() {
-        0 => None,
-        1 => Some(GotoDefinitionResponse::Scalar(
-            locations.into_iter().next()?,
-        )),
-        _ => Some(GotoDefinitionResponse::Array(locations)),
-    }
+        match locations.len() {
+            0 => None,
+            1 => Some(GotoDefinitionResponse::Scalar(
+                locations.into_iter().next()?,
+            )),
+            _ => Some(GotoDefinitionResponse::Array(locations)),
+        }
+    })
 }
 
 /// Resolve `textDocument/references` against a db `snapshot`. The inverse of
@@ -107,75 +106,74 @@ pub(crate) fn references_via_db(
             .position_to_byte(position, encoding)
             .min(text.len()) as u32,
     );
-    let root = parse(text).cst;
-    let model = SemanticModel::build(&root);
+    with_document_semantics(snapshot, path, buffer, |root, model| {
+        // Intra-file: the cursor names a local binding (or sits on its definition).
+        if let Some((target, occ)) = local_occurrences(root, model, offset) {
+            let mut locations: Vec<Location> = occ
+                .reads
+                .iter()
+                .map(|range| Location {
+                    uri: uri.clone(),
+                    range: text_range_to_lsp_range(line_index, *range, encoding),
+                })
+                .collect();
+            if include_declaration {
+                locations.extend(occ.defs.iter().map(|range| Location {
+                    uri: uri.clone(),
+                    range: text_range_to_lsp_range(line_index, *range, encoding),
+                }));
+            }
+            if model.binding_is_file_scope(target.binding) {
+                locations.extend(cross_file_reference_locations(
+                    snapshot,
+                    path,
+                    target.name.as_str(),
+                    include_declaration,
+                    Some(path),
+                    encoding,
+                ));
+            }
+            return (!locations.is_empty()).then_some(locations);
+        }
 
-    // Intra-file: the cursor names a local binding (or sits on its definition).
-    if let Some((target, occ)) = local_occurrences(&root, &model, offset) {
-        let mut locations: Vec<Location> = occ
-            .reads
+        // The cursor sits on a bare free read of a workspace name (no local binding).
+        // A namespaced name is a package export with no in-tree reads to collect.
+        let token = pick_name_token(root, offset)?;
+        if token.kind() != SyntaxKind::IDENT
+            || matches!(
+                symbol_query_at(root, offset),
+                Some(SymbolQuery::Namespaced { .. })
+            )
+        {
+            return None;
+        }
+        let name = SmolStr::new(token.text());
+        let visible_defs = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+            snapshot.visible_def_files(path, name.as_str())
+        }))
+        .unwrap_or_default();
+        if visible_defs.is_empty() {
+            return None;
+        }
+        // A unique resolution reports its component; an ambiguous one reports the
+        // union (references over-reports rather than refuse). Include this file's own
+        // read (skip = None).
+        let mut locations: Vec<Location> = visible_defs
             .iter()
-            .map(|range| Location {
-                uri: uri.clone(),
-                range: text_range_to_lsp_range(line_index, *range, encoding),
+            .flat_map(|def_file| {
+                cross_file_reference_locations(
+                    snapshot,
+                    def_file,
+                    name.as_str(),
+                    include_declaration,
+                    None,
+                    encoding,
+                )
             })
             .collect();
-        if include_declaration {
-            locations.extend(occ.defs.iter().map(|range| Location {
-                uri: uri.clone(),
-                range: text_range_to_lsp_range(line_index, *range, encoding),
-            }));
-        }
-        if model.binding_is_file_scope(target.binding) {
-            locations.extend(cross_file_reference_locations(
-                snapshot,
-                path,
-                target.name.as_str(),
-                include_declaration,
-                Some(path),
-                encoding,
-            ));
-        }
-        return (!locations.is_empty()).then_some(locations);
-    }
-
-    // The cursor sits on a bare free read of a workspace name (no local binding).
-    // A namespaced name is a package export with no in-tree reads to collect.
-    let token = pick_name_token(&root, offset)?;
-    if token.kind() != SyntaxKind::IDENT
-        || matches!(
-            symbol_query_at(&root, offset),
-            Some(SymbolQuery::Namespaced { .. })
-        )
-    {
-        return None;
-    }
-    let name = SmolStr::new(token.text());
-    let visible_defs = salsa::Cancelled::catch(AssertUnwindSafe(|| {
-        snapshot.visible_def_files(path, name.as_str())
-    }))
-    .unwrap_or_default();
-    if visible_defs.is_empty() {
-        return None;
-    }
-    // A unique resolution reports its component; an ambiguous one reports the
-    // union (references over-reports rather than refuse). Include this file's own
-    // read (skip = None).
-    let mut locations: Vec<Location> = visible_defs
-        .iter()
-        .flat_map(|def_file| {
-            cross_file_reference_locations(
-                snapshot,
-                def_file,
-                name.as_str(),
-                include_declaration,
-                None,
-                encoding,
-            )
-        })
-        .collect();
-    dedup_locations(&mut locations);
-    (!locations.is_empty()).then_some(locations)
+        dedup_locations(&mut locations);
+        (!locations.is_empty()).then_some(locations)
+    })
 }
 
 /// Resolve `textDocument/rename` against a db `snapshot` — the write mirror of
@@ -214,65 +212,64 @@ pub(crate) fn rename_via_db(
     }
     let line_index = buffer.line_index();
     let off = TextSize::new(offset.min(text.len()) as u32);
-    let root = parse(text).cst;
-    let model = SemanticModel::build(&root);
+    with_document_semantics(snapshot, path, buffer, |root, model| {
+        let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
 
-    let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
-
-    // Intra-file: the cursor names a local binding (or sits on its definition).
-    if let Some(target) = resolve_local_target(&root, &model, off) {
-        let intra = rename_edits(&model, &target, new_name, line_index, encoding);
-        // Cross-file: a top-level binding can be free-read from files that can
-        // see this one. Scope to that component; refuse if it isn't safe. Nested
-        // locals are file-private, so they stay intra-file.
-        if model.binding_is_file_scope(target.binding) {
-            // This file's own occurrences are `intra`; skip it cross-file.
-            let cross = cross_file_rename_edits(
-                snapshot,
-                path,
-                target.name.as_str(),
-                new_name,
-                Some(path),
-                encoding,
-            )?;
-            changes.insert(uri.clone(), intra);
-            for (edit_uri, edit) in cross {
-                changes.entry(edit_uri).or_default().push(edit);
+        // Intra-file: the cursor names a local binding (or sits on its definition).
+        if let Some(target) = resolve_local_target(root, model, off) {
+            let intra = rename_edits(model, &target, new_name, line_index, encoding);
+            // Cross-file: a top-level binding can be free-read from files that can
+            // see this one. Scope to that component; refuse if it isn't safe. Nested
+            // locals are file-private, so they stay intra-file.
+            if model.binding_is_file_scope(target.binding) {
+                // This file's own occurrences are `intra`; skip it cross-file.
+                let cross = cross_file_rename_edits(
+                    snapshot,
+                    path,
+                    target.name.as_str(),
+                    new_name,
+                    Some(path),
+                    encoding,
+                )?;
+                changes.insert(uri.clone(), intra);
+                for (edit_uri, edit) in cross {
+                    changes.entry(edit_uri).or_default().push(edit);
+                }
+            } else {
+                changes.insert(uri.clone(), intra);
             }
-        } else {
-            changes.insert(uri.clone(), intra);
+            return finalize_rename(changes);
         }
-        return finalize_rename(changes);
-    }
 
-    // The cursor sits on a bare free read of a workspace name (no local binding).
-    // A namespaced name is a package export with no in-tree sites to rewrite.
-    let token = pick_name_token(&root, off)?;
-    if token.kind() != SyntaxKind::IDENT
-        || matches!(
-            symbol_query_at(&root, off),
-            Some(SymbolQuery::Namespaced { .. })
-        )
-    {
-        return None;
-    }
-    let name = SmolStr::new(token.text());
-    // Resolve the bare read to the single definition it binds to. Zero (base R /
-    // package export / not visible) or more than one (ambiguous) → refuse.
-    let visible_defs = salsa::Cancelled::catch(AssertUnwindSafe(|| {
-        snapshot.visible_def_files(path, name.as_str())
-    }))
-    .unwrap_or_default();
-    let [def_file] = visible_defs.as_slice() else {
-        return None;
-    };
-    // Rename the whole component, the current file's read included (skip = None).
-    let cross =
-        cross_file_rename_edits(snapshot, def_file, name.as_str(), new_name, None, encoding)?;
-    for (edit_uri, edit) in cross {
-        changes.entry(edit_uri).or_default().push(edit);
-    }
-    finalize_rename(changes)
+        // The cursor sits on a bare free read of a workspace name (no local binding).
+        // A namespaced name is a package export with no in-tree sites to rewrite.
+        let token = pick_name_token(root, off)?;
+        if token.kind() != SyntaxKind::IDENT
+            || matches!(
+                symbol_query_at(root, off),
+                Some(SymbolQuery::Namespaced { .. })
+            )
+        {
+            return None;
+        }
+        let name = SmolStr::new(token.text());
+        // Resolve the bare read to the single definition it binds to. Zero (base R /
+        // package export / not visible) or more than one (ambiguous) → refuse.
+        let visible_defs = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+            snapshot.visible_def_files(path, name.as_str())
+        }))
+        .unwrap_or_default();
+        let [def_file] = visible_defs.as_slice() else {
+            return None;
+        };
+        // Rename the whole component, the current file's read included (skip = None).
+        let cross =
+            cross_file_rename_edits(snapshot, def_file, name.as_str(), new_name, None, encoding)?;
+        for (edit_uri, edit) in cross {
+            changes.entry(edit_uri).or_default().push(edit);
+        }
+        finalize_rename(changes)
+    })
 }
 
 /// The cross-file text edits renaming the top-level `name` defined in `def_file`
@@ -836,6 +833,86 @@ pub(crate) fn is_reserved_word(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn navigation_uses_live_semantics_with_warm_stale_or_missing_cache() {
+        let text = "# 😀\nf <- function(x) { x <- x + 1; x }\nf(1)\n";
+        let buffer = buf(text);
+        let offset = text.find("; x").unwrap() + 2;
+        let mut warm = IncrementalDatabase::default();
+        let file = warm.upsert_file(test_path(), buffer.text_arc());
+        let _ = warm.semantic_model(file);
+        let mut stale = IncrementalDatabase::default();
+        stale.upsert_file(test_path(), "x <- 0\nx\n");
+        let missing = IncrementalDatabase::default();
+
+        for snapshot in [warm.snapshot(), stale.snapshot(), missing.snapshot()] {
+            for encoding in [PositionEncoding::Utf8, PositionEncoding::Utf16] {
+                let index = buffer.line_index();
+                let position = index.byte_to_position(offset, encoding);
+                let expected_def = compute_definition(text, offset).map(|range| {
+                    GotoDefinitionResponse::Scalar(Location {
+                        uri: test_uri(),
+                        range: text_range_to_lsp_range(index, range, encoding),
+                    })
+                });
+                assert_eq!(
+                    definition_via_db(
+                        &snapshot,
+                        test_path(),
+                        &test_uri(),
+                        &buffer,
+                        position,
+                        encoding,
+                    ),
+                    expected_def,
+                );
+                for include_declaration in [false, true] {
+                    let expected_refs =
+                        compute_references(text, offset, include_declaration).map(|ranges| {
+                            ranges
+                                .into_iter()
+                                .map(|range| Location {
+                                    uri: test_uri(),
+                                    range: text_range_to_lsp_range(index, range, encoding),
+                                })
+                                .collect::<Vec<_>>()
+                        });
+                    let actual = references_via_db(
+                        &snapshot,
+                        test_path(),
+                        &test_uri(),
+                        &buffer,
+                        position,
+                        include_declaration,
+                        encoding,
+                    );
+                    let sort = |locations: Option<Vec<Location>>| {
+                        locations.map(|mut locations| {
+                            dedup_locations(&mut locations);
+                            locations
+                        })
+                    };
+                    assert_eq!(sort(actual), sort(expected_refs));
+                }
+                let expected_edits = compute_rename(text, offset, "renamed", encoding).unwrap();
+                let edits = rename_via_db(
+                    &snapshot,
+                    test_path(),
+                    &test_uri(),
+                    &buffer,
+                    offset,
+                    "renamed",
+                    encoding,
+                )
+                .unwrap()
+                .changes
+                .unwrap();
+                assert_eq!(edits.len(), 1);
+                assert_eq!(edits[&test_uri()], expected_edits);
+            }
+        }
+    }
 
     /// R's letters are locale-dependent, so a UTF-8 name like `café` needs no
     /// backticks and a rename to one must not be withheld (issue #108).
