@@ -24,6 +24,44 @@ fn element_text(el: &SyntaxElement) -> String {
     }
 }
 
+#[test]
+fn assignment_operands_preserve_trivia_and_incomplete_input() {
+    for (source, target, value) in [
+        ("x <- # value\r\n f(1)", Some("x"), Some("f(1)")),
+        ("f(1) -> # target\n `x y`", Some("`x y`"), Some("f(1)")),
+        ("x <<- y", Some("x"), Some("y")),
+        ("y ->> x", Some("x"), Some("y")),
+        ("x = y", Some("x"), Some("y")),
+        ("x := y", Some("x"), Some("y")),
+        ("x[1] <- y", Some("x[1]"), Some("y")),
+        ("x <- y <- 1", Some("x"), Some("y <- 1")),
+        ("x <- f(", Some("x"), Some("f(")),
+        ("x <- function() {", Some("x"), Some("function() {")),
+    ] {
+        let parsed = parse(source);
+        assert_eq!(parsed.cst.text().to_string(), source);
+        let assign = parsed
+            .cst
+            .descendants()
+            .find_map(AssignmentExpr::cast)
+            .unwrap_or_else(|| panic!("missing assignment: {source}"));
+        assert_eq!(
+            assign
+                .target_element()
+                .as_ref()
+                .map(element_text)
+                .as_deref(),
+            target,
+            "{source}",
+        );
+        assert_eq!(
+            assign.value_element().as_ref().map(element_text).as_deref(),
+            value,
+            "{source}",
+        );
+    }
+}
+
 macro_rules! range_text {
     ($source:expr, $range:expr $(,)?) => {{
         let range = $range;

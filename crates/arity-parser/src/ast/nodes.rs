@@ -237,34 +237,32 @@ impl AssignmentExpr {
     /// the binding). For `<-`/`=`/`<<-`/`:=` this is the left element; for
     /// `->`/`->>` it is the right element.
     pub fn target_element(&self) -> Option<SyntaxElement<RLanguage>> {
-        let elements: Vec<_> = self.syntax().children_with_tokens().collect();
-        let op_idx = assignment_op_index(&elements)?;
-        let kind = element_kind(&elements[op_idx])?;
-        let (start, end) = if is_right_assign(kind) {
-            (op_idx + 1, elements.len())
-        } else {
-            (0, op_idx)
-        };
-        elements[start..end]
-            .iter()
-            .find(|e| !is_trivia(e.kind()) && e.kind() != SyntaxKind::COMMENT)
-            .cloned()
+        self.operand(false)
     }
 
     /// The element on the *value* side of the operator.
     pub fn value_element(&self) -> Option<SyntaxElement<RLanguage>> {
-        let elements: Vec<_> = self.syntax().children_with_tokens().collect();
-        let op_idx = assignment_op_index(&elements)?;
-        let kind = element_kind(&elements[op_idx])?;
-        let (start, end) = if is_right_assign(kind) {
-            (0, op_idx)
-        } else {
-            (op_idx + 1, elements.len())
-        };
-        elements[start..end]
-            .iter()
-            .find(|e| !is_trivia(e.kind()) && e.kind() != SyntaxKind::COMMENT)
-            .cloned()
+        self.operand(true)
+    }
+
+    fn operand(&self, value_side: bool) -> Option<SyntaxElement<RLanguage>> {
+        let is_operand =
+            |e: &SyntaxElement<RLanguage>| !is_trivia(e.kind()) && e.kind() != SyntaxKind::COMMENT;
+        let mut elements = self.syntax().children_with_tokens();
+        let mut before = None;
+        while let Some(element) = elements.next() {
+            if matches!(&element, SyntaxElement::Token(t) if is_assignment_op(t.kind())) {
+                return if is_right_assign(element.kind()) == value_side {
+                    before
+                } else {
+                    elements.find(is_operand)
+                };
+            }
+            if before.is_none() && is_operand(&element) {
+                before = Some(element);
+            }
+        }
+        None
     }
 
     /// If the target is a simple `IDENT` (or backtick-quoted identifier), the
@@ -490,16 +488,6 @@ fn is_right_assign(kind: SyntaxKind) -> bool {
         kind,
         SyntaxKind::ASSIGN_RIGHT | SyntaxKind::SUPER_ASSIGN_RIGHT
     )
-}
-
-fn assignment_op_index(elements: &[SyntaxElement<RLanguage>]) -> Option<usize> {
-    elements
-        .iter()
-        .position(|e| matches!(e, SyntaxElement::Token(t) if is_assignment_op(t.kind())))
-}
-
-fn element_kind(element: &SyntaxElement<RLanguage>) -> Option<SyntaxKind> {
-    Some(element.kind())
 }
 
 /// The RHS member `IDENT` of a `pkg::name` / `pkg:::name` `BINARY_EXPR`, if that
