@@ -146,9 +146,6 @@
               sort: tools,
               axis: { labelAngle: 0 },
             },
-            // Dodge dots of different documents so same-ratio points (all the
-            // arity dots sit at 1.0) don't stack on top of each other.
-            xOffset: { field: "document", type: "nominal", sort: documents },
             y: {
               field: "ratio",
               type: "quantitative",
