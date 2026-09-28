@@ -1527,8 +1527,28 @@ fn document_symbols_follow_live_edits_and_support_untitled_buffers() {
         for (version, text) in [
             (1, "f <- function(x) { y <- x; y }\n"),
             (2, "# 😀\ng <- function(x) { z <- x; z }\n"),
+            (3, "# 😀\nh <- function(x) { z <- x; z }\n"),
+            (4, "reopened <- 1\n"),
         ] {
             if version == 1 {
+                h.did_open(uri, text, version);
+            } else if version == 3 {
+                h.did_change_raw(
+                    uri,
+                    version,
+                    json!([{
+                        "range": {
+                            "start": {"line": 1, "character": 0},
+                            "end": {"line": 1, "character": 1}
+                        },
+                        "text": "h"
+                    }]),
+                );
+            } else if version == 4 {
+                h.notify(
+                    "textDocument/didClose",
+                    json!({"textDocument": {"uri": uri}}),
+                );
                 h.did_open(uri, text, version);
             } else {
                 h.did_change(uri, text, version);

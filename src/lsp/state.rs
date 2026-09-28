@@ -47,6 +47,7 @@ pub(crate) struct Document {
     buffer: Arc<TextBuffer>,
     version: i32,
     kind: DocumentKind,
+    document_symbols: Arc<OnceLock<Vec<DocumentSymbol>>>,
 }
 
 impl Document {
@@ -55,12 +56,16 @@ impl Document {
             buffer: Arc::new(TextBuffer::new(text)),
             version,
             kind,
+            document_symbols: Arc::new(OnceLock::new()),
         }
     }
 
     /// Splice text and update the line index.
     fn apply_edit(&mut self, range: std::ops::Range<usize>, insert: &str) {
         Arc::make_mut(&mut self.buffer).apply_edit(range, insert);
+        // In-flight reads retain the old cell and cannot cache an old outline
+        // for the edited buffer. The negotiated position encoding is fixed.
+        self.document_symbols = Arc::new(OnceLock::new());
     }
 }
 
@@ -764,7 +769,8 @@ impl GlobalState {
 
     /// `textDocument/documentSymbol`: the file's function and variable bindings
     /// as a hierarchical outline, reusing the lint thread's cached syntax and
-    /// semantics on the read pool. See [`document_symbols_via_db`].
+    /// semantics on the read pool. Unchanged buffers reuse the completed outline
+    /// without another database snapshot. See [`document_symbols_via_db`].
     fn on_document_symbol(&mut self, req: Request) {
         let id = req.id.clone();
         let Ok((_, params)) = req.extract::<DocumentSymbolParams>(DocumentSymbolRequest::METHOD)
@@ -777,6 +783,18 @@ impl GlobalState {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
+        let cached = self.documents[&uri].document_symbols.clone();
+        if cached.get().is_some() {
+            self.register_read(id.clone(), Some((uri, version)));
+            let out = self.out_tx.clone();
+            // Large outlines still serialize off-thread, and their replies pass
+            // through the normal cancellation and document-version gates.
+            self.read_spawner.spawn(move || {
+                let symbols = cached.get().expect("completed outline");
+                let _ = out.send(Outbound::ReadReply(Response::new_ok(id, symbols)));
+            });
+            return;
+        }
         let path = uri::to_path(&uri)
             .unwrap_or_else(|| PathBuf::from(DocumentKind::R.placeholder_file_name()));
         self.register_read(id.clone(), Some((uri, version)));
@@ -784,6 +802,7 @@ impl GlobalState {
             id,
             path,
             buffer,
+            cached,
             out: self.out_tx.clone(),
         });
     }
@@ -2032,6 +2051,85 @@ mod cancellation_gate {
             "/tmp/t.R"
         }))
         .expect("valid file uri")
+    }
+
+    #[test]
+    fn document_symbol_repeats_reuse_outline_and_edits_drop_it() {
+        let (mut state, rig) = test_state();
+        let uri = doc_uri();
+        state.documents.insert(
+            uri.clone(),
+            Document::new("x <- 1\n".to_string(), 1, DocumentKind::R),
+        );
+        let request = |id| {
+            Request::new(
+                RequestId::from(id),
+                DocumentSymbolRequest::METHOD.to_string(),
+                serde_json::json!({"textDocument": {"uri": uri}}),
+            )
+        };
+        let complete = |state: &mut GlobalState| {
+            let job = rig.read_rx.try_recv().expect("uncached request dispatched");
+            run_read(
+                IncrementalDatabase::default().snapshot(),
+                PositionEncoding::Utf16,
+                job,
+            );
+            let Outbound::ReadReply(response) = rig.out_rx.try_recv().unwrap() else {
+                panic!("expected read reply");
+            };
+            state.on_read_reply(response);
+            rig.try_response().unwrap().response_result.unwrap()
+        };
+
+        let complete_cached = |state: &mut GlobalState| {
+            let Outbound::ReadReply(response) =
+                rig.out_rx.recv_timeout(Duration::from_secs(5)).unwrap()
+            else {
+                panic!("expected cached read reply");
+            };
+            state.on_read_reply(response);
+            assert!(rig.read_rx.try_recv().is_err());
+            rig.try_response().unwrap().response_result.unwrap()
+        };
+
+        state.on_document_symbol(request(1));
+        let original = complete(&mut state);
+        state.on_document_symbol(request(2));
+        assert_eq!(complete_cached(&mut state), original);
+
+        // A read already dispatched for the old buffer must not populate the
+        // edited buffer's cache, even if it finishes after the edit.
+        let doc = state.documents.get_mut(&uri).unwrap();
+        doc.apply_edit(0..1, "y");
+        doc.version = 2;
+        state.on_document_symbol(request(3));
+        let old_job = rig.read_rx.try_recv().unwrap();
+        let doc = state.documents.get_mut(&uri).unwrap();
+        doc.apply_edit(0..1, "z");
+        doc.version = 3;
+        run_read(
+            IncrementalDatabase::default().snapshot(),
+            PositionEncoding::Utf16,
+            old_job,
+        );
+        let Outbound::ReadReply(response) = rig.out_rx.try_recv().unwrap() else {
+            panic!("expected read reply");
+        };
+        state.on_read_reply(response);
+        assert_eq!(
+            rig.try_response()
+                .unwrap()
+                .response_result
+                .unwrap_err()
+                .code,
+            CONTENT_MODIFIED,
+        );
+        state.on_document_symbol(request(4));
+        let edited = complete(&mut state);
+        assert_eq!(edited[0]["name"], "z");
+        state.on_document_symbol(request(5));
+        assert_eq!(complete_cached(&mut state), edited);
     }
 
     #[test]

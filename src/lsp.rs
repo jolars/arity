@@ -40,10 +40,13 @@
 //! finish-during-cancel race).
 //!
 //! Read-only requests reuse the lint thread's cached work rather than re-parsing:
+//! - **Document symbols** retain their completed outline with the open buffer.
+//!   Repeated requests serialize it on the read pool without a db snapshot. Every
+//!   text edit replaces the cache cell so an old in-flight read cannot populate it.
 //! - **Formatting, hover, navigation, and document symbols** are sent to the lint
-//!   thread as [`ReadJob`]s; it mints a short-lived db clone and runs the job on
-//!   the read pool ([`run_read`]),
-//!   reusing the cached parse tree and, for navigation and document symbols, the
+//!   thread as [`ReadJob`]s (symbols only on a cache miss); it mints a short-lived
+//!   db clone and runs the job on the read pool ([`run_read`]), reusing the cached
+//!   parse tree and, for navigation and document symbols, the
 //!   semantic model when the tracked buffer still matches the live text. A clone
 //!   outstanding when the lint thread writes trips [`salsa::Cancelled`]; both
 //!   that and a cache miss fall back to fresh analysis,
@@ -64,7 +67,7 @@ mod task_pool;
 use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
 use std::time::SystemTime;
 
@@ -102,17 +105,16 @@ use lsp_types::{
     DocumentDiagnosticReportResult, DocumentFormattingParams, DocumentHighlight,
     DocumentHighlightKind, DocumentHighlightParams, DocumentLink, DocumentLinkOptions,
     DocumentLinkParams, DocumentRangeFormattingParams, DocumentSymbol, DocumentSymbolParams,
-    DocumentSymbolResponse, Documentation, FileChangeType, FileOperationFilter,
-    FileOperationPattern, FileOperationPatternKind, FileOperationRegistrationOptions,
-    FileSystemWatcher, FoldingRange, FoldingRangeKind, FoldingRangeParams,
-    FoldingRangeProviderCapability, FullDocumentDiagnosticReport, GlobPattern,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
-    HoverProviderCapability, InitializeResult, InlayHint, InlayHintLabel, InlayHintOptions,
-    InlayHintParams, InlayHintServerCapabilities, InlayHintTooltip, Location, MarkupContent,
-    MarkupKind, NumberOrString, OneOf, ParameterInformation, ParameterLabel, Position,
-    PositionEncodingKind, PrepareRenameResponse, ProgressParams, ProgressParamsValue,
-    ProgressToken, PublishDiagnosticsParams, Range, ReferenceParams, Registration,
-    RegistrationParams, RelatedFullDocumentDiagnosticReport,
+    Documentation, FileChangeType, FileOperationFilter, FileOperationPattern,
+    FileOperationPatternKind, FileOperationRegistrationOptions, FileSystemWatcher, FoldingRange,
+    FoldingRangeKind, FoldingRangeParams, FoldingRangeProviderCapability,
+    FullDocumentDiagnosticReport, GlobPattern, GotoDefinitionParams, GotoDefinitionResponse, Hover,
+    HoverContents, HoverParams, HoverProviderCapability, InitializeResult, InlayHint,
+    InlayHintLabel, InlayHintOptions, InlayHintParams, InlayHintServerCapabilities,
+    InlayHintTooltip, Location, MarkupContent, MarkupKind, NumberOrString, OneOf,
+    ParameterInformation, ParameterLabel, Position, PositionEncodingKind, PrepareRenameResponse,
+    ProgressParams, ProgressParamsValue, ProgressToken, PublishDiagnosticsParams, Range,
+    ReferenceParams, Registration, RegistrationParams, RelatedFullDocumentDiagnosticReport,
     RelatedUnchangedDocumentDiagnosticReport, RenameFilesParams, RenameOptions, RenameParams,
     SelectionRange, SelectionRangeParams, SelectionRangeProviderCapability, SemanticToken,
     SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensFullOptions,
