@@ -71,6 +71,33 @@ fn cli_format_writes_single_file_in_place() {
 }
 
 #[test]
+fn cli_format_can_preserve_roxygen_blocks() {
+    let dir = tempdir().expect("failed to create temp dir");
+    std::fs::write(dir.path().join("arity.toml"), "[format]\nroxygen = false\n")
+        .expect("failed to write config");
+    let input = "#' ---\n#' title: \"Test\"\n#' date: last-modified\n#' ---\n#'\n#' | a | b |\n#' |---|---|\n#' | 1 | 2 |\nx<-1+2\n";
+    let file = dir.path().join("report.R");
+    std::fs::write(&file, input).expect("failed to write input");
+
+    let output = run_cli_in(dir.path(), ["format", "report.R"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("failed to read formatted file"),
+        input.replace("x<-1+2", "x <- 1 + 2")
+    );
+    let verified = run_cli_in(dir.path(), ["format", "--verify", "report.R"]);
+    assert!(
+        verified.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verified.stderr)
+    );
+}
+
+#[test]
 fn cli_format_writes_directory_files_in_place() {
     let dir = tempdir().expect("failed to create temp dir");
     let a = dir.path().join("a.R");

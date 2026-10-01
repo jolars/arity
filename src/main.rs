@@ -317,6 +317,8 @@ const STARTER_CONFIG: &str = "\
 # line-width = 80
 # indent-width = 2
 # line-ending = \"auto\"  # auto | lf | crlf | native
+# roxygen = true
+# description = true
 
 [lint]
 # select = [\"...\"]  # if set, only these rules run

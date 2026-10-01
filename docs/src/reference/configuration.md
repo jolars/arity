@@ -128,6 +128,7 @@ extend-exclude = ["vendor/", "*.gen.R"]
   | `line-width`   | integer (1–1000) | `80`     | The width the formatter tries to keep lines within. Not a hard cap.   |
   | `indent-width` | integer (1–1000) | `2`      | Number of spaces per indentation level.                               |
   | `line-ending`  | string           | `"auto"` | Newline style: `"auto"`, `"lf"`, `"crlf"`, or `"native"` (see below). |
+  | `roxygen`      | boolean          | `true`   | Whether to format `#'` blocks in R files.                             |
   | `description`  | boolean          | `true`   | Whether a package `DESCRIPTION` is formatted.                         |
 
 `line-ending = "auto"` mirrors the source file's first line ending (defaulting
@@ -139,6 +140,7 @@ elsewhere; `"lf"` and `"crlf"` force that ending.
 line-width = 80
 indent-width = 2
 line-ending = "auto"
+roxygen = true
 description = true
 ```
 
@@ -146,6 +148,11 @@ description = true
 `--line-width`/`--indent-width` flags on `arity format`. They apply to
 `DESCRIPTION` too, except that its continuation indent is always four spaces —
 the file format's convention, and a different axis from R-code nesting.
+
+Set `roxygen = false` to keep each `#'` block's source layout while formatting
+the R code around it. This also preserves `#'` blocks used as Markdown prose by
+`knitr::spin()`. The file's configured `line-ending` still applies to the
+output.
 
 Setting `description = false` leaves `DESCRIPTION` alone, in the CLI (including
 a buffer piped in under `--stdin-filename DESCRIPTION`, which is passed through

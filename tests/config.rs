@@ -774,6 +774,11 @@ fn cli_init_writes_parseable_starter_config() {
     assert_eq!(out.status.code(), Some(0));
     let written = dir.path().join("arity.toml");
     assert!(written.is_file());
+    assert!(
+        fs::read_to_string(&written)
+            .unwrap()
+            .contains("# roxygen = true")
+    );
 
     // The starter config must parse: format a file using it as the config.
     let r_file = dir.path().join("a.R");
@@ -816,6 +821,17 @@ fn cli_init_refuses_to_overwrite_without_force() {
 fn format_description_defaults_to_enabled() {
     let config: arity::config::Config = toml::from_str("").expect("empty config parses");
     assert!(config.format.description);
+}
+
+#[test]
+fn format_roxygen_defaults_to_enabled_and_can_be_disabled() {
+    let default: arity::config::Config = toml::from_str("").expect("empty config parses");
+    assert!(default.format.roxygen);
+
+    let disabled: arity::config::Config =
+        toml::from_str("[format]\nroxygen = false\n").expect("parses");
+    assert!(!disabled.format.roxygen);
+    assert!(!arity::formatter::FormatStyle::from(&disabled.format).roxygen);
 }
 
 #[test]

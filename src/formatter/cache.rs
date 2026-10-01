@@ -317,6 +317,11 @@ mod tests {
             ..FormatStyle::default()
         };
         assert_ne!(cache_path(tmp.path(), &a), cache_path(tmp.path(), &b));
+        let c = FormatStyle {
+            roxygen: false,
+            ..FormatStyle::default()
+        };
+        assert_ne!(cache_path(tmp.path(), &a), cache_path(tmp.path(), &c));
     }
 
     #[test]

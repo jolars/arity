@@ -135,6 +135,7 @@ cache = false
 line-width = 100
 indent-width = 4
 line-ending = "crlf"
+roxygen = false
 description = false
 
 [lint]

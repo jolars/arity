@@ -150,6 +150,9 @@ pub struct FormatConfig {
     /// The newline style the formatter emits. See [`LineEndingConfig`].
     #[serde(default)]
     pub line_ending: LineEndingConfig,
+    /// Whether roxygen `#'` blocks are formatted. On by default.
+    #[serde(default = "default_true")]
+    pub roxygen: bool,
     /// Whether a package's `DESCRIPTION` is formatted. On by default.
     ///
     /// The off switch exists because arity is not the only tool that writes this
@@ -171,6 +174,7 @@ impl Default for FormatConfig {
             line_width: DEFAULT_LINE_WIDTH,
             indent_width: DEFAULT_INDENT_WIDTH,
             line_ending: LineEndingConfig::default(),
+            roxygen: true,
             description: true,
         }
     }
@@ -555,6 +559,7 @@ impl From<&FormatConfig> for FormatStyle {
         style.line_width = config.line_width as usize;
         style.indent_width = config.indent_width as usize;
         style.line_ending = config.line_ending.into();
+        style.roxygen = config.roxygen;
         style
     }
 }

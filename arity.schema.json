@@ -58,6 +58,11 @@
           "maximum": 1000,
           "minimum": 1,
           "type": "integer"
+        },
+        "roxygen": {
+          "default": true,
+          "description": "Whether roxygen `#'` blocks are formatted. On by default.",
+          "type": "boolean"
         }
       },
       "type": "object"

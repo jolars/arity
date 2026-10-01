@@ -186,6 +186,7 @@ mod tests {
     fn config_file_wins_over_editor_settings() {
         let mut config = Config::default();
         config.format.line_width = 70;
+        config.format.roxygen = false;
         let editor = EditorSettings {
             line_width: Some(120),
             indent_width: Some(8),
@@ -195,6 +196,7 @@ mod tests {
         let style = resolve_format_style(&config, true, &editor);
         assert_eq!(style.line_width, 70);
         assert_eq!(style.indent_width, FormatStyle::default().indent_width);
+        assert!(!style.roxygen);
         // No config file → editor settings apply over defaults.
         let fallback = resolve_format_style(&Config::default(), false, &editor);
         assert_eq!(fallback.line_width, 120);
