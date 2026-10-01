@@ -277,6 +277,30 @@ fn preserves_comment_only_lines() {
 }
 
 #[test]
+fn disabled_roxygen_formatting_preserves_nested_comment_layout() {
+    let input = "f<-function(){\n   #'  Keep   this spacing\n   #' | a | b |\n   #' |---|---|\n   x<-1+2\n}\n";
+    let expected = "f <- function() {\n   #'  Keep   this spacing\n   #' | a | b |\n   #' |---|---|\n  x <- 1 + 2\n}\n";
+    let style = FormatStyle {
+        roxygen: false,
+        ..FormatStyle::default()
+    };
+    let formatted = format_with_style(input, style).expect("format should succeed");
+    assert_eq!(formatted, expected);
+    assert_eq!(format_with_style(&formatted, style).unwrap(), expected);
+}
+
+#[test]
+fn disabled_roxygen_formatting_preserves_comment_inside_call() {
+    let input = "x<-list(\n  a=1,\n  #'  Keep   this spacing\n  b=2\n)\n";
+    let expected = "x <- list(\n  a = 1,\n  #'  Keep   this spacing\n  b = 2\n)\n";
+    let style = FormatStyle {
+        roxygen: false,
+        ..FormatStyle::default()
+    };
+    assert_eq!(format_with_style(input, style).unwrap(), expected);
+}
+
+#[test]
 fn formats_at_slot_extraction_like_dollar() {
     let input = "x @ y\n";
     let expected = "x@y\n";

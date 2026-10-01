@@ -291,6 +291,19 @@ pub fn format_range(
         .end();
 
     let mut text = Printer::new(style).print_at(&rendered.ir, base_indent);
+    if !style.roxygen
+        && let [NodeOrToken::Node(node)] = lines[first_line]
+            .iter()
+            .filter(|element| !is_trivia_kind(element.kind()))
+            .collect::<Vec<_>>()
+            .as_slice()
+        && node.kind() == SyntaxKind::ROXYGEN_BLOCK
+    {
+        let prefix = super::roxygen::source_indent(node);
+        if text.starts_with(&prefix) {
+            text.drain(..prefix.len());
+        }
+    }
     while text.ends_with('\n') {
         text.pop();
     }

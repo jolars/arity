@@ -9,6 +9,8 @@ pub struct FormatStyle {
     pub line_width: usize,
     pub indent_width: usize,
     pub line_ending: LineEnding,
+    /// Whether to format roxygen `#'` blocks. When false, their source layout is preserved.
+    pub roxygen: bool,
 }
 
 impl Default for FormatStyle {
@@ -17,6 +19,7 @@ impl Default for FormatStyle {
             line_width: 80,
             indent_width: 2,
             line_ending: LineEnding::default(),
+            roxygen: true,
         }
     }
 }

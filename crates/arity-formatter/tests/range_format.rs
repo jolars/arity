@@ -67,6 +67,28 @@ fn formats_statement_inside_a_block() {
 }
 
 #[test]
+fn disabled_roxygen_formatting_preserves_selected_comment_block() {
+    let text = "f <- function() {\n   #' ---\n   #' title: Test\n   #' ---\n   x<-1\n}\n";
+    let parsed = parse(text);
+    assert!(parsed.diagnostics.is_empty());
+    let start = text.find("#' title").unwrap();
+    let range = TextRange::new(TextSize::new(start as u32), TextSize::new(start as u32));
+    let style = FormatStyle {
+        roxygen: false,
+        ..FormatStyle::default()
+    };
+    let formatted = format_range(&parsed.cst, range, style, text)
+        .expect("range formatting should succeed")
+        .expect("selected block should produce a range");
+    let mut output = text.to_string();
+    output.replace_range(
+        usize::from(formatted.range.start())..usize::from(formatted.range.end()),
+        &formatted.text,
+    );
+    assert_eq!(output, text);
+}
+
+#[test]
 fn formats_statement_inside_a_nested_block() {
     // base_indent == 2: the inner statement keeps its 4-space indent.
     let out = range_format("f <- function() {\n  g <- function() {\n    <<1+1>>\n  }\n}\n");

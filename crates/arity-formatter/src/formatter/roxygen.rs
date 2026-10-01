@@ -673,6 +673,10 @@ fn link_label_leaks(node: &SyntaxNode) -> bool {
 /// Build the IR for a `ROXYGEN_BLOCK` at the given nesting `indent`.
 pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatContext) -> Ir {
     let style = ctx.style();
+    if !style.roxygen {
+        let prefix = source_indent(node);
+        return Ir::skipped(format!("{prefix}{node}"));
+    }
     let indent_cols = indent * style.indent_width;
 
     // The block's resolved markdown mode keys whether an unescaped `%` in prose is
@@ -901,6 +905,20 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
     flush_pending!();
 
     Ir::concat(items)
+}
+
+/// The source indentation before a roxygen block's first marker.
+pub(super) fn source_indent(node: &SyntaxNode) -> String {
+    node.first_token()
+        .and_then(|token| token.prev_token())
+        .filter(|token| token.kind() == SyntaxKind::WHITESPACE)
+        .filter(|token| {
+            token
+                .prev_token()
+                .is_none_or(|previous| previous.kind() == SyntaxKind::NEWLINE)
+        })
+        .map(|token| token.text().to_string())
+        .unwrap_or_default()
 }
 
 /// A run of consecutive plain-prose roxygen lines awaiting reflow.

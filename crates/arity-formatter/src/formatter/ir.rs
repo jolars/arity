@@ -88,7 +88,8 @@ pub(crate) enum Ir {
     /// otherwise it behaves as opaque inline text of its own width.
     Verbatim { text: Rc<str>, force_break: bool },
     /// Source the author told the formatter not to touch, via an
-    /// `# arity-format skip`/`off` directive: spliced back byte for byte,
+    /// `# arity-format skip`/`off` directive or disabled roxygen formatting:
+    /// spliced back byte for byte,
     /// starting at column zero so the text's own leading indentation is what
     /// lands, not the structural indent. Distinct from [`Ir::Verbatim`] on
     /// purpose — that one carries relocated comments and flat-rendered
