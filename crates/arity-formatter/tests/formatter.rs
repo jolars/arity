@@ -318,6 +318,33 @@ fn explicit_default_style_matches_default_format() {
 }
 
 #[test]
+fn reflows_around_line_spanning_verbatim_chunks() {
+    let style = FormatStyle {
+        line_width: 32,
+        ..FormatStyle::default()
+    };
+    let cases = [
+        (
+            "#' lead \\verb{abcdefghij\n#' klmnopqrst} after some words\nf <- function() NULL\n",
+            "#' lead \\verb{abcdefghij\n#' klmnopqrst} after some words\nf <- function() NULL\n",
+        ),
+        (
+            "#' @param x lead \\verb{abcde\n#' fghij} after some words\nf <- function(x) x\n",
+            "#' @param x lead \\verb{abcde\n#' fghij} after some words\nf <- function(x) x\n",
+        ),
+        (
+            "#' @details lead \\verb{abcde\n#' fghij} after\nf <- function() NULL\n",
+            "#' @details lead \\verb{abcde\n#' fghij} after\nf <- function() NULL\n",
+        ),
+    ];
+    for (input, expected) in cases {
+        let formatted = format_with_style(input, style).expect("format should succeed");
+        assert_eq!(formatted, expected);
+        assert_eq!(format_with_style(&formatted, style).unwrap(), expected);
+    }
+}
+
+#[test]
 fn wraps_binary_expression_when_width_is_exceeded() {
     let input = "alpha <- beta + gamma_delta\n";
     let style = FormatStyle {

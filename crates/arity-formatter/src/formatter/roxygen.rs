@@ -968,7 +968,8 @@ impl Paragraph {
             let marker = self.marker.clone().unwrap_or_else(|| "#'".to_string());
             let prefix = indent_cols + marker.chars().count() + 1;
             let budget = line_width.saturating_sub(prefix).max(1);
-            for wrapped in wrap_chunks(&self.chunks, budget) {
+            for wrapped in wrap_chunks(&self.chunks, budget, line_width.saturating_sub(indent_cols))
+            {
                 push_prose_line(items, &marker, &wrapped);
             }
         }
@@ -1056,7 +1057,12 @@ impl TagUnit {
         let first_budget = line_width.saturating_sub(first_start).max(1);
         let cont_budget = line_width.saturating_sub(cont_start).max(1);
 
-        let prose = wrap_chunks_hanging(&self.chunks, first_budget, cont_budget);
+        let prose = wrap_chunks_hanging(
+            &self.chunks,
+            first_budget,
+            cont_budget,
+            line_width.saturating_sub(self.indent_cols),
+        );
         let marker = &self.marker;
         let header = &self.header;
         if prose[0].is_empty() {
@@ -1183,20 +1189,26 @@ impl SectionUnit {
             push_line(items, format!("{marker} {header}"));
         } else {
             let one = self.chunks.join(" ");
-            let inline_w = self.indent_cols
-                + marker.chars().count()
-                + 1
-                + header.chars().count()
-                + 1
-                + one.chars().count();
-            let spans_lines = self.chunks.iter().any(|c| c.contains('\n'));
-            if !self.force_form2 && !spans_lines && inline_w <= line_width {
+            let inline_prefix =
+                self.indent_cols + marker.chars().count() + 1 + header.chars().count() + 1;
+            let inline_fits = chunk_fits(
+                &one,
+                0,
+                false,
+                line_width.saturating_sub(inline_prefix),
+                line_width.saturating_sub(self.indent_cols),
+            );
+            if !self.force_form2 && inline_fits {
                 push_line(items, format!("{marker} {header} {one}"));
             } else {
                 push_line(items, format!("{marker} {header}"));
                 let prefix = self.indent_cols + marker.chars().count() + 1;
                 let budget = line_width.saturating_sub(prefix).max(1);
-                for wrapped in wrap_chunks(&self.chunks, budget) {
+                for wrapped in wrap_chunks(
+                    &self.chunks,
+                    budget,
+                    line_width.saturating_sub(self.indent_cols),
+                ) {
                     push_prose_line(items, marker, &wrapped);
                 }
             }
@@ -1349,13 +1361,17 @@ impl ExampleBody {
 /// budget — the room left beside the tag header — and every continuation line
 /// uses `cont_budget`. The returned vector's first element is the line-1 prose
 /// (empty when nothing fits beside the header); the rest are continuation lines.
-fn wrap_chunks_hanging(chunks: &[String], first_budget: usize, cont_budget: usize) -> Vec<String> {
+fn wrap_chunks_hanging(
+    chunks: &[String],
+    first_budget: usize,
+    cont_budget: usize,
+    embedded_budget: usize,
+) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut cur = String::new();
     let mut cur_w = 0usize;
     let mut budget = first_budget;
     for chunk in chunks {
-        let w = chunk.chars().count();
         if cur.is_empty() {
             // The first prose chunk does not fit beside the header: leave line 1
             // header-only and start it on a continuation line — unless the chunk
@@ -1365,7 +1381,7 @@ fn wrap_chunks_hanging(chunks: &[String], first_budget: usize, cont_budget: usiz
             // overflow.
             if lines.is_empty()
                 && budget == first_budget
-                && w > first_budget
+                && !chunk_fits(chunk, 0, false, first_budget, embedded_budget)
                 && first_budget < cont_budget
                 && !is_md_standalone_html_tag(chunk)
             {
@@ -1373,19 +1389,21 @@ fn wrap_chunks_hanging(chunks: &[String], first_budget: usize, cont_budget: usiz
                 budget = cont_budget;
             }
             cur.push_str(chunk);
-            cur_w = w;
-        } else if cur_w + 1 + w <= budget || is_unsafe_line_start(chunk) {
+            advance_chunk(chunk, &mut cur_w, &mut budget, embedded_budget, false);
+        } else if chunk_fits(chunk, cur_w, true, budget, embedded_budget)
+            || is_unsafe_line_start(chunk)
+        {
             // Fits, or must not break here: breaking would drop an unsafe marker
             // onto a continuation-line start, where it could reparse as a block
             // construct (breaking idempotence). Keep it inline, accepting overflow.
             cur.push(' ');
             cur.push_str(chunk);
-            cur_w += 1 + w;
+            advance_chunk(chunk, &mut cur_w, &mut budget, embedded_budget, true);
         } else {
             lines.push(std::mem::take(&mut cur));
             budget = cont_budget;
             cur.push_str(chunk);
-            cur_w = w;
+            advance_chunk(chunk, &mut cur_w, &mut budget, embedded_budget, false);
         }
     }
     lines.push(cur);
@@ -1395,16 +1413,22 @@ fn wrap_chunks_hanging(chunks: &[String], first_budget: usize, cont_budget: usiz
 /// Greedy first-fit wrap of `chunks` into lines no wider than `budget` (in
 /// chars). A chunk wider than `budget` gets its own line, un-broken. Returns at
 /// least one line when `chunks` is non-empty.
-fn wrap_chunks(chunks: &[String], budget: usize) -> Vec<String> {
+fn wrap_chunks(chunks: &[String], budget: usize, embedded_budget: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut cur = String::new();
     let mut cur_w = 0usize;
+    let mut current_budget = budget;
     for chunk in chunks {
-        let w = chunk.chars().count();
         if cur.is_empty() {
             cur.push_str(chunk);
-            cur_w = w;
-        } else if cur_w + 1 + w <= budget
+            advance_chunk(
+                chunk,
+                &mut cur_w,
+                &mut current_budget,
+                embedded_budget,
+                false,
+            );
+        } else if chunk_fits(chunk, cur_w, true, current_budget, embedded_budget)
             || is_unsafe_line_start(chunk)
             // Never end the paragraph's FIRST line as a complete standalone tag:
             // at a fresh position that line reparses as an HTML block (CommonMark
@@ -1417,17 +1441,62 @@ fn wrap_chunks(chunks: &[String], budget: usize) -> Vec<String> {
             // (breaking idempotence). Keep it inline, accepting overflow.
             cur.push(' ');
             cur.push_str(chunk);
-            cur_w += 1 + w;
+            advance_chunk(
+                chunk,
+                &mut cur_w,
+                &mut current_budget,
+                embedded_budget,
+                true,
+            );
         } else {
             lines.push(std::mem::take(&mut cur));
+            current_budget = budget;
             cur.push_str(chunk);
-            cur_w = w;
+            advance_chunk(
+                chunk,
+                &mut cur_w,
+                &mut current_budget,
+                embedded_budget,
+                false,
+            );
         }
     }
     if !cur.is_empty() || lines.is_empty() {
         lines.push(cur);
     }
     lines
+}
+
+/// A protected span may include physical roxygen lines. Its first segment shares
+/// the current line; later segments already contain their own `#'` marker.
+fn chunk_fits(
+    chunk: &str,
+    current_width: usize,
+    separated: bool,
+    budget: usize,
+    embedded_budget: usize,
+) -> bool {
+    let mut segments = chunk.split('\n');
+    let first_width = segments.next().unwrap_or("").chars().count();
+    current_width + usize::from(separated) + first_width <= budget
+        && segments.all(|segment| segment.chars().count() <= embedded_budget)
+}
+
+fn advance_chunk(
+    chunk: &str,
+    current_width: &mut usize,
+    budget: &mut usize,
+    embedded_budget: usize,
+    separated: bool,
+) {
+    if let Some((_, last)) = chunk.rsplit_once('\n') {
+        *current_width = last.chars().count();
+        *budget = embedded_budget;
+    } else if separated {
+        *current_width += 1 + chunk.chars().count();
+    } else {
+        *current_width = chunk.chars().count();
+    }
 }
 
 /// Split a roxygen line's content into breakable chunks, appending to `out`.
