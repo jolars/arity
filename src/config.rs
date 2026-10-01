@@ -555,12 +555,12 @@ fn default_exclude() -> Vec<String> {
 
 impl From<&FormatConfig> for FormatStyle {
     fn from(config: &FormatConfig) -> Self {
-        let mut style = FormatStyle::default();
-        style.line_width = config.line_width as usize;
-        style.indent_width = config.indent_width as usize;
-        style.line_ending = config.line_ending.into();
-        style.roxygen = config.roxygen;
-        style
+        FormatStyle {
+            line_width: config.line_width as usize,
+            indent_width: config.indent_width as usize,
+            line_ending: config.line_ending.into(),
+            roxygen: config.roxygen,
+        }
     }
 }
 
