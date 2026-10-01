@@ -120,6 +120,25 @@ fn cli_explicit_config_is_applied() {
 }
 
 #[test]
+fn cli_explicit_config_extends_relative_base() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("base.toml"), "[format]\nline-width = 30\n").unwrap();
+    fs::write(dir.path().join("arity.toml"), "extend = \"base.toml\"\n").unwrap();
+
+    let output = run_cli_in(
+        dir.path(),
+        ["format", "--config", "arity.toml"],
+        LONG_FN_INPUT,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("function(\n"));
+}
+
+#[test]
 fn cli_missing_config_file_errors() {
     let dir = tempdir().unwrap();
     let cfg = dir.path().join("does-not-exist.toml");

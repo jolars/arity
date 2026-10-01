@@ -1,12 +1,12 @@
 use super::*;
 
 /// The glob patterns registered with the client for `didChangeWatchedFiles`. R
-/// sources drive workspace membership; `arity.toml` reshapes config; `DESCRIPTION`
-/// and `NAMESPACE` reshape package metadata — all of which affect cross-file
-/// analysis when they change on disk.
-pub(crate) const WATCHED_GLOBS: [&str; 4] = [
+/// sources drive workspace membership; `arity.toml` and inherited TOML files
+/// reshape config; `DESCRIPTION` and `NAMESPACE` reshape package metadata.
+pub(crate) const WATCHED_GLOBS: [&str; 5] = [
     "**/*.{R,r}",
     "**/arity.toml",
+    "**/*.toml",
     "**/DESCRIPTION",
     "**/NAMESPACE",
 ];

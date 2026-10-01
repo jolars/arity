@@ -128,6 +128,7 @@ fn config_schema_accepts_supported_configuration() {
     assert_accepts(
         r#"
 exclude = ["vendor/"]
+extend = "base.toml"
 extend-exclude = ["generated/"]
 cache = false
 
@@ -174,6 +175,7 @@ help = false
 fn config_schema_rejects_runtime_invalid_configuration() {
     for source in [
         "line-widht = 80",
+        "extend = 42",
         "[format]\nline-widht = 80",
         "[format]\nline-ending = \"windows\"",
         "[format]\nline-width = 0",

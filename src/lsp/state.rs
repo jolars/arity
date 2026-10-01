@@ -199,9 +199,12 @@ fn config_file_stamp(path: &Path) -> Option<ConfigFileStamp> {
     })
 }
 
-/// Snapshot every candidate consulted by config discovery. Missing candidates
-/// are significant—a newly created nearer config must displace a cached parent.
-fn config_fingerprint(anchor: &Path) -> Option<Vec<(PathBuf, Option<ConfigFileStamp>)>> {
+/// Snapshot discovery candidates and inherited files. Missing candidates are
+/// significant—a newly created nearer config must displace a cached parent.
+fn config_fingerprint(
+    anchor: &Path,
+    dependencies: &[PathBuf],
+) -> Option<Vec<(PathBuf, Option<ConfigFileStamp>)>> {
     let canonical = anchor.canonicalize().ok()?;
     let mut fingerprint = Vec::new();
     for dir in canonical.ancestors() {
@@ -210,15 +213,20 @@ fn config_fingerprint(anchor: &Path) -> Option<Vec<(PathBuf, Option<ConfigFileSt
         let found = stamp.is_some();
         fingerprint.push((candidate, stamp));
         if found {
-            return Some(fingerprint);
+            break;
         }
         if dir.join(".git").exists() {
             break;
         }
     }
-    if let Some(path) = crate::config::env_config_path() {
+    if !fingerprint.iter().any(|(_, stamp)| stamp.is_some())
+        && let Some(path) = crate::config::env_config_path()
+    {
         let stamp = config_file_stamp(&path);
         fingerprint.push((path, stamp));
+    }
+    for path in dependencies {
+        fingerprint.push((path.clone(), config_file_stamp(path)));
     }
     Some(fingerprint)
 }
@@ -227,18 +235,30 @@ fn config_fingerprint(anchor: &Path) -> Option<Vec<(PathBuf, Option<ConfigFileSt
 struct CachedSettings {
     resolved: ResolvedSettings,
     fingerprint: Vec<(PathBuf, Option<ConfigFileStamp>)>,
+    dependencies: Vec<PathBuf>,
 }
 
 impl CachedSettings {
-    fn new(resolved: ResolvedSettings, anchor: &Path) -> Option<Self> {
+    fn new(
+        resolved: ResolvedSettings,
+        anchor: &Path,
+        source: &crate::config::ConfigSource,
+    ) -> Option<Self> {
+        let dependencies = source
+            .path()
+            .map(crate::config::Config::source_chain)
+            .transpose()
+            .ok()?
+            .unwrap_or_default();
         Some(Self {
             resolved,
-            fingerprint: config_fingerprint(anchor)?,
+            fingerprint: config_fingerprint(anchor, &dependencies)?,
+            dependencies,
         })
     }
 
     fn is_fresh(&self, anchor: &Path) -> bool {
-        Some(&self.fingerprint) == config_fingerprint(anchor).as_ref()
+        Some(&self.fingerprint) == config_fingerprint(anchor, &self.dependencies).as_ref()
     }
 }
 
@@ -1593,16 +1613,25 @@ impl GlobalState {
     }
 
     /// Handle `workspace/didChangeWatchedFiles`: an on-disk change to a config,
-    /// package-metadata, or `.R` file outside the editor. An `arity.toml` edit is
+    /// package-metadata, or `.R` file outside the editor. A config edit is
     /// resolved here (drop the config cache, re-lint); the rest is db work, routed
     /// to the lint thread (the sole writer). See [`classify_watched_files`].
     fn on_watched_files_changed(&mut self, params: DidChangeWatchedFilesParams) {
         let WatchedClassification {
             batch,
-            config_changed,
+            mut config_changed,
         } = classify_watched_files(&params, |uri| self.documents.contains_key(uri));
+        config_changed |= params.changes.iter().any(|change| {
+            let Some(path) = uri::to_path(&change.uri) else {
+                return false;
+            };
+            let path = path.canonicalize().unwrap_or(path);
+            self.config_cache
+                .values()
+                .any(|cached| cached.dependencies.contains(&path))
+        });
         if config_changed {
-            // A committed `arity.toml` moved; drop cached resolutions so the next
+            // A selected or inherited config moved; drop cached resolutions so the next
             // lint/format re-reads it, then re-lint every open document.
             self.config_cache.clear();
             self.request_relint_all();
@@ -1746,7 +1775,7 @@ impl GlobalState {
             lint: config.lint,
             index,
         };
-        if let Some(cached) = CachedSettings::new(resolved.clone(), &anchor) {
+        if let Some(cached) = CachedSettings::new(resolved.clone(), &anchor, &source) {
             self.config_cache.insert(anchor, cached);
         }
         Ok(resolved)
@@ -2154,6 +2183,32 @@ mod cancellation_gate {
 
         std::fs::remove_file(nearer).expect("remove nearer config");
         assert_eq!(state.resolve_settings(&uri).unwrap().style.line_width, 60);
+    }
+
+    #[test]
+    fn resolve_settings_detects_inherited_config_edit() {
+        let repo = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(repo.path().join(".git")).expect("create git boundary");
+        let base = repo.path().join("shared.toml");
+        std::fs::write(&base, "[format]\nline-width = 60\n").expect("write base config");
+        std::fs::write(repo.path().join("arity.toml"), "extend = \"shared.toml\"\n")
+            .expect("write project config");
+        let uri = uri::from_path(&repo.path().join("main.R")).expect("file URI");
+        let (mut state, _rig) = test_state();
+
+        assert_eq!(state.resolve_settings(&uri).unwrap().style.line_width, 60);
+        state.on_watched_files_changed(DidChangeWatchedFilesParams {
+            changes: vec![lsp_types::FileEvent {
+                uri: uri::from_path(&base).expect("base URI"),
+                typ: FileChangeType::CHANGED,
+            }],
+        });
+        assert!(state.config_cache.is_empty());
+        std::fs::write(&base, "[format]\nline-width = 100\n").expect("change inherited config");
+        assert_eq!(state.resolve_settings(&uri).unwrap().style.line_width, 100);
+        std::fs::write(&base, "[format]\nline-width = 90\n")
+            .expect("change inherited config again");
+        assert_eq!(state.resolve_settings(&uri).unwrap().style.line_width, 90);
     }
 
     #[test]

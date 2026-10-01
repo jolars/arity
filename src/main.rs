@@ -307,6 +307,9 @@ const STARTER_CONFIG: &str = "\
 # arity configuration. All keys are optional; values shown are the defaults.
 # See https://arity.cc for the full reference.
 
+# Load another config first; this file overrides its settings.
+# extend = \"../shared/arity.toml\"
+
 # Gitignore-style patterns to skip; applies to both `format` and `lint`.
 # `exclude` replaces the built-in default set (shown below); use
 # `extend-exclude` to add patterns while keeping the defaults.

@@ -37,24 +37,24 @@
   currently follows air and moves the comment inside the synthetic block,
   immediately before the consequence. That preserves executable syntax plus
   comment text and order, but it can change the apparent referent from the
-  condition to the consequence—`sf`'s `# +- 4%` is a concrete example. Decide
-  whether to keep air's behavior, retain the comment on the `if` header, or
-  hoist it above the `if`; then pin the intended attachment and consider whether
-  verification needs a stronger comment invariant. Follow-up to
-  [issue #125](https://github.com/jolars/arity/issues/125).
+  condition to the consequence—`sf`'s `# +- 4%` is a concrete example.
+  Decide whether to keep air's behavior, retain the comment on the `if`
+  header, or hoist it above the `if`; then pin the intended attachment and
+  consider whether verification needs a stronger comment invariant.
+  Follow-up to [issue #125](https://github.com/jolars/arity/issues/125).
 
 - [x] Measure a **line-spanning reflow chunk** by its widest segment, not its
-  flattened length. A soft-wrapped `\verb{…}` retains its physical line breaks;
-  other inline Rd macros join them with `join_soft_breaks`. Wrapping now checks
-  each segment against its physical line budget, measures following words from
-  the final segment, and uses the same check for a section's inline/form-2
-  decision.
+  flattened length. A soft-wrapped `\verb{…}` retains its physical line
+  breaks; other inline Rd macros join them with `join_soft_breaks`. Wrapping
+  now checks each segment against its physical line budget, measures
+  following words from the final segment, and uses the same check for a
+  section's inline/form-2 decision.
 
 - [ ] Honor `# arity-format skip` and `off`/`on` in a `DESCRIPTION`. Only
-  `skip-file` works there today; the other verbs need the field-class planner
-  (`formatter/description/plan.rs`) to learn to hand a field's lines back
-  verbatim. `misplaced-suppression` does not yet report the ones that are inert
-  there.
+  `skip-file` works there today; the other verbs need the field-class
+  planner (`formatter/description/plan.rs`) to learn to hand a field's lines
+  back verbatim. `misplaced-suppression` does not yet report the ones that
+  are inert there.
 
 ## Linter
 

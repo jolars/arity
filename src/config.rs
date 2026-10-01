@@ -68,6 +68,11 @@ const DEFAULT_INDENT_WIDTH: u32 = 2;
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Config {
+    /// Another config file to load before this one. Relative paths start at
+    /// the directory containing the file that declares `extend`.
+    #[serde(default)]
+    #[cfg_attr(test, schemars(with = "String"))]
+    pub extend: Option<String>,
     /// Gitignore-style patterns to exclude from file discovery, resolved
     /// relative to the directory containing this `arity.toml`. Applies to *both*
     /// `format` and `lint` (which share one file walk), so it is a top-level
@@ -109,6 +114,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            extend: None,
             exclude: default_exclude(),
             extend_exclude: Vec::new(),
             format: FormatConfig::default(),
@@ -623,7 +629,43 @@ impl Config {
             path: path.to_path_buf(),
             source,
         })?;
-        Self::parse_str(&text, path)
+        let table: toml::Table = toml::from_str(&text).map_err(|err: toml::de::Error| {
+            let (line, column) = err
+                .span()
+                .map(|span| byte_offset_to_line_col(&text, span.start))
+                .unwrap_or((1, 1));
+            ConfigError::Parse {
+                path: path.to_path_buf(),
+                line,
+                column,
+                message: err.message().to_string(),
+            }
+        })?;
+        if !table.contains_key("extend") {
+            return Self::parse_str(&text, path);
+        }
+        let mut chain = Vec::new();
+        let merged = load_merged_config(path, &mut chain)?;
+        let mut config: Self =
+            toml::Value::Table(merged)
+                .try_into()
+                .map_err(|err: toml::de::Error| ConfigError::Parse {
+                    path: path.to_path_buf(),
+                    line: 1,
+                    column: 1,
+                    message: err.message().to_string(),
+                })?;
+        config.validate(Some(path))?;
+        config.lint.compat = config.compat.clone();
+        Ok(config)
+    }
+
+    /// Files that contribute to this config, starting with the selected file.
+    /// Used to invalidate editor settings when an inherited file changes.
+    pub(crate) fn source_chain(path: &Path) -> Result<Vec<PathBuf>, ConfigError> {
+        let mut chain = Vec::new();
+        load_merged_config(path, &mut chain)?;
+        Ok(chain)
     }
 
     fn parse_str(text: &str, path: &Path) -> Result<Self, ConfigError> {
@@ -721,6 +763,79 @@ impl Config {
     }
 }
 
+fn load_merged_config(path: &Path, chain: &mut Vec<PathBuf>) -> Result<toml::Table, ConfigError> {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if chain.contains(&canonical) {
+        return Err(ConfigError::InvalidValue {
+            path: Some(path.to_path_buf()),
+            field: "extend",
+            message: format!("configuration cycle: {}", canonical.display()),
+        });
+    }
+    chain.push(canonical);
+    let text = fs::read_to_string(path).map_err(|source| ConfigError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut table: toml::Table = toml::from_str(&text).map_err(|err: toml::de::Error| {
+        let (line, column) = err
+            .span()
+            .map(|span| byte_offset_to_line_col(&text, span.start))
+            .unwrap_or((1, 1));
+        ConfigError::Parse {
+            path: path.to_path_buf(),
+            line,
+            column,
+            message: err.message().to_string(),
+        }
+    })?;
+    if let Some(value) = table.get("extend") {
+        let Some(extend) = value.as_str() else {
+            return Err(ConfigError::InvalidValue {
+                path: Some(path.to_path_buf()),
+                field: "extend",
+                message: "must be a string path".to_string(),
+            });
+        };
+        let expanded = if extend == "~" || extend.starts_with("~/") {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|home| home.join(extend.strip_prefix("~/").unwrap_or("")))
+                .unwrap_or_else(|| PathBuf::from(extend))
+        } else {
+            PathBuf::from(extend)
+        };
+        let base = expanded.as_path();
+        let base = if base.is_absolute() {
+            base.to_path_buf()
+        } else {
+            path.parent().unwrap_or(Path::new(".")).join(base)
+        };
+        let mut inherited = load_merged_config(&base, chain)?;
+        merge_config_tables(&mut inherited, table);
+        table = inherited;
+    }
+    Ok(table)
+}
+
+fn merge_config_tables(base: &mut toml::Table, child: toml::Table) {
+    for (key, value) in child {
+        match (base.get_mut(&key), value) {
+            (Some(toml::Value::Table(base_table)), toml::Value::Table(child_table)) => {
+                merge_config_tables(base_table, child_table);
+            }
+            (Some(toml::Value::Array(base_array)), toml::Value::Array(child_array))
+                if key == "extend-exclude" =>
+            {
+                base_array.extend(child_array);
+            }
+            (_, value) => {
+                base.insert(key, value);
+            }
+        }
+    }
+}
+
 /// The deepest ancestor of `start` (itself included) that exists on disk, in
 /// canonical form, or `None` when none is reachable.
 ///
@@ -769,6 +884,55 @@ mod tests {
 
     fn parse(text: &str) -> Result<Config, ConfigError> {
         Config::parse_str(text, Path::new("arity.toml"))
+    }
+
+    #[test]
+    fn extend_merges_nested_settings_and_additive_excludes() {
+        let dir = tempdir().unwrap();
+        let base = dir.path().join("base.toml");
+        fs::write(&base, "exclude = [\"base/\"]\nextend-exclude = [\"one/\"]\n[format]\nline-width = 55\nindent-width = 4\n[lint]\nignore = [\"unused-binding\"]\n").unwrap();
+        let child = dir.path().join("arity.toml");
+        fs::write(&child, "extend = \"base.toml\"\nexclude = [\"child/\"]\nextend-exclude = [\"two/\"]\n[format]\nline-width = 30\n").unwrap();
+
+        let config = Config::load_from(&child).unwrap();
+        assert_eq!(config.exclude, ["child/"]);
+        assert_eq!(config.extend_exclude, ["one/", "two/"]);
+        assert_eq!(config.format.line_width, 30);
+        assert_eq!(config.format.indent_width, 4);
+        assert_eq!(config.lint.ignore, ["unused-binding"]);
+    }
+
+    #[test]
+    fn extend_resolves_each_relative_path_and_detects_cycles() {
+        let dir = tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        let root = dir.path().join("root.toml");
+        let middle = sub.join("middle.toml");
+        let child = sub.join("arity.toml");
+        fs::write(&root, "[format]\nindent-width = 3\n").unwrap();
+        fs::write(&middle, "extend = \"../root.toml\"\n").unwrap();
+        fs::write(&child, "extend = \"middle.toml\"\n").unwrap();
+        assert_eq!(Config::load_from(&child).unwrap().format.indent_width, 3);
+
+        fs::write(&root, "extend = \"sub/arity.toml\"\n").unwrap();
+        let err = Config::load_from(&child).unwrap_err().to_string();
+        assert!(err.contains("cycle"), "{err}");
+        assert!(err.contains("arity.toml"), "{err}");
+    }
+
+    #[test]
+    fn extend_reports_missing_or_invalid_base() {
+        let dir = tempdir().unwrap();
+        let child = dir.path().join("arity.toml");
+        fs::write(&child, "extend = \"missing.toml\"\n").unwrap();
+        let err = Config::load_from(&child).unwrap_err().to_string();
+        assert!(err.contains("missing.toml"), "{err}");
+
+        fs::write(dir.path().join("base.toml"), "[format]\nline-width = 0\n").unwrap();
+        fs::write(&child, "extend = \"base.toml\"\n").unwrap();
+        let err = Config::load_from(&child).unwrap_err().to_string();
+        assert!(err.contains("line-width"), "{err}");
     }
 
     #[test]

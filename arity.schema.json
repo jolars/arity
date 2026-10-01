@@ -246,6 +246,11 @@
       },
       "type": "array"
     },
+    "extend": {
+      "default": null,
+      "description": "Another config file to load before this one. Relative paths start at\nthe directory containing the file that declares `extend`.",
+      "type": "string"
+    },
     "extend-exclude": {
       "default": [],
       "description": "Gitignore-style patterns to exclude *in addition to*\n[`exclude`](Self::exclude). Unlike `exclude`, this never replaces the\ndefaults, so it is the right key for project-specific additions.",

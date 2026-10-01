@@ -59,6 +59,16 @@ absolute path is recommended for editor settings. An unset or empty value uses
 the built-in defaults when no project config is found. A missing or invalid
 fallback file is a configuration error.
 
+To share settings between projects, put `extend = "../shared/arity.toml"` at the
+top level of a project config. Arity resolves the path relative to the file that
+declares it (and expands a leading `~/` to your home directory), then merges the
+referenced config before the current file. Chains are allowed, and a cycle or
+missing file is an error. Child values override inherited values; tables merge
+by key, so overriding `[format] line-width` keeps an inherited `indent-width`.
+`extend-exclude` arrays append in base-to-child order, while `exclude` replaces
+the inherited array. For a project config or `--config` file, the selected file
+still anchors exclude patterns, even when they come from an extended file.
+
 On the command line:
 
 - `--config <PATH>` loads an explicit file and skips project discovery and
@@ -84,11 +94,12 @@ walks, or the directory being scanned in the language server.
 
 ## Top-level keys
 
-These apply to **both** `format` and `lint` (the first two govern the shared
-file walk).
+These apply to **both** `format` and `lint`. `exclude` and `extend-exclude`
+govern the shared file walk.
 
   | Key              | Type             | Default      | Description                                                                                                                                                                                                      |
   | ---------------- | ---------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `extend`         | string           | unset        | Path to another config file, resolved relative to this file.                                                                                                                                                     |
   | `exclude`        | array of strings | built-in set | [gitignore-style](https://git-scm.com/docs/gitignore) patterns to skip, anchored according to the [config source](#discovery). Setting it **replaces** the built-in set (below).                                 |
   | `extend-exclude` | array of strings | `[]`         | Like `exclude`, but **added to** `exclude` rather than replacing it. Use this to skip extra paths while keeping the built-in defaults.                                                                           |
   | `cache`          | boolean          | `true`       | Enable the persistent result cache (currently the `format --check` already-formatted cache; the cache directory follows `[index] cache-dir`/`$ARITY_CACHE_DIR`). The `--no-cache` CLI flag overrides it per run. |

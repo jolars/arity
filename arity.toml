@@ -2,6 +2,10 @@
 # All values shown below are the built-in defaults; this file dogfoods the
 # configuration discovery path and serves as a reference.
 
+# Inherit shared settings from another config, if needed. Relative paths start
+# at this file's directory.
+# extend = "../shared/arity.toml"
+
 # Test fixtures are inputs, not sources, and formatting them would break the
 # suites that assert on them byte for byte: `input.R` is unformatted on purpose,
 # several parser cases are unparseable on purpose, and `tests/fixtures/rindex/*`
