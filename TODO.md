@@ -43,14 +43,12 @@
   verification needs a stronger comment invariant. Follow-up to
   [issue #125](https://github.com/jolars/arity/issues/125).
 
-- [ ] Measure a **line-spanning reflow chunk** by its widest segment, not its
-  flattened length. Only a soft-wrapped `\verb{…}` still reaches this — every
-  other inline Rd macro joins its wrap (`join_soft_breaks`) — but there
-  `wrap_chunks_hanging` counts the whole multi-line text as one word, so the
-  chunk is over-wide wherever it lands and the ones after it are measured from
-  the wrong column. Output is stable and render-preserving either way; only the
-  wrap points are off. `SectionUnit::flush` special-cases the inline/form-2
-  decision for such a chunk, which this would subsume.
+- [x] Measure a **line-spanning reflow chunk** by its widest segment, not its
+  flattened length. A soft-wrapped `\verb{…}` retains its physical line breaks;
+  other inline Rd macros join them with `join_soft_breaks`. Wrapping now checks
+  each segment against its physical line budget, measures following words from
+  the final segment, and uses the same check for a section's inline/form-2
+  decision.
 
 - [ ] Honor `# arity-format skip` and `off`/`on` in a `DESCRIPTION`. Only
   `skip-file` works there today; the other verbs need the field-class planner
