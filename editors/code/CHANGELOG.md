@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.25.0](https://github.com/jolars/arity/compare/arity-code-v0.24.0...arity-code-v0.25.0) (2026-10-02)
+
+### Dependencies
+
+- updated arity to v0.25.0
+
 ## [0.24.0](https://github.com/jolars/arity/compare/arity-code-v0.23.0...arity-code-v0.24.0) (2026-09-25)
 
 ### Dependencies
