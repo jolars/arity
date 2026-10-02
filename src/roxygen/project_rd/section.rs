@@ -1241,7 +1241,7 @@ fn emit_section_with_list_hoist(
         let (_, title_text) = parse_md_heading(&cuts[k].node);
         let title = resolve_macro_arg_inlines(&title_text);
         let cur = lists_of(&cuts[k]);
-        let next = cuts.get(k + 1).map(&lists_of).unwrap_or_default();
+        let next = cuts.get(k + 1).map(lists_of).unwrap_or_default();
         if cur != next {
             // Sliced across a list boundary: the body is emptied, the title kept.
             let title_atoms = serialize_inlines(&group_brace_lists(&title, md), md);
