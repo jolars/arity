@@ -81,7 +81,7 @@ jobs:
             ${{ runner.os }}-cargo-msrv-
 
       - name: Run tests
-        run: cargo test --workspace --locked --verbose
+        run: cargo +1.89 test --workspace --locked --verbose
 
   wasm:
     if: github.event_name != 'schedule'
