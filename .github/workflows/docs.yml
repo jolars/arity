@@ -16,6 +16,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
 jobs:
   docs:
@@ -61,6 +63,14 @@ jobs:
       - name: Build mdBook
         run: mdbook build docs
 
+      - name: Build Markdown variants
+        run: |
+          command -v pandoc || (sudo apt-get update && sudo apt-get install -y pandoc)
+          python3 docs/build_markdown.py docs/book
+
+      - name: Test Markdown negotiation
+        run: node --test docs/markdown-worker.test.mjs
+
       - name: Publish arity.toml JSON Schema
         run: install -m 0644 arity.schema.json docs/book/arity.schema.json
 
@@ -93,6 +103,10 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+
+      - name: Deploy Markdown negotiation Worker
+        if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
+        run: npx --yes wrangler@4 deploy --config docs/wrangler.toml
 
   lighthouse:
     name: Lighthouse Audit
