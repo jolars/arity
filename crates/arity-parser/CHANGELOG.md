@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.1](https://github.com/jolars/arity/compare/arity-parser-v0.6.0...arity-parser-v0.6.1) (2026-10-05)
+
+### Performance Improvements
+
+- **parser:** avoid allocating assignment operand lists ([`82b2dd1`](https://github.com/jolars/arity/commit/82b2dd13df9159de41b478abbec04b8d90132f93))
+
 ## [0.6.0](https://github.com/jolars/arity/compare/arity-parser-v0.5.3...arity-parser-v0.6.0) (2026-09-07)
 
 ### Features

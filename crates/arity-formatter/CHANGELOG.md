@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.0](https://github.com/jolars/arity/compare/arity-formatter-v0.7.1...arity-formatter-v0.8.0) (2026-10-05)
+
+### Features
+
+- **formatter:** add roxygen formatting switch ([`767b5f6`](https://github.com/jolars/arity/commit/767b5f650904a4876d234e984b8d2ff221a1f516)), refs [#149](https://github.com/jolars/arity/issues/149)
+
+### Bug Fixes
+
+- **formatter:** measure wrapped Rd segments ([`4d7da84`](https://github.com/jolars/arity/commit/4d7da8424c67df6d36e2c448b2bc7da87bc2918b))
+
+### Dependencies
+
+- updated crates/arity-parser to v0.6.1
+
 ## [0.7.1](https://github.com/jolars/arity/compare/arity-formatter-v0.7.0...arity-formatter-v0.7.1) (2026-09-07)
 
 ### Dependencies

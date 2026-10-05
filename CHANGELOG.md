@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.25.0](https://github.com/jolars/arity/compare/v0.24.0...v0.25.0) (2026-10-05)
+
+### Features
+
+- **docs:** negotiate Markdown responses ([`88e5208`](https://github.com/jolars/arity/commit/88e5208850209da0c3f8eeecc868df4bf9fbe6b4))
+- **config:** add `extend` to extend configurations ([`ee7c1d0`](https://github.com/jolars/arity/commit/ee7c1d077ed0b2d2b519c1189cb69e7afaa92d30))
+- **format:** expose roxygen setting ([`6a22dc4`](https://github.com/jolars/arity/commit/6a22dc4df37ea5197d673a7d679f915575c1b467)), refs [#149](https://github.com/jolars/arity/issues/149)
+
+### Bug Fixes
+
+- **lint:** clarify repeated title diagnostic ([`fcfd29f`](https://github.com/jolars/arity/commit/fcfd29f951549b36e5eec61396a8f81de3dbbf64))
+
+### Performance Improvements
+
+- **lsp:** cache document symbols until the next edit ([`f40b177`](https://github.com/jolars/arity/commit/f40b1770d3da6e33812b9d671783b8f37f1fdab8))
+- **lsp:** prune document symbol traversal ([`6938781`](https://github.com/jolars/arity/commit/69387813d6ff2d875287729d98e725dba403ee3a))
+- **lsp:** reuse cached document analysis ([`d73fa44`](https://github.com/jolars/arity/commit/d73fa4416a472f738d355a6b6c007419c95016a6))
+
+### Dependencies
+
+- updated crates/arity-formatter to v0.8.0
+- updated crates/arity-parser to v0.6.1
+
 ## [0.24.0](https://github.com/jolars/arity/compare/v0.23.0...v0.24.0) (2026-09-25)
 
 ### Features
