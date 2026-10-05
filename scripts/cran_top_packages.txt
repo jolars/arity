@@ -127,6 +127,7 @@ codetools
 collapse
 colorspace
 colourpicker
+combinat
 commonmark
 config
 conflicted
@@ -506,6 +507,7 @@ svglite
 sys
 sysfonts
 systemfonts
+tensor
 tensorA
 tensorflow
 terra
