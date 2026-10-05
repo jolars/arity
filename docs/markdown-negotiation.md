@@ -11,9 +11,13 @@ Worker on `arity.cc`:
 
 1. Make the `arity.cc` DNS records proxied in Cloudflare. The records currently
    point directly to GitHub Pages and bypass Cloudflare's request processing.
-2. Add `CLOUDFLARE_API_TOKEN` (Workers Scripts edit and Workers Routes edit for
-   this zone) and `CLOUDFLARE_ACCOUNT_ID` as repository Actions secrets.
-3. Run the Documentation workflow. It deploys the Pages artifact first, then
+2. Create the `arity-markdown` Worker once with Workers product Admin access.
+   Cloudflare requires this role to create a Worker; Editor access can deploy
+   updates only after the Worker exists.
+3. Add `CLOUDFLARE_API_TOKEN` (Workers Editor access for `arity-markdown` and
+   Zone > Workers Routes > Write for `arity.cc`) and `CLOUDFLARE_ACCOUNT_ID` as
+   repository Actions secrets. Both must target the same Cloudflare account.
+4. Run the Documentation workflow. It deploys the Pages artifact first, then
    deploys the Worker on the `arity.cc/*` route.
 
 Check the public responses after deployment:
