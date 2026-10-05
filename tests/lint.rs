@@ -2641,6 +2641,21 @@ fn undefined_symbol_skips_data_loader_bindings() {
 }
 
 #[test]
+fn undefined_symbol_resolves_quoted_data_loader_bindings() {
+    let p = CompositeProvider::base_only();
+    let msgs = undefined_with(
+        "data(\"diabetes\", package = \"lars\")\nx <- scale(diabetes$x)\nprint(missing_name)\n",
+        &p,
+    );
+    assert_eq!(
+        msgs.len(),
+        1,
+        "only `missing_name` should be flagged: {msgs:?}"
+    );
+    assert!(msgs[0].contains("missing_name"));
+}
+
+#[test]
 fn undefined_symbol_gated_by_attach() {
     // `attach(df)` puts a data frame's columns on the search path; their names
     // are statically unknowable, so the rule stays silent for the whole file.

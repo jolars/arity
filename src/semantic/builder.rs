@@ -665,9 +665,9 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
                     return;
                 }
             }
-            // `data(name, …)` lazy-loads each named dataset and binds it in the
-            // caller's frame, so a later `name$col` read resolves. Introduce a
-            // binding for each bare-name argument, then walk normally.
+            // `data(name, …)` and `data("name", …)` load named datasets, so a
+            // later `name$col` read resolves. Introduce those bindings, then
+            // walk normally.
             "data" => introduce_data_bindings(ctx, &call, scope),
             // `setDT(df)` converts in place and returns invisibly, so `df` is a
             // data.table from here on even with no assignment.
@@ -827,11 +827,11 @@ fn walk_model_frame_arg_list(
     }
 }
 
-/// Introduce a binding for each bare-name positional argument of a `data()`
-/// call. `data(sole)` lazy-loads the `sole` dataset and binds it in the calling
-/// frame, so later reads (`sole$off`) resolve. Bound `Implicit` (like `<<-`
-/// targets): opaquely introduced, and thus excluded from `unused-binding`.
-/// String / named (`package = "…"`, `list = …`) arguments introduce nothing.
+/// Introduce a binding for each literal dataset name passed positionally to
+/// `data()`. `data(sole)` and `data("sole")` both load `sole`, so later reads
+/// (`sole$off`) resolve. Bound `Implicit` (like `<<-` targets): opaquely
+/// introduced, and thus excluded from `unused-binding`. Named arguments such
+/// as `package = "…"` are not dataset names.
 fn introduce_data_bindings(ctx: &mut BuildCtx<'_>, call: &CallExpr, scope: ScopeId) {
     let Some(arg_list) = call.arg_list() else {
         return;
@@ -843,20 +843,33 @@ fn introduce_data_bindings(ctx: &mut BuildCtx<'_>, call: &CallExpr, scope: Scope
         let Some(NodeOrToken::Token(tok)) = arg.value() else {
             continue;
         };
-        if tok.kind() != SyntaxKind::IDENT {
-            continue;
-        }
-        // Skip `...`/`..1` and reserved constants (`data(NULL)` etc.): not names
-        // to bind. Mirrors `record_ident_read`'s exclusions.
-        if let Some(ident) = Ident::cast(tok.clone())
-            && (ident.is_dots() || ident.is_reserved_constant())
-        {
-            continue;
-        }
+        let name = match tok.kind() {
+            SyntaxKind::IDENT => {
+                // `...`/`..1` and reserved constants are not dataset names.
+                if let Some(ident) = Ident::cast(tok.clone())
+                    && (ident.is_dots() || ident.is_reserved_constant())
+                {
+                    continue;
+                }
+                tok.text()
+            }
+            SyntaxKind::STRING => {
+                let Some(name) = strip_quotes(tok.text()) else {
+                    continue;
+                };
+                // Escaped strings need R string decoding before their spelling
+                // can be used as a binding name.
+                if name.is_empty() || name.contains('\\') {
+                    continue;
+                }
+                name
+            }
+            _ => continue,
+        };
         push_binding(
             ctx.model,
             scope,
-            SmolStr::new(tok.text()),
+            SmolStr::new(name),
             BindingKind::Implicit,
             tok.text_range(),
             ctx.loop_range,
