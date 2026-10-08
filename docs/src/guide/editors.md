@@ -65,16 +65,38 @@ rest, see the sections below.
 
 ## RStudio
 
-Install the [R package from CRAN](../getting-started.md#r-package-cran), then
-save your R script and format it from RStudio's console:
+The [development R package](https://github.com/jolars/arity-r) provides a
+**Format with arity** addin and discovers `arity.toml` automatically. These
+features were added after the CRAN 0.1.0 release. Install the development
+version to use them; building from source requires Cargo and Rust 1.89 or newer:
+
+```r
+install.packages("remotes")
+remotes::install_github("jolars/arity-r")
+```
+
+Choose **Format with arity** from RStudio's **Addins** menu. It formats selected
+R code, or the whole document when nothing is selected, including unsaved edits
+and untitled R scripts. Changes remain in the editor for you to save. To assign
+a shortcut, open **Tools > Modify Keyboard Shortcuts** and search for the addin.
+
+The addin discovers configuration from the document's directory, or the working
+directory for untitled buffers. It uses the nearest `arity.toml`, with
+`ARITY_CONFIG` as a fallback when no project config is found. Only formatting
+settings apply; file exclusions and lint configuration do not. See the [R
+package documentation](https://github.com/jolars/arity-r#configuration) for
+configuration overrides and supported selections.
+
+With the [CRAN package](../getting-started.md#r-package-cran), format saved
+files from the console:
 
 ```r
 arity::format_file("R/example.R")
 ```
 
-This rewrites the saved file on disk. Use `arity::format_text()` to format a
-string and return the formatted text instead. Pass formatting options as
-function arguments; the R package does not read `arity.toml`.
+This rewrites the file on disk. CRAN 0.1.0 takes formatting options as function
+arguments and does not discover `arity.toml`. The R package embeds the
+formatter, so neither installation needs the Arity CLI.
 
 ## VS Code/Positron
 

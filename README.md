@@ -37,11 +37,12 @@ Arity is available from several sources:
 - **Homebrew**: `brew install jolars/tap/arity`
 - **npm**: `npm install -g arity-cli` (bundles a prebuilt binary)
 - **PyPI**: `uv tool install arity`/`pipx install arity`
-- **Aqua**: `aqua install jolars/arity`
+- **mise/Aqua**: see the [installation
+  guide](https://arity.cc/getting-started.html#mise-and-aqua)
 - **Prebuilt binaries**: from the [releases
   page](https://github.com/jolars/arity/releases)
 - **VS Code/Open VSX**: the **Arity** extension (also works in Positron)
-- **Arch Linux**: `pacman -S arity-bin` (or `arity`) (from the AUR:
+- **Arch Linux**: `paru -S arity-bin` (or another AUR helper; packages:
   [`arity-bin`](https://aur.archlinux.org/packages/arity-bin/),
   [`arity`](https://aur.archlinux.org/packages/arity/))
 - **NixOS**: the `arity` package is available in
@@ -107,8 +108,11 @@ The Arity extension for VS Code/Open VSX (and Positron) bundles the binary and
 starts the server automatically. For Neovim, Helix, and other editors, see the
 [editor setup guide](https://arity.cc/guide/editors.html).
 
-In RStudio, use the R package to format saved files from the console; see
-[RStudio setup](https://arity.cc/guide/editors.html#rstudio).
+In RStudio, the development R package provides a **Format with arity** addin for
+selections and unsaved documents. The CRAN package supports formatting saved
+files from the console. See [RStudio
+setup](https://arity.cc/guide/editors.html#rstudio) for installation and
+configuration.
 
 ## Pre-Commit Hook
 
@@ -120,14 +124,14 @@ installation is required:
 ```yaml
 repos:
   - repo: https://github.com/jolars/arity-pre-commit
-    # arity version
-    rev: v0.18.0
+    rev: v0.25.0
     hooks:
-      # Lint .R files
       - id: arity-lint
-      # Format the same files in place
       - id: arity-format
 ```
+
+See the [integration guide](https://arity.cc/guide/integrations.html#pre-commit)
+for file coverage, optional fixes, and updates.
 
 ## GitHub Actions
 
