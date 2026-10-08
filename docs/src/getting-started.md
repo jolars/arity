@@ -164,5 +164,8 @@ Run the language server over stdio (for editor integration):
 arity lsp
 ```
 
-See the [CLI Reference](reference/cli.md) for the full set of commands and
+Continue with [Formatting](guide/formatting.md), [Linting](guide/linting.md), or
+[Configuration](guide/configuration.md) for day-to-day use. See [Editor
+Setup](guide/editors.md) for your editor, [Integrations](guide/integrations.md)
+for automation, and the [CLI Reference](reference/cli.md) for all commands and
 options.

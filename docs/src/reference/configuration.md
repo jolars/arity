@@ -1,4 +1,7 @@
-# Configuration
+# Configuration Reference
+
+For a walkthrough of creating and sharing a project config, see the
+[configuration guide](../guide/configuration.md).
 
 Arity is configured with a TOML file named `arity.toml`. All keys are optional;
 omitting a key uses its default. Keys are **kebab-case**, and unknown keys are

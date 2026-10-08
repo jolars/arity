@@ -1291,3 +1291,14 @@ rounds, distributions overlapping.
   though R treats that field name as `"Package "`.
 
 ## Misc
+
+## Documentation site
+
+- [ ] Split `docs/src/guide/editors.md` into focused editor recipes and a short
+  overview. Preserve the published URLs and anchors when moving content.
+- [ ] Consolidate configuration setup between `docs/src/guide/configuration.md`
+  and `docs/src/reference/configuration.md`. Keep practical setup in the guide
+  and exhaustive keys, defaults, and resolution rules in the reference.
+- [ ] Reduce duplicated commands and integration examples across `README.md`,
+  Getting Started, and the usage guides. Keep one detailed recipe per task and
+  link to it from introductory pages.
