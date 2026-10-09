@@ -1,8 +1,9 @@
 # Recorded intentional deviations from `air`'s output.
 #
 # This file is the "documented deviations" list behind the soft air-compatibility
-# gauge (see `tests/air_compat.rs` and `AIR_COMPAT.md`). It is SUBORDINATE to
-# Tenet 1 (deterministic, rule-based formatting): listing a file here means
+# gauge (see `tests/air_compat.rs` and `docs/reports/air-compat.md`). It is
+# SUBORDINATE to Tenet 1 (deterministic, rule-based formatting): listing a file
+# here means
 # "arity diverges from air here ON PURPOSE", not "air is wrong to flag it".
 #
 # Anything that diverges from air and is NOT listed here is reported as an

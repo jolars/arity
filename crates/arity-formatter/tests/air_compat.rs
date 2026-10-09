@@ -132,8 +132,8 @@ fn air_compat_report() {
     );
     print!("{report}");
 
-    let out_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../AIR_COMPAT.md");
-    fs::write(&out_path, &report).expect("write AIR_COMPAT.md");
+    let out_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/reports/air-compat.md");
+    fs::write(&out_path, &report).expect("write docs/reports/air-compat.md");
     eprintln!("air-compat: wrote {}", out_path.display());
 }
 
