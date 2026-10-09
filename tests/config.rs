@@ -197,12 +197,10 @@ fn run_cli_with_env_config(
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn arity");
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(input.as_bytes())
-        .unwrap();
+    // Config validation can exit before reading stdin; callers assert the resulting error.
+    if let Err(err) = child.stdin.take().unwrap().write_all(input.as_bytes()) {
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe, "{err}");
+    }
     child.wait_with_output().expect("wait for arity")
 }
 
@@ -297,8 +295,11 @@ fn cli_env_config_does_not_hide_invalid_project_config() {
     fs::write(dir.path().join("arity.toml"), "[format]\nline-widht = 80\n").unwrap();
     let config = dir.path().join("user.toml");
     fs::write(&config, "").unwrap();
-    let output = run_cli_with_env_config(dir.path(), &config, &["format"], LONG_FN_INPUT);
+    // Exceed the pipe capacity so an early config error closes stdin during the write.
+    let input = LONG_FN_INPUT.repeat(65_536);
+    let output = run_cli_with_env_config(dir.path(), &config, &["format"], &input);
     assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("arity.toml"),
         "{output:?}"
