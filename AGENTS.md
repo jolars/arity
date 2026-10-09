@@ -245,9 +245,9 @@ Use `task desc-compat` only as a gauge.
 ### Compatibility and tests
 
 `task air-compat` runs the ignored fixed-point test `air(arity(x)) == arity(x)`
-and regenerates `AIR_COMPAT.md`. Adopt idiomatic rules or record deliberate
-differences with rationale in `tests/air_compat_allowlist.toml`; an unexplained
-difference is an open question but never a build failure.
+and regenerates `docs/reports/air-compat.md`. Adopt idiomatic rules or record
+deliberate differences with rationale in `tests/air_compat_allowlist.toml`; an
+unexplained difference is an open question but never a build failure.
 
 Formatter cases use `input.R`/`expected.R` directories under
 `crates/arity-formatter/tests/fixtures/formatter/`, registered in

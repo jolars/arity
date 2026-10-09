@@ -23,8 +23,8 @@
 //! 3. Trailing-newline and final-blank-line noise.
 //!
 //! `#[ignore]`d because it needs R plus the `desc` package: run via
-//! `task desc-compat`, which regenerates `DESC_COMPAT.md`. A missing `Rscript`
-//! or `desc` is a skip, never a failure.
+//! `task desc-compat`, which regenerates `docs/reports/desc-compat.md`. A missing
+//! `Rscript` or `desc` is a skip, never a failure.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -63,8 +63,8 @@ fn desc_compat_report() {
     }
 
     let report = render_report(&at_desc_width, &at_our_width);
-    let path = manifest_path("DESC_COMPAT.md");
-    std::fs::write(&path, &report).expect("write DESC_COMPAT.md");
+    let path = manifest_path("docs/reports/desc-compat.md");
+    std::fs::write(&path, &report).expect("write docs/reports/desc-compat.md");
     eprintln!("{report}");
     eprintln!("desc-compat: wrote {}", path.display());
 }

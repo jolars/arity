@@ -4,8 +4,8 @@ extend-exclude = [
   "TODO.md",
   "AGENTS.md",
   "CHANGELOG.md",
-  "AIR_COMPAT.md",
-  "DESC_COMPAT.md",
+  "docs/reports/air-compat.md",
+  "docs/reports/desc-compat.md",
   # Generated mdBook pages (clap reference + rule reference + benchmark
   # partials); not hand-written prose.
   "docs/src/reference/cli.md",

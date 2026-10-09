@@ -32,7 +32,7 @@ tasks:
       - RUST_LOG=off cargo test --workspace
 
   air-compat:
-    desc: Measure soft air-formatter compatibility (writes AIR_COMPAT.md)
+    desc: Measure soft air-formatter compatibility (writes docs/reports/air-compat.md)
     cmds:
       - cargo test -p arity-formatter --test air_compat -- --ignored --nocapture
 
