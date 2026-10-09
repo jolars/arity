@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.1](https://github.com/jolars/arity/compare/arity-formatter-v0.8.0...arity-formatter-v0.8.1) (2026-10-09)
+
+### Other changes
+
+- **formatter:** update air report path ([`1863414`](https://github.com/jolars/arity/commit/18634144605f94236d3992219c2dbb5dd5d17a09))
+
 ## [0.8.0](https://github.com/jolars/arity/compare/arity-formatter-v0.7.1...arity-formatter-v0.8.0) (2026-10-05)
 
 ### Features

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.25.1](https://github.com/jolars/arity/compare/v0.25.0...v0.25.1) (2026-10-09)
+
+### Bug Fixes
+
+- **lint:** resolve quoted data bindings ([`87c08cb`](https://github.com/jolars/arity/commit/87c08cb053e79f3b8f2d3c28c2ccb1f65af0d7af))
+
+### Dependencies
+
+- updated crates/arity-formatter to v0.8.1
+
 ## [0.25.0](https://github.com/jolars/arity/compare/v0.24.0...v0.25.0) (2026-10-05)
 
 ### Features
