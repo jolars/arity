@@ -93,6 +93,121 @@
   branch each in `crates/arity-parser/src/directive.rs`, plus `Spelling` and the
   rule itself.
 
+### Rule-candidate audit: RStudio (2026-10-11)
+
+Audited [RStudio](https://github.com/rstudio/rstudio) at
+`ff9f819a5459f399508a550619307503b8afc40c`, focusing on its diagnostics
+implementation rather than linting its own R source. Sources: [call validation
+and special
+checks](https://github.com/rstudio/rstudio/blob/ff9f819a5459f399508a550619307503b8afc40c/src/cpp/session/modules/SessionRParser.cpp),
+[diagnostic
+tests](https://github.com/rstudio/rstudio/blob/ff9f819a5459f399508a550619307503b8afc40c/src/cpp/session/modules/SessionDiagnosticsTests.cpp),
+[Unicode
+checks](https://github.com/rstudio/rstudio/blob/ff9f819a5459f399508a550619307503b8afc40c/src/gwt/src/org/rstudio/studio/client/workbench/views/output/lint/ConfusableCharacterLinter.java),
+and the [user
+guide](https://github.com/rstudio/rstudio/blob/ff9f819a5459f399508a550619307503b8afc40c/docs/user/rstudio/ide/guide/code/diagnostics.qmd).
+Reduced examples below were checked with R 4.6.1. Prioritize the first two;
+these are candidates, not implemented rules. Follow `add-lint-rule` for new
+rules, and keep all production analysis static.
+
+- [ ] `bare-return`: report a standalone, base-resolved `return` in a function
+  body or control-flow branch. `f <- function() { return; 42 }; f()` returns
+  `42`, because the bare symbol evaluates to the primitive without calling
+  it. Suggest `return()`, with an unsafe fix because it changes control
+  flow. Exclude shadowed names, quoted expressions, and value uses such as
+  `ret <- return` or `lapply(xs, return)`. Check statement position through
+  typed AST navigation, including unbraced `if` branches.
+
+- [ ] Validate calls against statically resolved closure signatures. Start with
+  local and project functions, then indexed package formals when available.
+  Report unmatched names, excess positional arguments, ambiguous partial
+  matches, and multiple actual arguments bound to one formal. R rejects
+  `f <- function(x) x; f(y = 1)` and `f <- function() 1; f(2)`;
+  `f <- function(alpha, alpine) 1; f(al = 1)` is ambiguous, and
+  `f <- function(alpha) alpha; f(a = 1, al = 2)` matches `alpha` twice.
+  Model exact, partial, and positional matching in that order, respecting
+  the `...` boundary and exact-only formals after it. Reuse signature
+  resolution where practical, but extend `semantic::match_args_to_formals`
+  with explicit mismatch outcomes before using it as a diagnostic authority:
+  its current use for model-frame masking does not distinguish these errors.
+  Keep project signature facts range-free. Unknown callees, dynamic
+  rebinding, dispatch, forwarded `...`, and pipe insertion/placeholders
+  require conservative handling. No general autofix.
+
+- [ ] `partial-argument-match` (opt-in): report a successful unique partial
+  match, such as `f <- function(alpha) alpha; f(al = 1)`, and suggest the
+  full formal name. R accepts this and returns `1`; this is API robustness,
+  not a runtime error. Build on the same matcher as call validation. Offer a
+  name-only fix only with a stable, resolved signature and no ambiguity.
+  RStudio skips general validation for callees with `...`; arity can
+  eventually handle partial matches before `...` without treating names
+  captured by it as errors.
+
+- [ ] Refine `missing-argument` to report trailing empty arguments for resolved
+  callees known to reject them. R parses `c(1,)` but evaluating it errors
+  with “argument 2 is empty.” Preserve the exemption for unknown or
+  intentionally permissive closures and package APIs. Do not blanket-copy
+  RStudio's builtin classification or base-closure list: establish each
+  supported shape against R, including named holes, special forms, and
+  dispatch. No automatic deletion fix, since the intended missing value is
+  unknown. The earlier lintr audit's trailing-comma exemption remains
+  correct syntactically but is too broad semantically.
+
+- [ ] Extend `sprintf` with a portability warning for a `0` flag plus width on
+  `%s`, and cover resolved `gettextf()` as well. RStudio tests `%05s`,
+  `%0*s`, positional fields, precision, escaped `%%`, and partial `fmt`
+  names. On this Linux R, `sprintf("%05s", "x")` yields four spaces followed
+  by `x`; the cross-platform behavior is documented by RStudio, not verified
+  here on another C library. Reuse the format scanner and decoded-string
+  handling, retain source spans, and exclude literal text or numeric
+  conversions. Recommend explicit string padding or an appropriate numeric
+  conversion; neither is a general safe rewrite. Also fix format-argument
+  matching before extending coverage: the current rule recognizes exact
+  `fmt` and positional input but not valid partial names `f` and `fm`.
+
+- [ ] `confusable-identifier` (opt-in initially): report suspicious ASCII
+  lookalikes in unquoted identifiers, with the code point and likely ASCII
+  spelling. R accepts Cyrillic `с <- 1` as a different binding from Latin
+  `c`. Preserve legitimate non-Latin identifiers and Greek statistical
+  symbols; ignore strings, comments, roxygen, and backtick names. Use parser
+  tokens and UTF-8 byte spans, not a second source lexer. Zero-width
+  characters, Unicode spaces, and pasted Unicode minus signs that R rejects
+  should instead receive specific parser diagnostics: parse errors block
+  lint, so a lint rule cannot explain them. R rejected `x<U+200B> <- 1`,
+  `x<U+00A0><- 1`, and `x <- 1<U+2212>2` in the oracle. No blanket
+  normalization fix.
+
+- [ ] Improve `undefined-symbol` suggestions with nearby visible names when a
+  single close spelling is compelling. RStudio offers typo suggestions;
+  arity currently reports the unresolved name without this guidance. Rank
+  only bindings and package symbols already known to the static resolver,
+  bound the search cost, and withhold suggestions when several names fit. A
+  suggestion must not imply that an unavailable package symbol is absent. No
+  default fix.
+
+Existing coverage includes undefined/unused names, duplicate formals,
+assignments in conditions, NA comparisons, and suppression controls. Glue
+validation already has a candidate in the lintr/jarl audit below. Keep whitespace
+diagnostics in the
+formatter, package-installation checks out of machine-independent lint, and
+RStudio's embedding-specific `.Call(..., PACKAGE = "(embedding)")` check out of
+general rules; the native-registration candidate already covers the useful
+package-level direction.
+
+Do not infer a required argument merely from the absence of a default:
+`f <- function(x) 1; f()` and a function that handles `missing(x)` both work.
+Only consider an omitted-argument diagnostic after proving an unavoidable force
+or establishing a documented callee contract. Likewise, RStudio's warning for
+`paste(..., unexpected = value)` is too broad to adopt by default:
+`paste("a", "b", sepp = "-")` yields `"a b -"`, but named values can be
+intentional, as in `paste0(prefix = "id-", 1)`. Finally, refine the existing
+`duplicated-arguments` policy when signature matching lands: R accepts both
+`list(a = 1, a = 2)` and duplicated names captured by `...`. RStudio restricts
+its duplicate-match error to known formal names; arity currently exempts `c()`
+by spelling while warning on `list()`, including in its executable example. Keep
+any broader duplicate-data-name warning a separate, opt-in policy, and respect
+shadowed `c` bindings.
+
 ### Rule-candidate audit: lintr and jarl (2026-08-18)
 
 Audited [lintr](https://github.com/r-lib/lintr) at
