@@ -3,6 +3,7 @@
 
 mod all_equal;
 mod assignment_in_condition;
+mod bare_return;
 mod browser;
 mod duplicated_function_definition;
 mod for_loop_dup_index;
@@ -19,6 +20,7 @@ mod unused_function;
 
 pub use all_equal::AllEqual;
 pub use assignment_in_condition::AssignmentInCondition;
+pub use bare_return::BareReturn;
 pub use browser::Browser;
 pub use duplicated_function_definition::DuplicatedFunctionDefinition;
 pub use for_loop_dup_index::ForLoopDupIndex;

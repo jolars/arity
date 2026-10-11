@@ -110,13 +110,14 @@ Reduced examples below were checked with R 4.6.1. Prioritize the first two;
 these are candidates, not implemented rules. Follow `add-lint-rule` for new
 rules, and keep all production analysis static.
 
-- [ ] `bare-return`: report a standalone, base-resolved `return` in a function
+- [x] `bare-return`: report a standalone, base-resolved `return` in a function
   body or control-flow branch. `f <- function() { return; 42 }; f()` returns
   `42`, because the bare symbol evaluates to the primitive without calling
   it. Suggest `return()`, with an unsafe fix because it changes control
   flow. Exclude shadowed names, quoted expressions, and value uses such as
   `ret <- return` or `lapply(xs, return)`. Check statement position through
   typed AST navigation, including unbraced `if` branches.
+  Landed as a default suspicious warning with semantic gating and an unsafe fix.
 
 - [ ] Validate calls against statically resolved closure signatures. Start with
   local and project functions, then indexed package formals when available.

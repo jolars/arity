@@ -1,0 +1,28 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `bare-return`
+
+Flag a standalone base `return` in a function body or control-flow branch. The bare symbol evaluates to the function object without calling it, so execution continues. Use `return()` to exit the function. The fix is unsafe because it changes control flow. Shadowed names, quoted code, and value uses such as `ret <- return` or `lapply(xs, return)` are left alone.
+
+This rule is **enabled by default**.
+
+A bare `return` does not exit the function:
+
+```r
+f <- function() {
+  return
+  42
+}
+f()
+```
+
+```text
+warning: bare-return
+ --> example.R:2:3
+  |
+2 |   return
+  |   ^^^^^^ bare `return` does not exit the function
+  = help: Use `return()` to exit the function.
+```

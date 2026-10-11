@@ -6093,6 +6093,8 @@ fn assert_fixed_output_is_clean(input: &str) {
 #[test]
 fn fixed_output_is_parseable_and_clean() {
     let cases = [
+        "f <- function(x) { print(x); return }; f(1)\n",
+        "f <- function(x) if (x) return else 42; f(TRUE)\n",
         // meta/suppression rules (misnamed rename, outdated delete, deprecated
         // spelling rewrite)
         "# arity-ignore unusd-binding: typo\nx <- 1\nprint(x)\n",
@@ -7889,4 +7891,66 @@ fn undefined_symbol_suppresses_nested_package_local_forwards() {
             .all(|message| !message.contains("never_forced")),
         "a nested forward proved eagerness: {messages:?}"
     );
+}
+
+#[test]
+fn bare_return_flags_statements_and_control_flow_bodies() {
+    for src in [
+        "f <- function() { return; 42 }; f()\n",
+        "f <- function() return\n",
+        "f <- function(x) if (x) return else return\n",
+        "f <- function(x) while (x) return\n",
+        "f <- function(xs) for (x in xs) return\n",
+        "f <- function() repeat return\n",
+        "f <- function() { return # keep\n  42 }; f()\n",
+    ] {
+        let findings: Vec<_> = diagnostics(src)
+            .into_iter()
+            .filter(|d| d.rule == "bare-return")
+            .collect();
+        assert!(!findings.is_empty(), "{src}");
+        for d in findings {
+            assert_eq!(
+                &src[usize::from(d.range.start())..usize::from(d.range.end())],
+                "return"
+            );
+            let fix = d.fix.unwrap();
+            assert_eq!(fix.applicability, Applicability::Unsafe);
+            assert_eq!(
+                apply_fixes(src, std::slice::from_ref(&fix), false).output,
+                src
+            );
+            let out = apply_fixes(src, &[fix], true).output;
+            let parsed = arity::parser::parse(&out);
+            assert!(parsed.diagnostics.is_empty(), "{out}");
+            assert_eq!(parsed.cst.text().to_string(), out);
+        }
+    }
+    assert_eq!(
+        unsafe_fixed_output("f <- function() { return; 42 }\n", "bare-return"),
+        "f <- function() { return(); 42 }\n"
+    );
+}
+
+#[test]
+fn bare_return_ignores_values_shadowing_and_quoted_code() {
+    for src in [
+        "return\n",
+        "f <- function() return()\n",
+        "f <- function() { ret <- return; lapply(xs, return) }\n",
+        "f <- function() if (return) 1\n",
+        "f <- function(return) { return; 42 }\n",
+        "return <- 1; f <- function() { return; 42 }\n",
+        "f <- function() { return <- 1; return; 42 }\n",
+        "quote(function() { return; 42 })\n",
+        "f <- function() quote({ return; 42 })\n",
+        "f <- function() substitute({ return; 42 })\n",
+        "f <- function(df) dplyr::mutate(df, x = { return; 42 })\n",
+        "f <- function() { g <- function(return) return; g(1) }\n",
+    ] {
+        assert!(
+            !diagnostics(src).iter().any(|d| d.rule == "bare-return"),
+            "{src}"
+        );
+    }
 }

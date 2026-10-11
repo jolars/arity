@@ -48,6 +48,7 @@ so this page never drifts from the rules' actual behavior.
 - [`redundant-ifelse`](#redundant-ifelse)
 - [`all-equal`](#all-equal)
 - [`pipe-return`](#pipe-return)
+- [`bare-return`](#bare-return)
 - [`function-return-assignment`](#function-return-assignment)
 - [`repeat`](#repeat)
 - [`undesirable-function`](#undesirable-function)
@@ -798,6 +799,31 @@ warning: pipe-return
 2 |   x %>% sum() %>% return()
   |                   ^^^^^^^^ `return` after `%>%` does not exit the surrounding function
   = help: Wrap the pipeline in `return()`, or assign and return its result.
+```
+
+### `bare-return`
+
+Flag a standalone base `return` in a function body or control-flow branch. The bare symbol evaluates to the function object without calling it, so execution continues. Use `return()` to exit the function. The fix is unsafe because it changes control flow. Shadowed names, quoted code, and value uses such as `ret <- return` or `lapply(xs, return)` are left alone.
+
+This rule is **enabled by default**.
+
+A bare `return` does not exit the function:
+
+```r
+f <- function() {
+  return
+  42
+}
+f()
+```
+
+```text
+warning: bare-return
+ --> example.R:2:3
+  |
+2 |   return
+  |   ^^^^^^ bare `return` does not exit the function
+  = help: Use `return()` to exit the function.
 ```
 
 ### `function-return-assignment`
