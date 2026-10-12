@@ -28,3 +28,5 @@ roxygen = true
 description = true
 
 [lint]
+# select = ["equals-na"] # replaces the default rule selection
+extend-select = []

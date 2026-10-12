@@ -101,6 +101,7 @@ fn main() -> ExitCode {
             fix,
             unsafe_fixes,
             select,
+            extend_select,
             ignore,
             exclude,
             force_exclude,
@@ -110,7 +111,11 @@ fn main() -> ExitCode {
                 paths,
                 stdin_filename,
                 fix: FixOptions { fix, unsafe_fixes },
-                overrides: LintOverrides { select, ignore },
+                overrides: LintOverrides {
+                    select,
+                    extend_select,
+                    ignore,
+                },
                 excludes: ExcludeOptions {
                     patterns: exclude,
                     force: force_exclude,
@@ -324,7 +329,8 @@ const STARTER_CONFIG: &str = "\
 # description = true
 
 [lint]
-# select = [\"...\"]  # if set, only these rules run
+# select = [\"...\"]  # replaces the default rule selection
+# extend-select = [] # adds rules to the selection
 # ignore = []        # rules to disable
 
 # A few rules take options of their own, in a table named after the rule ID.
@@ -387,6 +393,7 @@ struct FormatModes {
 
 struct LintOverrides {
     select: Vec<String>,
+    extend_select: Vec<String>,
     ignore: Vec<String>,
 }
 
@@ -1025,6 +1032,7 @@ fn run_lint(
     if !overrides.select.is_empty() {
         config.lint.select = Some(overrides.select);
     }
+    config.lint.extend_select.extend(overrides.extend_select);
     if !overrides.ignore.is_empty() {
         config.lint.ignore = overrides.ignore;
     }

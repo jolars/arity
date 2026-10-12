@@ -238,12 +238,14 @@ fn default_indent_width() -> u32 {
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct LintConfig {
-    /// Explicit allowlist of rule IDs. When `Some`, only these rules run.
+    /// Base rule IDs to enable. `None` uses every default-enabled rule.
     /// Unknown rule IDs are reported at lint-time, not at config parse-time.
     #[serde(default)]
     pub select: Option<Vec<String>>,
-    /// Rule IDs to disable. Applied on top of either `select` (subtracts) or
-    /// the default rule set.
+    /// Additional rule IDs to enable alongside `select` or the defaults.
+    #[serde(default)]
+    pub extend_select: Vec<String>,
+    /// Rule IDs to disable, including those in `extend-select`.
     #[serde(default)]
     pub ignore: Vec<String>,
     /// Per-rule option tables (`[lint.rules.<id>]`).
@@ -264,8 +266,8 @@ pub struct LintConfig {
 /// Deliberately typed rather than a `Map<String, Value>` keyed by rule ID: the
 /// `deny_unknown_fields` convention then makes a mistyped rule ID a parse error
 /// instead of a silently-ignored table. Note the asymmetry this creates with
-/// `select`/`ignore`, where an unknown ID is reported at *lint* time — there the
-/// IDs are free-form data, here they are schema.
+/// `select`, `extend-select`, and `ignore`, where an unknown ID is reported at
+/// *lint* time — there the IDs are free-form data, here they are schema.
 ///
 /// Most rules take no options and so have no field here.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
@@ -825,7 +827,7 @@ fn merge_config_tables(base: &mut toml::Table, child: toml::Table) {
                 merge_config_tables(base_table, child_table);
             }
             (Some(toml::Value::Array(base_array)), toml::Value::Array(child_array))
-                if key == "extend-exclude" =>
+                if matches!(key.as_str(), "extend-exclude" | "extend-select") =>
             {
                 base_array.extend(child_array);
             }
@@ -900,6 +902,42 @@ mod tests {
         assert_eq!(config.format.line_width, 30);
         assert_eq!(config.format.indent_width, 4);
         assert_eq!(config.lint.ignore, ["unused-binding"]);
+    }
+
+    #[test]
+    fn extend_select_accumulates_while_select_and_ignore_replace() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("base.toml"), "[lint]\nselect = [\"unused-binding\"]\nextend-select = [\"undesirable-function\"]\nignore = [\"equals-na\"]\n").unwrap();
+        fs::write(
+            dir.path().join("middle.toml"),
+            "extend = \"base.toml\"\n[lint]\nextend-select = [\"implicit-assignment\"]\n",
+        )
+        .unwrap();
+        let child = dir.path().join("arity.toml");
+        fs::write(&child, "extend = \"middle.toml\"\n[lint]\nselect = []\nextend-select = [\"unused-function\"]\nignore = [\"implicit-assignment\"]\n").unwrap();
+
+        let config = Config::load_from(&child).unwrap();
+        assert_eq!(config.lint.select, Some(Vec::new()));
+        assert_eq!(
+            config.lint.extend_select,
+            [
+                "undesirable-function",
+                "implicit-assignment",
+                "unused-function"
+            ]
+        );
+        assert_eq!(config.lint.ignore, ["implicit-assignment"]);
+        let (rules, unknown) = crate::linter::rules::ResolvedRules::resolve(&config.lint);
+        assert!(unknown.is_empty());
+        for (id, expected) in [
+            ("unused-binding", false),
+            ("equals-na", false),
+            ("undesirable-function", true),
+            ("implicit-assignment", false),
+            ("unused-function", true),
+        ] {
+            assert_eq!(rules.enabled().contains(id), expected, "{id}");
+        }
     }
 
     #[test]

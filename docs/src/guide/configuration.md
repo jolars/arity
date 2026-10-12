@@ -93,5 +93,16 @@ the [formatting](formatting.md) and [linting](linting.md) guides, then consult
 the reference for [formatting options](../reference/configuration.md#format) and
 [lint settings](../reference/configuration.md#lint).
 
+Use `extend-select` to enable opt-in rules while preserving the defaults:
+
+```toml
+[lint]
+extend-select = ["undesirable-function"]
+```
+
+If you also set `select`, Arity adds `extend-select` to that list instead.
+`ignore` takes precedence over both lists. When inheriting a config with
+`extend`, `extend-select` accumulates across the chain.
+
 The [dprint plugin](integrations.md#dprint) has its own configuration in
 `dprint.json`; it does not load `arity.toml`.

@@ -52,10 +52,19 @@ To disable a rule for the project, put it in `arity.toml`:
 ignore = ["unused-binding"]
 ```
 
-`select` replaces the default rule selection; `ignore` removes rules from that
-selection. The [configuration guide](configuration.md) covers shared settings,
-and the [reference](../reference/configuration.md#lint) lists rule-specific
-options.
+To enable an opt-in rule while keeping the defaults, use `extend-select`:
+
+```toml
+[lint]
+extend-select = ["undesirable-function"]
+```
+
+For one run, use `arity lint --extend-select undesirable-function .`.
+
+`select` replaces the default rule selection, `extend-select` adds rules to that
+selection, and `ignore` removes rules afterward. The [configuration
+guide](configuration.md) covers shared settings, and the
+[reference](../reference/configuration.md#lint) lists rule-specific options.
 
 ## Apply Fixes
 

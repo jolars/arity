@@ -141,9 +141,13 @@ pub enum Commands {
         #[arg(long)]
         unsafe_fixes: bool,
 
-        /// Only run these rules (overrides config `select`); repeatable or comma-separated
+        /// Base rule selection (overrides config `select`); repeatable or comma-separated
         #[arg(long, value_name = "RULE_ID", value_delimiter = ',')]
         select: Vec<String>,
+
+        /// Additional rules to run alongside config or `--select`; repeatable or comma-separated
+        #[arg(long, value_name = "RULE_ID", value_delimiter = ',')]
+        extend_select: Vec<String>,
 
         /// Disable these rules (overrides config `ignore`); repeatable or comma-separated
         #[arg(long, value_name = "RULE_ID", value_delimiter = ',')]

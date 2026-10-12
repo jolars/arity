@@ -110,7 +110,10 @@ Reads stdin when given `-`, or when paths are omitted and stdin is not a termina
 :   Also apply fixes that may change behavior (requires --fix)
 
 `--select <RULE_ID>`
-:   Only run these rules (overrides config `select`); repeatable or comma-separated
+:   Base rule selection (overrides config `select`); repeatable or comma-separated
+
+`--extend-select <RULE_ID>`
+:   Additional rules to run alongside config or `--select`; repeatable or comma-separated
 
 `--ignore <RULE_ID>`
 :   Disable these rules (overrides config `ignore`); repeatable or comma-separated

@@ -68,9 +68,10 @@ declares it (and expands a leading `~/` to your home directory), then merges the
 referenced config before the current file. Chains are allowed, and a cycle or
 missing file is an error. Child values override inherited values; tables merge
 by key, so overriding `[format] line-width` keeps an inherited `indent-width`.
-`extend-exclude` arrays append in base-to-child order, while `exclude` replaces
-the inherited array. For a project config or `--config` file, the selected file
-still anchors exclude patterns, even when they come from an extended file.
+`extend-exclude` and `extend-select` arrays append in base-to-child order, while
+`exclude`, `select`, and `ignore` replace inherited arrays. For a project config
+or `--config` file, the selected file still anchors exclude patterns, even when
+they come from an extended file.
 
 On the command line:
 
@@ -178,18 +179,25 @@ to formatting at all.
 
 ## `[lint]`
 
-  | Key      | Type             | Default | Description                                                          |
-  | -------- | ---------------- | ------- | -------------------------------------------------------------------- |
-  | `select` | array of strings | unset   | If set, only these rule IDs run.                                     |
-  | `ignore` | array of strings | `[]`    | Rule IDs to disable (applied on top of `select` or the default set). |
+  | Key             | Type             | Default | Description                                                   |
+  | --------------- | ---------------- | ------- | ------------------------------------------------------------- |
+  | `select`        | array of strings | unset   | Base rule IDs to enable; replaces the default selection.      |
+  | `extend-select` | array of strings | `[]`    | Additional rule IDs to enable alongside `select` or defaults. |
+  | `ignore`        | array of strings | `[]`    | Rule IDs to disable, including those in `extend-select`.      |
 
 Rule IDs are the kebab-case names from the [rule reference](rules.md). Unknown
 IDs are reported when linting runs, not when the config is parsed. The
-`--select`/`--ignore` flags on `arity lint` override these for a single run.
+`--select` and `--ignore` flags on `arity lint` override the corresponding lists
+for a single run. `--extend-select` adds to the configured `extend-select` list.
+All three flags accept repeated arguments or comma-separated IDs.
+
+Arity starts with the defaults, or `select` when set, adds `extend-select`, and
+then removes anything in `ignore`. An empty `select = []` disables the defaults;
+`extend-select` can still add rules. Duplicate IDs run a rule only once.
 
 ```toml
 [lint]
-select = ["undefined-symbol", "equals-na"]
+extend-select = ["undesirable-function"]
 ignore = ["unused-binding"]
 ```
 
@@ -198,9 +206,9 @@ ignore = ["unused-binding"]
 A few rules take options of their own, set in a table named after the rule ID.
 Rules that take no options have no table.
 
-Unlike `select`/`ignore`---where rule IDs are data, checked when linting
-runs---a rule ID here is part of the schema, so a mistyped one is reported when
-the config is *parsed*, alongside any other unknown key.
+Unlike `select`, `extend-select`, and `ignore`---where rule IDs are data,
+checked when linting runs---a rule ID here is part of the schema, so a mistyped
+one is reported when the config is *parsed*, alongside any other unknown key.
 
 #### `[lint.rules.undesirable-function]`
 
@@ -294,4 +302,5 @@ the strict unknown-key check):
 - `[format].skip` and a `# fmt: skip` comment---opt specific calls out of
   formatting.
 - `severity` in a `[lint.rules.<id>]` table---overriding a rule's severity.
-- Category names (e.g. `"correctness"`) in `select`/`ignore`.
+- Category names (e.g. `"correctness"`) in `select`, `extend-select`, or
+  `ignore`.

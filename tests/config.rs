@@ -459,6 +459,120 @@ fn cli_invalid_override_value_errors() {
 const LINT_TWO_RULES: &str = "f <- function(a) {\n  x <- 1\n  a == NA\n}\n";
 
 #[test]
+fn cli_lint_extend_select_adds_rules_and_ignore_takes_precedence() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("a.R"),
+        "f <- function(a) {\n  a == NA\n  setwd(\".\")\n}\nf(1)\n",
+    )
+    .unwrap();
+
+    for (settings, expected) in [
+        ("", vec!["equals-na"]),
+        ("extend-select = []", vec!["equals-na"]),
+        (
+            "extend-select = [\"undesirable-function\"]",
+            vec!["equals-na", "undesirable-function"],
+        ),
+        (
+            "select = [\"equals-na\"]\nextend-select = [\"undesirable-function\", \"equals-na\", \"undesirable-function\"]",
+            vec!["equals-na", "undesirable-function"],
+        ),
+        (
+            "select = []\nextend-select = [\"undesirable-function\"]",
+            vec!["undesirable-function"],
+        ),
+        (
+            "extend-select = [\"undesirable-function\"]\nignore = [\"undesirable-function\"]",
+            vec!["equals-na"],
+        ),
+        (
+            "extend-select = [\"undesirable-function\"]\nignore = [\"equals-na\"]",
+            vec!["undesirable-function"],
+        ),
+    ] {
+        fs::write(
+            dir.path().join("arity.toml"),
+            format!("[lint]\n{settings}\n"),
+        )
+        .unwrap();
+        let output = run_cli_in_no_stdin(dir.path(), ["lint", "--output", "json", "a.R"]);
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{settings}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let diagnostics: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+        let mut rules: Vec<_> = diagnostics
+            .iter()
+            .map(|d| d["rule"].as_str().unwrap())
+            .collect();
+        rules.sort_unstable();
+        assert_eq!(rules, expected, "{settings}");
+    }
+}
+
+#[test]
+fn cli_lint_unknown_extend_selected_rule_errors() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        "[lint]\nextend-select = [\"no-such-rule\"]\n",
+    )
+    .unwrap();
+    let output = run_cli_in(dir.path(), ["lint", "-"], "1\n");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown lint rule") && stderr.contains("no-such-rule"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn cli_lint_extend_select_flag_augments_config_and_accepts_lists() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        "[lint]\nselect = [\"unused-binding\"]\nextend-select = [\"undesirable-function\"]\n",
+    )
+    .unwrap();
+    let output = run_cli_in(
+        dir.path(),
+        [
+            "lint",
+            "--output",
+            "json",
+            "--select",
+            "equals-na",
+            "--extend-select",
+            "implicit-assignment,equals-na",
+            "--extend-select",
+            "implicit-assignment",
+            "-",
+        ],
+        "f <- function(a) {\n  a == NA\n  setwd(\".\")\n  identity(x <- 1)\n}\n",
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let diagnostics: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let mut rules: Vec<_> = diagnostics
+        .iter()
+        .map(|d| d["rule"].as_str().unwrap())
+        .collect();
+    rules.sort_unstable();
+    assert_eq!(
+        rules,
+        ["equals-na", "implicit-assignment", "undesirable-function"]
+    );
+}
+
+#[test]
 fn cli_lint_select_restricts_to_named_rule() {
     let dir = tempdir().unwrap();
     let r_file = dir.path().join("a.R");

@@ -1106,6 +1106,42 @@ fn completion_in_a_dependency_field_reaches_the_client() {
 }
 
 #[test]
+fn lint_extend_select_preserves_defaults_and_honors_ignore() {
+    let source = "f <- function(a) {\n  a == NA\n  setwd(\".\")\n}\nf(1)\n";
+    for (settings, expected) in [
+        (
+            "extend-select = [\"undesirable-function\"]",
+            vec!["equals-na", "undesirable-function"],
+        ),
+        (
+            "extend-select = [\"undesirable-function\"]\nignore = [\"undesirable-function\"]",
+            vec!["equals-na"],
+        ),
+        (
+            "select = []\nextend-select = [\"undesirable-function\"]",
+            vec!["undesirable-function"],
+        ),
+    ] {
+        let (dir, _, uri) = package_fixture(COMPLETE_DESCRIPTION, source);
+        std::fs::write(
+            dir.path().join("arity.toml"),
+            format!("[lint]\n{settings}\n"),
+        )
+        .unwrap();
+        let mut h = Harness::start_push();
+        h.did_open(&uri, source, 1);
+        let diagnostics = h.recv_publish_for(&uri, 1);
+        let mut rules: Vec<_> = diagnostics
+            .iter()
+            .map(|d| d["code"].as_str().unwrap())
+            .collect();
+        rules.sort_unstable();
+        assert_eq!(rules, expected, "{settings}");
+        h.shutdown();
+    }
+}
+
+#[test]
 fn did_open_buggy_publishes_diagnostics() {
     let mut h = Harness::start_push();
     let uri = doc_uri();

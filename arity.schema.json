@@ -129,9 +129,17 @@
       "additionalProperties": false,
       "description": "Linter settings from the `[lint]` section.",
       "properties": {
+        "extend-select": {
+          "default": [],
+          "description": "Additional rule IDs to enable alongside `select` or the defaults.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "ignore": {
           "default": [],
-          "description": "Rule IDs to disable. Applied on top of either `select` (subtracts) or\nthe default rule set.",
+          "description": "Rule IDs to disable, including those in `extend-select`.",
           "items": {
             "type": "string"
           },
@@ -147,7 +155,7 @@
         },
         "select": {
           "default": null,
-          "description": "Explicit allowlist of rule IDs. When `Some`, only these rules run.\nUnknown rule IDs are reported at lint-time, not at config parse-time.",
+          "description": "Base rule IDs to enable. `None` uses every default-enabled rule.\nUnknown rule IDs are reported at lint-time, not at config parse-time.",
           "items": {
             "type": "string"
           },
@@ -161,7 +169,7 @@
     },
     "RulesConfig": {
       "additionalProperties": false,
-      "description": "`[lint.rules]` — per-rule option tables, one field per *configurable* rule.\n\nDeliberately typed rather than a `Map<String, Value>` keyed by rule ID: the\n`deny_unknown_fields` convention then makes a mistyped rule ID a parse error\ninstead of a silently-ignored table. Note the asymmetry this creates with\n`select`/`ignore`, where an unknown ID is reported at *lint* time — there the\nIDs are free-form data, here they are schema.\n\nMost rules take no options and so have no field here.",
+      "description": "`[lint.rules]` — per-rule option tables, one field per *configurable* rule.\n\nDeliberately typed rather than a `Map<String, Value>` keyed by rule ID: the\n`deny_unknown_fields` convention then makes a mistyped rule ID a parse error\ninstead of a silently-ignored table. Note the asymmetry this creates with\n`select`, `extend-select`, and `ignore`, where an unknown ID is reported at\n*lint* time — there the IDs are free-form data, here they are schema.\n\nMost rules take no options and so have no field here.",
       "properties": {
         "undesirable-function": {
           "allOf": [

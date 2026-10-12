@@ -141,6 +141,7 @@ description = false
 
 [lint]
 select = ["undesirable-function"]
+extend-select = ["implicit-assignment", "future-rule"]
 ignore = ["unused-binding"]
 
 [lint.rules.undesirable-function]
@@ -181,6 +182,9 @@ fn config_schema_rejects_runtime_invalid_configuration() {
         "[format]\nline-width = 0",
         "[format]\nindent-width = 1001",
         "[lint.rules]\nundesirabl-function = {}",
+        "[lint]\nextend-select = \"implicit-assignment\"",
+        "[lint]\nextend-select = [1]",
+        "[lint]\nextend_select = []",
         "[compat]\nr = \"version four\"",
         "[index]\nremote-url = \"https://example.com\"",
         "[lint.compat]\nr = \"4.1\"",

@@ -243,9 +243,9 @@ fn meta_rules() -> Vec<Box<dyn Rule>> {
 }
 
 /// Every shipped rule's ID, derived from [`all_rules`] so the two never drift.
-/// Used to validate `LintConfig::select` / `ignore`.
+/// Used to validate rule-selection lists in [`LintConfig`].
 ///
-/// Both grammars' IDs, in one namespace: `select`, `ignore`, `# arity-lint`,
+/// Both grammars' IDs, in one namespace: `select`, `extend-select`, `ignore`, `# arity-lint`,
 /// and `misnamed-suppression` all see one flat set of rule names, and none of
 /// them has to learn which file type a rule fires in.
 pub fn all_rule_ids() -> Vec<&'static str> {
@@ -432,7 +432,7 @@ pub trait DcfRule: Send + Sync {
 /// A registered rule, whichever grammar it runs over.
 ///
 /// The catalogue is one list ([`rules_by_category`]), so everything derived from
-/// it — the valid rule IDs, the reference page, `select`/`ignore` resolution —
+/// it — the valid rule IDs, the reference page, rule selection —
 /// is written once and sees both grammars. Dispatch is the only place the
 /// distinction matters, and [`ResolvedRules`] splits it exactly once.
 pub enum AnyRule {
@@ -501,7 +501,7 @@ impl AnyRule {
     }
 }
 
-/// The rule IDs running in a pass, after `select`/`ignore`. Lets a rule tell
+/// The rule IDs running in a pass, after rule selection. Lets a rule tell
 /// "this rule ran and found nothing" from "this rule never ran" — the
 /// distinction between a stale suppression and a dormant one.
 #[derive(Debug, Clone, Default)]
@@ -886,19 +886,20 @@ impl ResolvedRules {
         &self.enabled
     }
 
-    /// Build the rule set honoring `select` / `ignore` from `LintConfig`.
+    /// Build the rule set honoring `select`, `extend-select`, and `ignore`.
     ///
     /// Resolution order:
     /// 1. Start with all rules whose `default_enabled()` is `true`, unless
     ///    `select` is set (then start with the listed rules instead).
-    /// 2. Subtract anything in `ignore`.
-    /// 3. Unknown rule IDs in `select` or `ignore` are returned via the second
+    /// 2. Add anything in `extend-select`.
+    /// 3. Subtract anything in `ignore`.
+    /// 4. Unknown rule IDs in any of these lists are returned via the second
     ///    element of the tuple so the caller can surface them.
     ///
     /// `config.rules` (the `[lint.rules.<id>]` tables) is carried through onto
     /// the result, reaching rules via [`RuleContext::config`]. Unknown *rule
     /// tables* are rejected earlier, when the config is parsed — unlike unknown
-    /// IDs in `select`/`ignore`, which are data and so surface here.
+    /// IDs in the selection lists, which are data and so surface here.
     pub fn resolve(config: &LintConfig) -> (Self, Vec<String>) {
         let select = config.select.as_deref();
         let ignore = &config.ignore;
@@ -906,19 +907,26 @@ impl ResolvedRules {
         // rather than calling `all_rule_ids()` (a second `all_rules()`).
         let all = all_rules();
         let mut unknown = Vec::new();
-        for id in select.iter().flat_map(|v| v.iter()).chain(ignore.iter()) {
-            if !all.iter().any(|r| r.id() == id.as_str()) {
+        for id in select
+            .iter()
+            .flat_map(|v| v.iter())
+            .chain(&config.extend_select)
+            .chain(ignore)
+        {
+            if !all.iter().any(|r| r.id() == id.as_str()) && !unknown.contains(id) {
                 unknown.push(id.clone());
             }
         }
-        let mut chosen: Vec<AnyRule> = match select {
-            Some(picks) => all
-                .into_iter()
-                .filter(|r| picks.iter().any(|p| p == r.id()))
-                .collect(),
-            None => all.into_iter().filter(|r| r.default_enabled()).collect(),
-        };
-        chosen.retain(|r| !ignore.iter().any(|i| i == r.id()));
+        let chosen = all
+            .into_iter()
+            .filter(|rule| {
+                let selected = match select {
+                    Some(picks) => picks.iter().any(|id| id == rule.id()),
+                    None => rule.default_enabled(),
+                } || config.extend_select.iter().any(|id| id == rule.id());
+                selected && !ignore.iter().any(|id| id == rule.id())
+            })
+            .collect();
         (
             Self::with_config(chosen, config.rules.clone(), config.compat.clone()),
             unknown,
@@ -1127,6 +1135,44 @@ pub fn default_symbol_provider() -> CompositeProvider {
 mod tests {
     use super::*;
     use crate::linter::diagnostic::ViolationData;
+
+    #[test]
+    fn extend_select_resolves_both_grammars_without_duplicates() {
+        let config = LintConfig {
+            select: Some(vec!["equals-na".into()]),
+            extend_select: vec![
+                "unused-dependency".into(),
+                "equals-na".into(),
+                "unused-dependency".into(),
+            ],
+            ..Default::default()
+        };
+        let (rules, unknown) = ResolvedRules::resolve(&config);
+        assert!(unknown.is_empty());
+        assert_eq!(rules.rules.len(), 1);
+        assert_eq!(rules.dcf_rules.len(), 1);
+        assert!(rules.enabled().contains("equals-na"));
+        assert!(rules.enabled().contains("unused-dependency"));
+    }
+
+    #[test]
+    fn extend_select_reports_unknown_ids_once_in_first_seen_order() {
+        let config = LintConfig {
+            select: Some(vec!["unknown-base".into()]),
+            extend_select: vec![
+                "unknown-extension".into(),
+                "unknown-base".into(),
+                "unknown-extension".into(),
+            ],
+            ignore: vec!["unknown-extension".into(), "unknown-ignore".into()],
+            ..Default::default()
+        };
+        let (_, unknown) = ResolvedRules::resolve(&config);
+        assert_eq!(
+            unknown,
+            ["unknown-base", "unknown-extension", "unknown-ignore"]
+        );
+    }
 
     /// A rule that subscribes to every `CALL_EXPR` and emits a finding carrying
     /// the *placeholder* severity (`Default::default()` == `Warning`). Its
