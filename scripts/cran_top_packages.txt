@@ -222,6 +222,7 @@ ggtext
 ggthemes
 gh
 gitcreds
+gld
 glmmTMB
 glmnet
 globals
@@ -494,6 +495,7 @@ spatstat.univar
 spatstat.utils
 spdep
 spelling
+stars
 statmod
 stringdist
 stringi
