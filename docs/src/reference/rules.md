@@ -50,6 +50,7 @@ so this page never drifts from the rules' actual behavior.
 - [`pipe-return`](#pipe-return)
 - [`bare-return`](#bare-return)
 - [`function-return-assignment`](#function-return-assignment)
+- [`partial-argument-match`](#partial-argument-match)
 - [`repeat`](#repeat)
 - [`undesirable-function`](#undesirable-function)
 - [`for-loop-index`](#for-loop-index)
@@ -875,6 +876,28 @@ warning: function-return-assignment
 1 | f <- function() return(result <- compute())
   |                        ^^^^^^^^^^^^^^^^^^^ assignment inside `return()` has a side effect
   = help: Move the assignment before `return()` or return the value directly.
+```
+
+### `partial-argument-match`
+
+Flag successful partial argument-name matches to statically resolved local and package-local closures. Use the full formal name so an API addition cannot make the abbreviation ambiguous or redirect it to another argument. Exact matches and names captured by `...` are left alone. Unknown callees, reassignments, conditional definitions, dispatch, forwarded `...`, and pipe calls are skipped. Indexed package functions are not checked yet. The name-only fix is unsafe because functions can inspect the original call's argument names.
+
+This rule is **enabled by default**.
+
+Spell out the formal name instead of relying on its prefix:
+
+```r
+f <- function(alpha) alpha
+f(al = 1)
+```
+
+```text
+warning: partial-argument-match
+ --> example.R:2:3
+  |
+2 | f(al = 1)
+  |   ^^ argument `al` partially matches `alpha`
+  = help: Use the full argument name `alpha`.
 ```
 
 ### `repeat`

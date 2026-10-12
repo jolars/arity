@@ -447,6 +447,82 @@ pub fn match_args_to_formals<'a, T: AsRef<str>>(
     matched
 }
 
+/// A call whose supplied arguments cannot be matched to a closure signature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArgumentMatchError {
+    DuplicateFormal,
+    DuplicateArgument,
+    AmbiguousPartial,
+    UnmatchedName,
+    ExcessPositional,
+}
+
+/// Match a complete, statically known argument list, rejecting invalid calls.
+/// Unlike [`match_args_to_formals`], this is suitable for diagnostics. Missing
+/// formals are allowed: R closures may deliberately leave promises unforced.
+pub fn checked_match_args_to_formals<'a, T: AsRef<str>>(
+    names: &[Option<SmolStr>],
+    formals: &'a [T],
+) -> Result<Vec<Option<&'a str>>, ArgumentMatchError> {
+    let dots = formals.iter().position(|f| f.as_ref() == "...");
+    let boundary = dots.unwrap_or(formals.len());
+    let mut seen = HashSet::new();
+    for formal in formals {
+        if !seen.insert(formal.as_ref()) {
+            return Err(ArgumentMatchError::DuplicateFormal);
+        }
+    }
+    let mut exact = vec![false; formals.len()];
+    let mut supplied = vec![false; names.len()];
+    for (i, name) in names.iter().enumerate() {
+        let Some(name) = name else { continue };
+        if let Some(j) = formals
+            .iter()
+            .position(|f| f.as_ref() != "..." && f.as_ref() == name.as_str())
+        {
+            if exact[j] {
+                return Err(ArgumentMatchError::DuplicateArgument);
+            }
+            exact[j] = true;
+            supplied[i] = true;
+        }
+    }
+    let mut partial = vec![false; formals.len()];
+    for (i, name) in names.iter().enumerate() {
+        let Some(name) = name else { continue };
+        if supplied[i] {
+            continue;
+        }
+        // Partial matches do not remove candidates for subsequent partial
+        // matches. Only the exact pass can disambiguate another argument.
+        let mut candidates = (0..boundary).filter(|&j| {
+            !exact[j] && !name.is_empty() && formals[j].as_ref().starts_with(name.as_str())
+        });
+        match (candidates.next(), candidates.next()) {
+            (Some(_), Some(_)) => return Err(ArgumentMatchError::AmbiguousPartial),
+            (Some(j), None) => {
+                if partial[j] {
+                    return Err(ArgumentMatchError::DuplicateArgument);
+                }
+                partial[j] = true;
+            }
+            (None, _) if dots.is_none() => return Err(ArgumentMatchError::UnmatchedName),
+            _ => {}
+        }
+    }
+    let available = (0..boundary).filter(|&j| !exact[j] && !partial[j]).count();
+    if dots.is_none() && names.iter().filter(|name| name.is_none()).count() > available {
+        return Err(ArgumentMatchError::ExcessPositional);
+    }
+    let mut matched = match_args_to_formals(names, formals);
+    for (name, formal) in names.iter().zip(&mut matched) {
+        if name.as_ref().is_some_and(|name| name.is_empty()) {
+            *formal = None;
+        }
+    }
+    Ok(matched)
+}
+
 /// Whether the argument bound to formal `name` of a model-fitting call is
 /// evaluated in the model frame. `data` itself is *not* one of these: it names
 /// the data frame and must resolve to a real binding.
@@ -740,6 +816,70 @@ const PACKAGE_LISTS: &[(&str, &str)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_argument_matching_rejects_invalid_calls() {
+        for (names, formals, error) in [
+            (
+                vec![Some("al")],
+                vec!["alpha", "alpha"],
+                ArgumentMatchError::DuplicateFormal,
+            ),
+            (
+                vec![Some("alpha"), Some("alpha")],
+                vec!["alpha"],
+                ArgumentMatchError::DuplicateArgument,
+            ),
+            (
+                vec![Some("a"), Some("al")],
+                vec!["alpha"],
+                ArgumentMatchError::DuplicateArgument,
+            ),
+            (
+                vec![Some("f"), Some("fo")],
+                vec!["fumble", "fooey"],
+                ArgumentMatchError::AmbiguousPartial,
+            ),
+            (
+                vec![Some("other")],
+                vec!["alpha"],
+                ArgumentMatchError::UnmatchedName,
+            ),
+            (
+                vec![Some("al"), None],
+                vec!["alpha"],
+                ArgumentMatchError::ExcessPositional,
+            ),
+        ] {
+            let names: Vec<_> = names
+                .into_iter()
+                .map(|name| name.map(SmolStr::new))
+                .collect();
+            assert_eq!(checked_match_args_to_formals(&names, &formals), Err(error));
+        }
+    }
+
+    #[test]
+    fn checked_argument_matching_respects_exact_precedence_and_dots() {
+        let names = [Some(SmolStr::new("f")), Some(SmolStr::new("fooey")), None];
+        assert_eq!(
+            checked_match_args_to_formals(&names, &["fumble", "fooey", "..."]),
+            Ok(vec![Some("fumble"), Some("fooey"), None])
+        );
+        let names = [
+            Some(SmolStr::new("al")),
+            Some(SmolStr::new("om")),
+            Some(SmolStr::new("omega")),
+        ];
+        assert_eq!(
+            checked_match_args_to_formals(&names, &["alpha", "...", "omega"]),
+            Ok(vec![Some("alpha"), None, Some("omega")])
+        );
+        assert_eq!(
+            checked_match_args_to_formals(&[Some(SmolStr::new(""))], &["alpha", "..."]),
+            Ok(vec![None])
+        );
+    }
 
     #[test]
     fn knows_common_base_names() {

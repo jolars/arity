@@ -26,6 +26,8 @@ pub struct PromiseForward {
 #[derive(Debug, Clone, Default, PartialEq, Eq, salsa::SalsaValue)]
 pub struct FunctionPromiseSeed {
     pub formals: Vec<String>,
+    /// A unique, unconditional closure signature, suitable for diagnostics.
+    pub signature_known: bool,
     pub directly_eager: BTreeSet<String>,
     pub opaque: BTreeSet<String>,
     /// Deduplicated and order-independent so that a second identical
@@ -37,7 +39,16 @@ pub struct FunctionPromiseSeed {
 #[derive(Debug, Clone, Default, PartialEq, Eq, salsa::SalsaValue)]
 pub struct FunctionPromiseSummary {
     pub formals: Vec<String>,
+    pub signature_known: bool,
     pub eager: BTreeSet<String>,
+}
+
+/// Range-free per-file evidence, including mutations that may affect a closure
+/// defined in another file of the same package.
+#[derive(Debug, Clone, Default, PartialEq, Eq, salsa::SalsaValue)]
+pub struct FilePromiseSeeds {
+    pub functions: BTreeMap<String, FunctionPromiseSeed>,
+    pub dynamic_bindings: bool,
 }
 
 impl FunctionPromiseSummary {
@@ -60,10 +71,8 @@ pub struct PackagePromiseIndex {
     pub by_root: BTreeMap<PathBuf, PromiseSummaries>,
 }
 
-pub fn file_promise_seeds(
-    model: &SemanticModel,
-    root: &SyntaxNode,
-) -> BTreeMap<String, FunctionPromiseSeed> {
+pub fn file_promise_seeds(model: &SemanticModel, root: &SyntaxNode) -> FilePromiseSeeds {
+    let dynamic_bindings = crate::semantic::calls::has_dynamic_bindings(model);
     let mut out = BTreeMap::new();
     for node in root
         .descendants()
@@ -88,7 +97,21 @@ pub fn file_promise_seeds(
         let Some(function) = FunctionExpr::cast(value) else {
             continue;
         };
-        let seed = seed_function(model, root, &function);
+        let mut seed = seed_function(model, root, &function);
+        seed.signature_known = !dynamic_bindings
+            && model
+                .bindings()
+                .iter()
+                .enumerate()
+                .find(|(_, binding)| binding.def_range == name_token.text_range())
+                .is_some_and(|(index, _)| {
+                    crate::semantic::calls::stable_closure(
+                        model,
+                        root,
+                        BindingId::from_index(index),
+                    )
+                    .is_some()
+                });
         let name = assignment
             .target_name()
             .expect("a name token has a name")
@@ -109,7 +132,10 @@ pub fn file_promise_seeds(
             out.entry(binding.name.to_string()).or_default();
         }
     }
-    out
+    FilePromiseSeeds {
+        functions: out,
+        dynamic_bindings,
+    }
 }
 
 fn seed_function(
@@ -305,6 +331,7 @@ pub(crate) fn solve_package(seeds: BTreeMap<String, FunctionPromiseSeed>) -> Pro
                 name.clone(),
                 FunctionPromiseSummary {
                     formals: seed.formals.clone(),
+                    signature_known: seed.signature_known,
                     eager: BTreeSet::new(),
                 },
             )

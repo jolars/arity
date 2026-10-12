@@ -7,6 +7,7 @@
 
 pub mod binding;
 pub mod builder;
+pub(crate) mod calls;
 pub mod cfg;
 mod interpolation;
 pub mod scope;
@@ -21,10 +22,11 @@ pub use binding::{Binding, BindingId, BindingKind};
 pub use cfg::{BasicBlock, BlockId, ControlFlowGraph, FileControlFlow, Terminator};
 pub use scope::{Scope, ScopeId, ScopeKind};
 pub use symbols::{
-    LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider, implicit_attached_packages,
-    is_data_masking_callee, is_data_table_arg_name, is_data_table_constructor,
-    is_data_table_pronoun, is_model_frame_arg, is_model_frame_arg_prefix, is_model_frame_callee,
-    match_args_to_formals, meta_package_members, model_frame_formals,
+    LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider, checked_match_args_to_formals,
+    implicit_attached_packages, is_data_masking_callee, is_data_table_arg_name,
+    is_data_table_constructor, is_data_table_pronoun, is_model_frame_arg,
+    is_model_frame_arg_prefix, is_model_frame_callee, match_args_to_formals, meta_package_members,
+    model_frame_formals,
 };
 
 use crate::syntax::SyntaxNode;
@@ -123,6 +125,7 @@ pub struct SemanticModel {
     /// `undefined-symbol` gates the whole file when set, since any otherwise-
     /// unresolved bare name might be one of those opaquely-introduced bindings.
     attaches_opaque_env: bool,
+    signature_effects: calls::SignatureEffects,
 }
 
 impl SemanticModel {
@@ -272,7 +275,7 @@ impl SemanticModel {
     /// execution frame) into it. Returns `scope` itself when it is already a
     /// frame root. Distinct from the builder's `enclosing_function_or_file`,
     /// which steps *past* a function (for `<<-` semantics).
-    fn frame_scope(&self, scope: ScopeId) -> ScopeId {
+    pub(crate) fn frame_scope(&self, scope: ScopeId) -> ScopeId {
         let mut current = scope;
         loop {
             match self.scope(current).kind {

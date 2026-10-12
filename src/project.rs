@@ -35,8 +35,8 @@ pub use graph::{
 };
 pub use native::{dynlib_bound_names, registered_routines};
 pub use promises::{
-    FunctionPromiseSeed, FunctionPromiseSummary, PackagePromiseIndex, PromiseSummaries,
-    file_promise_seeds,
+    FilePromiseSeeds, FunctionPromiseSeed, FunctionPromiseSummary, PackagePromiseIndex,
+    PromiseSummaries, file_promise_seeds,
 };
 pub use roxygen::{
     ParamDoc, TopicMember, documented_binding_name, documented_function, file_roxygen_topics,

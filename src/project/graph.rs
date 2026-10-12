@@ -927,6 +927,7 @@ pub fn project_promises(db: &dyn IncrementalDb) -> PackagePromiseIndex {
     });
     let mut seeds_by_root: BTreeMap<PathBuf, BTreeMap<String, FunctionPromiseSeed>> =
         BTreeMap::new();
+    let mut dynamic_roots = BTreeSet::new();
     for member in &workspace_project(db).members {
         let Some(root) = &member.package_root else {
             continue;
@@ -935,7 +936,11 @@ pub fn project_promises(db: &dyn IncrementalDb) -> PackagePromiseIndex {
             continue;
         }
         let package = seeds_by_root.entry(root.clone()).or_default();
-        for (name, seed) in file_promise_seeds(db, member.file) {
+        let file_seeds = file_promise_seeds(db, member.file);
+        if file_seeds.dynamic_bindings {
+            dynamic_roots.insert(root.clone());
+        }
+        for (name, seed) in &file_seeds.functions {
             if package.insert(name.clone(), seed.clone()).is_some() {
                 package.insert(name.clone(), FunctionPromiseSeed::default());
             }
@@ -944,7 +949,14 @@ pub fn project_promises(db: &dyn IncrementalDb) -> PackagePromiseIndex {
     PackagePromiseIndex {
         by_root: seeds_by_root
             .into_iter()
-            .map(|(root, seeds)| (root, solve_package(seeds)))
+            .map(|(root, mut seeds)| {
+                if dynamic_roots.contains(&root) {
+                    for seed in seeds.values_mut() {
+                        seed.signature_known = false;
+                    }
+                }
+                (root, solve_package(seeds))
+            })
             .collect(),
     }
 }

@@ -2685,6 +2685,165 @@ fn diagnostics(src: &str) -> Vec<arity::linter::Diagnostic> {
     check_document(Path::new("t.R"), src, &LintConfig::default()).expect("lint should succeed")
 }
 
+#[test]
+fn partial_argument_match_reports_by_default_and_expands_only_the_name() {
+    for (name, expanded) in [
+        ("al", "alpha"),
+        ("`al`", "`alpha`"),
+        ("\"al\"", "\"alpha\""),
+    ] {
+        let src = format!("f <- function(alpha) alpha\nf({name} = # keep\n  1)\n");
+        let findings: Vec<_> = diagnostics(&src)
+            .into_iter()
+            .filter(|d| d.rule == "partial-argument-match")
+            .collect();
+        assert_eq!(findings.len(), 1, "{src}: {findings:?}");
+        let d = &findings[0];
+        assert_eq!(
+            &src[usize::from(d.range.start())..usize::from(d.range.end())],
+            name
+        );
+        assert_eq!(d.severity, arity::linter::Severity::Warning);
+        let fix = d.fix.as_ref().expect("name expansion");
+        assert_eq!(fix.applicability, Applicability::Unsafe);
+        assert_eq!(
+            apply_fixes(&src, std::slice::from_ref(fix), false).output,
+            src
+        );
+        let fixed = apply_fixes(&src, std::slice::from_ref(fix), true).output;
+        assert_eq!(
+            fixed,
+            src.replace(&format!("f({name}"), &format!("f({expanded}"))
+        );
+        let parsed = arity::parser::parse(&fixed);
+        assert!(parsed.diagnostics.is_empty());
+        assert_eq!(parsed.cst.to_string(), fixed);
+        assert!(
+            diagnostics(&fixed)
+                .iter()
+                .all(|d| d.rule != "partial-argument-match")
+        );
+    }
+}
+
+#[test]
+fn partial_argument_match_handles_exact_names_first_and_the_dots_boundary() {
+    for src in [
+        "f <- function(alpha, alpine) alpha\nf(al = 1, alpine = 2)\n",
+        "f <- function(alpha, ..., omega = 1) alpha\nf(al = 1, om = 2)\n",
+        "outer <- function() { f <- function(alpha) alpha; f(al = 1) }\n",
+        "f <- function(alpha) alpha\ng <- function() f(al = 1)\n",
+        "f <- function(`alpha beta`) 1\nf(`alpha b` = 1)\n",
+    ] {
+        assert_eq!(
+            diagnostics(src)
+                .iter()
+                .filter(|d| d.rule == "partial-argument-match")
+                .count(),
+            1,
+            "{src}"
+        );
+    }
+}
+
+#[test]
+fn partial_argument_match_preserves_non_syntactic_formals() {
+    for (formal, name, expanded) in [
+        ("`alpha beta`", "al", "`alpha beta`"),
+        ("`function`", "fun", "`function`"),
+        ("`alpha beta`", "'al'", "'alpha beta'"),
+    ] {
+        let src = format!("f <- function({formal}) 1\nf({name} = 1)\n");
+        let fix = diagnostics(&src)
+            .into_iter()
+            .find(|d| d.rule == "partial-argument-match")
+            .and_then(|d| d.fix)
+            .expect("partial match has a fix");
+        let fixed = apply_fixes(&src, &[fix], true).output;
+        assert_eq!(
+            fixed,
+            src.replace(&format!("f({name}"), &format!("f({expanded}"))
+        );
+        let parsed = arity::parser::parse(&fixed);
+        assert!(parsed.diagnostics.is_empty(), "{fixed}");
+        assert_eq!(parsed.cst.to_string(), fixed);
+    }
+}
+
+#[test]
+fn partial_argument_match_withholds_uncertain_or_invalid_calls() {
+    for src in [
+        "f <- function(alpha) alpha\nf(alpha = 1)\n",
+        "f <- function(alpha) alpha\nf(1)\n",
+        "f(al = 1)\n",
+        "f <- function(alpha, alpine) alpha\nf(al = 1)\n",
+        "f <- function(fumble, fooey) 1\nf(f = 1, fo = 2)\n",
+        "f <- function(alpha) alpha\nf(a = 1, al = 2)\n",
+        "f <- function(alpha) alpha\nf(alpha = 1, al = 2)\n",
+        "f <- function(alpha) alpha\nf(alpha = 1, alpha = 2, al = 3)\n",
+        "f <- function(alpha) alpha\nf(al = 1, extra = 2)\n",
+        "f <- function(alpha) alpha\nf(al = 1, 2)\n",
+        "f <- function(..., alpha = 1) alpha\nf(al = 1)\n",
+        "f <- function(...) 1\nf(al = 1)\n",
+        "f <- function(alpha) alpha\ng <- function(...) f(al = 1, ...)\n",
+        "f <- function(alpha) alpha\n1 |> f(al = 2)\n",
+        "f <- function(alpha) alpha\n1 %>% f(al = 2)\n",
+        "f <- function(alpha) alpha\nf <- function(al) al\nf(al = 1)\n",
+        "f <- function(alpha) alpha\ng <- function(f) f(al = 1)\n",
+        "if (cond) f <- function(alpha) alpha\nf(al = 1)\n",
+        "g <- function(x = (f <- function(alpha) alpha)) f(al = 1)\n",
+        "g <- function(x = f <- function(alpha) alpha) f(al = 1)\n",
+        "f(al = 1)\nf <- function(alpha) alpha\n",
+        "f <- function(alpha) UseMethod(\"f\")\nf(al = 1)\n",
+        "f <- function(alpha) base::UseMethod(\"f\")\nf(al = 1)\n",
+        "f <- function(alpha) `UseMethod`(\"f\")\nf(al = 1)\n",
+        "f <- function(alpha) { \"UseMethod\"(\"f\") }\nf(al = 1)\n",
+        "f <- function(alpha) alpha\nassign(\"f\", other)\nf(al = 1)\n",
+        "f <- function(alpha) alpha\n\"assign\"(\"f\", other)\nf(al = 1)\n",
+        "f <- function(alpha) alpha\ng <- function() f <<- other\nf(al = 1)\n",
+        "f <- function(alpha) alpha\nformals(f) <- alist(al = )\nf(al = 1)\n",
+        "f <- function(`alpha\\x20beta`) 1\nf(al = 1)\n",
+        "f <- function(alpha) alpha\nother::f(al = 1)\n",
+    ] {
+        let findings = diagnostics(src);
+        assert!(
+            findings.iter().all(|d| d.rule != "partial-argument-match"),
+            "{src}: {findings:?}"
+        );
+    }
+}
+
+#[test]
+fn partial_argument_match_resolves_package_local_signatures() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
+    let r_dir = dir.path().join("R");
+    std::fs::create_dir(&r_dir).unwrap();
+    std::fs::write(r_dir.join("a.R"), "helper <- function(alpha, ...) alpha\n").unwrap();
+    std::fs::write(r_dir.join("b.R"), "caller <- function() helper(al = 1)\n").unwrap();
+    let result = check_paths(&[dir.path().to_path_buf()]).unwrap();
+    assert!(rules_for(&result, "b.R").contains(&"partial-argument-match"));
+    for definition in [
+        "helper <- function(alpha) UseMethod(\"helper\")\n",
+        "if (cond) helper <- function(alpha) alpha\n",
+        "helper <- function(alpha) alpha\nhelper <- other\n",
+    ] {
+        std::fs::write(r_dir.join("a.R"), definition).unwrap();
+        let result = check_paths(&[dir.path().to_path_buf()]).unwrap();
+        assert!(
+            !rules_for(&result, "b.R").contains(&"partial-argument-match"),
+            "{definition}"
+        );
+    }
+    std::fs::write(r_dir.join("a.R"), "helper <- function(alpha) alpha\n").unwrap();
+    std::fs::write(r_dir.join("c.R"), "assign(\"helper\", other)\n").unwrap();
+    let result = check_paths(&[dir.path().to_path_buf()]).unwrap();
+    assert!(!rules_for(&result, "b.R").contains(&"partial-argument-match"));
+    std::fs::write(r_dir.join("c.R"), "helper <- function(al) al\n").unwrap();
+    let result = check_paths(&[r_dir.join("a.R"), r_dir.join("b.R")]).unwrap();
+    assert!(!rules_for(&result, "b.R").contains(&"partial-argument-match"));
+}
+
 /// A `LintConfig` carrying `[compat]` floors, as `Config::parse_str` would
 /// mirror them onto the lint section.
 fn compat_config(r: Option<&str>, roxygen2: Option<&str>) -> LintConfig {
@@ -6286,6 +6445,8 @@ fn assert_fixed_output_is_clean(input: &str) {
 #[test]
 fn fixed_output_is_parseable_and_clean() {
     let cases = [
+        "f <- function(alpha) alpha\nf(al = 1)\n",
+        "f <- function(alpha, ...) alpha\nf(`al` = 1, extra = 2)\n",
         "f <- function(x) { print(x); return }; f(1)\n",
         "f <- function(x) if (x) return else 42; f(TRUE)\n",
         // meta/suppression rules (misnamed rename, outdated delete, deprecated

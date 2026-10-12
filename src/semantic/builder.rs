@@ -576,6 +576,9 @@ fn walk_replacement_target(ctx: &mut BuildCtx<'_>, target: &SyntaxNode, scope: S
     let Some(name) = call.callee_name() else {
         return false;
     };
+    ctx.model
+        .signature_effects
+        .record(&format!("{name}<-"), call.syntax().text_range());
     push_ident(
         ctx,
         IdentRef {
@@ -593,6 +596,11 @@ fn walk_replacement_target(ctx: &mut BuildCtx<'_>, target: &SyntaxNode, scope: S
 }
 
 fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
+    if ctx.quote_depth == 0
+        && let Some(name) = CallExpr::cast(node.clone()).and_then(|call| call.callee_name())
+    {
+        ctx.model.signature_effects.record(&name, node.text_range());
+    }
     if let Some(call) = CallExpr::cast(node.clone()) {
         ctx.model.use_only_reads.extend(
             crate::semantic::interpolation::use_only_reads(&call)

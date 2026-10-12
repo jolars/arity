@@ -135,14 +135,15 @@ rules, and keep all production analysis static.
   rebinding, dispatch, forwarded `...`, and pipe insertion/placeholders
   require conservative handling. No general autofix.
 
-- [ ] `partial-argument-match` (opt-in): report a successful unique partial
+- [x] `partial-argument-match` (default on): report a successful unique partial
   match, such as `f <- function(alpha) alpha; f(al = 1)`, and suggest the
   full formal name. R accepts this and returns `1`; this is API robustness,
-  not a runtime error. Build on the same matcher as call validation. Offer a
-  name-only fix only with a stable, resolved signature and no ambiguity.
-  RStudio skips general validation for callees with `...`; arity can
-  eventually handle partial matches before `...` without treating names
-  captured by it as errors.
+  not a runtime error. Landed as a suspicious, semantic warning for stable
+  local and package-local closures, using checked argument matching with exact
+  names first and partial matches before `...`. Names captured by `...` are
+  left alone. Skip uncertain signatures, dispatch, forwarded dots, and pipes.
+  The name-only fix is unsafe because a closure can inspect the original call.
+  Indexed package signatures remain follow-up work.
 
 - [ ] Refine `missing-argument` to report trailing empty arguments for resolved
   callees known to reject them. R parses `c(1,)` but evaluating it errors
