@@ -154,7 +154,7 @@ rules, and keep all production analysis static.
   unknown. The earlier lintr audit's trailing-comma exemption remains
   correct syntactically but is too broad semantically.
 
-- [ ] Extend `sprintf` with a portability warning for a `0` flag plus width on
+- [x] Extend `sprintf` with a portability warning for a `0` flag plus width on
   `%s`, and cover resolved `gettextf()` as well. RStudio tests `%05s`,
   `%0*s`, positional fields, precision, escaped `%%`, and partial `fmt`
   names. On this Linux R, `sprintf("%05s", "x")` yields four spaces followed
@@ -165,6 +165,8 @@ rules, and keep all production analysis static.
   conversion; neither is a general safe rewrite. Also fix format-argument
   matching before extending coverage: the current rule recognizes exact
   `fmt` and positional input but not valid partial names `f` and `fm`.
+  Implemented with conversion-level source spans, exact-before-partial
+  matching, translation controls excluded from value counts, and no padding fix.
 
 - [ ] `confusable-identifier` (opt-in initially): report suspicious ASCII
   lookalikes in unquoted identifiers, with the code point and likely ASCII

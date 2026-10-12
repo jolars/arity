@@ -3889,6 +3889,10 @@ fn sprintf_collapses_literal_only_call() {
         fixed_output("x <- sprintf(\"literal %% text\")\n", "sprintf"),
         "x <- \"literal % text\"\n"
     );
+    assert_eq!(
+        fixed_output("x <- sprintf(fm = \"literal %% text\")\n", "sprintf"),
+        "x <- \"literal % text\"\n"
+    );
 }
 
 #[test]
@@ -3909,6 +3913,195 @@ fn sprintf_ignores_dynamic_and_shadowed_calls() {
     .filter(|d| d.rule == "sprintf")
     .collect();
     assert!(rules.is_empty(), "{rules:?}");
+}
+
+#[test]
+fn sprintf_matches_partial_fmt_after_exact_names() {
+    let source = r#"
+sprintf(f = "%s %s", "x")
+sprintf("x", fm = "%s %s")
+sprintf(fmt = "%s", f = "x")
+sprintf(fm = "x", fmt = "%s")
+sprintf(f = "%s", fm = "%s")
+sprintf(fmt = "%s", fmt = "%s")
+"#;
+    let findings: Vec<_> = diagnostics(source)
+        .into_iter()
+        .filter(|d| d.rule == "sprintf")
+        .collect();
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    assert!(
+        findings
+            .iter()
+            .all(|d| d.message.body.contains("missing argument 2"))
+    );
+}
+
+#[test]
+fn sprintf_warns_on_zero_padded_strings_without_a_fix() {
+    let cases = [
+        ("%05s", "\"x\""),
+        ("%0*s", "5, \"x\""),
+        ("%1$05s", "\"x\""),
+        ("%2$0*1$s", "5, \"x\""),
+        ("%05.2s", "\"xxx\""),
+        ("%05.*s", "2, \"xxx\""),
+        ("%1$05.*2$s", "\"xxx\", 2"),
+        ("%+05s", "\"x\""),
+    ];
+    for (field, values) in cases {
+        for name in ["sprintf", "gettextf"] {
+            let source = format!("{name}(\"prefix {field} suffix\", {values})\n");
+            let findings: Vec<_> = diagnostics(&source)
+                .into_iter()
+                .filter(|d| d.rule == "sprintf")
+                .collect();
+            assert_eq!(findings.len(), 1, "{source}: {findings:?}");
+            let finding = &findings[0];
+            assert!(finding.message.body.contains("platform"), "{finding:?}");
+            assert_eq!(finding.severity, arity::linter::Severity::Warning);
+            assert_eq!(
+                &source[std::ops::Range::<usize>::from(finding.range)],
+                field
+            );
+            assert!(finding.fix.is_none());
+            let suggestion = finding.message.suggestion.as_deref().unwrap();
+            assert!(suggestion.contains("padding") && suggestion.contains("numeric"));
+        }
+    }
+}
+
+#[test]
+fn sprintf_portability_keeps_decoded_source_spans() {
+    let fields = [
+        r"\x2505s",
+        r"\04505s",
+        r"\u002505s",
+        r"\U0000002505s",
+        r"\u{25}05s",
+        r"%\x305s",
+        r"%05\u0073",
+    ];
+    for field in fields {
+        let source = format!("sprintf('é\\t {field}', 'x')\n");
+        let findings: Vec<_> = diagnostics(&source)
+            .into_iter()
+            .filter(|d| d.rule == "sprintf")
+            .collect();
+        assert_eq!(findings.len(), 1, "{source}: {findings:?}");
+        assert!(findings[0].message.body.contains("platform"));
+        assert_eq!(
+            &source[std::ops::Range::<usize>::from(findings[0].range)],
+            field
+        );
+        assert!(findings[0].fix.is_none());
+    }
+}
+
+#[test]
+fn sprintf_portability_scans_each_field_and_literal_format() {
+    let source = r#"sprintf(c("%%05s %05s %0*s", "%1$05.2s"), "x", 5, "y")
+"#;
+    let findings: Vec<_> = diagnostics(source)
+        .into_iter()
+        .filter(|d| d.rule == "sprintf")
+        .collect();
+    assert_eq!(findings.len(), 3, "{findings:?}");
+    let fields: Vec<_> = findings
+        .iter()
+        .map(|d| &source[std::ops::Range::<usize>::from(d.range)])
+        .collect();
+    assert_eq!(fields, ["%05s", "%0*s", "%1$05.2s"]);
+}
+
+#[test]
+fn sprintf_portability_ignores_literal_text_and_numeric_fields() {
+    let source = r#"
+sprintf("05s %s %5s %0s %0.5s", "x", "x", "x", "x")
+sprintf("%%05s %%0*s %%1$05s %s", "x")
+sprintf("\x25\x2505s %s", "x")
+sprintf("\045\0450*s %s", "x")
+sprintf("\u0025\u002505s %s", "x")
+sprintf("%05d %05i %05o %05x %05X %05f %05e %05g %05a", 1, 1, 1, 1, 1, 1, 1, 1, 1)
+sprintf("%0*s", width, "x")
+"#;
+    let findings: Vec<_> = diagnostics(source)
+        .into_iter()
+        .filter(|d| d.rule == "sprintf")
+        .collect();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert!(findings[0].message.body.contains("platform"));
+}
+
+#[test]
+fn gettextf_matches_controls_exactly_and_preserves_translation() {
+    let source = r#"
+gettextf(f = "%05s", "x", domain = NA, trim = FALSE)
+gettextf("%s", "x", domain = NA, trim = FALSE)
+gettextf(fm = "%s %s", "x", domain = NA)
+gettextf("%s %s", "x", dom = NA, tri = FALSE)
+gettextf("%q", "x", domain = NA)
+gettextf("literal %% text", domain = NA)
+"#;
+    let findings: Vec<_> = diagnostics(source)
+        .into_iter()
+        .filter(|d| d.rule == "sprintf")
+        .collect();
+    assert_eq!(findings.len(), 4, "{findings:?}");
+    assert!(findings[0].message.body.contains("platform"));
+    assert!(findings[1].message.body.contains("missing argument 2"));
+    assert!(findings[2].message.body.contains("excess"));
+    assert!(findings[3].message.body.contains("conversion"));
+    assert!(findings.iter().all(|d| d.fix.is_none()));
+}
+
+#[test]
+fn sprintf_portability_requires_resolved_literal_formats() {
+    let source = r#"
+sprintf <- function(...) NULL
+gettextf <- function(...) NULL
+sprintf("%05s", "x")
+gettextf("%05s", "x")
+other::gettextf("%05s", "x")
+"#;
+    assert!(!diagnostics(source).iter().any(|d| d.rule == "sprintf"));
+    let source = "sprintf(fmt, x)\ngettextf(fmt, x)\n";
+    assert!(!diagnostics(source).iter().any(|d| d.rule == "sprintf"));
+}
+
+#[test]
+fn sprintf_portability_accepts_explicit_base_calls_and_partial_formats() {
+    let source = r#"
+sprintf <- function(...) NULL
+gettextf <- function(...) NULL
+base::sprintf(f = "%05s", "x")
+base::gettextf(fm = "%05s", "x", domain = NA)
+base:::gettextf("%05s", "x")
+"#;
+    let findings: Vec<_> = diagnostics(source)
+        .into_iter()
+        .filter(|d| d.rule == "sprintf")
+        .collect();
+    assert_eq!(findings.len(), 3, "{findings:?}");
+    assert!(findings.iter().all(|d| d.message.body.contains("platform")));
+}
+
+#[test]
+fn sprintf_forwarded_dots_do_not_prove_argument_counts() {
+    let source = r#"
+f <- function(...) {
+  sprintf("%s %s", ...)
+  gettextf("%s %s", ..., domain = NA)
+  sprintf("%05s", ...)
+  gettextf("%05s", ..., domain = NA)
+}
+"#;
+    let findings: Vec<_> = diagnostics(source)
+        .into_iter()
+        .filter(|d| d.rule == "sprintf")
+        .collect();
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    assert!(findings.iter().all(|d| d.message.body.contains("platform")));
 }
 
 #[test]
@@ -6144,7 +6337,10 @@ fn fixed_output_is_parseable_and_clean() {
         "rep(x, times = 2, length.out = 10)\n",
         // sprintf (literal-only format collapse; validation findings have no fix)
         "x <- sprintf(\"ready: 100%%\")\n",
+        "x <- sprintf(f = \"ready: 100%%\")\n",
         "sprintf(\"%s %d\", x)\n",
+        "sprintf(\"%05s\", \"x\")\n",
+        "gettextf(\"%0*s\", 5, \"x\", domain = NA)\n",
         // namespace-confirmed call rewrites
         "apply(x, 1, sum)\n",
         "which(grepl(\"a\", x))\n",

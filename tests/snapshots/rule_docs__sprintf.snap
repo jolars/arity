@@ -4,7 +4,7 @@ expression: render_rule_doc(&rule)
 ---
 ### `sprintf`
 
-Validate literal formats passed to base `sprintf()`: flag invalid conversions, definitely missing or excess arguments, and a call whose format contains no fields. The literal-only case has a safe autofix.
+Validate literal formats passed to base `sprintf()` and `gettextf()`: flag invalid conversions, definitely missing or excess arguments, and platform-dependent zero padding of strings (`0` plus a width on `%s`). Use explicit string padding or an appropriate numeric conversion instead; neither is a general safe rewrite. A literal-only `sprintf()` call has a safe autofix. Literal-only `gettextf()` calls retain translation.
 
 This rule is **enabled by default**.
 
@@ -27,4 +27,34 @@ After applying the fix:
 
 ```r
 label <- "ready: 100%"
+```
+
+Zero padding of strings depends on the platform:
+
+```r
+label <- sprintf(f = "%05s", "x")
+```
+
+```text
+warning: sprintf
+ --> example.R:1:23
+  |
+1 | label <- sprintf(f = "%05s", "x")
+  |                       ^^^^ `sprintf()` string conversion `%05s` has platform-dependent zero padding
+  = help: Use explicit string padding or an appropriate numeric conversion.
+```
+
+The same portability check applies to translated formats:
+
+```r
+label <- gettextf("%0*s", 5, "x", domain = NA)
+```
+
+```text
+warning: sprintf
+ --> example.R:1:20
+  |
+1 | label <- gettextf("%0*s", 5, "x", domain = NA)
+  |                    ^^^^ `gettextf()` string conversion `%0*s` has platform-dependent zero padding
+  = help: Use explicit string padding or an appropriate numeric conversion.
 ```
