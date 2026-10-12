@@ -8311,3 +8311,57 @@ fn bare_return_ignores_values_shadowing_and_quoted_code() {
         );
     }
 }
+
+#[test]
+fn missing_argument_rejecting_base_calls() {
+    let src = "list(1,)\nbase::list(x = )\nc(1,)\nbase::c(x = )\n";
+    let findings: Vec<_> = diagnostics(src)
+        .into_iter()
+        .filter(|d| d.rule == "missing-argument")
+        .collect();
+    assert_eq!(findings.len(), 4, "{findings:?}");
+    assert!(findings.iter().all(|d| d.fix.is_none()));
+}
+
+#[test]
+fn missing_argument_preserves_uncertain_trailing_holes() {
+    for src in [
+        "list <- function(...) 1; list(1,)",
+        "c(x,)",
+        "c(structure(1, class = 'custom'),)",
+        "list(...,)",
+        "expression(1,)",
+        "quote(expr = )",
+        "pkg::list(1,)",
+        "1 |> list(1,)",
+        "x %>% list(1,)",
+        "function(x) missing(x)",
+        "f(x = )",
+    ] {
+        let findings: Vec<_> = diagnostics(src)
+            .into_iter()
+            .filter(|d| d.rule == "missing-argument")
+            .collect();
+        assert!(findings.is_empty(), "{src}: {findings:?}");
+    }
+}
+
+#[test]
+fn missing_argument_rejecting_call_spans_and_duplicates() {
+    for (src, spans) in [
+        ("list(1, # comment\n)", vec![","]),
+        ("list(x = , 1)", vec!["x = "]),
+        ("list(1,,)", vec![",", ","]),
+        ("c(1L, \"x\",)", vec![","]),
+    ] {
+        let findings: Vec<_> = diagnostics(src)
+            .into_iter()
+            .filter(|d| d.rule == "missing-argument")
+            .collect();
+        let actual: Vec<_> = findings
+            .iter()
+            .map(|d| &src[usize::from(d.range.start())..usize::from(d.range.end())])
+            .collect();
+        assert_eq!(actual, spans, "{src}");
+    }
+}

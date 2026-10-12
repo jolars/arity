@@ -293,7 +293,7 @@ if (is.null(x)) handle_null()
 
 ### `missing-argument`
 
-Flag an empty, non-trailing call argument such as `f(a, , b)`. Trailing commas and intentional missing function-formal defaults are excluded.
+Flag empty call arguments, including trailing and named holes in resolved base `list()` calls and `c()` calls with only atomic literal values. Unknown or potentially dispatching callees retain the trailing-hole exemption. Function-formal defaults are excluded.
 
 This rule is **enabled by default**.
 
@@ -309,6 +309,28 @@ warning: missing-argument
   |
 1 | paste("a", , "b")
   |            ^ call contains an empty argument before this comma
+  = help: Supply the intended argument explicitly.
+```
+
+Base list and literal c calls reject trailing or named holes:
+
+```r
+list(1,)
+c(value = )
+```
+
+```text
+warning: missing-argument
+ --> example.R:1:7
+  |
+1 | list(1,)
+  |       ^ base call rejects this empty argument
+  = help: Supply the intended argument explicitly.
+warning: missing-argument
+ --> example.R:2:3
+  |
+2 | c(value = )
+  |   ^^^^^^^^ base call rejects this empty argument
   = help: Supply the intended argument explicitly.
 ```
 

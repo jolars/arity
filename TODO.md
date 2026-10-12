@@ -145,7 +145,7 @@ rules, and keep all production analysis static.
   The name-only fix is unsafe because a closure can inspect the original call.
   Indexed package signatures remain follow-up work.
 
-- [ ] Refine `missing-argument` to report trailing empty arguments for resolved
+- [x] Refine `missing-argument` to report trailing empty arguments for resolved
   callees known to reject them. R parses `c(1,)` but evaluating it errors
   with “argument 2 is empty.” Preserve the exemption for unknown or
   intentionally permissive closures and package APIs. Do not blanket-copy
@@ -153,7 +153,12 @@ rules, and keep all production analysis static.
   supported shape against R, including named holes, special forms, and
   dispatch. No automatic deletion fix, since the intended missing value is
   unknown. The earlier lintr audit's trailing-comma exemption remains
-  correct syntactically but is too broad semantically.
+  correct syntactically but is too broad semantically. Implemented for resolved
+  base `list()`, plus `c()` with only numeric or string literal values, including
+  named holes and comments after a trailing comma. R 4.6.1 confirmed rejection
+  for these shapes and acceptance by permissive closures and `expression()`.
+  Other closures, special forms, potentially dispatching calls, forwarded dots,
+  and pipes retain the trailing-hole exemption. Findings have no fix.
 
 - [x] Extend `sprintf` with a portability warning for a `0` flag plus width on
   `%s`, and cover resolved `gettextf()` as well. RStudio tests `%05s`,
