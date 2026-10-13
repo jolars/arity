@@ -8,6 +8,9 @@
 //! any of the otherwise-unresolved names, so flagging them would be a false
 //! positive.
 
+use std::collections::{BTreeSet, HashMap};
+use std::sync::OnceLock;
+
 use rowan::TextRange;
 use rowan::ast::AstNode as _;
 use smol_str::SmolStr;
@@ -15,7 +18,11 @@ use smol_str::SmolStr;
 use crate::ast::{Arg, CallExpr, HasArgList as _};
 use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
 use crate::linter::rules::{Example, Rule, RuleContext};
-use crate::semantic::{LoadedPackage, PackageOrigin, implicit_attached_packages};
+use crate::semantic::spelling::{bounded_chars, candidate_names, one_edit};
+use crate::semantic::symbols::unbacktick;
+use crate::semantic::{
+    IdentRef, LoadedPackage, PackageOrigin, ScopeId, implicit_attached_packages,
+};
 
 pub struct UndefinedSymbol;
 
@@ -31,14 +38,25 @@ impl Rule for UndefinedSymbol {
          an un-indexed package could export the otherwise-unresolved name. In \
          an analyzed package, a package-local call argument is checked only \
          when its matched formal is proven to evaluate the promise normally; \
-         capture, opaque forwarding, and ambiguous behavior stay silent."
+         capture, opaque forwarding, and ambiguous behavior stay silent.\n\n\
+         Suggest a visible binding or known attached export only when a single \
+         name differs by one insertion, deletion, substitution, or adjacent \
+         transposition. Short names (fewer than four characters), distant or \
+         ambiguous spellings, and searches exceeding a fixed budget receive no \
+         hint. Suggestions do not provide an automatic fix."
     }
 
     fn examples(&self) -> &'static [Example] {
-        &[Example {
-            caption: "`subtotal` resolves to nothing:",
-            source: "total <- subtotal\n",
-        }]
+        &[
+            Example {
+                caption: "`subtotal` resolves to nothing:",
+                source: "total <- subtotal\n",
+            },
+            Example {
+                caption: "A unique close spelling receives a hint:",
+                source: "lenth(1:3)\n",
+            },
+        ]
     }
 
     fn default_severity(&self) -> Severity {
@@ -53,6 +71,7 @@ impl Rule for UndefinedSymbol {
         if ctx.model.attaches_opaque_env() {
             return;
         }
+        let mut suggestions = Suggestions::default();
         match ctx.resolution {
             // Cross-file path: the salsa `external_resolution` query already
             // applied the conservative gates and the project + package masking,
@@ -80,7 +99,13 @@ impl Rule for UndefinedSymbol {
                             &resolution.local_functions,
                         )
                     })
-                    .map(|ident| undefined(&ident.name, ident.range)),
+                    .map(|ident| {
+                        undefined(
+                            &ident.name,
+                            ident.range,
+                            suggestions.find(ctx, ident, resolution.suggestion_exports.as_ref()),
+                        )
+                    }),
             ),
             None => self.run_standalone(ctx, sink),
         }
@@ -196,6 +221,8 @@ impl UndefinedSymbol {
         if ctx.project.is_some_and(|p| p.resolution_incomplete) {
             return;
         }
+        let exports = OnceLock::new();
+        let mut suggestions = Suggestions::default();
         for ident in ctx.model.idents() {
             // A data-masked read may be a data-frame column, not an undefined
             // symbol — never flag it (see the builder's `mask_depth`).
@@ -223,22 +250,115 @@ impl UndefinedSymbol {
             ) {
                 continue;
             }
-            sink.push(undefined(&ident.name, ident.range));
+            let exports = exports.get_or_init(|| candidate_names(ctx.symbols.export_names(loaded)));
+            sink.push(undefined(
+                &ident.name,
+                ident.range,
+                suggestions.find(ctx, ident, exports.as_ref()),
+            ));
         }
     }
 }
 
 /// Build an `undefined-symbol` diagnostic for `name` at `range`.
-fn undefined(name: &str, range: rowan::TextRange) -> Diagnostic {
+fn undefined(name: &str, range: rowan::TextRange, suggestion: Option<SmolStr>) -> Diagnostic {
+    let mut message = ViolationData::new(
+        "undefined-symbol",
+        format!("no in-scope binding or attached package exports `{name}`"),
+    );
+    if let Some(name) = suggestion {
+        message = message.with_suggestion(format!("did you mean `{name}`?"));
+    }
     Diagnostic {
         rule: "undefined-symbol",
         severity: Default::default(),
         path: Default::default(),
         range,
-        message: ViolationData::new(
-            "undefined-symbol",
-            format!("no in-scope binding or attached package exports `{name}`"),
-        ),
+        message,
         fix: None,
+    }
+}
+
+const MAX_COMPARISONS: usize = 65_536;
+const MAX_QUERIES: usize = 256;
+
+struct Suggestions {
+    remaining: usize,
+    cache: HashMap<(ScopeId, SmolStr), Option<SmolStr>>,
+}
+
+impl Default for Suggestions {
+    fn default() -> Self {
+        Self {
+            remaining: MAX_COMPARISONS,
+            cache: HashMap::new(),
+        }
+    }
+}
+
+impl Suggestions {
+    fn find(
+        &mut self,
+        ctx: &RuleContext<'_>,
+        ident: &IdentRef,
+        exports: Option<&BTreeSet<SmolStr>>,
+    ) -> Option<SmolStr> {
+        let key = (ident.scope, ident.name.clone());
+        if let Some(cached) = self.cache.get(&key) {
+            return cached.clone();
+        }
+        if self.cache.len() == MAX_QUERIES {
+            return None;
+        }
+        let result = self.search(ctx, ident, exports);
+        self.cache.insert(key, result.clone());
+        result
+    }
+
+    fn search(
+        &mut self,
+        ctx: &RuleContext<'_>,
+        ident: &IdentRef,
+        exports: Option<&BTreeSet<SmolStr>>,
+    ) -> Option<SmolStr> {
+        let exports = exports?;
+        let query = bounded_chars(unbacktick(&ident.name))?;
+        if query.len() < 4 {
+            return None;
+        }
+        let mut found: Option<SmolStr> = None;
+        let mut consider = |name: &str| -> Option<()> {
+            self.remaining = self.remaining.checked_sub(1)?;
+            let name = unbacktick(name);
+            let Some(chars) = bounded_chars(name) else {
+                return Some(());
+            };
+            if one_edit(&query, &chars) {
+                if found.as_ref().is_some_and(|previous| previous != name) {
+                    return None;
+                }
+                found = Some(SmolStr::new(name));
+            }
+            Some(())
+        };
+        let mut scope = Some(ident.scope);
+        while let Some(id) = scope {
+            // Count scopes too, bounding even a deeply nested empty scope chain.
+            consider("")?;
+            let current = ctx.model.scope(id);
+            for binding in &current.bindings {
+                consider(&ctx.model.binding(*binding).name)?;
+            }
+            scope = current.parent;
+        }
+        if let Some(project) = ctx.project {
+            for name in project.visible_layer().iter() {
+                consider(name)?;
+            }
+        }
+        for name in exports {
+            consider(name)?;
+        }
+        found
     }
 }

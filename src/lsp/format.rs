@@ -341,7 +341,10 @@ pub(crate) fn to_lsp_diagnostic(
         severity: Some(severity),
         code: Some(NumberOrString::String(d.rule.to_string())),
         source: Some("arity".to_string()),
-        message: d.message.body.clone(),
+        message: match &d.message.suggestion {
+            Some(suggestion) => format!("{}\n\n{suggestion}", d.message.body),
+            None => d.message.body.clone(),
+        },
         ..Default::default()
     }
 }
@@ -467,7 +470,7 @@ mod tests {
         use crate::linter::ViolationData;
         // "line0\nWARN\n": the finding spans bytes 6..10 (the second line).
         let text = "line0\nWARN\n";
-        let findings = vec![Diagnostic {
+        let mut findings = vec![Diagnostic {
             rule: "demo-rule",
             severity: Severity::Warning,
             path: test_path().to_path_buf(),
@@ -484,6 +487,9 @@ mod tests {
         assert_eq!(item.source.as_deref(), Some("arity"));
         assert_eq!(item.message, "a demo finding");
         assert!(matches!(&item.code, Some(NumberOrString::String(c)) if c == "demo-rule"));
+        findings[0].message.suggestion = Some("did you mean `length`?".to_owned());
+        let items = findings_to_items(&findings, &buf(text), PositionEncoding::Utf16);
+        assert_eq!(items[0].message, "a demo finding\n\ndid you mean `length`?");
     }
 
     // --- edit geometry ----------------------------------------------------

@@ -137,6 +137,31 @@ pub fn base_names() -> impl Iterator<Item = &'static SmolStr> {
     base.base_names()
 }
 
+/// Enumerate precisely the export tiers used by [`resolve_origin`], without
+/// loading rich symbol metadata or visiting unattached packages.
+pub(crate) fn known_export_names<'a>(
+    indexed: &'a IndexedProvider,
+    remote: &'a RemoteExports,
+    loaded: &'a [LoadedPackage],
+) -> impl Iterator<Item = &'a SmolStr> + 'a {
+    let base: &'a StaticBaseR = &BASE_R;
+    base.base_names().chain(loaded.iter().flat_map(move |pkg| {
+        std::iter::once(pkg.name.as_str())
+            .chain(attach_members(indexed, &pkg.name))
+            .flat_map(
+                move |package| -> Box<dyn Iterator<Item = &'a SmolStr> + 'a> {
+                    if let Some(membership) = indexed.membership(package) {
+                        Box::new(membership.exports.iter())
+                    } else if let Some(exports) = remote.package_exports(package) {
+                        Box::new(exports)
+                    } else {
+                        Box::new(BUNDLED.package_exports(package).into_iter().flatten())
+                    }
+                },
+            )
+    }))
+}
+
 /// The default package that exports a base `name`, if any (for `resolve` to
 /// attach docs to a bare base-R completion once `base` is harvested).
 pub fn base_package_of(name: &str) -> Option<&'static SmolStr> {
@@ -444,6 +469,13 @@ impl CompositeProvider {
 }
 
 impl SymbolProvider for CompositeProvider {
+    fn export_names<'a>(
+        &'a self,
+        loaded: &'a [LoadedPackage],
+    ) -> Box<dyn Iterator<Item = &'a SmolStr> + 'a> {
+        Box::new(known_export_names(&self.indexed, &self.remote, loaded))
+    }
+
     fn origin(&self, name: &str, loaded: &[LoadedPackage]) -> PackageOrigin {
         resolve_origin(&self.indexed, &self.remote, name, loaded)
     }
@@ -496,6 +528,60 @@ mod tests {
         LoadedPackage {
             name: SmolStr::new(name),
             range: TextRange::new(TextSize::new(0), TextSize::new(0)),
+        }
+    }
+
+    #[test]
+    fn spelling_exports_follow_resolution_tiers_and_attached_members() {
+        let mut meta = pkg("suggestmeta", &[]);
+        meta.attaches = vec!["suggestmember".into()];
+        let mut member = pkg("suggestmember", &["installed_name"]);
+        let mut private = member.symbols[0].clone();
+        private.name = "private_name".into();
+        private.exported = false;
+        member.symbols.push(private);
+        let index = IndexedProvider::from_indices([
+            meta,
+            member,
+            pkg("unattached", &["unattached_name"]),
+            pkg("data.table", &["replacement_name"]),
+        ]);
+        let mut remote = RemoteExports::new();
+        remote.insert_package("suggestmember", ["superseded_name".into()]);
+        remote.insert_package("suggestremote", ["remote_name".into()]);
+        remote.insert_package("dplyr", ["remote_replacement".into()]);
+        let loaded = [
+            loaded("suggestmeta"),
+            loaded("suggestremote"),
+            loaded("data.table"),
+            loaded("dplyr"),
+            loaded("rlang"),
+        ];
+        let names: HashSet<_> = known_export_names(&index, &remote, &loaded).collect();
+        for name in [
+            "length",
+            "installed_name",
+            "remote_name",
+            "replacement_name",
+            "remote_replacement",
+            "abort",
+        ] {
+            assert!(names.iter().any(|n| n.as_str() == name), "{name}");
+        }
+        for name in [
+            "private_name",
+            "superseded_name",
+            "unattached_name",
+            "fread",
+            "across",
+        ] {
+            assert!(!names.iter().any(|n| n.as_str() == name), "{name}");
+        }
+        for name in names {
+            assert!(!matches!(
+                resolve_origin(&index, &remote, name, &loaded),
+                PackageOrigin::Unknown
+            ));
         }
     }
 

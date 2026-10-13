@@ -11,6 +11,7 @@ pub(crate) mod calls;
 pub mod cfg;
 mod interpolation;
 pub mod scope;
+pub(crate) mod spelling;
 pub mod symbols;
 
 use std::collections::{HashMap, HashSet};

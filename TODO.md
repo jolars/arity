@@ -186,13 +186,15 @@ rules, and keep all production analysis static.
   `x<U+00A0><- 1`, and `x <- 1<U+2212>2` in the oracle. No blanket
   normalization fix.
 
-- [ ] Improve `undefined-symbol` suggestions with nearby visible names when a
+- [x] Improve `undefined-symbol` suggestions with nearby visible names when a
   single close spelling is compelling. RStudio offers typo suggestions;
   arity currently reports the unresolved name without this guidance. Rank
   only bindings and package symbols already known to the static resolver,
   bound the search cost, and withhold suggestions when several names fit. A
   suggestion must not imply that an unavailable package symbol is absent. No
-  default fix.
+  default fix. Implemented unique one-edit hints from visible bindings and
+  resolver-owned exports, with fixed search budgets, ambiguity rejection,
+  and CLI/editor coverage.
 
 Existing coverage includes undefined/unused names, duplicate formals,
 assignments in conditions, NA comparisons, and suppression controls. Glue

@@ -1156,6 +1156,27 @@ fn did_open_buggy_publishes_diagnostics() {
 }
 
 #[test]
+fn undefined_symbol_spelling_hint_reaches_editor_diagnostics() {
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    h.did_open(uri, "lenth(1:3)\n", 1);
+    let diagnostics = h.recv_publish_for(uri, 1);
+    let finding = diagnostics
+        .iter()
+        .find(|d| d["code"] == "undefined-symbol")
+        .unwrap();
+    assert!(
+        finding["message"]
+            .as_str()
+            .unwrap()
+            .contains("did you mean `length`?")
+    );
+    assert_eq!(finding["range"]["start"]["character"], 0);
+    assert_eq!(finding["range"]["end"]["character"], 5);
+    h.shutdown();
+}
+
+#[test]
 fn rapid_did_change_coalesces_and_supersedes() {
     let mut h = Harness::start_push();
     let uri = doc_uri();

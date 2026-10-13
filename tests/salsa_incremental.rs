@@ -1537,6 +1537,53 @@ fn swapping_library_index_invalidates_resolution() {
 }
 
 #[test]
+fn spelling_candidates_refresh_even_when_unresolved_names_stay_equal() {
+    let (mut db, file) = script_one("library(suggestpkg)\ncustmer_total\n");
+    let manifest = db.set_library_index(IndexedProvider::from_indices([index_pkg(
+        "suggestpkg",
+        &["customer_total"],
+    )]));
+    let before = external_resolution(&db, manifest, file).clone();
+    assert!(
+        before
+            .suggestion_exports
+            .as_ref()
+            .unwrap()
+            .contains("customer_total")
+    );
+    db.set_library_index(IndexedProvider::from_indices([index_pkg(
+        "suggestpkg",
+        &[],
+    )]));
+    let after = external_resolution(&db, manifest, file);
+    assert_eq!(before.unresolved, after.unresolved);
+    assert!(
+        !after
+            .suggestion_exports
+            .as_ref()
+            .unwrap()
+            .contains("customer_total")
+    );
+    let manifest = db.set_remote_exports(remote_exports(&[("suggestpkg", &["customer_total"])]));
+    // The installed tier remains authoritative, including an empty export list.
+    assert!(
+        !external_resolution(&db, manifest, file)
+            .suggestion_exports
+            .as_ref()
+            .unwrap()
+            .contains("customer_total")
+    );
+    db.set_library_index(IndexedProvider::empty());
+    assert!(
+        external_resolution(&db, manifest, file)
+            .suggestion_exports
+            .as_ref()
+            .unwrap()
+            .contains("customer_total")
+    );
+}
+
+#[test]
 fn unindexed_attached_package_suppresses_resolution() {
     // Conservative gate: when an attached package's exports are unknown (not
     // base, not indexed, not bundled), it could define any unresolved name, so

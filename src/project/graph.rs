@@ -914,6 +914,9 @@ pub fn project_reads(db: &dyn IncrementalDb) -> ReadIndex {
 pub struct ExternalResolution {
     pub unresolved: BTreeSet<String>,
     pub local_functions: PromiseSummaries,
+    /// Bounded export candidates from the same index and attachment set as
+    /// resolution. `None` means enumeration exceeded the suggestion budget.
+    pub suggestion_exports: Option<BTreeSet<SmolStr>>,
 }
 
 /// Promise behavior of package-local functions, grouped by package root.
@@ -1061,7 +1064,7 @@ pub fn external_resolution(
         })
         .collect();
 
-    let unresolved = file_free_reads(db, file)
+    let unresolved: BTreeSet<String> = file_free_reads(db, file)
         .iter()
         .filter(|name| !visibility.visible.contains(name.as_str()))
         .filter(|name| {
@@ -1084,6 +1087,15 @@ pub fn external_resolution(
         .unwrap_or_default();
 
     ExternalResolution {
+        suggestion_exports: if unresolved.is_empty() {
+            Some(BTreeSet::new())
+        } else {
+            crate::semantic::spelling::candidate_names(crate::rindex::provider::known_export_names(
+                index,
+                remote,
+                &loaded_pkgs,
+            ))
+        },
         unresolved,
         local_functions,
     }

@@ -567,6 +567,17 @@ pub trait SymbolProvider: Send + Sync {
     /// True when `name` is exported by one of R's default packages.
     fn is_base(&self, name: &str) -> bool;
 
+    /// Enumerate known exports visible as bare names, including default
+    /// packages and attached members. Providers without enumeration support
+    /// leave typo suggestions to local and project bindings.
+    fn export_names<'a>(
+        &'a self,
+        loaded: &'a [LoadedPackage],
+    ) -> Box<dyn Iterator<Item = &'a SmolStr> + 'a> {
+        let _ = loaded;
+        Box::new(std::iter::empty())
+    }
+
     /// True if this provider has *full* export knowledge for `pkg` — i.e. an
     /// unresolved name attributed to `pkg` is genuinely undefined, not merely
     /// un-indexed. Default packages always qualify; installed packages qualify
@@ -645,6 +656,13 @@ impl StaticBaseR {
 }
 
 impl SymbolProvider for StaticBaseR {
+    fn export_names<'a>(
+        &'a self,
+        _loaded: &'a [LoadedPackage],
+    ) -> Box<dyn Iterator<Item = &'a SmolStr> + 'a> {
+        Box::new(self.base_names())
+    }
+
     fn origin(&self, name: &str, loaded: &[LoadedPackage]) -> PackageOrigin {
         let mut candidates: Vec<SmolStr> = Vec::new();
         if let Some(pkgs) = self.name_to_packages.get(unbacktick(name)) {

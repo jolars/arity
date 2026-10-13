@@ -2141,6 +2141,221 @@ fn undefined_symbol_flags_base_only_typo() {
     assert!(msgs[0].contains("lenth"));
 }
 
+fn undefined_findings(src: &str, provider: &CompositeProvider) -> Vec<arity::linter::Diagnostic> {
+    check_document_with_provider(Path::new("t.R"), src, &LintConfig::default(), provider)
+        .unwrap()
+        .into_iter()
+        .filter(|d| d.rule == "undefined-symbol")
+        .collect()
+}
+
+#[test]
+fn undefined_symbol_suggests_unique_visible_spellings_without_fixes() {
+    let provider = CompositeProvider::base_only();
+    for (src, expected) in [
+        ("lenth(1)\n", "length"),
+        ("lenght(1)\n", "length"),
+        ("lenggth(1)\n", "length"),
+        (
+            "f <- function(customer_total) custmer_total\n",
+            "customer_total",
+        ),
+        (
+            "customer_total <- 1\nf <- function() custmer_total\n",
+            "customer_total",
+        ),
+        ("résultat <- 1\nrésultt\n", "résultat"),
+        ("`customer total` <- 1\n`custmer total`\n", "customer total"),
+    ] {
+        let findings = undefined_findings(src, &provider);
+        assert_eq!(findings.len(), 1, "{src}: {findings:?}");
+        assert_eq!(
+            findings[0].message.suggestion.as_deref(),
+            Some(format!("did you mean `{expected}`?").as_str()),
+            "{src}"
+        );
+        assert!(findings[0].fix.is_none());
+        let range = findings[0].range;
+        assert!(src[usize::from(range.start())..usize::from(range.end())].contains("t"));
+    }
+}
+
+#[test]
+fn undefined_symbol_withholds_ambiguous_distant_short_or_hidden_spellings() {
+    let provider = CompositeProvider::base_only();
+    for src in [
+        "customer_total <- 1\ncustomer_totel <- 2\ncustomer_totl\n",
+        "f <- function(customer_total) 1\ncustmer_total\n",
+        "f <- function(customer_total) 1\ng <- function() custmer_total\n",
+        "customer_total <- 1\ncstm_total\n",
+        "xyzq\n",
+        "zq\n",
+        "lengthh(1)\n",
+    ] {
+        let findings = undefined_findings(src, &provider);
+        assert_eq!(findings.len(), 1, "{src}: {findings:?}");
+        assert!(
+            findings[0].message.suggestion.is_none(),
+            "{src}: {findings:?}"
+        );
+    }
+}
+
+#[test]
+fn undefined_symbol_suggests_only_attached_exported_package_names() {
+    let mut index = indexed_pkg("suggestpkg", &["customer_total"]);
+    index.symbols.push(SymbolEntry {
+        name: "private_total".into(),
+        exported: false,
+        kind: SymbolKind::Function,
+        formals: None,
+        help: None,
+    });
+    let provider = CompositeProvider::with_index(IndexedProvider::from_indices([index]));
+    let findings = undefined_findings("library(suggestpkg)\ncustmer_total()\n", &provider);
+    assert_eq!(
+        findings[0].message.suggestion.as_deref(),
+        Some("did you mean `customer_total`?")
+    );
+    for src in ["custmer_total()\n", "library(suggestpkg)\nprivat_total()\n"] {
+        assert!(
+            undefined_findings(src, &provider)[0]
+                .message
+                .suggestion
+                .is_none()
+        );
+    }
+    assert!(undefined_findings("library(unknown_suggestpkg)\nlenth(1)\n", &provider).is_empty());
+}
+
+#[test]
+fn undefined_symbol_suggestions_follow_project_visibility_and_imports() {
+    for (namespace, description, helper, expected) in [
+        (
+            "",
+            TEST_DESCRIPTION.to_owned(),
+            "customer_total <- 1\n",
+            Some("did you mean `customer_total`?"),
+        ),
+        (
+            "importFrom(suggestpkg, customer_total)\n",
+            TEST_DESCRIPTION.to_owned(),
+            "",
+            Some("did you mean `customer_total`?"),
+        ),
+        (
+            "import(suggestpkg)\n",
+            TEST_DESCRIPTION.to_owned(),
+            "",
+            Some("did you mean `customer_total`?"),
+        ),
+        (
+            "",
+            format!("{TEST_DESCRIPTION}Depends: suggestpkg\n"),
+            "",
+            Some("did you mean `customer_total`?"),
+        ),
+        (
+            "",
+            format!("{TEST_DESCRIPTION}Imports: suggestpkg\n"),
+            "",
+            None,
+        ),
+    ] {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("R")).unwrap();
+        std::fs::write(dir.path().join("DESCRIPTION"), description).unwrap();
+        std::fs::write(dir.path().join("NAMESPACE"), namespace).unwrap();
+        std::fs::write(dir.path().join("R/helper.R"), helper).unwrap();
+        std::fs::write(dir.path().join("R/use.R"), "custmer_total\n").unwrap();
+        let index = IndexedProvider::from_indices([indexed_pkg("suggestpkg", &["customer_total"])]);
+        let result = check_paths_with_index(
+            &[dir.path().to_owned()],
+            &LintConfig::default(),
+            &ExcludeFilter::none(),
+            index,
+        )
+        .unwrap();
+        let finding = result
+            .reports
+            .iter()
+            .find(|report| report.path.ends_with("use.R"))
+            .unwrap()
+            .diagnostics
+            .iter()
+            .find(|d| d.rule == "undefined-symbol")
+            .unwrap();
+        assert_eq!(
+            finding.message.suggestion.as_deref(),
+            expected,
+            "{namespace}"
+        );
+        assert!(finding.fix.is_none());
+    }
+}
+
+#[test]
+fn undefined_symbol_withholds_hints_when_export_enumeration_is_truncated() {
+    let names: Vec<_> = (0..8193).map(|i| format!("generated_export_{i}")).collect();
+    let exports: Vec<_> = names.iter().map(String::as_str).collect();
+    let provider = CompositeProvider::with_index(IndexedProvider::from_indices([indexed_pkg(
+        "large_suggestpkg",
+        &exports,
+    )]));
+    let findings = undefined_findings("library(large_suggestpkg)\nlenth(1)\n", &provider);
+    assert_eq!(findings.len(), 1);
+    assert!(findings[0].message.suggestion.is_none());
+    assert!(findings[0].fix.is_none());
+}
+
+#[test]
+fn undefined_symbol_suggestions_deduplicate_names_and_respect_scope() {
+    let provider = CompositeProvider::with_index(IndexedProvider::from_indices([indexed_pkg(
+        "suggestpkg",
+        &["customer_total"],
+    )]));
+    let src = "library(suggestpkg)\ncustomer_total <- 1\nf <- function(customer_total) {\n  custmer_total\n  custmer_total\n}\n";
+    let findings = undefined_findings(src, &provider);
+    assert_eq!(findings.len(), 2);
+    for finding in findings {
+        assert_eq!(
+            finding.message.suggestion.as_deref(),
+            Some("did you mean `customer_total`?")
+        );
+    }
+    let src = "library(suggestpkg)\nf <- function(customer_totel) customer_totl\ncustomer_totl\n";
+    let findings = undefined_findings(src, &provider);
+    assert_eq!(findings.len(), 2);
+    assert!(findings[0].message.suggestion.is_none());
+    assert_eq!(
+        findings[1].message.suggestion.as_deref(),
+        Some("did you mean `customer_total`?")
+    );
+}
+
+#[test]
+fn undefined_symbol_bounds_total_search_work_and_reuses_repeated_hints() {
+    let mut src = String::from("customer_total <- 1\n");
+    for i in 0..5000 {
+        src.push_str(&format!("unrelated_binding_{i} <- 1\n"));
+    }
+    for suffix in 'a'..='z' {
+        src.push_str(&format!("customer_total{suffix}\n"));
+    }
+    src.push_str("customer_totala\n");
+    let findings = undefined_findings(&src, &CompositeProvider::base_only());
+    assert_eq!(findings.len(), 27);
+    assert_eq!(
+        findings[0].message.suggestion.as_deref(),
+        Some("did you mean `customer_total`?")
+    );
+    assert!(findings[25].message.suggestion.is_none());
+    assert_eq!(
+        findings[26].message.suggestion,
+        findings[0].message.suggestion
+    );
+}
+
 #[test]
 fn undefined_symbol_resolves_backtick_quoted_base_names() {
     // Backticks are part of the IDENT token, but the export lists store the

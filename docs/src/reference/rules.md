@@ -129,6 +129,8 @@ Flag an identifier read that resolves to no in-scope binding and no known packag
 
 Gated for safety: the rule stays silent for a whole file unless every `library()`-attached package is indexed, since an un-indexed package could export the otherwise-unresolved name. In an analyzed package, a package-local call argument is checked only when its matched formal is proven to evaluate the promise normally; capture, opaque forwarding, and ambiguous behavior stay silent.
 
+Suggest a visible binding or known attached export only when a single name differs by one insertion, deletion, substitution, or adjacent transposition. Short names (fewer than four characters), distant or ambiguous spellings, and searches exceeding a fixed budget receive no hint. Suggestions do not provide an automatic fix.
+
 This rule is **enabled by default**.
 
 `subtotal` resolves to nothing:
@@ -143,6 +145,21 @@ warning: undefined-symbol
   |
 1 | total <- subtotal
   |          ^^^^^^^^ no in-scope binding or attached package exports `subtotal`
+```
+
+A unique close spelling receives a hint:
+
+```r
+lenth(1:3)
+```
+
+```text
+warning: undefined-symbol
+ --> example.R:1:1
+  |
+1 | lenth(1:3)
+  | ^^^^^ no in-scope binding or attached package exports `lenth`
+  = help: did you mean `length`?
 ```
 
 ### `unused-binding`
