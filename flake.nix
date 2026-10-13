@@ -21,7 +21,7 @@
 
         arity = pkgs.rustPlatform.buildRustPackage {
           pname = "arity";
-          version = "0.25.0";
+          version = "0.26.0";
 
           src = ./.;
 
