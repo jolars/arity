@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.26.0](https://github.com/jolars/arity/compare/v0.25.0...v0.26.0) (2026-10-13)
+
+### Features
+
+- **lint:** suggest nearby visible symbol names ([`c445867`](https://github.com/jolars/arity/commit/c445867b99eaf3e10fb21e00deef5a8977ece807))
+- **lint:** add `extend-select` option ([`5a880b2`](https://github.com/jolars/arity/commit/5a880b2598de29312c1618c7cd6accad5beb434b))
+- **lint:** warn on partial argument matches ([`968b026`](https://github.com/jolars/arity/commit/968b02631b179d21026960bb64dc22e4f6c0b967))
+- **lint:** warn on nonportable `sprintf` padding ([`5c94173`](https://github.com/jolars/arity/commit/5c9417329e982f2267836a549a8eebf86d1e3087))
+- **lint:** flag bare return statements ([`752d442`](https://github.com/jolars/arity/commit/752d442463ff300472da6d542e5cc0293baac232))
+
+### Bug Fixes
+
+- **lint:** detect rejected trailing argument holes ([`53fd077`](https://github.com/jolars/arity/commit/53fd07789f3a69aba405856f736e002b2d65f200))
+- **lint:** resolve quoted data bindings ([`87c08cb`](https://github.com/jolars/arity/commit/87c08cb053e79f3b8f2d3c28c2ccb1f65af0d7af))
+
+### Dependencies
+
+- updated crates/arity-formatter to v0.8.1
+
 ## [0.25.0](https://github.com/jolars/arity/compare/v0.24.0...v0.25.0) (2026-10-05)
 
 ### Features
