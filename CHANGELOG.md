@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.26.1](https://github.com/jolars/arity/compare/v0.26.0...v0.26.1) (2026-10-15)
+
+### Bug Fixes
+
+- update rustls to 0.23.46 ([`1df1015`](https://github.com/jolars/arity/commit/1df10159d941875d101f3f008ed8582d808d6d73))
+
 ## [0.26.0](https://github.com/jolars/arity/compare/v0.25.0...v0.26.0) (2026-10-13)
 
 ### Features
