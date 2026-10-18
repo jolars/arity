@@ -61,6 +61,12 @@ extend-select = ["undesirable-function"]
 
 For one run, use `arity lint --extend-select undesirable-function .`.
 
+Enable [`confusable-identifier`](../reference/rules.md#confusable-identifier) to
+flag names that look like ASCII but contain Cyrillic lookalikes or fullwidth
+Latin letters. It reports Unicode code points and a likely ASCII spelling,
+without a rename fix. Greek statistical symbols and ordinary non-Latin names
+remain usable.
+
 `select` replaces the default rule selection, `extend-select` adds rules to that
 selection, and `ignore` removes rules afterward. The [configuration
 guide](configuration.md) covers shared settings, and the

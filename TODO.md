@@ -174,7 +174,7 @@ rules, and keep all production analysis static.
   Implemented with conversion-level source spans, exact-before-partial
   matching, translation controls excluded from value counts, and no padding fix.
 
-- [ ] `confusable-identifier` (opt-in initially): report suspicious ASCII
+- [x] `confusable-identifier` (opt-in initially): report suspicious ASCII
   lookalikes in unquoted identifiers, with the code point and likely ASCII
   spelling. R accepts Cyrillic `с <- 1` as a different binding from Latin
   `c`. Preserve legitimate non-Latin identifiers and Greek statistical
@@ -184,7 +184,11 @@ rules, and keep all production analysis static.
   should instead receive specific parser diagnostics: parse errors block
   lint, so a lint rule cannot explain them. R rejected `x<U+200B> <- 1`,
   `x<U+00A0><- 1`, and `x <- 1<U+2212>2` in the oracle. No blanket
-  normalization fix.
+  normalization fix. Implemented as a syntax-only opt-in warning with a
+  conservative Cyrillic/fullwidth Latin map and whole-identifier byte spans.
+  Other non-ASCII letters exempt a name. Parser errors identify rejected
+  invisible characters, spaces, and Unicode minus signs, including during
+  recovery and incremental reparsing; R-accepted horizontal spaces remain valid.
 
 - [x] Improve `undefined-symbol` suggestions with nearby visible names when a
   single close spelling is compelling. RStudio offers typo suggestions;

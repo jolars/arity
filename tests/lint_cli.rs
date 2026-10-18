@@ -27,6 +27,37 @@ fn run_lint<const N: usize>(args: [&str; N]) -> std::process::Output {
         .expect("failed to run cli")
 }
 
+#[test]
+fn invalid_unicode_reports_syntax_errors_before_lint() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("unicode.R");
+    for (src, point) in [
+        ("с <- 1\nx\u{200b} <- 1\n", "U+200B"),
+        ("с <- 1\nx\u{a0}<- 1\n", "U+00A0"),
+        ("с <- 1\nx <- 1\u{2212}2\n", "U+2212"),
+    ] {
+        std::fs::write(&path, src).unwrap();
+        let output = run_lint([
+            "--no-config",
+            "--select",
+            "confusable-identifier",
+            "--output",
+            "concise",
+            path.to_str().unwrap(),
+        ]);
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        let rendered = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(rendered.contains("syntax-error"), "{rendered}");
+        assert!(rendered.contains(point), "{rendered}");
+        assert!(!rendered.contains("confusable-identifier"), "{rendered}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), src);
+    }
+}
+
 /// Write a package whose `R/` holds `files`, returning the temp dir.
 fn write_package(namespace: &str, files: &[(&str, &str)]) -> tempfile::TempDir {
     let dir = tempdir().expect("failed to create temp dir");

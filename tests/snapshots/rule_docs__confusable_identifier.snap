@@ -1,0 +1,41 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `confusable-identifier`
+
+Flag unquoted identifiers made entirely of ASCII characters and a conservative set of Cyrillic lookalikes or fullwidth Latin letters. Report the lookalikes' Unicode code points and the likely ASCII spelling. R treats these spellings as different names.
+
+Greek letters, accented Latin letters, and names containing other non-Latin letters are left alone. Entirely Cyrillic names can still be reported if every letter resembles ASCII. Strings, comments, roxygen, and backtick names are ignored. This is a visual warning, not a ban on non-Latin identifiers or a complete Unicode confusability check; see [Unicode's confusability guidance](https://www.unicode.org/reports/tr39/). No automatic fix is offered because the intended binding is unknown.
+
+This rule is **disabled by default**; enable it with `select`.
+
+Cyrillic `с` looks like Latin `c` but defines a different binding:
+
+```r
+с <- 1
+```
+
+```text
+warning: confusable-identifier
+ --> example.R:1:1
+  |
+1 | с <- 1
+  | ^ identifier `с` contains ASCII lookalikes (U+0441); likely ASCII spelling is `c`
+  = help: Check which spelling is intended; R treats these as different names.
+```
+
+A Cyrillic `а` can hide inside an otherwise ASCII name:
+
+```r
+pаyload <- 1
+```
+
+```text
+warning: confusable-identifier
+ --> example.R:1:1
+  |
+1 | pаyload <- 1
+  | ^^^^^^^ identifier `pаyload` contains ASCII lookalikes (U+0430); likely ASCII spelling is `payload`
+  = help: Check which spelling is intended; R treats these as different names.
+```

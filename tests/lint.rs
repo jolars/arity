@@ -9,6 +9,89 @@ use arity::linter::{
 };
 use tempfile::tempdir;
 
+#[test]
+fn confusable_identifier_reports_code_points_ascii_spelling_and_byte_spans() {
+    for (name, spelling, points) in [
+        ("с", "c", vec!["U+0441"]),
+        ("pаyload", "payload", vec!["U+0430"]),
+        (
+            "ѕсоре",
+            "scope",
+            vec!["U+0455", "U+0441", "U+043E", "U+0440", "U+0435"],
+        ),
+        ("СОРЕ", "COPE", vec!["U+0421", "U+041E", "U+0420", "U+0415"]),
+        (
+            "ｓｃｏｐｅ",
+            "scope",
+            vec!["U+FF53", "U+FF43", "U+FF4F", "U+FF50", "U+FF45"],
+        ),
+        (".с_1", ".c_1", vec!["U+0441"]),
+    ] {
+        let src = format!("# café\n{name} <- 1\n");
+        assert!(arity::parser::parse(&src).diagnostics.is_empty());
+        let findings = diagnostics_selecting(&src, &["confusable-identifier"]);
+        assert_eq!(findings.len(), 1, "{src}: {findings:?}");
+        let d = &findings[0];
+        assert_eq!(
+            &src[usize::from(d.range.start())..usize::from(d.range.end())],
+            name
+        );
+        assert!(d.message.body.contains(&format!("`{spelling}`")), "{d:?}");
+        for point in points {
+            assert!(d.message.body.contains(point), "{d:?}");
+        }
+        assert!(d.fix.is_none());
+        assert_eq!(d.severity, arity::linter::Severity::Warning);
+    }
+}
+
+#[test]
+fn confusable_identifier_preserves_other_scripts_and_quoted_text() {
+    let src = "café <- 1\nданные <- 1\n日本語 <- 1\nα <- 1\nρ <- 1\nΩx <- 1\n.δ_1 <- 1\nμ <- 1\nµ <- 1\nрадар <- 1\nсα <- 1\n`с` <- 1\n`pаyload` <- 1\ns <- 'с'\nr <- r'(с)'\n# с\n#' с\n#' @param с с\n1 %с% 2\n";
+    assert!(arity::parser::parse(src).diagnostics.is_empty());
+    assert!(diagnostics_selecting(src, &["confusable-identifier"]).is_empty());
+}
+
+#[test]
+fn confusable_identifier_covers_identifier_positions() {
+    for src in [
+        "с(1)\n",
+        "f <- function(с) с\n",
+        "f(с = 1)\n",
+        "x$с\n",
+        "x@с\n",
+        "base::с\n",
+    ] {
+        let findings = diagnostics_selecting(src, &["confusable-identifier"]);
+        let expected = if src.contains("function") { 2 } else { 1 };
+        assert_eq!(findings.len(), expected, "{src}: {findings:?}");
+    }
+}
+
+#[test]
+fn confusable_identifier_is_opt_in_suppressible_and_never_fixed() {
+    let src = "с <- 1\nprint(с)\n";
+    assert!(
+        diagnostics(src)
+            .iter()
+            .all(|d| d.rule != "confusable-identifier")
+    );
+    let findings = diagnostics_selecting(src, &["confusable-identifier"]);
+    assert_eq!(findings.len(), 2);
+    let fixes: Vec<_> = findings.iter().filter_map(|d| d.fix.clone()).collect();
+    let result = apply_fixes(src, &fixes, true);
+    assert_eq!(result.output, src);
+    assert!(arity::parser::parse(&result.output).diagnostics.is_empty());
+    assert_eq!(arity::parser::reconstruct(&result.output), src);
+    assert!(
+        diagnostics_selecting(
+            "# arity-lint skip confusable-identifier\nс <- 1\n",
+            &["confusable-identifier"]
+        )
+        .is_empty()
+    );
+}
+
 /// A `DESCRIPTION` complete enough that the `packaging` rules have nothing to
 /// say about it, so a package fixture only ever reports what its test is about.
 const TEST_DESCRIPTION: &str = "\
@@ -6660,6 +6743,7 @@ fn assert_fixed_output_is_clean(input: &str) {
 #[test]
 fn fixed_output_is_parseable_and_clean() {
     let cases = [
+        "с <- 1\nprint(с)\n",
         "f <- function(alpha) alpha\nf(al = 1)\n",
         "f <- function(alpha, ...) alpha\nf(`al` = 1, extra = 2)\n",
         "f <- function(x) { print(x); return }; f(1)\n",
