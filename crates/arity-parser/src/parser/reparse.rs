@@ -638,6 +638,7 @@ fn parse_stmt_in_isolation(
     if children.next().is_some() || node.kind() != expected_kind {
         return None;
     }
+    crate::parser::diagnostics::refine_unicode_diagnostics(&tokens, &mut diagnostics);
     Some((node.green().to_owned(), diagnostics))
 }
 
@@ -695,6 +696,7 @@ fn parse_block_in_isolation(
         return None;
     }
 
+    crate::parser::diagnostics::refine_unicode_diagnostics(&tokens, &mut diagnostics);
     Some((block.green().to_owned(), diagnostics))
 }
 

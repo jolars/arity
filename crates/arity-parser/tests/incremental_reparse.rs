@@ -198,6 +198,10 @@ fn check_single_via_edits(src: &str) {
 }
 
 const SOURCES: &[&str] = &[
+    "с <- 1\npаyload <- с + 2\n",
+    "x\u{200b} <- 1\nf(x\u{a0})\ny <- 1\u{2212}2\n",
+    "f <- function(x\u{200b} = 1) {\n  x\u{2007}\n  1\u{2212}2\n}\n",
+    "x\u{2000}<-\u{3000}1\nf(x\u{2009}+ 1)\n",
     "x <- 1 + 2\n",
     "foo <- function(a, b) {\n  a + b\n}\n",
     "if (x > 0) {\n  print(\"hello world\")\n} else {\n  y\n}\n",

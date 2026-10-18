@@ -105,6 +105,7 @@ pub fn parse_with_options(text: &str, options: &ParseOptions) -> ParseOutput {
         }
     }
 
+    crate::parser::diagnostics::refine_unicode_diagnostics(&tokens, &mut diagnostics);
     let cst = build_tree(&tokens, &root_events);
     ParseOutput { cst, diagnostics }
 }

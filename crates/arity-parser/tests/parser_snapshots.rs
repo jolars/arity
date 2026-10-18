@@ -5,6 +5,77 @@ use insta::assert_snapshot;
 use arity_parser::parser::{parse, reconstruct};
 
 #[test]
+fn invalid_unicode_input_has_specific_lossless_diagnostics() {
+    // R 4.6.1 in C.UTF-8 rejects these even when recovery skips the token.
+    for (ch, explanation) in [
+        ('\u{ad}', "invisible soft hyphen"),
+        ('\u{34f}', "invisible combining grapheme joiner"),
+        ('\u{180e}', "zero-width"),
+        ('\u{200b}', "zero-width"),
+        ('\u{200c}', "zero-width"),
+        ('\u{200d}', "zero-width"),
+        ('\u{2060}', "invisible"),
+        ('\u{2062}', "invisible operator"),
+        ('\u{200f}', "invisible direction control"),
+        ('\u{202e}', "invisible direction control"),
+        ('\u{2066}', "invisible direction control"),
+        ('\u{feff}', "zero-width"),
+        ('\u{a0}', "Unicode space"),
+        ('\u{2007}', "Unicode space"),
+        ('\u{202f}', "Unicode space"),
+        ('\u{2028}', "Unicode line separator"),
+        ('\u{2029}', "Unicode paragraph separator"),
+        ('\u{85}', "Unicode next-line character"),
+        ('\u{2212}', "minus sign"),
+    ] {
+        for src in [
+            format!("# café\nx{ch} <- 1\n"),
+            format!("f(x{ch})\n"),
+            format!("f({ch})\n"),
+            format!("function(x{ch} = 1) x\n"),
+            format!("{{ x <- 1{ch}2 }}\n"),
+        ] {
+            let output = parse(&src);
+            let point = format!("U+{:04X}", ch as u32);
+            let diagnostic = output
+                .diagnostics
+                .iter()
+                .find(|d| d.message.contains(&point))
+                .unwrap_or_else(|| panic!("missing {point} for {src:?}: {:?}", output.diagnostics));
+            assert!(diagnostic.message.contains(explanation), "{diagnostic:?}");
+            assert_eq!(&src[diagnostic.start..diagnostic.end], ch.to_string());
+            assert_eq!(reconstruct(&src), src);
+        }
+    }
+}
+
+#[test]
+fn unicode_inside_quoted_tokens_and_comments_is_valid() {
+    let src = "s <- 'с\u{200b}\u{a0}\u{2212}'\nr <- r'(\u{200b}\u{a0}\u{2212})'\n`x\u{200b}` <- 1\n# \u{200b}\u{a0}\u{2212}\n#' \u{200b}\u{a0}\u{2212}\n1 %\u{2212}% 2\n";
+    assert!(parse(src).diagnostics.is_empty());
+    assert_eq!(reconstruct(src), src);
+}
+
+#[test]
+fn r_unicode_horizontal_spaces_are_valid_and_lossless() {
+    // R's UTF-8 lexer accepts these horizontal spaces, but not NBSP,
+    // figure space, narrow NBSP, or Unicode line/paragraph separators.
+    for ch in [
+        '\u{1680}', '\u{2000}', '\u{2001}', '\u{2002}', '\u{2003}', '\u{2004}', '\u{2005}',
+        '\u{2006}', '\u{2008}', '\u{2009}', '\u{200a}', '\u{205f}', '\u{3000}',
+    ] {
+        let src = format!("x{ch}<-{ch}1\nf(x{ch}+{ch}1)\n");
+        let output = parse(&src);
+        assert!(
+            output.diagnostics.is_empty(),
+            "{src:?}: {:?}",
+            output.diagnostics
+        );
+        assert_eq!(reconstruct(&src), src);
+    }
+}
+
+#[test]
 fn parser_fixtures_snapshots_and_losslessness() {
     for name in fixture_names() {
         let input = fixture_input(name);

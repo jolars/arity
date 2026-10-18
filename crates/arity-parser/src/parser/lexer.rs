@@ -1244,6 +1244,21 @@ pub(crate) fn lex_with_md(input: &str, md_default: bool) -> Vec<Token<'_>> {
                 // `c` is only faithful for ASCII, so decode the char in full
                 // before asking whether it opens a name.
                 let first = char_at(input, i);
+                // R 4.6.1 in C.UTF-8 treats these as horizontal whitespace.
+                // Nonbreaking spaces and Unicode line separators are rejected,
+                // so `char::is_whitespace` would accept too much here.
+                if matches!(first, '\u{1680}' | '\u{2000}'..='\u{2006}' | '\u{2008}'..='\u{200a}' | '\u{205f}' | '\u{3000}')
+                {
+                    let end = i + first.len_utf8();
+                    out.push(Token {
+                        kind: TokKind::Whitespace,
+                        text: &input[i..end],
+                        start: i,
+                        end,
+                    });
+                    i = end;
+                    continue;
+                }
                 if is_name_start(first) || first == '_' {
                     let start = i;
                     i = scan_name_continue(input, i + first.len_utf8());
