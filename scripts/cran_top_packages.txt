@@ -5,6 +5,7 @@
 # ranking (only by disappearing from CRAN). Sorted; one package per line.
 # Regenerate with: scripts/rank_cran_downloads.sh
 
+AER
 AsioHeaders
 BH
 BiocManager
