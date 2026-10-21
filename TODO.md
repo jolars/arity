@@ -308,10 +308,13 @@ Tier 2—performance/readability transformations that the formatter cannot do:
   Implemented as an opt-in `ns`-tier warning for direct base-resolved function
   tails, including unbraced bodies and transparent blocks or parentheses. No fix
   is offered because ownership, cleanup timing, and return values can differ.
-- [ ] `routine-registration`: flag string-named `.Call`/`.C`/`.Fortran`/
+- [x] `routine-registration`: flag string-named `.Call`/`.C`/`.Fortran`/
   `.External` calls in packages and recommend registered native symbols. Reuse
   the existing NAMESPACE/native-registration project facts; do not invoke R or
   inspect the local installation.
+  Implemented as a default-on packaging warning for base-resolved calls in
+  package `R/` sources, including qualified calls and named `.NAME` arguments.
+  Registered symbol arguments reuse project visibility; no fix is offered.
 - [ ] `package-hooks`: validate `.onLoad`, `.onAttach`, `.Last.lib`,
   `.onDetach`, and `.onUnload` signatures and statically forbidden/noisy calls
   per Writing R Extensions. Package-only, cross-checked against `R CMD check`'s

@@ -19,6 +19,7 @@ mod description_package_in_multiple_fields;
 mod description_text_format;
 mod description_unknown_field;
 mod description_version_constraint;
+mod routine_registration;
 mod scalar_field;
 mod undeclared_dependency;
 mod unused_dependency;
@@ -35,5 +36,6 @@ pub use description_package_in_multiple_fields::DescriptionPackageInMultipleFiel
 pub use description_text_format::DescriptionTextFormat;
 pub use description_unknown_field::DescriptionUnknownField;
 pub use description_version_constraint::DescriptionVersionConstraint;
+pub use routine_registration::RoutineRegistration;
 pub use undeclared_dependency::UndeclaredDependency;
 pub use unused_dependency::UnusedDependency;

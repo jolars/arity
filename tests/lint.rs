@@ -8813,3 +8813,88 @@ fn missing_argument_rejecting_call_spans_and_duplicates() {
         assert_eq!(actual, spans, "{src}");
     }
 }
+
+#[test]
+fn routine_registration_flags_string_heads_in_packages() {
+    let source = "f <- function(x) {\n.Call(\"ffi_enquo\", x)\n.C(.NAME = 'c_fun', x)\n.Fortran(\"f_fun\", x)\n.External(\"e_fun\", x)\n.Call(ffi_enquo, x)\n}\n";
+    let result = lint_package_with_src(
+        "useDynLib(testpkg, .registration = TRUE)\nexport(f)\n",
+        source,
+        &[("init.c", INIT_C)],
+    );
+    let findings: Vec<_> = result
+        .reports
+        .iter()
+        .flat_map(|r| &r.diagnostics)
+        .filter(|d| d.rule == "routine-registration")
+        .collect();
+    assert_eq!(findings.len(), 4);
+    for finding in findings {
+        assert!(finding.fix.is_none());
+        let range = std::ops::Range::<usize>::from(finding.range);
+        assert!(matches!(
+            &source[range],
+            "\"ffi_enquo\"" | "'c_fun'" | "\"f_fun\"" | "\"e_fun\""
+        ));
+    }
+}
+
+#[test]
+fn routine_registration_skips_scripts_and_shadowed_or_dynamic_calls() {
+    assert!(
+        !diagnostics(".Call(\"foo\")")
+            .iter()
+            .any(|d| d.rule == "routine-registration")
+    );
+    let result = lint_package(
+        "export(f)\n",
+        "f <- function(.Call, name) { .Call(\"foo\"); .C(name); .External(ptr); other::.Call(\"foo\") }\n",
+    );
+    assert!(
+        !result
+            .reports
+            .iter()
+            .flat_map(|r| &r.diagnostics)
+            .any(|d| d.rule == "routine-registration")
+    );
+}
+
+#[test]
+fn routine_registration_handles_qualified_calls_and_registered_prefixes() {
+    let result = lint_package_with_src(
+        "useDynLib(testpkg, .registration = TRUE, .fixes = \"C_\")\nexport(f)\n",
+        "f <- function(x) { base::.Call(\"ffi_enquo\", x); base:::.C(.NAME = r\"(c_fun)\", x); .Call(C_ffi_enquo, x) }\n",
+        &[("init.c", INIT_C)],
+    );
+    assert_eq!(
+        rules_for(&result, "a.R")
+            .iter()
+            .filter(|&&rule| rule == "routine-registration")
+            .count(),
+        2
+    );
+    assert!(!rules_for(&result, "a.R").contains(&"undefined-symbol"));
+}
+
+#[test]
+fn routine_registration_respects_package_sibling_shadowing() {
+    let result = lint_package_files(
+        "export(f)\n",
+        &[
+            ("a.R", "f <- function(x) .Call(\"foo\", x)\n"),
+            ("b.R", ".Call <- function(...) NULL\n"),
+        ],
+        &LintConfig::default(),
+    );
+    assert!(!rules_for(&result, "a.R").contains(&"routine-registration"));
+}
+
+#[test]
+fn routine_registration_is_limited_to_package_r_sources() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
+    std::fs::create_dir(dir.path().join("tests")).unwrap();
+    std::fs::write(dir.path().join("tests/test.R"), ".Call(\"foo\")\n").unwrap();
+    let result = check_paths(&[dir.path().to_path_buf()]).unwrap();
+    assert!(!rules_for(&result, "test.R").contains(&"routine-registration"));
+}

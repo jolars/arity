@@ -100,6 +100,7 @@ so this page never drifts from the rules' actual behavior.
 **Packaging**
 
 - [`undeclared-dependency`](#undeclared-dependency)
+- [`routine-registration`](#routine-registration)
 - [`description-missing-field`](#description-missing-field)
 - [`description-duplicate-field`](#description-duplicate-field)
 - [`description-unknown-field`](#description-unknown-field)
@@ -2015,6 +2016,31 @@ warning: undeclared-dependency
 2 |   dplyr::group_by(data, id)
   |   ^^^^^ package `dplyr` is used here but is not declared in DESCRIPTION
   = help: Add `dplyr` to `Imports:` in DESCRIPTION.
+```
+
+### `routine-registration`
+
+Flag string-named `.Call`, `.C`, `.Fortran`, and `.External` calls in package R sources. Prefer registered native symbols to runtime string lookup. A string still triggers the rule when the routine is registered: registration alone does not make the R call use the symbol binding.
+
+Only files directly in a package's `R/` directory are checked. Dynamic names and symbol arguments are left alone. Existing NAMESPACE and native registration facts supply symbol visibility through the project graph; the rule never runs R or inspects an installed package.
+
+There is no automatic fix: the symbol's binding may depend on `useDynLib()` aliases or `.fixes`, and changing registration can require edits to NAMESPACE and native sources.
+
+This rule is **enabled by default**.
+
+In a package's `R/` directory:
+
+```r
+f <- function(x) .Call("native_fun", x)
+```
+
+```text
+warning: routine-registration
+ --> example.R:1:24
+  |
+1 | f <- function(x) .Call("native_fun", x)
+  |                        ^^^^^^^^^^^^ `.Call` looks up a native routine by string name
+  = help: Register the native routine and pass its registered symbol binding.
 ```
 
 ### `description-missing-field`

@@ -217,6 +217,7 @@ fn documentation_rules() -> Vec<Box<dyn Rule>> {
 fn packaging_rules() -> Vec<AnyRule> {
     vec![
         AnyRule::R(Box::new(packaging::UndeclaredDependency)),
+        AnyRule::R(Box::new(packaging::RoutineRegistration)),
         AnyRule::Dcf(Box::new(packaging::DescriptionMissingField)),
         AnyRule::Dcf(Box::new(packaging::DescriptionDuplicateField)),
         AnyRule::Dcf(Box::new(packaging::DescriptionUnknownField)),

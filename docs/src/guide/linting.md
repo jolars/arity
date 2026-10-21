@@ -78,6 +78,12 @@ selection, and `ignore` removes rules afterward. The [configuration
 guide](configuration.md) covers shared settings, and the
 [reference](../reference/configuration.md#lint) lists rule-specific options.
 
+In package `R/` sources,
+[`routine-registration`](../reference/rules.md#routine-registration) flags
+string-named native calls such as `.Call("native_fun", x)` and recommends
+registered symbol bindings. It offers no automatic fix because registration may
+require changes to NAMESPACE and native sources.
+
 ## Apply Fixes
 
 Apply safe fixes in place, then format the rewritten code:
