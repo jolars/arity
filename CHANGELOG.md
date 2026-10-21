@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.27.0](https://github.com/jolars/arity/compare/v0.26.0...v0.27.0) (2026-10-21)
+
+### Features
+
+- **lint:** add `cyclomatic-complexity` rule ([`64a35a7`](https://github.com/jolars/arity/commit/64a35a749360b2ed09130d0768f15dcab3e05e5d))
+- **lint:** add `strings-as-factors` rule ([`df3e9a1`](https://github.com/jolars/arity/commit/df3e9a1640df42903d4aa59a048afa634f9438cf))
+- **lint:** add `routine-registration` rule ([`8c06bd7`](https://github.com/jolars/arity/commit/8c06bd79a2131bf3fe7118f51c8cb82e21fc90ed))
+- **lint:** add `terminal-close` ([`f9163b8`](https://github.com/jolars/arity/commit/f9163b84a47e4f0e6dd623a250feb8e7c808ac64))
+- **lint:** add `confusable-identifier` ([`b2ac2fc`](https://github.com/jolars/arity/commit/b2ac2fc48143e1d8ce669be81af14459ff2f1faa))
+
+### Bug Fixes
+
+- **deps:** update vulnerable TLS dependencies ([`a91f8e7`](https://github.com/jolars/arity/commit/a91f8e7cee6a47b7dae6165cd25de65b6eabd25b)), fixes [#166](https://github.com/jolars/arity/issues/166) and [#167](https://github.com/jolars/arity/issues/167)
+- update rustls to 0.23.46 ([`1df1015`](https://github.com/jolars/arity/commit/1df10159d941875d101f3f008ed8582d808d6d73))
+
+### Dependencies
+
+- updated crates/arity-formatter to v0.8.2
+- updated crates/arity-parser to v0.6.2
+
 ## [0.26.0](https://github.com/jolars/arity/compare/v0.25.0...v0.26.0) (2026-10-13)
 
 ### Features
