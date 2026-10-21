@@ -1,0 +1,27 @@
+---
+source: tests/cfg.rs
+expression: cfg_dump(source)
+---
+region: <toplevel>
+  bb0: [f <- function() { if (a && b) use(if (c)…] -> return
+region: function() { if (a && b) use(if (c) retu…
+  bb0: [if (a && b) use(if (c) return(1) else st…] -> then bb1, else bb2
+    expression flow:
+      bb0: [a && b] -> then bb1, else bb2
+      bb1: [] -> bb2
+      bb2: [] -> return
+  bb1: [use(if (c) return(1) else stop())] -> bb2
+    expression flow:
+      bb0: [if (c) return(1) else stop()] -> then bb1, else bb2
+      bb1: [return(1)] -> diverge
+      bb2: [stop()] -> diverge
+  bb2: [value <- switch(x, a = , b = if (d) 1, 2…; after()] -> return
+    expression flow:
+      bb0: [switch(x, a = , b = if (d) 1, 2)] -> alternatives [1, 2, 3]
+      bb1: [] -> return
+      bb2: [] -> bb1
+        expression flow:
+          bb0: [if (d) 1] -> then bb1, else bb2
+          bb1: [1] -> bb2
+          bb2: [] -> return
+      bb3: [] -> bb1

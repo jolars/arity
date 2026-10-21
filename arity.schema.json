@@ -28,6 +28,20 @@
       },
       "type": "object"
     },
+    "CyclomaticComplexityConfig": {
+      "additionalProperties": false,
+      "description": "Maximum native CFG decision complexity allowed for a function body.",
+      "properties": {
+        "max-complexity": {
+          "default": 20,
+          "description": "Functions exceeding this positive ceiling are reported.",
+          "maximum": 4294967295,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "FormatConfig": {
       "additionalProperties": false,
       "description": "Formatter settings from the `[format]` section.",
@@ -171,6 +185,14 @@
       "additionalProperties": false,
       "description": "`[lint.rules]` — per-rule option tables, one field per *configurable* rule.\n\nDeliberately typed rather than a `Map<String, Value>` keyed by rule ID: the\n`deny_unknown_fields` convention then makes a mistyped rule ID a parse error\ninstead of a silently-ignored table. Note the asymmetry this creates with\n`select`, `extend-select`, and `ignore`, where an unknown ID is reported at\n*lint* time — there the IDs are free-form data, here they are schema.\n\nMost rules take no options and so have no field here.",
       "properties": {
+        "cyclomatic-complexity": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CyclomaticComplexityConfig"
+            }
+          ],
+          "description": "`[lint.rules.cyclomatic-complexity]`"
+        },
         "undesirable-function": {
           "allOf": [
             {

@@ -1012,3 +1012,24 @@ fn the_repos_own_config_shields_its_fixture_descriptions() {
         "fixture DESCRIPTIONs collected: {fixtures:?}"
     );
 }
+
+#[test]
+fn cli_cyclomatic_complexity_uses_configured_ceiling_without_fixing() {
+    let dir = tempdir().unwrap();
+    let source = "f <- function(x) if (x) 1 else 2\nf(TRUE)\n";
+    let r_file = dir.path().join("a.R");
+    fs::write(&r_file, source).unwrap();
+    for (maximum, status) in [(1, 1), (2, 0)] {
+        fs::write(dir.path().join("arity.toml"), format!(
+            "[lint]\nselect = [\"cyclomatic-complexity\"]\n[lint.rules.cyclomatic-complexity]\nmax-complexity = {maximum}\n"
+        )).unwrap();
+        let output =
+            run_cli_in_no_stdin(dir.path(), ["lint", "--fix", "--output", "concise", "a.R"]);
+        assert_eq!(output.status.code(), Some(status), "{output:?}");
+        assert_eq!(fs::read_to_string(&r_file).unwrap(), source);
+        assert!(output.stdout.is_empty());
+        if status == 1 {
+            assert!(String::from_utf8_lossy(&output.stderr).contains("complexity of 2"));
+        }
+    }
+}

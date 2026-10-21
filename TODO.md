@@ -333,9 +333,11 @@ Tier 2—performance/readability transformations that the formatter cannot do:
 
 Tier 3—useful but policy-heavy; consider only default-off after corpus evidence:
 
-- [ ] `cyclomatic-complexity`, parameterized by a threshold. This is a
+- [x] `cyclomatic-complexity`, parameterized by a threshold. This is a
   maintainability metric, not layout; define the count over arity's CFG instead
   of depending on R's `cyclocomp` package.
+  Implemented as an opt-in readability warning with a configurable maximum of
+  20, native CFG decision counting, and no autofix.
 - [ ] `unused-import`: report an attached package whose symbols are never used.
   This requires the project resolver to distinguish attachment-provided bare
   names from `pkg::name`, plus explicit exemptions for packages attached for

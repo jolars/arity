@@ -122,3 +122,29 @@ fn always_diverges_both_branches() {
     let no_else: arity::ast::IfExpr = first("if (c) return(1)");
     assert!(!always_diverges(&no_else.syntax().clone().into()));
 }
+
+#[test]
+fn expression_decisions_are_separate_from_execution_reachability() {
+    let source = "f <- function() {\n  if (a && b) use(if (c) return(1) else stop())\n  value <- switch(x, a = , b = if (d) 1, 2)\n  after()\n}\n";
+    assert_snapshot!(cfg_dump(source));
+    let parsed = parse(source);
+    assert_eq!(arity::parser::reconstruct(source), source);
+    let flow = FileControlFlow::build(&parsed.cst);
+    let graph = &flow.functions()[0].1;
+    assert_eq!(graph.cyclomatic_complexity(&|_| true), 7);
+    assert_eq!(graph.cyclomatic_complexity(&|_| false), 5);
+    let after = parsed
+        .cst
+        .descendants()
+        .find(|node| node.text() == "after()")
+        .unwrap();
+    assert!(!flow.is_unreachable(after.text_range()));
+}
+
+#[test]
+fn short_circuit_expression_edges_preserve_operator_direction() {
+    let source = "f <- function() { a && b; a || b }\n";
+    let dump = cfg_dump(source);
+    assert!(dump.contains("[a && b] -> then bb1, else bb2"), "{dump}");
+    assert!(dump.contains("[a || b] -> then bb2, else bb1"), "{dump}");
+}

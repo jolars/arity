@@ -28,7 +28,9 @@ use rowan::TextRange;
 use rowan::ast::AstNode as _;
 
 use crate::ast::kinds::is_trivia;
-use crate::ast::{CallExpr, ForExpr, FunctionExpr, IfExpr, RepeatExpr, WhileExpr};
+use crate::ast::{
+    BinaryExpr, CallExpr, ForExpr, FunctionExpr, HasArgList as _, IfExpr, RepeatExpr, WhileExpr,
+};
 use crate::syntax::{NodePtr, SyntaxElement, SyntaxKind, SyntaxNode};
 
 /// Index of a [`BasicBlock`] within a [`ControlFlowGraph`].
@@ -63,6 +65,12 @@ pub enum Terminator {
         then_blk: BlockId,
         else_blk: BlockId,
     },
+    /// Alternative bodies of a syntactic `switch()` call, including no match.
+    /// Consumers confirm the primitive's identity before counting dispatch.
+    MultiBranch {
+        call: NodePtr,
+        targets: Vec<BlockId>,
+    },
     /// Falls off the end of the region — a normal return to the caller.
     Return,
     /// Diverges out of the region via `return()`/`stop()`; no in-region successor.
@@ -78,6 +86,9 @@ pub enum Terminator {
 pub struct ControlFlowGraph {
     blocks: Vec<BasicBlock>,
     entry: BlockId,
+    /// Potential expression flow belongs to its enclosing block, but cannot
+    /// prove that a lazy argument executes or that the surrounding code exits.
+    expressions: Vec<(BlockId, ControlFlowGraph)>,
 }
 
 impl Default for ControlFlowGraph {
@@ -88,6 +99,7 @@ impl Default for ControlFlowGraph {
                 terminator: Terminator::Return,
             }],
             entry: BlockId(0),
+            expressions: Vec::new(),
         }
     }
 }
@@ -110,7 +122,10 @@ impl ControlFlowGraph {
 
     /// Build the CFG for a region given its ordered statement elements.
     fn build_region(stmts: &[SyntaxElement]) -> Self {
-        let mut builder = Builder { blocks: Vec::new() };
+        let mut builder = Builder {
+            blocks: Vec::new(),
+            expressions: Vec::new(),
+        };
         let entry = builder.new_block();
         if let Some(exit) = builder.lower_seq(stmts, entry, None) {
             builder.set_term(exit, Terminator::Return);
@@ -118,7 +133,47 @@ impl ControlFlowGraph {
         ControlFlowGraph {
             blocks: builder.blocks,
             entry,
+            expressions: builder.expressions,
         }
+    }
+
+    /// One plus the excess outcomes of reachable decisions. The callback lets
+    /// semantic consumers exclude a shadowed `switch` without resolving names
+    /// during syntactic graph construction.
+    pub fn cyclomatic_complexity(&self, counts_switch: &impl Fn(NodePtr) -> bool) -> usize {
+        1 + self.decisions(counts_switch)
+    }
+
+    fn decisions(&self, counts_switch: &impl Fn(NodePtr) -> bool) -> usize {
+        let mut seen = vec![false; self.blocks.len()];
+        let mut pending = vec![self.entry];
+        let mut score = 0;
+        while let Some(id) = pending.pop() {
+            if std::mem::replace(&mut seen[id.index()], true) {
+                continue;
+            }
+            match &self.block(id).terminator {
+                Terminator::Goto(target) => pending.push(*target),
+                Terminator::Branch { then_blk, else_blk } => {
+                    score += 1;
+                    pending.extend([*then_blk, *else_blk]);
+                }
+                Terminator::MultiBranch { call, targets } => {
+                    if counts_switch(*call) {
+                        score += targets.len().saturating_sub(1);
+                    }
+                    pending.extend(targets.iter().copied());
+                }
+                Terminator::Return | Terminator::Diverge | Terminator::Unreachable => {}
+            }
+        }
+        score
+            + self
+                .expressions
+                .iter()
+                .filter(|(owner, _)| seen[owner.index()])
+                .map(|(_, graph)| graph.decisions(counts_switch))
+                .sum::<usize>()
     }
 }
 
@@ -238,6 +293,7 @@ pub fn always_diverges(element: &SyntaxElement) -> bool {
 /// Builder state: the block arena being filled.
 struct Builder {
     blocks: Vec<BasicBlock>,
+    expressions: Vec<(BlockId, ControlFlowGraph)>,
 }
 
 /// The enclosing loop's targets, threaded through lowering so `break`/`next`
@@ -270,6 +326,7 @@ impl Builder {
         self.blocks.iter().any(|block| match block.terminator {
             Terminator::Goto(t) => t == target,
             Terminator::Branch { then_blk, else_blk } => then_blk == target || else_blk == target,
+            Terminator::MultiBranch { ref targets, .. } => targets.contains(&target),
             _ => false,
         })
     }
@@ -341,16 +398,24 @@ impl Builder {
             }
             SyntaxKind::FOR_EXPR => {
                 self.push_stmt(cur, node.text_range());
-                let body = ForExpr::cast(node.clone())
-                    .expect("FOR_EXPR casts")
-                    .body_element();
+                let for_expr = ForExpr::cast(node.clone()).expect("FOR_EXPR casts");
+                for element in for_expr.clause_elements().unwrap_or_default() {
+                    if let Some(node) = element.as_node() {
+                        self.collect_expression(node, cur);
+                    }
+                }
+                let body = for_expr.body_element();
                 self.lower_loop(cur, body.as_ref(), false)
             }
             SyntaxKind::WHILE_EXPR => {
                 self.push_stmt(cur, node.text_range());
-                let body = WhileExpr::cast(node.clone())
-                    .expect("WHILE_EXPR casts")
-                    .body_element();
+                let while_expr = WhileExpr::cast(node.clone()).expect("WHILE_EXPR casts");
+                for element in while_expr.condition_elements().unwrap_or_default() {
+                    if let Some(node) = element.as_node() {
+                        self.collect_expression(node, cur);
+                    }
+                }
+                let body = while_expr.body_element();
                 self.lower_loop(cur, body.as_ref(), false)
             }
             SyntaxKind::REPEAT_EXPR => {
@@ -362,6 +427,7 @@ impl Builder {
             }
             SyntaxKind::CALL_EXPR => {
                 self.push_stmt(cur, node.text_range());
+                self.collect_expression(node, cur);
                 match CallExpr::cast(node.clone())
                     .and_then(|call| call.callee_name())
                     .as_deref()
@@ -375,8 +441,114 @@ impl Builder {
             }
             _ => {
                 self.push_stmt(cur, node.text_range());
+                self.collect_expression(node, cur);
                 Some(cur)
             }
+        }
+    }
+
+    /// Attach only branching expressions. Ordinary calls stay opaque in the
+    /// enclosing flow because R may defer, reorder, or never force arguments.
+    fn collect_expression(&mut self, node: &SyntaxNode, owner: BlockId) {
+        if node.kind() == SyntaxKind::FUNCTION_EXPR
+            || super::builder::call_quote_kind(node).is_some()
+        {
+            return;
+        }
+        if matches!(
+            node.kind(),
+            SyntaxKind::IF_EXPR
+                | SyntaxKind::FOR_EXPR
+                | SyntaxKind::WHILE_EXPR
+                | SyntaxKind::REPEAT_EXPR
+                | SyntaxKind::BLOCK_EXPR
+        ) {
+            self.expressions.push((
+                owner,
+                ControlFlowGraph::build_region(&body_statements(&node.clone().into())),
+            ));
+            return;
+        }
+        if let Some(binary) = BinaryExpr::cast(node.clone())
+            && matches!(binary.op_kind(), Some(SyntaxKind::AND2 | SyntaxKind::OR2))
+        {
+            let mut builder = Builder {
+                blocks: Vec::new(),
+                expressions: Vec::new(),
+            };
+            let entry = builder.new_block();
+            builder.push_stmt(entry, node.text_range());
+            let rhs = builder.new_block();
+            let after = builder.new_block();
+            let (then_blk, else_blk) = if binary.op_kind() == Some(SyntaxKind::AND2) {
+                (rhs, after)
+            } else {
+                (after, rhs)
+            };
+            builder.set_term(entry, Terminator::Branch { then_blk, else_blk });
+            builder.set_term(rhs, Terminator::Goto(after));
+            if let Some(node) = binary.lhs().and_then(SyntaxElement::into_node) {
+                builder.collect_expression(&node, entry);
+            }
+            if let Some(node) = binary.rhs().and_then(SyntaxElement::into_node) {
+                builder.collect_expression(&node, rhs);
+            }
+            self.expressions.push((
+                owner,
+                ControlFlowGraph {
+                    blocks: builder.blocks,
+                    entry,
+                    expressions: builder.expressions,
+                },
+            ));
+            return;
+        }
+        if let Some(call) = CallExpr::cast(node.clone())
+            && call.callee_name().as_deref() == Some("switch")
+        {
+            let mut args = call.args();
+            let Some(selector) = args.next() else { return };
+            let mut builder = Builder {
+                blocks: Vec::new(),
+                expressions: Vec::new(),
+            };
+            let entry = builder.new_block();
+            builder.push_stmt(entry, node.text_range());
+            let after = builder.new_block();
+            if let Some(node) = selector.value().and_then(SyntaxElement::into_node) {
+                builder.collect_expression(&node, entry);
+            }
+            // A numeric selector can miss every arm even with an unnamed arm.
+            let mut targets = vec![after];
+            for arg in args {
+                if let Some(value) = arg.value() {
+                    let arm = builder.new_block();
+                    targets.push(arm);
+                    if let Some(node) = value.as_node() {
+                        builder.collect_expression(node, arm);
+                    }
+                    builder.set_term(arm, Terminator::Goto(after));
+                }
+            }
+            builder.set_term(
+                entry,
+                Terminator::MultiBranch {
+                    call: NodePtr::from_node(node),
+                    targets,
+                },
+            );
+            self.expressions.push((
+                owner,
+                ControlFlowGraph {
+                    blocks: builder.blocks,
+                    entry,
+                    expressions: builder.expressions,
+                },
+            ));
+            return;
+        }
+        for child in node.children() {
+            self.collect_expression(&child, owner);
         }
     }
 
@@ -405,6 +577,11 @@ impl Builder {
         cur: BlockId,
         loop_ctx: Option<LoopCtx>,
     ) -> Option<BlockId> {
+        for element in if_expr.condition_elements().unwrap_or_default() {
+            if let Some(node) = element.as_node() {
+                self.collect_expression(node, cur);
+            }
+        }
         let then_blk = self.new_block();
         let then_exit = self.lower_seq(
             &branch_statements(if_expr.then_elements()),
@@ -548,6 +725,10 @@ fn branch_single(elements: Option<Vec<SyntaxElement>>) -> Option<SyntaxElement> 
 }
 
 fn render_region(cfg: &ControlFlowGraph, src: &str, out: &mut String) {
+    render_region_at(cfg, src, out, 2);
+}
+
+fn render_region_at(cfg: &ControlFlowGraph, src: &str, out: &mut String, indent: usize) {
     for (i, block) in cfg.blocks().iter().enumerate() {
         let stmts = block
             .stmts
@@ -564,11 +745,23 @@ fn render_region(cfg: &ControlFlowGraph, src: &str, out: &mut String) {
                     else_blk.index()
                 )
             }
+            Terminator::MultiBranch { ref targets, .. } => format!(
+                "-> alternatives {:?}",
+                targets.iter().map(|id| id.index()).collect::<Vec<_>>()
+            ),
             Terminator::Return => "-> return".to_string(),
             Terminator::Diverge => "-> diverge".to_string(),
             Terminator::Unreachable => "(unreachable)".to_string(),
         };
-        out.push_str(&format!("  bb{i}: [{stmts}] {term}\n"));
+        out.push_str(&format!("{}bb{i}: [{stmts}] {term}\n", " ".repeat(indent)));
+        for (_, graph) in cfg
+            .expressions
+            .iter()
+            .filter(|(owner, _)| owner.index() == i)
+        {
+            out.push_str(&format!("{}expression flow:\n", " ".repeat(indent + 2)));
+            render_region_at(graph, src, out, indent + 4);
+        }
     }
 }
 

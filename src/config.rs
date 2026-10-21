@@ -274,9 +274,30 @@ pub struct LintConfig {
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct RulesConfig {
+    /// `[lint.rules.cyclomatic-complexity]`
+    #[serde(default)]
+    pub cyclomatic_complexity: CyclomaticComplexityConfig,
     /// `[lint.rules.undesirable-function]`
     #[serde(default)]
     pub undesirable_function: UndesirableFunctionConfig,
+}
+
+/// Maximum native CFG decision complexity allowed for a function body.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct CyclomaticComplexityConfig {
+    /// Functions exceeding this positive ceiling are reported.
+    #[cfg_attr(test, schemars(range(max = u32::MAX)))]
+    pub max_complexity: std::num::NonZeroU32,
+}
+
+impl Default for CyclomaticComplexityConfig {
+    fn default() -> Self {
+        Self {
+            max_complexity: std::num::NonZeroU32::new(20).unwrap(),
+        }
+    }
 }
 
 /// `[lint.rules.undesirable-function]` — the function-name policy for the

@@ -30,3 +30,7 @@ description = true
 [lint]
 # select = ["equals-na"] # replaces the default rule selection
 extend-select = []
+
+# This opt-in rule is enabled with `extend-select` above.
+[lint.rules.cyclomatic-complexity]
+max-complexity = 20

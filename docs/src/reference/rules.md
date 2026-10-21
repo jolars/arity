@@ -68,6 +68,7 @@ so this page never drifts from the rules' actual behavior.
 - [`outer-negation`](#outer-negation)
 - [`string-boundary`](#string-boundary)
 - [`unnecessary-nesting`](#unnecessary-nesting)
+- [`cyclomatic-complexity`](#cyclomatic-complexity)
 
 **Performance**
 
@@ -1380,6 +1381,42 @@ warning: unnecessary-nesting
 2 |   if (b) {
   |   ^^ this `if` is nested in another `if` with no `else`
   = help: Combine the two conditions with `&&` to drop a level of nesting.
+```
+
+### `cyclomatic-complexity`
+
+Report function bodies whose native CFG decision complexity exceeds `[lint.rules.cyclomatic-complexity] max-complexity` (20 by default, at least 1). This maintainability policy is opt-in and has no autofix.
+
+The score starts at 1. Each reachable `if`, `for`, `while`, `&&`, or `||` adds 1. Each value-bearing arm of a base-resolved `switch()` adds 1, including an unnamed arm: a numeric selector can still match none. Empty fallthrough labels add nothing. `else`, `return()`, `stop()`, `break`, `next`, and unconditional `repeat` add nothing themselves. Decisions in nested functions are scored independently; formal defaults, quoted bodies, and unreachable tails are excluded. Decisions in ordinary call arguments count as potential flow, without assuming eager evaluation.
+
+A simple loop or an early-return guard scores 2. These native scores intentionally differ from cyclocomp and Jarl, which score those shapes as 3. Consider splitting a complex function into smaller helpers.
+
+This rule is **disabled by default**; enable it with `select`.
+
+Many independent conditions make a function harder to maintain:
+
+```r
+dispatch <- function(x) {
+  if (x$a && x$b) a()
+  if (x$c && x$d) b()
+  if (x$e && x$f) c()
+  if (x$g && x$h) d()
+  if (x$i && x$j) e()
+  if (x$k && x$l) f()
+  if (x$m && x$n) g()
+  if (x$o && x$p) h()
+  if (x$q && x$r) i()
+  if (x$s && x$t) j()
+}
+```
+
+```text
+warning: cyclomatic-complexity
+ --> example.R:1:13
+  |
+1 | dispatch <- function(x) {
+  |             ^^^^^^^^ function has a cyclomatic complexity of 21, exceeding the maximum of 20
+  = help: Split this function into smaller helpers.
 ```
 
 ## Performance

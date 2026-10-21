@@ -144,6 +144,9 @@ select = ["undesirable-function"]
 extend-select = ["implicit-assignment", "future-rule"]
 ignore = ["unused-binding"]
 
+[lint.rules.cyclomatic-complexity]
+max-complexity = 25
+
 [lint.rules.undesirable-function]
 functions = { attach = "avoid changing the search path" }
 extend-functions = { sapply = "use `vapply()`" }
@@ -182,6 +185,11 @@ fn config_schema_rejects_runtime_invalid_configuration() {
         "[format]\nline-width = 0",
         "[format]\nindent-width = 1001",
         "[lint.rules]\nundesirabl-function = {}",
+        "[lint.rules.cyclomatic-complexity]\nmax-complexity = 0",
+        "[lint.rules.cyclomatic-complexity]\nmax-complexity = -1",
+        "[lint.rules.cyclomatic-complexity]\nmax-complexity = 4294967296",
+        "[lint.rules.cyclomatic-complexity]\nmax-complexity = 1.5",
+        "[lint.rules.cyclomatic-complexity]\nmaximum = 20",
         "[lint]\nextend-select = \"implicit-assignment\"",
         "[lint]\nextend-select = [1]",
         "[lint]\nextend_select = []",

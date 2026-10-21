@@ -2440,3 +2440,24 @@ fn upsert_file_resolves_markdown_from_package() {
         "package markdown default reaches the salsa parse"
     );
 }
+
+#[test]
+fn control_flow_expression_decisions_backdate_and_refresh() {
+    let mut db = IncrementalDatabase::default();
+    let before = "f <- function() { value <- if (aaa && b) 1 else 2; value }\n";
+    let file = db.add_file(before);
+    let graph = db.control_flow(file).clone();
+    assert_eq!(graph.functions()[0].1.cyclomatic_complexity(&|_| true), 3);
+    db.set_file_text(file, before.replace("aaa", "bbb"));
+    assert_eq!(*db.control_flow(file), graph);
+    db.clear_query_log();
+    let _ = db.control_flow(file);
+    assert!(db.query_log().is_empty());
+    db.set_file_text(file, before.replace("aaa && b", "aaa &  b"));
+    assert_eq!(
+        db.control_flow(file).functions()[0]
+            .1
+            .cyclomatic_complexity(&|_| true),
+        2
+    );
+}

@@ -1028,7 +1028,7 @@ fn call_masks_arguments(node: &SyntaxNode) -> bool {
 /// How a quoting callee defuses its argument body — specifically, which
 /// unquoting escape (if any) it honors inside that body.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum QuoteKind {
+pub(crate) enum QuoteKind {
     /// Nothing in the body is ever evaluated (`quote`, `substitute`,
     /// `expression`), so there is no escape at all.
     Opaque,
@@ -1078,7 +1078,7 @@ fn quoting_callee_kind(name: &str) -> Option<QuoteKind> {
 }
 
 /// How the `CALL_EXPR` `node`'s callee quotes its argument body, if it does.
-fn call_quote_kind(node: &SyntaxNode) -> Option<QuoteKind> {
+pub(crate) fn call_quote_kind(node: &SyntaxNode) -> Option<QuoteKind> {
     CallExpr::cast(node.clone())
         .and_then(|call| call_callee_ident(&call))
         .and_then(|name| quoting_callee_kind(&name))

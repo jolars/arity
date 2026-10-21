@@ -11,3 +11,6 @@ pub use outer_negation::OuterNegation;
 pub use string_boundary::StringBoundary;
 pub use true_false_symbol::TrueFalseSymbol;
 pub use unnecessary_nesting::UnnecessaryNesting;
+
+mod cyclomatic_complexity;
+pub use cyclomatic_complexity::CyclomaticComplexity;

@@ -177,6 +177,7 @@ fn readability_rules() -> Vec<Box<dyn Rule>> {
         Box::new(readability::OuterNegation),
         Box::new(readability::StringBoundary),
         Box::new(readability::UnnecessaryNesting),
+        Box::new(readability::CyclomaticComplexity),
     ]
 }
 

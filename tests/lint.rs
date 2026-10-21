@@ -3610,6 +3610,7 @@ fn undesirable_config(
     undesirable_function.extend_functions = map(extend);
     arity::config::RulesConfig {
         undesirable_function,
+        ..Default::default()
     }
 }
 
@@ -8980,4 +8981,117 @@ fn strings_as_factors_uses_description_floor_and_tight_span() {
         &src[usize::from(finding.range.start())..usize::from(finding.range.end())],
         "\"a\""
     );
+}
+
+fn complexity_findings(body: &str, maximum: u32) -> Vec<arity::linter::Diagnostic> {
+    let config: arity::config::Config = toml::from_str(
+        &format!("[lint]\nselect = [\"cyclomatic-complexity\"]\n[lint.rules.cyclomatic-complexity]\nmax-complexity = {maximum}\n"),
+    ).unwrap();
+    check_document(Path::new("complexity.R"), body, &config.lint).unwrap()
+}
+
+#[test]
+fn cyclomatic_complexity_scores_native_decisions() {
+    for (body, score) in [
+        ("1", 1),
+        ("{}", 1),
+        ("if (x) 1 else 2", 2),
+        ("{ if (x) return(1); 2 }", 2),
+        ("for (i in xs) print(i)", 2),
+        ("while (x) x <- x - 1", 2),
+        ("repeat 1", 1),
+        ("repeat if (x) break", 2),
+        ("{ if (a) next_fn(); if (b) other() }", 3),
+        ("if (a && (b || c)) 1", 4),
+        ("a && b || c", 3),
+        ("if (a & b | c) 1", 2),
+        ("{ value <- (if (x) 1 else 2); value }", 2),
+        ("{ foo(if (x) return(1) else stop()); if (y) 2 }", 3),
+        ("{ return(1); if (a && b) 2 }", 1),
+        ("quote(if (a && b) 1)", 1),
+        ("base::expression(if (a) 1)", 1),
+        ("switch(x, a = 1, b = 2)", 3),
+        ("base::switch(x, a = , b = if (y) 1, 2)", 4),
+        ("{ switch <- identity; switch(x, a = 1, b = 2) }", 1),
+        ("custom::switch(x, a = 1, b = 2)", 1),
+        ("{ if (x) return(1) else stop(); if (y) 2 }", 2),
+    ] {
+        let source = format!("f <- function() {body}\n");
+        let findings = complexity_findings(&source, score);
+        assert!(findings.is_empty(), "{source}: {findings:?}");
+        if score > 1 {
+            let findings = complexity_findings(&source, score - 1);
+            assert_eq!(findings.len(), 1, "{source}: {findings:?}");
+            assert!(
+                findings[0]
+                    .message
+                    .body
+                    .contains(&format!("complexity of {score}")),
+                "{findings:?}"
+            );
+            assert!(findings[0].fix.is_none());
+        }
+    }
+}
+
+#[test]
+fn cyclomatic_complexity_functions_are_independent() {
+    let source = "outer <- function(x = if (a) 1) { inner <- \\(x) if (x) 1; 2 }\n";
+    let findings = complexity_findings(source, 1);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(
+        &source[usize::from(findings[0].range.start())..usize::from(findings[0].range.end())],
+        "\\"
+    );
+    assert!(complexity_findings("if (a) 1 else 2\n", 1).is_empty());
+    assert!(complexity_findings("quote(function() if (a) 1)\n", 1).is_empty());
+}
+
+#[test]
+fn cyclomatic_complexity_is_opt_in_and_suppressible() {
+    for count in [19, 20] {
+        let source = format!("f <- function() {{ {} }}\n", "if (x) 1; ".repeat(count));
+        assert!(
+            diagnostics(&source)
+                .iter()
+                .all(|d| d.rule != "cyclomatic-complexity")
+        );
+        let findings = diagnostics_selecting(&source, &["cyclomatic-complexity"]);
+        assert_eq!(findings.len(), usize::from(count == 20));
+        if let Some(finding) = findings.first() {
+            assert_eq!(
+                &source[usize::from(finding.range.start())..usize::from(finding.range.end())],
+                "function"
+            );
+            assert_eq!(finding.severity, arity::linter::Severity::Warning);
+        }
+        let suppressed = format!("# arity-lint skip cyclomatic-complexity: dispatcher\n{source}");
+        assert!(diagnostics_selecting(&suppressed, &["cyclomatic-complexity"]).is_empty());
+    }
+}
+
+#[test]
+fn cyclomatic_complexity_configuration_is_strict() {
+    for value in ["0", "-1", "1.5", "\"20\"", "4294967296"] {
+        let text = format!("[lint.rules.cyclomatic-complexity]\nmax-complexity = {value}");
+        assert!(
+            toml::from_str::<arity::config::Config>(&text).is_err(),
+            "{text}"
+        );
+    }
+    assert!(
+        toml::from_str::<arity::config::Config>("[lint.rules.cyclomatic-complexity]\nmaximum = 20")
+            .is_err()
+    );
+}
+
+#[test]
+fn cyclomatic_complexity_preserves_lazy_argument_reachability() {
+    for source in [
+        "f <- function() { if (x) foo(return(1)) else bar(stop()); after() }\n",
+        "f <- function() { if (x) quote(return(1)) else quote(stop()); after() }\n",
+    ] {
+        assert!(diagnostics_selecting(source, &["unreachable-code"]).is_empty());
+        assert_eq!(complexity_findings(source, 1).len(), 1);
+    }
 }

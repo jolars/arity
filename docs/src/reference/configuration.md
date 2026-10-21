@@ -210,6 +210,21 @@ Unlike `select`, `extend-select`, and `ignore`---where rule IDs are data,
 checked when linting runs---a rule ID here is part of the schema, so a mistyped
 one is reported when the config is *parsed*, alongside any other unknown key.
 
+#### `[lint.rules.cyclomatic-complexity]`
+
+The opt-in [`cyclomatic-complexity`](rules.md#cyclomatic-complexity) rule
+reports functions whose native CFG decision count exceeds `max-complexity`. The
+maximum must be a positive integer and defaults to 20. Setting the maximum does
+not enable the rule.
+
+```toml
+[lint]
+extend-select = ["cyclomatic-complexity"]
+
+[lint.rules.cyclomatic-complexity]
+max-complexity = 20
+```
+
 #### `[lint.rules.undesirable-function]`
 
 The function-name policy for
