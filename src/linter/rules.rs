@@ -158,6 +158,7 @@ fn suspicious_rules() -> Vec<Box<dyn Rule>> {
         Box::new(suspicious::BareReturn),
         Box::new(suspicious::FunctionReturnAssignment),
         Box::new(suspicious::TerminalClose),
+        Box::new(suspicious::StringsAsFactors),
         Box::new(suspicious::PartialArgumentMatch),
         Box::new(suspicious::ConfusableIdentifier),
         Box::new(suspicious::Repeat),

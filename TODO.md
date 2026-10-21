@@ -319,9 +319,12 @@ Tier 2—performance/readability transformations that the formatter cannot do:
   `.onDetach`, and `.onUnload` signatures and statically forbidden/noisy calls
   per Writing R Extensions. Package-only, cross-checked against `R CMD check`'s
   implementation rather than copied blindly from lintr.
-- [ ] `strings-as-factors`: when the R compatibility floor crosses 4.0, flag a
+- [x] `strings-as-factors`: when the R compatibility floor crosses 4.0, flag a
   `data.frame()` with known character columns and no explicit
   `stringsAsFactors`. No fix can choose the intended behavior.
+  Implemented as a default-on `ns`-tier warning for declared floors below 4.0,
+  with literal strings and base `c()` vectors of atomic literals. Unknown
+  column types remain silent; explicit settings are preserved.
 - [ ] Extend the existing Phase 5 package-aware plan with jarl/lintr's remaining
   testthat rewrites: `expect-not`, `expect-s4-class`, `expect-comparison`,
   `expect-identical`, `expect-shape`, and yoda argument order. Keep the family

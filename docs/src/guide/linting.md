@@ -84,6 +84,12 @@ string-named native calls such as `.Call("native_fun", x)` and recommends
 registered symbol bindings. It offers no automatic fix because registration may
 require changes to NAMESPACE and native sources.
 
+[`strings-as-factors`](../reference/rules.md#strings-as-factors) warns when a
+`data.frame()` has a known character column and supported R versions span the
+4.0 default change. Set `stringsAsFactors` explicitly to choose factors or
+character vectors. The rule uses the declared R compatibility floor and stays
+silent when the floor is absent or at least 4.0.
+
 ## Apply Fixes
 
 Apply safe fixes in place, then format the rewritten code:

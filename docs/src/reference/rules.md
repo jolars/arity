@@ -51,6 +51,7 @@ so this page never drifts from the rules' actual behavior.
 - [`bare-return`](#bare-return)
 - [`function-return-assignment`](#function-return-assignment)
 - [`terminal-close`](#terminal-close)
+- [`strings-as-factors`](#strings-as-factors)
 - [`partial-argument-match`](#partial-argument-match)
 - [`confusable-identifier`](#confusable-identifier)
 - [`repeat`](#repeat)
@@ -945,6 +946,29 @@ warning: terminal-close
 4 |   close(con)
   |   ^^^^^^^^^^ `close()` at the end of a function can be skipped by errors or early returns
   = help: Register cleanup with `on.exit(..., add = TRUE)` immediately after acquiring the connection.
+```
+
+### `strings-as-factors`
+
+Set `stringsAsFactors` explicitly in `data.frame()` when supported R versions span the R 4.0.0 default change from `TRUE` to `FALSE`. The rule runs only with a declared R floor below 4.0, resolved from `[compat] r` or DESCRIPTION. With no floor, or a floor of 4.0 or later, it stays silent.
+
+Known character columns include string literals and base `c()` calls made entirely from atomic literals with at least one string. Unknown values and columns protected by `I()` are left alone. Only base-resolved calls are checked. No fix is offered because either factors or character vectors may be intended.
+
+This rule is **enabled by default**.
+
+With a declared R 3.6 compatibility floor:
+
+```r
+data.frame(label = c("a", "b"))
+```
+
+```text
+warning: strings-as-factors
+ --> example.R:1:20
+  |
+1 | data.frame(label = c("a", "b"))
+  |                    ^^^^^^^^^^^ This character column depends on the `stringsAsFactors` default changed in R 4.0.0
+  = help: Set `stringsAsFactors = TRUE` or `stringsAsFactors = FALSE` explicitly.
 ```
 
 ### `partial-argument-match`

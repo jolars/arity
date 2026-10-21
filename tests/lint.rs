@@ -8898,3 +8898,86 @@ fn routine_registration_is_limited_to_package_r_sources() {
     let result = check_paths(&[dir.path().to_path_buf()]).unwrap();
     assert!(!rules_for(&result, "test.R").contains(&"routine-registration"));
 }
+
+#[test]
+fn strings_as_factors_warns_when_supported_versions_cross_r_40() {
+    for src in [
+        "data.frame(x = \"a\")\n",
+        "base::data.frame(x = c(\"a\", \"b\"))\n",
+        "data.frame(x = c(\"a\", 1, TRUE, NA))\n",
+    ] {
+        let findings: Vec<_> = diagnostics_with_compat(src, Some("3.6"), None)
+            .into_iter()
+            .filter(|d| d.rule == "strings-as-factors")
+            .collect();
+        assert_eq!(findings.len(), 1, "{src}: {findings:?}");
+        assert!(findings[0].fix.is_none());
+        for floor in [None, Some("4.0"), Some("4.4")] {
+            assert!(
+                diagnostics_with_compat(src, floor, None)
+                    .iter()
+                    .all(|d| d.rule != "strings-as-factors"),
+                "{src}: {floor:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn strings_as_factors_leaves_explicit_or_unknown_columns_alone() {
+    for src in [
+        "data.frame(x = \"a\", stringsAsFactors = FALSE)\n",
+        "data.frame(x = \"a\", stringsAsFactors = TRUE)\n",
+        "data.frame(x = \"a\", stringsAsFactors = option)\n",
+        "data.frame(x = 1, row.names = \"a\")\n",
+        "data.frame(x = 1)\n",
+        "data.frame(x = unknown)\n",
+        "data.frame(x = I(\"a\"))\n",
+        "data.frame(x = c(\"a\", unknown))\n",
+        "data.frame(x = c())\n",
+        "data.frame <- function(...) NULL; data.frame(x = \"a\")\n",
+        "c <- function(...) list(...); data.frame(x = c(\"a\"))\n",
+        "other::data.frame(x = \"a\")\n",
+    ] {
+        assert!(
+            diagnostics_with_compat(src, Some("3.6"), None)
+                .iter()
+                .all(|d| d.rule != "strings-as-factors"),
+            "{src}"
+        );
+    }
+}
+
+#[test]
+fn strings_as_factors_uses_description_floor_and_tight_span() {
+    let dir = tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("R")).unwrap();
+    let description = dir.path().join("DESCRIPTION");
+    let file = dir.path().join("R/frame.R");
+    let src = "data.frame(x = \"a\")\n";
+    std::fs::write(&file, src).unwrap();
+    for (floor, expected) in [("3.6", 1), ("4.0", 0)] {
+        std::fs::write(
+            &description,
+            format!("Package: mypkg\nDepends: R (>= {floor})\n"),
+        )
+        .unwrap();
+        let result = check_paths(std::slice::from_ref(&file)).unwrap();
+        assert_eq!(
+            rules_for(&result, "frame.R")
+                .iter()
+                .filter(|&&rule| rule == "strings-as-factors")
+                .count(),
+            expected
+        );
+    }
+    let findings = diagnostics_with_compat(src, Some("3.6"), None);
+    let finding = findings
+        .iter()
+        .find(|d| d.rule == "strings-as-factors")
+        .unwrap();
+    assert_eq!(
+        &src[usize::from(finding.range.start())..usize::from(finding.range.end())],
+        "\"a\""
+    );
+}
