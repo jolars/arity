@@ -262,9 +262,6 @@ Tier 1—clear correctness bugs, good default-on candidates:
   `unused-binding`. A template with no interpolation is at most an opt-in
   readability rule: `glue()` also provides trimming, concatenation, and a
   distinct result class, so a default warning would be noisy.
-- [ ] `length-test`: flag the likely-parenthesization error
-  `length(x == n)`/`length(x != n)` and suggest `length(x) == n`. Keep the
-  diagnostic conservative around overloaded calls and non-atomic operands.
 - [x] `all-equal`: flag truth-testing `all.equal()` directly (conditions,
   negation, `isFALSE`) because disagreement returns a character vector, not
   `FALSE`; recommend `isTRUE(all.equal(...))`. Fixes are unsafe because they
