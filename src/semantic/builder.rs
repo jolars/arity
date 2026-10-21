@@ -29,7 +29,7 @@ use crate::ast::{Arg, AssignmentExpr, AstToken as _, CallExpr, FunctionExpr, Ide
 use crate::semantic::binding::{Binding, BindingId, BindingKind};
 use crate::semantic::scope::{Scope, ScopeId, ScopeKind};
 use crate::semantic::symbols::LoadedPackage;
-use crate::semantic::{IdentRef, SemanticModel, UseOnlyRead};
+use crate::semantic::{IdentRef, SemanticModel, UseOnlyRead, binding_name_key};
 use crate::syntax::{RLanguage, SyntaxElement, SyntaxKind, SyntaxNode};
 
 /// Build a fresh semantic model from a root CST node.
@@ -1580,7 +1580,7 @@ fn push_binding(
     let id = BindingId::from_index(model.bindings.len());
     model
         .bindings_by_name
-        .entry((scope, name.clone()))
+        .entry((scope, binding_name_key(&name)))
         .or_default()
         .push(id);
     model.bindings.push(Binding {

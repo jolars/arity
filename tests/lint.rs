@@ -10,6 +10,153 @@ use arity::linter::{
 use tempfile::tempdir;
 
 #[test]
+fn terminal_close_reports_function_tails_without_a_fix() {
+    for (src, tail) in [
+        (
+            "f <- function(path) {\n  con <- file(path)\n  readLines(con)\n  close(con)\n}\n",
+            "close(con)",
+        ),
+        ("f <- function(con) close(con)\n", "close(con)"),
+        ("f <- \\(con) close(con)\n", "close(con)"),
+        ("f <- function(con) { close(con); # done\n}\n", "close(con)"),
+        (
+            "f <- function(con) { { print(con); (close(con)) } }\n",
+            "close(con)",
+        ),
+        (
+            "f <- function(con) { close(con = con, type = 'output') }\n",
+            "close(con = con, type = 'output')",
+        ),
+        ("f <- function(con) `close`(con)\n", "`close`(con)"),
+    ] {
+        assert!(arity::parser::parse(src).diagnostics.is_empty(), "{src}");
+        assert_eq!(arity::parser::reconstruct(src), src);
+        let findings = diagnostics_selecting(src, &["terminal-close"]);
+        assert_eq!(findings.len(), 1, "{src}: {findings:?}");
+        let d = &findings[0];
+        assert_eq!(
+            &src[usize::from(d.range.start())..usize::from(d.range.end())],
+            tail,
+        );
+        assert_eq!(d.severity, arity::linter::Severity::Warning);
+        assert!(d.message.body.contains("close()"), "{d:?}");
+        let suggestion = d.message.suggestion.as_deref().expect("cleanup advice");
+        assert!(suggestion.contains("on.exit("), "{d:?}");
+        assert!(suggestion.contains("acquir"), "{d:?}");
+        assert!(d.fix.is_none(), "{d:?}");
+        let fixes: Vec<_> = findings.into_iter().filter_map(|d| d.fix).collect();
+        assert_eq!(apply_fixes(src, &fixes, true).output, src);
+    }
+}
+
+#[test]
+fn terminal_close_requires_a_direct_function_tail() {
+    for src in [
+        "close(con)\n",
+        "{ close(con) }\n",
+        "f <- function(con) { close(con); NULL }\n",
+        "f <- function(con) { { close(con) }; NULL }\n",
+        "f <- function(con) { close(con); identity }\n",
+        "f <- function(con) { on.exit(close(con), add = TRUE); readLines(con) }\n",
+        "f <- function(con) on.exit(close(con), add = TRUE)\n",
+        "f <- function(con) if (flag) close(con)\n",
+        "f <- function(con) for (i in 1:2) close(con)\n",
+        "f <- function(con) while (flag) close(con)\n",
+        "f <- function(con) invisible(close(con))\n",
+        "f <- function(con) { result <- close(con) }\n",
+        "f <- function(con) { closeAllConnections() }\n",
+        "f <- function(con = close(other)) NULL\n",
+        "f <- function() { # empty\n}\n",
+    ] {
+        assert!(arity::parser::parse(src).diagnostics.is_empty(), "{src}");
+        let findings = diagnostics_selecting(src, &["terminal-close"]);
+        assert!(findings.is_empty(), "{src}: {findings:?}");
+    }
+}
+
+#[test]
+fn terminal_close_requires_an_evaluated_base_callee() {
+    for src in [
+        "f <- function(con, close) close(con)\n",
+        "f <- function(con, close) `close`(con)\n",
+        "f <- function(con, `close`) close(con)\n",
+        "close <- function(...) NULL\nf <- function(con) close(con)\n",
+        "f <- function(con) { close <- identity; close(con) }\n",
+        "f <- function(con) custom::close(con)\n",
+        "f <- function(con) base::close(con)\n",
+        "f <- function(con) object$close(con)\n",
+        "f <- function(con) (close)(con)\n",
+        "quote(function(con) close(con))\n",
+        "expression(function(con) close(con))\n",
+        "substitute(function(con) close(con))\n",
+        "f <- function(con) quote(close(con))\n",
+    ] {
+        let findings = diagnostics_selecting(src, &["terminal-close"]);
+        assert!(findings.is_empty(), "{src}: {findings:?}");
+    }
+}
+
+#[test]
+fn terminal_close_respects_attached_package_masks() {
+    let provider = CompositeProvider::with_index(IndexedProvider::from_indices([indexed_pkg(
+        "custompkg",
+        &["close"],
+    )]));
+    let config = LintConfig {
+        select: Some(vec!["terminal-close".into()]),
+        ..Default::default()
+    };
+    for (src, expected) in [
+        ("f <- function(con) close(con)\n", 1),
+        ("library(custompkg)\nf <- function(con) close(con)\n", 0),
+    ] {
+        let findings = check_document_with_provider(Path::new("t.R"), src, &config, &provider)
+            .expect("lint should succeed");
+        assert_eq!(findings.len(), expected, "{src}: {findings:?}");
+    }
+}
+
+#[test]
+fn terminal_close_checks_nested_functions_independently() {
+    let src =
+        "outer <- function(con) {\n  inner <- function(other) close(other)\n  inner(con)\n}\n";
+    let findings = diagnostics_selecting(src, &["terminal-close"]);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let range = findings[0].range;
+    assert_eq!(
+        &src[usize::from(range.start())..usize::from(range.end())],
+        "close(other)",
+    );
+    let src = "outer <- function(con) function(other) close(other)\n";
+    assert_eq!(diagnostics_selecting(src, &["terminal-close"]).len(), 1);
+}
+
+#[test]
+fn terminal_close_is_opt_in_and_suppressible() {
+    let src = "f <- function(con) close(con)\nf(con)\n";
+    assert!(diagnostics(src).iter().all(|d| d.rule != "terminal-close"));
+    let config = LintConfig {
+        extend_select: vec!["terminal-close".into()],
+        ..Default::default()
+    };
+    let findings = check_document(Path::new("t.R"), src, &config).unwrap();
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|d| d.rule == "terminal-close")
+            .count(),
+        1,
+    );
+    for src in [
+        "# arity-lint skip terminal-close: ownership transfer\nf <- function(con) close(con)\n",
+        "f <- function(con) {\n  # arity-lint skip terminal-close: finalizer\n  close(con)\n}\n",
+        "# arity-lint skip-file terminal-close: cleanup helpers\nf <- function(con) close(con)\n",
+    ] {
+        assert!(diagnostics_selecting(src, &["terminal-close"]).is_empty());
+    }
+}
+
+#[test]
 fn confusable_identifier_reports_code_points_ascii_spelling_and_byte_spans() {
     for (name, spelling, points) in [
         ("с", "c", vec!["U+0441"]),
@@ -6743,6 +6890,8 @@ fn assert_fixed_output_is_clean(input: &str) {
 #[test]
 fn fixed_output_is_parseable_and_clean() {
     let cases = [
+        // terminal-close (opt-in, no fix).
+        "f <- function(con) { print(con); close(con) }\nf(con)\n",
         "с <- 1\nprint(с)\n",
         "f <- function(alpha) alpha\nf(al = 1)\n",
         "f <- function(alpha, ...) alpha\nf(`al` = 1, extra = 2)\n",

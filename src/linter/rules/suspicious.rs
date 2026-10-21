@@ -17,6 +17,7 @@ mod redundant_equals;
 mod redundant_ifelse;
 mod repeat_loop;
 mod shadowed_builtin;
+mod terminal_close;
 mod undesirable_function;
 mod unused_function;
 
@@ -36,5 +37,6 @@ pub use redundant_equals::RedundantEquals;
 pub use redundant_ifelse::RedundantIfelse;
 pub use repeat_loop::Repeat;
 pub use shadowed_builtin::ShadowedBuiltin;
+pub use terminal_close::TerminalClose;
 pub use undesirable_function::UndesirableFunction;
 pub use unused_function::UnusedFunction;

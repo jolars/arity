@@ -67,6 +67,12 @@ Latin letters. It reports Unicode code points and a likely ASCII spelling,
 without a rename fix. Greek statistical symbols and ordinary non-Latin names
 remain usable.
 
+Enable [`terminal-close`](../reference/rules.md#terminal-close) to flag
+functions that end with a base `close()` call. It recommends registering cleanup
+with `on.exit()` immediately after acquiring the connection. The rule is
+disabled by default because connection ownership can make terminal cleanup
+intentional, and it offers no automatic fix.
+
 `select` replaces the default rule selection, `extend-select` adds rules to that
 selection, and `ignore` removes rules afterward. The [configuration
 guide](configuration.md) covers shared settings, and the

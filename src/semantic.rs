@@ -101,7 +101,7 @@ pub struct SemanticModel {
     /// `undefined-symbol`; they exist only to mark a same-package binding *used*
     /// across files (e.g. `pkg:::helper()` in a test reads `helper`).
     qualified_reads: Vec<SmolStr>,
-    /// Each scope's directly-declared bindings keyed by name, in
+    /// Each scope's directly-declared bindings keyed by unbackticked name, in
     /// [`Scope::bindings`] order — the constant-time backend for
     /// [`resolve_local`](Self::resolve_local) and the builder's read marking
     /// (a linear scan of a scope's bindings per lookup is quadratic over a
@@ -252,7 +252,7 @@ impl SemanticModel {
     /// ([`Scope::bindings`]) order. Empty if the scope declares no such name.
     pub(crate) fn scope_bindings_named(&self, scope: ScopeId, name: &SmolStr) -> &[BindingId] {
         self.bindings_by_name
-            .get(&(scope, name.clone()))
+            .get(&(scope, binding_name_key(name)))
             .map(Vec::as_slice)
             .unwrap_or(&[])
     }
@@ -326,6 +326,16 @@ impl SemanticModel {
     }
 }
 
+fn binding_name_key(name: &SmolStr) -> SmolStr {
+    // Backticks quote a name without changing its binding identity. Keep the
+    // original spelling on bindings and reads for source-facing consumers.
+    if name.starts_with('`') {
+        SmolStr::new(symbols::unbacktick(name))
+    } else {
+        name.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,6 +378,30 @@ mod tests {
             .map(BindingId::from_index)
             .unwrap();
         assert_eq!(resolved, first_x);
+    }
+
+    #[test]
+    fn resolve_local_matches_plain_and_backticked_names() {
+        for (parameter, read) in [
+            ("close", "`close`"),
+            ("`close`", "close"),
+            ("`close`", "`close`"),
+        ] {
+            let source = format!("close <- identity\nf <- function({parameter}) {read}(1)\n");
+            let model = model_of(&source);
+            let binding = model
+                .bindings()
+                .iter()
+                .position(|binding| binding.kind == BindingKind::Param)
+                .map(BindingId::from_index)
+                .unwrap();
+            let ident = ident_named(&model, read);
+            assert_eq!(model.resolve_local(ident), Some(binding), "{source}");
+            assert!(model.binding(binding).read, "{source}");
+            assert_eq!(model.read_sites(binding).count(), 1, "{source}");
+            let ident_index = model.idents().iter().position(|i| i == ident).unwrap();
+            assert_eq!(model.ident_bindings(ident_index), &[binding], "{source}");
+        }
     }
 
     #[test]

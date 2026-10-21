@@ -301,10 +301,13 @@ Tier 2—performance/readability transformations that the formatter cannot do:
 - [ ] `list-comparison`: flag direct comparisons of known list-producing calls
   such as `lapply(...) > 1`, which rely on awkward coercion; recommend a typed
   iterator rather than guessing a fix.
-- [ ] `terminal-close`: flag a function whose final action is `close(conn)` and
+- [x] `terminal-close`: flag a function whose final action is `close(conn)` and
   recommend registering cleanup with `on.exit()` near acquisition. Default-off
   until a corpus pass establishes that ownership-transfer patterns are not
   noisy.
+  Implemented as an opt-in `ns`-tier warning for direct base-resolved function
+  tails, including unbraced bodies and transparent blocks or parentheses. No fix
+  is offered because ownership, cleanup timing, and return values can differ.
 - [ ] `routine-registration`: flag string-named `.Call`/`.C`/`.Fortran`/
   `.External` calls in packages and recommend registered native symbols. Reuse
   the existing NAMESPACE/native-registration project facts; do not invoke R or

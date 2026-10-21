@@ -50,6 +50,7 @@ so this page never drifts from the rules' actual behavior.
 - [`pipe-return`](#pipe-return)
 - [`bare-return`](#bare-return)
 - [`function-return-assignment`](#function-return-assignment)
+- [`terminal-close`](#terminal-close)
 - [`partial-argument-match`](#partial-argument-match)
 - [`confusable-identifier`](#confusable-identifier)
 - [`repeat`](#repeat)
@@ -916,6 +917,33 @@ warning: function-return-assignment
 1 | f <- function() return(result <- compute())
   |                        ^^^^^^^^^^^^^^^^^^^ assignment inside `return()` has a side effect
   = help: Move the assignment before `return()` or return the value directly.
+```
+
+### `terminal-close`
+
+Flag a direct base `close()` call at the end of a function, including an unbraced body or a tail wrapped in blocks or parentheses. Errors or early returns before that call can skip cleanup. Register `on.exit(close(con), add = TRUE)` immediately after acquiring the connection so cleanup runs when the function exits; see [R's `on.exit()` documentation](https://stat.ethz.ch/R-manual/R-devel/library/base/html/on.exit.html).
+
+This rule is opt-in because a function may intentionally take ownership of a caller's connection or expose the result of `close()`. No automatic fix is offered: moving cleanup can change ownership, timing, and the return value. Only simple calls that resolve to base R are checked; shadowed or qualified callees, quoted code, conditional cleanup, and calls nested inside other operations are left alone.
+
+This rule is **disabled by default**; enable it with `select`.
+
+An error before the last statement skips cleanup:
+
+```r
+read_file <- function(path) {
+  con <- file(path)
+  print(readLines(con))
+  close(con)
+}
+```
+
+```text
+warning: terminal-close
+ --> example.R:4:3
+  |
+4 |   close(con)
+  |   ^^^^^^^^^^ `close()` at the end of a function can be skipped by errors or early returns
+  = help: Register cleanup with `on.exit(..., add = TRUE)` immediately after acquiring the connection.
 ```
 
 ### `partial-argument-match`
