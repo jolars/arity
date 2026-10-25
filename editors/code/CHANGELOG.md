@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.27.0](https://github.com/jolars/arity/compare/arity-code-v0.26.0...arity-code-v0.27.0) (2026-10-25)
+
+### Bug Fixes
+
+- **security:** add a scoped override for msal-node ([`790607a`](https://github.com/jolars/arity/commit/790607aec1d038ecda2c1c8c1e1f8559a3f3960b))
+
+### Dependencies
+
+- updated arity to v0.27.0
+
 ## [0.26.0](https://github.com/jolars/arity/compare/arity-code-v0.25.0...arity-code-v0.26.0) (2026-10-13)
 
 ### Dependencies
