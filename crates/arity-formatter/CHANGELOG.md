@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.2](https://github.com/jolars/arity/compare/arity-formatter-v0.8.1...arity-formatter-v0.8.2) (2026-10-25)
+
+### Dependencies
+
+- updated crates/arity-parser to v0.6.2
+
 ## [0.8.1](https://github.com/jolars/arity/compare/arity-formatter-v0.8.0...arity-formatter-v0.8.1) (2026-10-13)
 
 ### Other changes

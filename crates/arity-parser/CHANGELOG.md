@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.2](https://github.com/jolars/arity/compare/arity-parser-v0.6.1...arity-parser-v0.6.2) (2026-10-25)
+
+### Bug Fixes
+
+- **parser:** diagnose pasted Unicode characters ([`8a16da2`](https://github.com/jolars/arity/commit/8a16da285732c99ec3c1e4812bbd51f0571f6c59))
+
 ## [0.6.1](https://github.com/jolars/arity/compare/arity-parser-v0.6.0...arity-parser-v0.6.1) (2026-10-05)
 
 ### Performance Improvements
