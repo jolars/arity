@@ -179,6 +179,7 @@ fastmatch
 fields
 filelock
 fitdistrplus
+fixest
 flashClust
 flextable
 fontBitstreamVera
@@ -360,6 +361,7 @@ patchwork
 pbapply
 pbivnorm
 pbkrtest
+pcaPP
 pcreg
 pdftools
 performance
@@ -530,6 +532,7 @@ timechange
 tinytest
 tinytex
 torch
+truncnorm
 tseries
 tweenr
 tzdb
