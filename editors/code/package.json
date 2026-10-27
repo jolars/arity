@@ -31,8 +31,11 @@
   ],
   "activationEvents": [
     "onLanguage:r",
+    "onLanguage:rd",
     "workspaceContains:**/*.R",
     "workspaceContains:**/*.r",
+    "workspaceContains:**/*.Rd",
+    "workspaceContains:**/*.rd",
     "workspaceContains:**/*.Rproj",
     "workspaceContains:arity.toml",
     "workspaceContains:.arity.toml",
@@ -56,6 +59,17 @@
         ],
         "filenames": [
           "NAMESPACE"
+        ]
+      },
+      {
+        "id": "rd",
+        "extensions": [
+          ".Rd",
+          ".rd"
+        ],
+        "aliases": [
+          "R documentation",
+          "r documentation"
         ]
       },
       {

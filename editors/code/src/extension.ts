@@ -314,6 +314,10 @@ async function startClient(
       { scheme: "untitled", language: "r" },
       { scheme: "file", pattern: "**/*.R" },
       { scheme: "file", pattern: "**/*.r" },
+      { scheme: "file", language: "rd" },
+      { scheme: "untitled", language: "rd" },
+      { scheme: "file", pattern: "**/*.Rd" },
+      { scheme: "file", pattern: "**/*.rd" },
       // DCF is also the Debian `control` grammar, so another extension may
       // already claim `DESCRIPTION` under a different language id. Match the
       // path too, so the server still sees the file when it does.

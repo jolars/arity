@@ -5,7 +5,7 @@ A language server, formatter, and linter for R.
 ## Quick start
 
 1. Install the **Arity** extension.
-2. Open an R file (`.R`, `.r`, `.Rprofile`).
+2. Open an R file (`.R`, `.r`, `.Rprofile`) or an Rd file (`.Rd`, `.rd`).
 3. The extension starts `arity lsp` automatically.
 
 By default, the extension uses an `arity` binary that ships inside the extension
@@ -14,10 +14,14 @@ matching binary from GitHub releases when none is bundled.
 
 ## Features
 
-- Starts `arity lsp` automatically when you open R files.
+- Starts `arity lsp` automatically when you open R or Rd files.
 - Formats R code using Arity's deterministic, tidyverse-style formatter.
 - Surfaces Arity diagnostics and quick-fix code actions in the editor.
 - Registers itself as the default formatter for `[r]` files.
+
+Opening an Rd file starts the server so workspace features, such as symbol
+search, are available before you open an R file. Arity does not yet provide
+diagnostics, formatting, or other document features for Rd files.
 
 ## Commands
 
