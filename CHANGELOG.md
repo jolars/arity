@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-Arity now has rudimentary suppor for `.Rd` files. It parses them but does not yet supply and language server features, linting, or formatting. It does, however, attach the server to `.Rd` files so that workspace symbols and diagnostics are available.
+Arity now has rudimentary support for `.Rd` files. It parses them but does not yet supply and language server features, linting, or formatting. It does, however, attach the server to `.Rd` files so that workspace symbols and diagnostics are available.
 
 ## [0.27.0](https://github.com/jolars/arity/compare/v0.26.0...v0.27.0) (2026-10-25)
 
