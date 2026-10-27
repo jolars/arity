@@ -11,7 +11,7 @@ semantic/project, and package-index capabilities.
 
 - Root crate (`arity`): CLI, LSP, lint, semantic/project, roxygen projector, and
   rindex.
-- `crates/arity-parser`: lossless R CST parser, `DESCRIPTION` DCF grammar, and
+- `crates/arity-parser`: lossless R, `DESCRIPTION` DCF, and Rd grammars, plus
   typed AST wrappers.
 - `crates/arity-formatter`: format engine. `src/formatter.rs` is its root-crate
   filesystem bridge.
@@ -45,7 +45,8 @@ Dependency changes must pass `cargo-audit` and `cargo-deny`.
 - Preserve losslessness and idempotence. Benchmarks/profiles are opt-in local
   measurements, not release gates.
 - Recurring workflows use the `add-lint-rule`, `linter-investigation`,
-  `roxygen-parity`, `smoke-test-triage`, and `perf-investigation` skills.
+  `roxygen-parity`, `rd-parity`, `smoke-test-triage`, and `perf-investigation`
+  skills.
 - Optional untracked oracle/reference checkouts (`air/`, `style/`,
   `roxygen2-ref/`) may be absent in a fresh clone.
 
@@ -81,16 +82,17 @@ Scope: `src/cli.rs`, `src/main.rs`, and CLI integration tests such as
   Preserve them unless intentionally changing the contract, and pin changes in
   CLI integration tests.
 - The stdin contract is stable. `-` as the only path makes `format`, `lint`, and
-  `parse` read one buffer from stdin; `format -` writes only the formatted buffer
-  to stdout, the working directory anchors config discovery, and a pathless
-  buffer is R unless `--stdin-filename` says otherwise. Changing any of those is
-  breaking.
+  `parse` read one buffer from stdin; `format -` writes only the formatted
+  buffer to stdout, the working directory anchors config discovery, and a
+  pathless buffer is R unless `--stdin-filename` says otherwise. Changing any of
+  those is breaking.
 
 ## Parser and typed AST
 
 Scope: `crates/arity-parser/**` and the parsing parts of `src/incremental.rs`.
-The root crate re-exports this crate as `arity::{syntax, ast, parser, dcf}`;
-intra-repo users should continue using `crate::parser::…`.
+The root crate re-exports this crate as
+`arity::{syntax, ast, parser, dcf, namespace, rd}`; intra-repo users should
+continue using `crate::parser::…`.
 
 ### Hard constraints
 
@@ -134,6 +136,23 @@ constraints.
 - `task dcf-oracle` is an ignored differential against `read.dcf`. A new
   disagreement must be fixed or deliberately normalized in its recorded
   divergence table, never explained away.
+
+### Rd grammar
+
+`rd/` independently parses complete UTF-8 `.Rd` source. Use the `rd-parity`
+skill when investigating or extending its grammar against R's `tools::parse_Rd`.
+
+- Preserve macro calls and definitions without expansion or evaluation. Unknown
+  macro names remain quiet; their following groups do not acquire guessed
+  argument counts.
+- R-like Rd arguments have their own lexical rules and need not be complete R
+  expressions. Keep mode and context decisions in the Rd parser.
+- `crates/arity-parser/tests/rd_oracle.rs` compares the CST with pinned R trees
+  without requiring R in CI. `task rd-oracle` runs the live comparison. Fixture
+  names are hand-registered, and pin refreshes require reviewing every changed
+  tree.
+- Preserve comments, exact whitespace, and example contents in the standalone
+  oracle. Roxygen's section and whitespace normalization does not apply here.
 
 ### Incremental parsing
 
@@ -507,13 +526,13 @@ prefix, so an asset on any sibling stream would shadow the CLI release.
 
 Editor/member paths are excluded from CLI version calculation, so commits
 spanning root, member crates, or `editors/` must be split atomically. The VS
-Code bundled binary must not be load-bearing—PATH fallback remains necessary
-for NixOS. `editors/zed` obeys the same rule by resolving PATH before
-downloading. It is a language-server-only extension, deliberately outside the
-root workspace (its own `[workspace]`, edition 2021, `wasm32-wasip2`), so the
-`zed` CI job is the only thing that compiles it; a version bump must also
-refresh its `Cargo.lock`. Its registry entry in `zed-industries/extensions` is
-submitted by hand, which is why it does not follow the CLI version.
+Code bundled binary must not be load-bearing—PATH fallback remains necessary for
+NixOS. `editors/zed` obeys the same rule by resolving PATH before downloading.
+It is a language-server-only extension, deliberately outside the root workspace
+(its own `[workspace]`, edition 2021, `wasm32-wasip2`), so the `zed` CI job is
+the only thing that compiles it; a version bump must also refresh its
+`Cargo.lock`. Its registry entry in `zed-industries/extensions` is submitted by
+hand, which is why it does not follow the CLI version.
 
 Main pushes run tests/audit/deny and versionary opens a release PR. Merging tags
 and fans out builds/publishing. `publish-cargo.yml` publishes unpublished
