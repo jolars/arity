@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.0](https://github.com/jolars/arity/compare/arity-parser-v0.6.2...arity-parser-v0.7.0) (2026-10-27)
+
+### Features
+
+- **parser:** add lossless Rd source parsing ([`cfb4d7d`](https://github.com/jolars/arity/commit/cfb4d7d323a04cf4f6ace8cc74cbcdd3fea1d902))
+
 ## [0.6.2](https://github.com/jolars/arity/compare/arity-parser-v0.6.1...arity-parser-v0.6.2) (2026-10-25)
 
 ### Bug Fixes

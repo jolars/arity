@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.28.0](https://github.com/jolars/arity/compare/arity-code-v0.27.0...arity-code-v0.28.0) (2026-10-27)
+
+### Features
+
+- **code:** activate the server for Rd files ([`1e9c80a`](https://github.com/jolars/arity/commit/1e9c80a1e65d47dbf52b09f8a5959eae85451d8d)), ref [#170](https://github.com/jolars/arity/issues/170)
+
+### Dependencies
+
+- updated arity to v0.28.0
+
 ## [0.27.0](https://github.com/jolars/arity/compare/arity-code-v0.26.0...arity-code-v0.27.0) (2026-10-25)
 
 ### Bug Fixes

@@ -1,8 +1,22 @@
 # Changelog
 
-## Unreleased
+## [0.28.0](https://github.com/jolars/arity/compare/v0.27.0...v0.28.0) (2026-10-27)
 
 Arity now has rudimentary support for `.Rd` files. It parses them but does not yet supply and language server features, linting, or formatting. It does, however, attach the server to `.Rd` files so that workspace symbols and diagnostics are available.
+
+### Features
+
+- **cli:** support Rd files in `parse` ([`d450a06`](https://github.com/jolars/arity/commit/d450a062113a28e0b8349ac812f59f1239f27566))
+- **lsp:** enable workspace features from Rd buffers ([`9733d28`](https://github.com/jolars/arity/commit/9733d280f644efbe2fc208c3cd3294de9006cb49)), ref [#170](https://github.com/jolars/arity/issues/170)
+
+### Bug Fixes
+
+- **ci:** preserve Rd oracle fixture line endings ([`5e8b02b`](https://github.com/jolars/arity/commit/5e8b02bf3cb13f11cee169172cfc46a5936ee78f))
+
+### Dependencies
+
+- updated crates/arity-formatter to v0.8.3
+- updated crates/arity-parser to v0.7.0
 
 ## [0.27.0](https://github.com/jolars/arity/compare/v0.26.0...v0.27.0) (2026-10-25)
 
