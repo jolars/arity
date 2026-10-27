@@ -40,3 +40,22 @@ assert_eq!(
 );
 assert_eq!(namespace::reconstruct(text), text);
 ```
+
+Rd help files have an independent lossless grammar:
+
+```rust
+use arity_parser::rd;
+
+let text = "\\title{An example}\n\\description{Use \\code{foo()}.}\n";
+let output = rd::parse(text);
+assert!(output.diagnostics.is_empty());
+assert_eq!(output.document().macros().next().unwrap().name(), "title");
+assert_eq!(rd::reconstruct(text), text);
+```
+
+The Rd parser models standard sections, nested markup, links, lists, tables,
+conditionals, and prose, R-like, and verbatim arguments. It preserves macro
+definitions and calls without expansion or evaluation. Unrecognized macro names
+remain in the tree without a diagnostic. Malformed syntax produces byte-ranged
+diagnostics and a recovered, lossless CST. Input is UTF-8; the initial API
+parses complete documents and does not provide incremental Rd reparsing.

@@ -1,0 +1,1 @@
+{"r_version":"R version 4.6.1 (2026-06-24)","invocation":"tools::parse_Rd(encoding=\"UTF-8\", macros=FALSE, fragment=FALSE, permissive=FALSE)","tree":[["\\name",null,[["VERB","crlf"]]],["TEXT","\u000a"],["\\description",null,[["TEXT","First.\u000a"],["COMMENT","% Comment."],["TEXT","\u000aSecond."]]],["TEXT","\u000a"]]}

@@ -17,6 +17,7 @@
 //!   format of R's `DESCRIPTION`.
 //! - [`namespace`] — a typed, lossless view of R package `NAMESPACE` files,
 //!   built on the R CST without evaluating conditional directives.
+//! - [`rd`] — an independent, lossless grammar for Rd help source files.
 //!
 //! The parser preserves all source text: `reconstruct(&parse(text).syntax())`
 //! is always `text`.
@@ -26,4 +27,5 @@ pub mod dcf;
 pub mod directive;
 pub mod namespace;
 pub mod parser;
+pub mod rd;
 pub mod syntax;
