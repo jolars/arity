@@ -8,4 +8,7 @@ repository = "https://github.com/jolars/arity"
 
 [language_servers.arity-language-server]
 name = "Arity Language Server"
-languages = ["R"]
+languages = ["R", "Rd"]
+
+[language_servers.arity-language-server.language_ids]
+"Rd" = "rd"
