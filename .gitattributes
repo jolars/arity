@@ -9,6 +9,10 @@ crates/*/tests/fixtures/**/*.R eol=lf
 # line ending would shift every range in the tree.
 crates/*/tests/fixtures/dcf/**/*.dcf eol=lf
 
+# Rd oracle trees are pinned against LF source. Explicit CRLF fixtures below
+# retain their original bytes.
+crates/arity-parser/tests/fixtures/rd/** eol=lf
+
 # NAMESPACE fixture snapshots also pin byte offsets.
 crates/*/tests/fixtures/namespace/** eol=lf
 
