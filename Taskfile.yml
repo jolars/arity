@@ -97,6 +97,16 @@ tasks:
           && mv /tmp/roxygen-projector-allowlist.txt tests/oracle/roxygen-projector-allowlist.txt
         echo "seeded $(wc -l < /tmp/roxygen-projector-pass.txt) matching cases into the projector allowlist"
 
+  rd-oracle:
+    desc: Compare the Rd source parser with R's parse_Rd (needs R)
+    cmds:
+      - cargo test -p arity-parser --test rd_oracle -- --ignored --nocapture
+
+  rd-oracle-refresh:
+    desc: Refresh Rd oracle pins from the current R (review expected.json diffs)
+    cmds:
+      - Rscript --vanilla scripts/rd-oracle.R --refresh crates/arity-parser/tests/fixtures/rd
+
   dcf-oracle:
     desc: Check the DCF parser and formatter against R's own `read.dcf` (needs R)
     cmds:

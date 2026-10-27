@@ -17,7 +17,7 @@ use arity::linter::{
     OutputMode, apply_fixes, check_document, check_document_in_project, render_findings_shared,
 };
 use arity::parser::ParseOptions;
-use arity::parser::{parse, reconstruct};
+use arity::parser::parse;
 use arity::rindex::build::{BuildOptions, PackageOutcome, build_index};
 use arity::rindex::cache::{Cache, resolve_cache_root};
 use arity::rindex::discover::{referenced_packages, with_default_packages};
@@ -63,9 +63,10 @@ fn main() -> ExitCode {
     match cli.command {
         Commands::Parse {
             file,
+            stdin_filename,
             quiet,
             verify,
-        } => run_parse(file, quiet, verify),
+        } => run_parse(file, stdin_filename, quiet, verify),
         Commands::Format {
             paths,
             stdin_filename,
@@ -592,7 +593,12 @@ fn inputs_or_exit<'a>(paths: &'a [PathBuf], subcommand: &str, missing: &str) -> 
     }
 }
 
-fn run_parse(file: Option<PathBuf>, quiet: bool, verify: bool) -> ExitCode {
+fn run_parse(
+    file: Option<PathBuf>,
+    stdin_filename: Option<PathBuf>,
+    quiet: bool,
+    verify: bool,
+) -> ExitCode {
     // Clap caps `parse` at one positional, so the slice holds at most one path.
     let file = match inputs_or_exit(file.as_slice(), "parse", PARSE_MISSING_INPUT) {
         Inputs::Stdin => None,
@@ -606,25 +612,42 @@ fn run_parse(file: Option<PathBuf>, quiet: bool, verify: bool) -> ExitCode {
         }
     };
 
-    let parse_output = parse(&input);
-
-    if !quiet {
-        println!("{:#?}", parse_output.cst);
+    if file
+        .or(stdin_filename.as_deref())
+        .is_some_and(arity::file_discovery::is_rd_file)
+    {
+        let output = arity::rd::parse(&input);
+        let lossless = !verify || output.cst.text().to_string() == input;
+        return report_parse(&output.cst, &output.diagnostics, quiet, lossless);
     }
 
-    if !parse_output.diagnostics.is_empty() {
-        for diag in &parse_output.diagnostics {
+    let output = parse(&input);
+    let lossless = !verify || output.cst.text().to_string() == input;
+    report_parse(&output.cst, &output.diagnostics, quiet, lossless)
+}
+
+fn report_parse(
+    cst: &impl std::fmt::Debug,
+    diagnostics: &[arity::parser::ParseDiagnostic],
+    quiet: bool,
+    lossless: bool,
+) -> ExitCode {
+    if !quiet {
+        println!("{cst:#?}");
+    }
+
+    if !lossless {
+        eprintln!("error: parser losslessness check failed");
+    }
+    if !diagnostics.is_empty() {
+        for diag in diagnostics {
             eprintln!("error[{}..{}]: {}", diag.start, diag.end, diag.message);
         }
         return ExitCode::from(1);
     }
 
-    if verify {
-        let reconstructed = reconstruct(&input);
-        if reconstructed != input {
-            eprintln!("error: parser losslessness check failed");
-            return ExitCode::from(1);
-        }
+    if !lossless {
+        return ExitCode::from(1);
     }
 
     ExitCode::SUCCESS

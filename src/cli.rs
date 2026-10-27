@@ -63,6 +63,11 @@ pub enum Commands {
         /// and stdin is not a terminal
         file: Option<PathBuf>,
 
+        /// Filename the stdin buffer stands for; `.Rd` selects Rd parsing.
+        /// Without it, stdin is parsed as R
+        #[arg(long, value_name = "PATH")]
+        stdin_filename: Option<PathBuf>,
+
         /// Suppress CST output to stdout
         #[arg(long)]
         quiet: bool,

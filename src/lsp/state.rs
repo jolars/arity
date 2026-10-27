@@ -33,11 +33,7 @@ impl DocumentKind {
         if crate::file_discovery::is_description_file(path) {
             return Self::Description;
         }
-        if path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("rd"))
-        {
+        if crate::file_discovery::is_rd_file(path) {
             return Self::Rd;
         }
         Self::R

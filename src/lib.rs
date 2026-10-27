@@ -1,4 +1,4 @@
-pub use arity_parser::{ast, dcf, directive, namespace, parser, syntax};
+pub use arity_parser::{ast, dcf, directive, namespace, parser, rd, syntax};
 
 pub mod bench_docs;
 pub mod cli;

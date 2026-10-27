@@ -358,6 +358,13 @@ pub fn is_description_file(path: &Path) -> bool {
         .is_some_and(|name| name == DESCRIPTION_FILE_NAME)
 }
 
+/// Whether a path names Rd source, matching the editor's case-insensitive kind.
+pub fn is_rd_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("rd"))
+}
+
 /// Whether `dir` is a package root in its own right, rather than a package
 /// nested inside another one.
 ///

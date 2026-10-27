@@ -42,6 +42,9 @@ Parse and display the CST tree for debugging
 
 ### Options
 
+`--stdin-filename <PATH>`
+:   Filename the stdin buffer stands for; `.Rd` selects Rd parsing. Without it, stdin is parsed as R
+
 `--quiet`
 :   Suppress CST output to stdout
 

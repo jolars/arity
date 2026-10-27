@@ -5,6 +5,7 @@
 # Guide
 
 - [Getting Started](getting-started.md)
+- [Parsing](guide/parsing.md)
 - [Formatting](guide/formatting.md)
 - [Linting](guide/linting.md)
 - [Configuration](guide/configuration.md)
