@@ -2,24 +2,28 @@ use super::*;
 
 use crate::file_discovery::DESCRIPTION_FILE_NAME;
 
-/// Grammar selected for an open document.
+/// Document kind selected when a buffer opens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DocumentKind {
     /// R source.
     R,
     /// Package `DESCRIPTION` DCF.
     Description,
+    /// Rd documentation, attached only to activate workspace features.
+    Rd,
 }
 
 impl DocumentKind {
     /// Classify by filename, falling back to the client's language id.
     pub(crate) fn from_uri(uri: &Uri, language_id: Option<&str>) -> Self {
         let name = uri.path().as_str().rsplit('/').next().unwrap_or_default();
-        if name == DESCRIPTION_FILE_NAME {
-            return Self::Description;
+        let kind = Self::from_path(Path::new(name));
+        if kind != Self::R {
+            return kind;
         }
         match language_id {
             Some("r-description" | "dcf" | "debian-control") => Self::Description,
+            Some("rd" | "rhelp") => Self::Rd,
             _ => Self::R,
         }
     }
@@ -29,6 +33,13 @@ impl DocumentKind {
         if crate::file_discovery::is_description_file(path) {
             return Self::Description;
         }
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("rd"))
+        {
+            return Self::Rd;
+        }
         Self::R
     }
 
@@ -37,6 +48,7 @@ impl DocumentKind {
         match self {
             Self::R => "untitled.R",
             Self::Description => DESCRIPTION_FILE_NAME,
+            Self::Rd => "untitled.Rd",
         }
     }
 }
@@ -1698,6 +1710,11 @@ impl GlobalState {
         let Some(doc) = self.documents.get(&uri) else {
             return;
         };
+        // Rd buffers activate the server for workspace requests, but neither
+        // supported parser can analyze their contents.
+        if doc.kind == DocumentKind::Rd {
+            return;
+        }
         let buffer = Arc::clone(&doc.buffer);
         let version = doc.version;
         let kind = doc.kind;
@@ -1723,7 +1740,7 @@ impl GlobalState {
     /// Reads clone the `Arc`, never the text.
     ///
     /// Every R-grammar request goes through this, and there is deliberately no
-    /// un-annotated way to get a buffer: a `DESCRIPTION` answers `None` here, so
+    /// un-annotated way to get a buffer: `DESCRIPTION` and Rd answer `None`, so
     /// each handler's existing "not open" arm already declines correctly, and a
     /// handler added later cannot silently inherit the wrong grammar. Use
     /// [`doc_snapshot_any`](Self::doc_snapshot_any) for the few requests that
@@ -1732,15 +1749,16 @@ impl GlobalState {
         let doc = self.documents.get(uri)?;
         match doc.kind {
             DocumentKind::R => Some((Arc::clone(&doc.buffer), doc.version)),
-            DocumentKind::Description => None,
+            DocumentKind::Description | DocumentKind::Rd => None,
         }
     }
 
-    /// The live buffer, version, and grammar for `uri` — for the requests that
-    /// serve both languages and branch on the kind themselves.
+    /// The live buffer, version, and grammar for supported document requests.
+    /// Rd buffers only activate workspace features and decline these requests.
     fn doc_snapshot_any(&self, uri: &Uri) -> Option<(Arc<TextBuffer>, i32, DocumentKind)> {
         self.documents
             .get(uri)
+            .filter(|d| d.kind != DocumentKind::Rd)
             .map(|d| (Arc::clone(&d.buffer), d.version, d.kind))
     }
 
@@ -2491,7 +2509,90 @@ mod cancellation_gate {
         }
     }
 
-    /// Every R-grammar request, asked of a `DESCRIPTION`.
+    #[test]
+    fn rd_buffers_never_queue_analysis() {
+        for (uri, language_id) in [
+            (uri_named("topic.Rd"), "r"),
+            (uri_named("topic.rd"), "plaintext"),
+            ("untitled:topic".parse().unwrap(), "rd"),
+            ("untitled:help".parse().unwrap(), "rhelp"),
+        ] {
+            let (mut state, rig) = test_state();
+            state.on_notification(did_open(&uri, "\\name{topic}\n", language_id));
+            assert!(rig.lint_rx.try_recv().is_err(), "lint queued for {uri:?}");
+            assert!(state.r_doc_snapshot(&uri).is_none());
+            assert!(state.doc_snapshot_any(&uri).is_none());
+
+            state.on_notification(Notification::new(
+                DidChangeTextDocument::METHOD.to_string(),
+                json!({
+                    "textDocument": { "uri": uri, "version": 2 },
+                    "contentChanges": [{ "text": "\\name{updated}\n" }]
+                }),
+            ));
+            state.send_lint(uri.clone(), Vec::new());
+            assert!(
+                rig.lint_rx.try_recv().is_err(),
+                "lint queued after editing {uri:?}"
+            );
+
+            state.on_request(Request::new(
+                RequestId::from(1),
+                "textDocument/diagnostic".to_string(),
+                json!({ "textDocument": { "uri": uri } }),
+            ));
+            let report = rig.try_response().unwrap().response_result.unwrap();
+            assert_eq!(report["kind"], "full");
+            assert_eq!(report["items"], json!([]));
+            assert!(rig.lint_rx.try_recv().is_err());
+        }
+    }
+
+    #[test]
+    fn rd_document_requests_decline_without_read_work() {
+        let uri = uri_named("topic.Rd");
+        let doc = json!({ "uri": uri });
+        let position = json!({ "line": 0, "character": 3 });
+        let range = json!({ "start": position, "end": position });
+        let cases = [
+            (
+                "textDocument/formatting",
+                json!({
+                    "textDocument": doc,
+                    "options": { "tabSize": 2, "insertSpaces": true }
+                }),
+            ),
+            (
+                "textDocument/hover",
+                json!({ "textDocument": doc, "position": position }),
+            ),
+            (
+                "textDocument/completion",
+                json!({ "textDocument": doc, "position": position }),
+            ),
+            (
+                "textDocument/inlayHint",
+                json!({ "textDocument": doc, "range": range }),
+            ),
+        ];
+        let (mut state, rig) = test_state();
+        state.on_notification(did_open(&uri, "\\name{topic}\n", "rd"));
+        let _ = rig.lint_rx.try_recv();
+        for (method, params) in cases {
+            state.on_request(Request::new(RequestId::from(1), method.to_string(), params));
+            let response = rig
+                .try_response()
+                .unwrap_or_else(|| panic!("{method} did not respond"));
+            assert_eq!(
+                response.response_result.unwrap(),
+                serde_json::Value::Null,
+                "{method}"
+            );
+            assert!(rig.no_read_work(), "{method} queued work for Rd");
+        }
+    }
+
+    /// Every R-only request, asked of `DESCRIPTION` and Rd buffers.
     ///
     /// These range from useless (folding) to misleading (rename). Each must
     /// decline *without* spending a read slot.
@@ -2500,7 +2601,7 @@ mod cancellation_gate {
     /// grammars now. `rangeFormatting` stays, because canonical field order is a
     /// whole-document property and a range has no coherent answer.
     #[test]
-    fn r_only_requests_return_null_for_a_description() {
+    fn r_only_requests_return_null_for_a_description_or_rd() {
         let uri = description_uri();
         let position = json!({ "line": 0, "character": 3 });
         let doc = json!({ "uri": uri.as_str() });
@@ -2574,29 +2675,29 @@ mod cancellation_gate {
         ];
 
         for (method, params) in cases {
-            // The DESCRIPTION case: decline, and spend nothing doing it.
-            let (mut state, rig) = test_state();
-            state.on_notification(did_open(&uri, "Package: testpkg\nDepends: R\n", "r"));
-            let _ = rig.try_lint_msg();
+            for (uri, text) in [
+                (uri.clone(), "Package: testpkg\nDepends: R\n"),
+                (uri_named("topic.Rd"), "\\name{topic}\n"),
+            ] {
+                let (mut state, rig) = test_state();
+                state.on_notification(did_open(&uri, text, "r"));
+                let _ = rig.lint_rx.try_recv();
+                state.on_request(Request::new(
+                    RequestId::from(1),
+                    method.to_string(),
+                    params_for(&params, &uri),
+                ));
 
-            state.on_request(Request::new(
-                RequestId::from(1),
-                method.to_string(),
-                params.clone(),
-            ));
-
-            let resp = rig
-                .try_response()
-                .unwrap_or_else(|| panic!("{method} answered nothing"));
-            assert_eq!(
-                resp.response_result.clone().ok(),
-                Some(serde_json::Value::Null),
-                "{method} must answer null for a DESCRIPTION, got {resp:?}"
-            );
-            assert!(
-                rig.no_read_work(),
-                "{method} queued read work for a DESCRIPTION"
-            );
+                let resp = rig
+                    .try_response()
+                    .unwrap_or_else(|| panic!("{method} answered nothing"));
+                assert_eq!(
+                    resp.response_result.clone().ok(),
+                    Some(serde_json::Value::Null),
+                    "{method} must answer null for {uri:?}, got {resp:?}"
+                );
+                assert!(rig.no_read_work(), "{method} queued read work for {uri:?}");
+            }
 
             let (mut state, rig) = test_state();
             let r_uri = test_uri();

@@ -13,6 +13,10 @@ Renaming reaches beyond symbols: moving or renaming an `.R` file, or a folder of
 them, rewrites the `source()` paths that referred to it, and rebases the moved
 files' own `source()` paths to their new location.
 
+Editors can also start the server for `.Rd` and `.rd` files, making workspace
+symbol search available before you open an R file. Arity does not yet provide
+diagnostics, formatting, or other document features for Rd files.
+
 Beyond the quick fixes attached to lint diagnostics, the server offers a
 cursor-context refactor that writes a roxygen2 skeleton for the function you are
 on; see the [code action reference](../reference/code-actions.md).
@@ -103,8 +107,8 @@ formatter, so neither installation needs the Arity CLI.
 Install the **Arity** extension from the [VS Code
 Marketplace](https://marketplace.visualstudio.com/) or [Open
 VSX](https://open-vsx.org/). It bundles the `arity` binary (falling back to a
-download) and starts the language server automatically for R files. Editors that
-support VS Code extensions, such as Positron, work the same way.
+download) and starts the language server automatically for R and Rd files.
+Editors that support VS Code extensions, such as Positron, work the same way.
 
 To use a custom user config, add this to your user `settings.json`, then run
 **Arity: Restart Server**:
@@ -152,6 +156,9 @@ Arity attaches to Zed's `R` language, which the [R
 extension](https://github.com/ocsmit/zed-r) provides. Install that one first,
 then install **Arity** from the extensions view (`zed: extensions` in the
 command palette).
+
+The Arity extension also recognizes `.Rd` and `.rd` files as `Rd`, so opening
+one starts the server for workspace symbol search.
 
 Zed uses the `arity` on your `PATH` when there is one, and otherwise downloads
 the release binary matching your platform. Keeping Arity on the `PATH` is the
@@ -216,8 +223,8 @@ until Zed's R language definition covers them.
 
 ## Neovim
 
-With [`nvim-lspconfig`](https://github.com/neovim/nvim-lspconfig) installed,
-register arity as a server for R files:
+Register arity with Neovim's built-in LSP client for R, `DESCRIPTION`, and Rd
+files:
 
 ```lua
 -- Neovim ships no filetype for DESCRIPTION, so give it one. The name is yours
@@ -226,14 +233,15 @@ vim.filetype.add({ filename = { DESCRIPTION = "r-description" } })
 
 vim.lsp.config("arity", {
   cmd = { "arity", "lsp" },
-  filetypes = { "r", "r-description" },
+  filetypes = { "r", "r-description", "rhelp" },
   root_markers = { "arity.toml", "DESCRIPTION", ".git" },
 })
 vim.lsp.enable("arity")
 ```
 
-Drop the `vim.filetype.add` line and the second entry in `filetypes` if you only
-want arity on `.R` files.
+The `rhelp` filetype starts Arity when you open an Rd file, making workspace
+symbol search available. Drop the `vim.filetype.add` line and keep only `"r"` in
+`filetypes` if you only want arity on `.R` files.
 
 Format on save (optional):
 
@@ -263,6 +271,19 @@ formatter = { command = "arity", args = ["format"] }
 auto-format = true
 ```
 
+To start Arity when you open an Rd file, add a separate language entry to the
+same file:
+
+```toml
+[[language]]
+name = "rd"
+scope = "text.rd"
+language-id = "rd"
+file-types = ["Rd", "rd"]
+roots = ["arity.toml", "DESCRIPTION", ".git"]
+language-servers = ["arity"]
+```
+
 ## Other editors
 
 Any LSP-capable editor can use arity by launching `arity lsp` over stdio for the
@@ -273,3 +294,8 @@ To get the `DESCRIPTION` features too, add the file to whatever the client uses
 to decide which documents to send. Arity decides the grammar from the file name,
 so the language id the client reports does not matter, and one that says `r` is
 still handled as DCF.
+
+To start Arity from an Rd file, associate `.Rd` and `.rd` with the same server
+in your client's filetype or document selector settings. The `rd` language id
+also identifies pathless Rd buffers. This enables workspace symbol search
+without opening an R file first.

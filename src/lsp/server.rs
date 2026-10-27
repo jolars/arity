@@ -326,18 +326,10 @@ pub(crate) fn main_loop(
         out_tx.clone(),
         read_pool.spawner(),
         position_encoding,
+        workspace_roots,
     );
     // `done_tx`/`done_rx` are created inside the lint thread (see
     // `spawn_lint_thread`) so the main loop never holds the read end.
-
-    // Seed the explicit workspace file-set once, before any document traffic, so
-    // cross-file queries see the whole workspace. The lint thread owns the db, so
-    // the walk + upsert happen there (off the main loop).
-    if !workspace_roots.is_empty() {
-        let _ = lint_tx.send(LintMsg::SeedWorkspace {
-            roots: workspace_roots,
-        });
-    }
 
     let mut state = GlobalState::new(
         connection.sender.clone(),

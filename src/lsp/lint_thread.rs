@@ -30,8 +30,8 @@ pub(crate) enum LintMsg {
         uri: Uri,
         path: PathBuf,
     },
-    /// Seed the explicit workspace file-set from the discovered roots (sent once
-    /// at startup). Handled on the lint thread, the sole db writer.
+    /// Seed the explicit workspace file-set when workspace folders are added.
+    /// Handled on the lint thread, the sole db writer.
     SeedWorkspace {
         roots: Vec<PathBuf>,
     },
@@ -58,6 +58,7 @@ pub(crate) fn spawn_lint_thread(
     out_tx: Sender<Outbound>,
     read_spawner: Spawner,
     position_encoding: PositionEncoding,
+    workspace_roots: Vec<PathBuf>,
 ) -> JoinHandle<()> {
     let (build_tx, build_rx) = crossbeam_channel::unbounded::<IndexedProvider>();
     let (remote_tx, remote_rx) = crossbeam_channel::unbounded::<RemoteExports>();
@@ -86,6 +87,13 @@ pub(crate) fn spawn_lint_thread(
                 resolved_rules: None,
                 position_encoding,
             };
+            // Reads use a separate channel and could otherwise overtake a
+            // queued seed, making the first workspace symbol search empty.
+            if !workspace_roots.is_empty() {
+                guard("initial workspace seed", || {
+                    worker.seed_workspace(workspace_roots)
+                });
+            }
             worker.run(&lint_rx, &read_rx, &build_rx, &remote_rx, &done_rx);
         })
         .expect("spawn lint thread")
@@ -513,6 +521,7 @@ impl LintWorker {
         match req.kind {
             DocumentKind::R => self.start_r(req),
             DocumentKind::Description => self.start_description(req),
+            DocumentKind::Rd => false,
         }
     }
 

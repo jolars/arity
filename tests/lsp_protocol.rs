@@ -138,6 +138,10 @@ impl Harness {
     /// Like [`start_push`] but with caller-chosen client `capabilities`, so a test
     /// can opt into features gated on them (e.g. dynamic watched-file registration).
     fn start_with_capabilities(capabilities: Value) -> Self {
+        Self::start_in_workspace(capabilities, None)
+    }
+
+    fn start_in_workspace(capabilities: Value, root_uri: Option<&str>) -> Self {
         let (server_conn, client_conn) = Connection::memory();
         let server = std::thread::spawn(move || {
             let _ = arity::lsp::serve(server_conn);
@@ -156,6 +160,7 @@ impl Harness {
                 "processId": null,
                 "clientInfo": { "name": "arity-protocol-test" },
                 "capabilities": capabilities,
+                "rootUri": root_uri,
             }),
         );
         let resp = harness.recv_response(&init_id);
@@ -577,6 +582,56 @@ fn initialize_advertises_file_and_folder_rename_operations() {
             ]),
             "{op} covers .R files and any folder"
         );
+    }
+    h.shutdown();
+}
+
+#[test]
+fn rd_first_open_preserves_workspace_symbols_without_document_analysis() {
+    let (dir, _, r_uri) =
+        package_fixture(COMPLETE_DESCRIPTION, "workspace_function <- function() 1\n");
+    let root_uri = path_uri(dir.path());
+    let rd_uri = path_uri(&dir.path().join("man").join("workspace_function.Rd"));
+    let mut h = Harness::start_in_workspace(
+        json!({ "textDocument": { "diagnostic": {} } }),
+        Some(&root_uri),
+    );
+    // Filename routing also protects clients that label every R-related file as R.
+    h.did_open_as(&rd_uri, "\\name{workspace_function}\n", 1, "r");
+
+    for version in [1, 2] {
+        if version == 2 {
+            h.did_change(
+                &rd_uri,
+                "rd_must_not_be_a_symbol <- function() 2\n",
+                version,
+            );
+        }
+        let doc = json!({ "uri": rd_uri });
+        let id = h.request("textDocument/diagnostic", json!({ "textDocument": doc }));
+        let report = h.recv_response(&id).response_result.unwrap();
+        assert_eq!(report["kind"], "full");
+        assert_eq!(report["items"], json!([]));
+
+        let id = h.request(
+            "textDocument/formatting",
+            json!({
+                "textDocument": doc,
+                "options": { "tabSize": 2, "insertSpaces": true }
+            }),
+        );
+        assert_eq!(h.recv_response(&id).response_result.unwrap(), Value::Null);
+
+        let id = h.request("workspace/symbol", json!({ "query": "" }));
+        let symbols = h.recv_response(&id).response_result.unwrap();
+        let symbols = symbols.as_array().expect("workspace symbols array");
+        assert_eq!(
+            symbols.len(),
+            1,
+            "only the unopened R function: {symbols:#?}"
+        );
+        assert_eq!(symbols[0]["name"], "workspace_function");
+        assert_eq!(symbols[0]["location"]["uri"], r_uri);
     }
     h.shutdown();
 }
