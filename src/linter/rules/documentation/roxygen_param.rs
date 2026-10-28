@@ -45,6 +45,7 @@ const EXAMPLES: &[Example] = &[Example {
 struct TopicParams {
     formals: Vec<String>,
     documented: Vec<String>,
+    has_unknown_formals: bool,
 }
 
 impl TopicParams {
@@ -58,12 +59,11 @@ impl TopicParams {
 }
 
 /// The union this block's `@param`s are judged against, or `None` when the
-/// topic is unknowable and coverage must be skipped entirely.
+/// block inherits documentation or does not own a resolvable topic.
 ///
-/// Unknowable means any of: the block inherits its argument list from another
-/// object; it joins a topic someone else owns; or some member of its topic
-/// documents a statement arity cannot classify (a `setMethod`, an R6 call),
-/// whose formals are therefore invisible.
+/// Inheritance exempts only the inheriting member's formals from missing
+/// documentation checks. Its unknown argument surface still prevents rejecting
+/// an owner's `@param` merely because no visible formal matches it.
 fn topic_params(block: &RoxygenBlock, ctx: &RuleContext<'_>) -> Option<TopicParams> {
     if inherits_params(block) {
         return None;
@@ -71,10 +71,12 @@ fn topic_params(block: &RoxygenBlock, ctx: &RuleContext<'_>) -> Option<TopicPara
     let members = topic_members(block, ctx)?;
     let mut params = TopicParams::default();
     for member in members {
+        let formals = member.formals.as_ref()?;
         if member.inherits_params {
-            return None;
+            params.documented.extend(formals.iter().cloned());
+            params.has_unknown_formals = true;
         }
-        params.formals.extend(member.formals.clone()?);
+        params.formals.extend(formals.iter().cloned());
         params
             .documented
             .extend(member.documented_params.iter().cloned());
@@ -199,7 +201,10 @@ impl Rule for RoxygenParam {
                             ));
                             continue;
                         }
-                        if judge_coverage && !topic.contains_formal(&name) {
+                        if judge_coverage
+                            && !topic.has_unknown_formals
+                            && !topic.contains_formal(&name)
+                        {
                             sink.push(diagnostic(
                                 range,
                                 format!(

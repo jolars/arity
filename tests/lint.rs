@@ -7396,6 +7396,33 @@ fn roxygen_param_merged_topic_negatives() {
 }
 
 #[test]
+fn roxygen_param_inherited_joiner_preserves_owner_coverage() {
+    for tag in [
+        "inheritParams other",
+        "inherit other",
+        "template args",
+        "usage g(inherited)",
+    ] {
+        let src = format!(
+            "#' Backend\n#' @param x X.\n#' @param bogus Unknown surface.\n\
+             f <- function(x, hooks) x\n\n\
+             #' @rdname f\n#' @{tag}\ng <- function(inherited) inherited\n"
+        );
+        let findings = roxygen_param_findings(&src);
+        assert_eq!(findings.len(), 1, "{tag}: {findings:?}");
+        assert_eq!(&src[findings[0].range], "hooks");
+        assert!(findings[0].message.body.contains("not documented"));
+    }
+}
+
+#[test]
+fn roxygen_param_inherited_joiner_covers_shared_formal() {
+    let src = "#' Backend\n#' @param x X.\nf <- function(x, shared) x\n\n\
+               #' @rdname f\n#' @inheritParams other\ng <- function(shared) shared\n";
+    assert!(roxygen_param_findings(src).is_empty());
+}
+
+#[test]
 fn roxygen_param_merged_topic_resolves_under_markdown() {
     // Under `@md` an underscore inside a name is carved as an unresolved
     // markdown delimiter, so `@rdname missing_arg` is three leaves. Reading
@@ -7537,6 +7564,18 @@ fn cross_file_findings(rule: &str, a_r: &str, b_r: &str, file_name: &str) -> Vec
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[test]
+fn roxygen_param_inherited_joiner_preserves_cross_file_owner_coverage() {
+    let findings = cross_file_findings(
+        "roxygen-param",
+        "#' Backend\n#' @param x X.\nf <- function(x, hooks) x\n",
+        "#' @rdname f\n#' @inheritParams other\ng <- function(inherited) inherited\n",
+        "a.R",
+    );
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert!(findings[0].contains("formal argument `hooks` is not documented"));
 }
 
 #[test]

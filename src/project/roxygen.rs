@@ -40,9 +40,8 @@ pub struct TopicMember {
     /// `@return` or its `@returns` alias: the topic's `\value` section.
     pub has_value: bool,
     /// The block pulls its argument list in from another *object*
-    /// (`@inheritParams`, `@template`, …), which no amount of cross-block
-    /// resolution recovers — it makes the whole topic's argument surface
-    /// unknowable.
+    /// (`@inheritParams`, `@template`, …). Its formals may be documented
+    /// externally, but other topic members still need coverage.
     pub inherits_params: bool,
     /// `@rdname` / `@describeIn`: this block joins a topic someone else owns.
     pub joins: bool,

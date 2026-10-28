@@ -455,7 +455,7 @@ remains needs broader modeling rather than a name-shaped exemption:
   `%packages%`, `mandelbrot_tiles`, `as.raster.Mandelbrot`, `plot.Mandelbrot`,
   and `as.FutureGlobals` expose this. Extend the range-free topic projection;
   do not bolt aliases onto individual rules.
-- [ ] **Do not let one inherited topic member suppress owner coverage.** The
+- [x] **Do not let one inherited topic member suppress owner coverage.** The
   current topic-wide "any member inherits parameters" gate misses the genuinely
   undocumented `hooks` formal on `FutureBackend()`, which
   `tools::checkDocFiles()` reports. Preserve the unknown surface only for the
