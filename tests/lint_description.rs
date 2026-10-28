@@ -778,23 +778,10 @@ Authors@R: person(\"Test\", \"User\", email = \"test@example.com\", role = c(\"a
     assert!(!ids(text).contains(&"description-missing-field"));
 }
 
-/// **Known gap**, pinned so it reads as a defect rather than as intent.
-///
-/// The rule accepts any non-empty `Authors@R`, but R only *derives* `Author` and
-/// `Maintainer` from a person with role `"cre"`, a **valid email**, and a
-/// non-empty name. Without the email R rejects the package outright —
-/// "Authors@R field gives no person with maintainer role, valid email address
-/// and non-empty name", signal
-/// `bad_authors_at_R_field_has_no_valid_maintainer`, confirmed by
-/// `tests/description_oracle.rs`.
-///
-/// `description-authors-at-r` has since landed and *does* report the file, so
-/// the defect is no longer silent — see `a_creator_without_an_email_is_flagged`.
-/// What is left is this rule's own reading: closing it means consulting the
-/// parsed field instead of testing it for non-emptiness (`TODO.md`). When that
-/// lands, invert the first assertion.
+/// A named author still derives `Author`, but a creator without an email
+/// cannot supply `Maintainer`.
 #[test]
-fn a_creator_without_an_email_is_not_yet_reported() {
+fn a_creator_without_an_email_is_reported_as_missing_maintainer() {
     let text = "\
 Package: testpkg
 Version: 0.1.0
@@ -803,14 +790,64 @@ Description: Fixture data.
 License: MIT + file LICENSE
 Authors@R: person(\"Test\", \"User\", role = c(\"aut\", \"cre\"))
 ";
-    assert!(
-        !ids(text).contains(&"description-missing-field"),
-        "the gap has been closed — invert this assertion",
-    );
-    assert!(
-        ids(text).contains(&"description-authors-at-r"),
-        "the defect is reported, just not by the rule whose subject it also is",
-    );
+    let findings = messages(text, "description-missing-field");
+    assert_eq!(findings.len(), 1);
+    assert!(findings[0].contains("required field `Maintainer`"));
+    assert!(ids(text).contains(&"description-authors-at-r"));
+}
+
+#[test]
+fn authors_at_r_derivation_requires_suitable_people() {
+    let base = "Package: testpkg\nVersion: 0.1.0\nTitle: A Test Package\nDescription: Fixture data.\nLicense: MIT\n";
+    for (authors, missing) in [
+        (
+            "person(\"Jane\", \"Doe\", role = \"aut\")",
+            Some("`Maintainer`"),
+        ),
+        (
+            "person(role = \"cre\", email = \"jane@example.com\")",
+            Some("`Author`, `Maintainer`"),
+        ),
+        ("person()", Some("`Author`, `Maintainer`")),
+        (
+            "person(\"Jane\", role = \"cre\", email = \" \")",
+            Some("`Maintainer`"),
+        ),
+        (
+            "person(\"Jane\", role = \"cre\", email = \"invalid\")",
+            None,
+        ),
+        ("person(\"Jane\", role = \"cre\", email = address)", None),
+        (
+            "person(\"Jane\", role = roles, email = \"jane@example.com\")",
+            None,
+        ),
+        ("people", None),
+        (
+            "person(first = \"Jane\", last = \"Doe\", role = \"cre\", email = \"jane@example.com\")",
+            None,
+        ),
+        ("as.person(people)", None),
+        (
+            "c(person(\"Jane\", role = \"aut\"), person(\"John\", role = \"cre\", email = \"john@example.com\"))",
+            None,
+        ),
+        (
+            "c(person(\"Jane\", role = \"cre\", email = \"jane@example.com\"), person(\"John\", role = \"cre\", email = \"john@example.com\"))",
+            Some("`Maintainer`"),
+        ),
+    ] {
+        let text = format!("{base}Authors@R: {authors}\n");
+        let findings = messages(&text, "description-missing-field");
+        if let Some(missing) = missing {
+            assert_eq!(findings.len(), 1, "{authors}");
+            assert!(findings[0].contains(missing), "{authors}: {findings:?}");
+        } else {
+            assert!(findings.is_empty(), "{authors}: {findings:?}");
+        }
+        let explicit = format!("{text}Author: Jane Doe\nMaintainer: Jane Doe <jane@example.com>\n");
+        assert!(messages(&explicit, "description-missing-field").is_empty());
+    }
 }
 
 /// The legacy pair satisfies it too — plenty of packages still write both.

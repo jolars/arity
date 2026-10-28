@@ -477,10 +477,26 @@ fn person(call: &CallExpr, folded: &Folded) -> Person {
         let index = FORMALS.iter().position(|f| *f == name).expect("a formal");
         slots[index].take().unwrap_or(Value::Missing)
     };
+    let given = take("given");
+    let family = take("family");
+    // Deprecated name arguments can supply a name too. Keep combinations
+    // conservative because R may warn, combine them, or reject a conflict.
+    let given = if take("first").is_present() != Some(false)
+        || take("middle").is_present() != Some(false)
+    {
+        Value::Unknown
+    } else {
+        given
+    };
+    let family = if take("last").is_present() != Some(false) {
+        Value::Unknown
+    } else {
+        family
+    };
     Person {
         range: folded.map(call.syntax().text_range()),
-        given: take("given"),
-        family: take("family"),
+        given,
+        family,
         email: take("email"),
         role: take("role"),
         comment: take("comment"),

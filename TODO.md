@@ -637,18 +637,16 @@ Tier 1—pure grammar, R is the oracle, no new machinery. None takes a fix:
   Six planted cases exercise them, three of them pinning the places arity
   deliberately withholds.
 
-- [ ] **Gap in the shipped `description-missing-field`.** It treats the mere
-  presence of `Authors@R` as satisfying `Author` and `Maintainer`, but R only
-  *derives* them if some person has role `"cre"`, a **valid email**, and a
-  non-empty name; otherwise `R CMD check` errors with "Authors@R field gives
-  no person with maintainer role, valid email address and non-empty name."
-  So `person("Jane", "Doe", role = c("aut", "cre"))`—no `email`—is rejected
-  by R and passes arity today. Confirmed against R. Fixing it means the rule
-  consults the parsed `Authors@R` rather than testing the field for
-  non-emptiness; `description-authors-at-r` has landed, so the resolver it
-  needs (`src/linter/rules/packaging/authors.rs`) is there and the file is no
-  longer silent—only this rule's own reading of it is. Write the failing test
-  before the fix.
+- [x] **Gap in the shipped `description-missing-field`.** The rule now resolves
+  `Authors@R` with the shared static person resolver instead of accepting any
+  nonempty value. It checks derivation separately: `Author` needs a named person
+  with a role, and `Maintainer` needs exactly one creator with a name and nonempty
+  email. R's derivation check calls this a "valid email" but checks presence;
+  malformed address syntax belongs to `description-malformed-maintainer`.
+  Computed values remain conservative, and explicit fields still satisfy the
+  requirement. The formerly known-gap test failed before the fix and now reports
+  the missing `Maintainer`; regression cases cover names, roles, empty people,
+  email presence, multiple creators, explicit fields, and computed values.
 
 - [ ] `description-title-format`. The parts R and CRAN actually enforce: no
   continuation lines (R-exts says Title *cannot* have any, and

@@ -17,6 +17,11 @@
 //!
 //! **No autofix.** Every one of these fields needs a value only the author has.
 
+use super::{
+    authors::{self, Authors},
+    scalar_field,
+};
+
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::{DcfRule, DcfRuleContext, Example};
 
@@ -34,7 +39,7 @@ const REQUIRED: [&str; 7] = [
 ];
 
 /// `Authors@R` is the modern spelling of these two: `R CMD build` derives both
-/// from it, so declaring it satisfies both.
+/// from it when it supplies suitable people.
 const DERIVED_FROM_AUTHORS_AT_R: [&str; 2] = ["Author", "Maintainer"];
 
 const EXAMPLES: &[Example] = &[Example {
@@ -51,8 +56,9 @@ impl DcfRule for DescriptionMissingField {
         "Flag a `DESCRIPTION` missing a field R requires.\n\n`R CMD build` \
          refuses a package whose `DESCRIPTION` omits `Package`, `Version`, \
          `Title`, `Description`, `Author`, `Maintainer`, or `License`. \
-         `Authors@R` satisfies `Author` and `Maintainer`, since `R CMD build` \
-         derives both from it. A field that is present but empty declares \
+         `Authors@R` supplies `Author` through a named person with a role, and \
+         `Maintainer` through a single creator with a name and nonempty email. \
+         Computed values are left alone when derivation cannot be decided statically. A field that is present but empty declares \
          nothing and counts as missing.\n\nEvery missing field is reported as \
          one finding rather than one each: the defect is that the file is \
          incomplete, and it takes one decision—and one suppression—to \
@@ -78,11 +84,39 @@ impl DcfRule for DescriptionMissingField {
             return;
         };
 
-        let has_authors_at_r = declared("Authors@R");
+        let derived = ctx
+            .document
+            .field("Authors@R")
+            .and_then(|field| scalar_field::folded(&field))
+            .map(|folded| authors::resolve(&folded));
+        let can_derive = |name: &str| match &derived {
+            None | Some(Authors::Unparseable | Authors::UnsafeCall(..)) => false,
+            Some(Authors::Unresolved) => true,
+            Some(Authors::Persons(resolved)) => {
+                if name == "Author" {
+                    resolved.persons.iter().any(|person| {
+                        person.has_name() != Some(false) && person.role.is_present() != Some(false)
+                    })
+                } else {
+                    let creators = resolved
+                        .persons
+                        .iter()
+                        .filter(|person| person.has_role("cre") == Some(true))
+                        .count();
+                    // R refuses derivation when more than one creator is known.
+                    creators <= 1
+                        && resolved.persons.iter().any(|person| {
+                            person.has_role("cre") != Some(false)
+                                && person.has_name() != Some(false)
+                                && person.email.is_present() != Some(false)
+                        })
+                }
+            }
+        };
         let missing: Vec<&str> = REQUIRED
             .into_iter()
             .filter(|name| {
-                if has_authors_at_r && DERIVED_FROM_AUTHORS_AT_R.contains(name) {
+                if DERIVED_FROM_AUTHORS_AT_R.contains(name) && can_derive(name) {
                     return false;
                 }
                 !declared(name)
@@ -116,7 +150,7 @@ impl DcfRule for DescriptionMissingField {
             .with_suggestion(if missing.iter().any(|name| {
                 DERIVED_FROM_AUTHORS_AT_R.contains(name)
             }) {
-                format!("Add the {plural} {list}, or declare `Authors@R` in place of `Author` and `Maintainer`.")
+                format!("Add the {plural} {list}, or supply suitable people in `Authors@R` to derive `Author` and `Maintainer`.")
             } else {
                 format!("Add the {plural} {list}.")
             }),

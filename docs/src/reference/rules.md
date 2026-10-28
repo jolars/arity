@@ -2130,7 +2130,7 @@ warning: routine-registration
 
 Flag a `DESCRIPTION` missing a field R requires.
 
-`R CMD build` refuses a package whose `DESCRIPTION` omits `Package`, `Version`, `Title`, `Description`, `Author`, `Maintainer`, or `License`. `Authors@R` satisfies `Author` and `Maintainer`, since `R CMD build` derives both from it. A field that is present but empty declares nothing and counts as missing.
+`R CMD build` refuses a package whose `DESCRIPTION` omits `Package`, `Version`, `Title`, `Description`, `Author`, `Maintainer`, or `License`. `Authors@R` supplies `Author` through a named person with a role, and `Maintainer` through a single creator with a name and nonempty email. Computed values are left alone when derivation cannot be decided statically. A field that is present but empty declares nothing and counts as missing.
 
 Every missing field is reported as one finding rather than one each: the defect is that the file is incomplete, and it takes one decision—and one suppression—to settle.
 
@@ -2153,7 +2153,7 @@ warning: description-missing-field
   |
 1 | Package: mypkg
   | ^^^^^^^ DESCRIPTION is missing the required fields `Title`, `Description`, `Author`, `Maintainer`, `License`
-  = help: Add the fields `Title`, `Description`, `Author`, `Maintainer`, `License`, or declare `Authors@R` in place of `Author` and `Maintainer`.
+  = help: Add the fields `Title`, `Description`, `Author`, `Maintainer`, `License`, or supply suitable people in `Authors@R` to derive `Author` and `Maintainer`.
 ```
 
 ### `description-duplicate-field`
