@@ -50,6 +50,7 @@ so this page never drifts from the rules' actual behavior.
 - [`pipe-return`](#pipe-return)
 - [`bare-return`](#bare-return)
 - [`function-return-assignment`](#function-return-assignment)
+- [`list-comparison`](#list-comparison)
 - [`terminal-close`](#terminal-close)
 - [`strings-as-factors`](#strings-as-factors)
 - [`partial-argument-match`](#partial-argument-match)
@@ -920,6 +921,27 @@ warning: function-return-assignment
 1 | f <- function() return(result <- compute())
   |                        ^^^^^^^^^^^^^^^^^^^ assignment inside `return()` has a side effect
   = help: Move the assignment before `return()` or return the value directly.
+```
+
+### `list-comparison`
+
+Flag direct comparisons involving base `list()`, `pairlist()`, `lapply()`, or `Map()` calls, including parenthesized operands. List comparisons depend on coercion and may fail for non-scalar elements. Prefer a typed iterator such as `vapply()` with an explicit result template before comparing. Only simple base-resolved callees are checked; variables, qualified calls, shadowed functions, and quoted code are left alone. No automatic fix is offered because the intended element type and comparison are unknown.
+
+This rule is **enabled by default**.
+
+Compare a typed result instead of a list:
+
+```r
+lapply(x, length) > 1
+```
+
+```text
+warning: list-comparison
+ --> example.R:1:19
+  |
+1 | lapply(x, length) > 1
+  |                   ^ Direct list comparison relies on element coercion
+  = help: Use a typed iterator such as `vapply()` before comparing.
 ```
 
 ### `terminal-close`

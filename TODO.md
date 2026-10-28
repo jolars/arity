@@ -298,9 +298,12 @@ Tier 2—performance/readability transformations that the formatter cannot do:
   and mirrored spellings are covered; fixes preserve `NA` behavior but are
   unsafe because `Summary` method dispatch can differ, and are withheld around
   comments, a shadowed introduced `any`, or a tight negation context.
-- [ ] `list-comparison`: flag direct comparisons of known list-producing calls
+- [x] `list-comparison`: flag direct comparisons of known list-producing calls
   such as `lapply(...) > 1`, which rely on awkward coercion; recommend a typed
   iterator rather than guessing a fix.
+  Implemented as a default-on `ns`-tier suspicious warning for direct base
+  `list`, `pairlist`, `lapply`, and `Map` comparisons, including parenthesized
+  operands. No fix is offered because the intended element type is unknown.
 - [x] `terminal-close`: flag a function whose final action is `close(conn)` and
   recommend registering cleanup with `on.exit()` near acquisition. Default-off
   until a corpus pass establishes that ownership-transfer patterns are not

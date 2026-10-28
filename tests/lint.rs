@@ -6891,6 +6891,8 @@ fn assert_fixed_output_is_clean(input: &str) {
 #[test]
 fn fixed_output_is_parseable_and_clean() {
     let cases = [
+        // list-comparison (no fix).
+        "lapply(x, length) > 1\n",
         // terminal-close (opt-in, no fix).
         "f <- function(con) { print(con); close(con) }\nf(con)\n",
         "с <- 1\nprint(с)\n",
@@ -9094,4 +9096,62 @@ fn cyclomatic_complexity_preserves_lazy_argument_reachability() {
         assert!(diagnostics_selecting(source, &["unreachable-code"]).is_empty());
         assert_eq!(complexity_findings(source, 1).len(), 1);
     }
+}
+
+#[test]
+fn list_comparison_reports_direct_list_calls_without_fixes() {
+    for call in [
+        "lapply(x, length)",
+        "list(1, 2)",
+        "pairlist(1, 2)",
+        "Map(f, x)",
+    ] {
+        for op in ["==", "!=", "<", "<=", ">", ">="] {
+            for src in [format!("({call}) {op} 1\n"), format!("1 {op} {call}\n")] {
+                let findings = diagnostics_selecting(&src, &["list-comparison"]);
+                assert_eq!(findings.len(), 1, "{src}: {findings:?}");
+                let d = &findings[0];
+                assert_eq!(
+                    &src[usize::from(d.range.start())..usize::from(d.range.end())],
+                    op
+                );
+                assert!(d.fix.is_none());
+                assert_eq!(arity::parser::reconstruct(&src), src);
+            }
+        }
+    }
+}
+
+#[test]
+fn list_comparison_leaves_unknown_or_shadowed_results_alone() {
+    for src in [
+        "x > 1",
+        "sapply(x, length) > 1",
+        "vapply(x, length, 1L) > 1",
+        "lapply(x, f) + 1",
+        "length(lapply(x, f)) > 1",
+        "f <- function(lapply) lapply(x, f) > 1",
+        "list <- function(...) 1; list(1) > 1",
+        "pkg::lapply(x, f) > 1",
+        "quote(lapply(x, f) > 1)",
+        "substitute(list(1) > 1)",
+    ] {
+        assert!(
+            diagnostics_selecting(src, &["list-comparison"]).is_empty(),
+            "{src}"
+        );
+    }
+}
+
+#[test]
+fn list_comparison_is_default_enabled_and_suppressible() {
+    let src = "lapply(x, length) > 1\n";
+    assert!(diagnostics(src).iter().any(|d| d.rule == "list-comparison"));
+    assert!(
+        diagnostics_selecting(
+            "# arity-lint skip list-comparison: intentional coercion\nlapply(x, length) > 1\n",
+            &["list-comparison"],
+        )
+        .is_empty()
+    );
 }

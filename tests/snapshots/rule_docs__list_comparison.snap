@@ -1,0 +1,24 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `list-comparison`
+
+Flag direct comparisons involving base `list()`, `pairlist()`, `lapply()`, or `Map()` calls, including parenthesized operands. List comparisons depend on coercion and may fail for non-scalar elements. Prefer a typed iterator such as `vapply()` with an explicit result template before comparing. Only simple base-resolved callees are checked; variables, qualified calls, shadowed functions, and quoted code are left alone. No automatic fix is offered because the intended element type and comparison are unknown.
+
+This rule is **enabled by default**.
+
+Compare a typed result instead of a list:
+
+```r
+lapply(x, length) > 1
+```
+
+```text
+warning: list-comparison
+ --> example.R:1:19
+  |
+1 | lapply(x, length) > 1
+  |                   ^ Direct list comparison relies on element coercion
+  = help: Use a typed iterator such as `vapply()` before comparing.
+```
