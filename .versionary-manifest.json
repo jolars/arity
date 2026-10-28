@@ -1,11 +1,11 @@
 {
   "manifest-version": 1,
-  "baseline-sha": "790607aec1d038ecda2c1c8c1e1f8559a3f3960b",
+  "baseline-sha": "5e8b02bf3cb13f11cee169172cfc46a5936ee78f",
   "release-targets": [
     {
       "path": ".",
-      "version": "0.27.0",
-      "tag": "v0.27.0",
+      "version": "0.28.0",
+      "tag": "v0.28.0",
       "dependencies": [
         "crates/arity-formatter",
         "crates/arity-parser"
@@ -13,36 +13,36 @@
     },
     {
       "path": "crates/arity-formatter",
-      "version": "0.8.2",
-      "tag": "arity-formatter-v0.8.2",
+      "version": "0.8.3",
+      "tag": "arity-formatter-v0.8.3",
       "dependencies": [
         "crates/arity-parser"
       ]
     },
     {
       "path": "crates/arity-parser",
-      "version": "0.6.2",
-      "tag": "arity-parser-v0.6.2"
+      "version": "0.7.0",
+      "tag": "arity-parser-v0.7.0"
     },
     {
       "path": "editors/code",
-      "version": "0.27.0",
-      "tag": "arity-code-v0.27.0",
+      "version": "0.28.0",
+      "tag": "arity-code-v0.28.0",
       "dependencies": [
         "."
       ]
     },
     {
       "path": "editors/zed",
-      "version": "0.2.0",
-      "tag": "arity-zed-v0.2.0"
+      "version": "0.3.0",
+      "tag": "arity-zed-v0.3.0"
     }
   ],
   "pending-release-targets": [
     {
       "path": ".",
-      "version": "0.27.0",
-      "tag": "v0.27.0",
+      "version": "0.28.0",
+      "tag": "v0.28.0",
       "dependencies": [
         "crates/arity-formatter",
         "crates/arity-parser"
@@ -50,24 +50,29 @@
     },
     {
       "path": "crates/arity-formatter",
-      "version": "0.8.2",
-      "tag": "arity-formatter-v0.8.2",
+      "version": "0.8.3",
+      "tag": "arity-formatter-v0.8.3",
       "dependencies": [
         "crates/arity-parser"
       ]
     },
     {
       "path": "crates/arity-parser",
-      "version": "0.6.2",
-      "tag": "arity-parser-v0.6.2"
+      "version": "0.7.0",
+      "tag": "arity-parser-v0.7.0"
     },
     {
       "path": "editors/code",
-      "version": "0.27.0",
-      "tag": "arity-code-v0.27.0",
+      "version": "0.28.0",
+      "tag": "arity-code-v0.28.0",
       "dependencies": [
         "."
       ]
+    },
+    {
+      "path": "editors/zed",
+      "version": "0.3.0",
+      "tag": "arity-zed-v0.3.0"
     }
   ]
 }

@@ -158,7 +158,7 @@ dependencies = [
 
 [[package]]
 name = "arity"
-version = "0.27.0"
+version = "0.28.0"
 dependencies = [
  "annotate-snippets",
  "arity-formatter",
@@ -201,7 +201,7 @@ dependencies = [
 
 [[package]]
 name = "arity-formatter"
-version = "0.8.2"
+version = "0.8.3"
 dependencies = [
  "arity-parser",
  "insta",
@@ -213,7 +213,7 @@ dependencies = [
 
 [[package]]
 name = "arity-parser"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "air_r_parser",
  "criterion",
