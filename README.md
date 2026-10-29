@@ -12,8 +12,7 @@ version](https://badge.fury.io/py/arity.svg?icon=si%3Apython)](https://pypi.org/
 [![npm
 version](https://badge.fury.io/js/@arity-cli%2Farity-cli.svg?icon=si%3Anpm)](https://www.npmjs.com/package/arity-cli)
 [![CRAN](https://www.r-pkg.org/badges/version/arity)](https://CRAN.R-project.org/package=arity)
-[![Software
-DOI](https://img.shields.io/badge/Software_DOI-10.5281%2Fzenodo.20662733-blue)](https://doi.org/10.5281/zenodo.20662733)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20662733-blue)](https://doi.org/10.5281/zenodo.20662733)
 
 Arity is a language server, formatter, and linter for the R programming
 language, built on a lossless, incremental parser. It provides a fast,
