@@ -394,9 +394,10 @@ fn cli_config_and_no_config_conflict() {
     let cfg = dir.path().join("custom.toml");
     fs::write(&cfg, "[format]\n").unwrap();
 
-    let output = run_cli(
+    // Clap rejects conflicting arguments before reading stdin.
+    let output = run_cli_in_no_stdin(
+        dir.path(),
         ["format", "--config", cfg.to_str().unwrap(), "--no-config"],
-        LONG_FN_INPUT,
     );
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(2));
