@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.29.0](https://github.com/jolars/arity/compare/v0.28.0...v0.29.0) (2026-10-30)
+
+### Features
+
+- **lint:** add list-comparison rule ([`78a7685`](https://github.com/jolars/arity/commit/78a7685ea63af8632b75407df4205e81d4f6c11c))
+
+### Bug Fixes
+
+- **test:** avoid stdin race in config conflict test ([`9b5547e`](https://github.com/jolars/arity/commit/9b5547ebe0c001fb0ca5eddb0cb8bd00f6b15699))
+- **lint:** resolve required fields from `Authors@R` ([`6f3dac1`](https://github.com/jolars/arity/commit/6f3dac12c1f6f09b2f201f1acb971a07fe3d0e22))
+- **lint:** preserve topic owner parameter coverage ([`6f9b131`](https://github.com/jolars/arity/commit/6f9b13151dadac534da9308e9ca706f26b8efb29))
+
 ## [0.28.0](https://github.com/jolars/arity/compare/v0.27.0...v0.28.0) (2026-10-27)
 
 Arity now has rudimentary support for `.Rd` files. It parses them but does not yet supply and language server features, linting, or formatting. It does, however, attach the server to `.Rd` files so that workspace symbols and diagnostics are available.
