@@ -3,8 +3,24 @@
 Run Arity from the root of an existing R project. The commands below use the
 default settings unless your project already has an `arity.toml`.
 
-See [Installation](../installation.md) if you need the CLI, or [Editor
-setup](editors.md) to use Arity directly in your editor.
+## Install Arity
+
+Use the installer to download Arity for your platform:
+
+::: code-group
+
+```sh [macOS/Linux]
+curl --proto '=https' --tlsv1.2 -sSf https://arity.cc/install | sh
+```
+
+```powershell [Windows]
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://arity.cc/install.ps1 | iex"
+```
+
+:::
+
+See [Installation](../installation.md) for package managers and other options,
+or [Editor setup](editors.md) to use Arity directly in your editor.
 
 ## Check your project
 
