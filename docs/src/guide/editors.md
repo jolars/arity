@@ -28,80 +28,6 @@ server rechecks config files on subsequent formatting requests and document
 edits, including a user config outside the workspace. A missing or invalid
 `ARITY_CONFIG` file causes formatting to be refused until the config is fixed.
 
-## DESCRIPTION files
-
-The server also serves a package's `DESCRIPTION`, which is a different grammar
-from R. There it offers the packaging diagnostics, completion of package names
-in `Depends`, `Imports`, `Suggests`, `LinkingTo`, and `Enhances`, and hover
-showing a dependency's installed version and title. An unsaved edit counts
-immediately, so adding a package to `Imports` clears the
-[`undeclared-dependency`](../reference/rules.md#undeclared-dependency) findings
-in the R files that use it without saving first.
-
-The installed version is also shown inline, as an inlay hint after each
-dependency:
-
-```text
-Imports:
-    dplyr (>= 1.0.0) 1.1.4,
-    rlang 1.1.4,
-```
-
-Only indexed packages get one, so a dependency you have not installed stays
-bare. Arity has no setting of its own for these — your editor's inlay hint
-switch (`editor.inlayHints.enabled` in VS Code) turns them off.
-
-Diagnostics are reported only for a `DESCRIPTION` at a package root of its own,
-matching what `arity lint` walks. A complete miniature package under
-`tests/testthat/` is fixture data for a test, so it stays quiet.
-
-A `DESCRIPTION` is formatted too, by default, so format-on-save canonicalizes it
-the same way it canonicalizes your `.R` files. Set `description = false` under
-`[format]` in `arity.toml` to leave it alone.
-
-Only whole-document formatting is offered: canonical field order is a property
-of the whole file, so `editor.formatOnSaveMode: "modifications"` (and
-format-selection generally) will not touch a `DESCRIPTION`.
-
-Editors need to be told to send the file, since most do not recognize
-`DESCRIPTION` on their own. The VS Code extension does this for you; for the
-rest, see the sections below.
-
-## RStudio
-
-The [development R package](https://github.com/jolars/arity-r) provides a
-**Format with arity** addin and discovers `arity.toml` automatically. These
-features were added after the CRAN 0.1.0 release. Install the development
-version to use them; building from source requires Cargo and Rust 1.89 or newer:
-
-```r
-install.packages("remotes")
-remotes::install_github("jolars/arity-r")
-```
-
-Choose **Format with arity** from RStudio's **Addins** menu. It formats selected
-R code, or the whole document when nothing is selected, including unsaved edits
-and untitled R scripts. Changes remain in the editor for you to save. To assign
-a shortcut, open **Tools > Modify Keyboard Shortcuts** and search for the addin.
-
-The addin discovers configuration from the document's directory, or the working
-directory for untitled buffers. It uses the nearest `arity.toml`, with
-`ARITY_CONFIG` as a fallback when no project config is found. Only formatting
-settings apply; file exclusions and lint configuration do not. See the [R
-package documentation](https://github.com/jolars/arity-r#configuration) for
-configuration overrides and supported selections.
-
-With the [CRAN package](../installation.md#r-package-cran), format saved files
-from the console:
-
-```r
-arity::format_file("R/example.R")
-```
-
-This rewrites the file on disk. CRAN 0.1.0 takes formatting options as function
-arguments and does not discover `arity.toml`. The R package embeds the
-formatter, so neither installation needs the Arity CLI.
-
 ## VS Code/Positron
 
 Install the **Arity** extension from the [VS Code
@@ -284,6 +210,41 @@ roots = ["arity.toml", "DESCRIPTION", ".git"]
 language-servers = ["arity"]
 ```
 
+## RStudio
+
+The [development R package](https://github.com/jolars/arity-r) provides a
+**Format with arity** addin and discovers `arity.toml` automatically. These
+features were added after the CRAN 0.1.0 release. Install the development
+version to use them; building from source requires Cargo and Rust 1.89 or newer:
+
+```r
+install.packages("remotes")
+remotes::install_github("jolars/arity-r")
+```
+
+Choose **Format with arity** from RStudio's **Addins** menu. It formats selected
+R code, or the whole document when nothing is selected, including unsaved edits
+and untitled R scripts. Changes remain in the editor for you to save. To assign
+a shortcut, open **Tools > Modify Keyboard Shortcuts** and search for the addin.
+
+The addin discovers configuration from the document's directory, or the working
+directory for untitled buffers. It uses the nearest `arity.toml`, with
+`ARITY_CONFIG` as a fallback when no project config is found. Only formatting
+settings apply; file exclusions and lint configuration do not. See the [R
+package documentation](https://github.com/jolars/arity-r#configuration) for
+configuration overrides and supported selections.
+
+With the [CRAN package](../installation.md#r-package-cran), format saved files
+from the console:
+
+```r
+arity::format_file("R/example.R")
+```
+
+This rewrites the file on disk. CRAN 0.1.0 takes formatting options as function
+arguments and does not discover `arity.toml`. The R package embeds the
+formatter, so neither installation needs the Arity CLI.
+
 ## Other editors
 
 Any LSP-capable editor can use arity by launching `arity lsp` over stdio for the
@@ -299,3 +260,42 @@ To start Arity from an Rd file, associate `.Rd` and `.rd` with the same server
 in your client's filetype or document selector settings. The `rd` language id
 also identifies pathless Rd buffers. This enables workspace symbol search
 without opening an R file first.
+
+## DESCRIPTION files
+
+The server also serves a package's `DESCRIPTION`, which is a different grammar
+from R. There it offers the packaging diagnostics, completion of package names
+in `Depends`, `Imports`, `Suggests`, `LinkingTo`, and `Enhances`, and hover
+showing a dependency's installed version and title. An unsaved edit counts
+immediately, so adding a package to `Imports` clears the
+[`undeclared-dependency`](../reference/rules.md#undeclared-dependency) findings
+in the R files that use it without saving first.
+
+The installed version is also shown inline, as an inlay hint after each
+dependency:
+
+```text
+Imports:
+    dplyr (>= 1.0.0) 1.1.4,
+    rlang 1.1.4,
+```
+
+Only indexed packages get one, so a dependency you have not installed stays
+bare. Arity has no setting of its own for these — your editor's inlay hint
+switch (`editor.inlayHints.enabled` in VS Code) turns them off.
+
+Diagnostics are reported only for a `DESCRIPTION` at a package root of its own,
+matching what `arity lint` walks. A complete miniature package under
+`tests/testthat/` is fixture data for a test, so it stays quiet.
+
+A `DESCRIPTION` is formatted too, by default, so format-on-save canonicalizes it
+the same way it canonicalizes your `.R` files. Set `description = false` under
+`[format]` in `arity.toml` to leave it alone.
+
+Only whole-document formatting is offered: canonical field order is a property
+of the whole file, so `editor.formatOnSaveMode: "modifications"` (and
+format-selection generally) will not touch a `DESCRIPTION`.
+
+Editors need to be told to send the file, since most do not recognize
+`DESCRIPTION` on their own. The VS Code extension does this for you; for the
+rest, see the sections below.
