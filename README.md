@@ -1,16 +1,13 @@
 # Arity <img src='https://raw.githubusercontent.com/jolars/arity/refs/heads/main/images/logo.png' align="right" width="139" />
 
-[![Build and
-Test](https://github.com/jolars/arity/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/jolars/arity/actions/workflows/build-and-test.yml)
+[![CI](https://github.com/jolars/arity/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/jolars/arity/actions/workflows/build-and-test.yml)
 [![Crates.io](https://img.shields.io/crates/v/arity.svg?logo=rust)](https://crates.io/crates/arity)
 [![Open
 VSX](https://img.shields.io/open-vsx/v/jolars/arity?logo=vsix)](https://open-vsx.org/extension/jolars/arity)
 [![VS
 Code](https://vsmarketplacebadges.dev/version-short/jolars.arity.svg?logo=vsix)](https://marketplace.visualstudio.com/items?itemName=jolars.arity)
-[![PyPI
-version](https://badge.fury.io/py/arity.svg?icon=si%3Apython)](https://pypi.org/project/arity/)
-[![npm
-version](https://badge.fury.io/js/@arity-cli%2Farity-cli.svg?icon=si%3Anpm)](https://www.npmjs.com/package/arity-cli)
+[![PyPI](https://badge.fury.io/py/arity.svg?icon=si%3Apython)](https://pypi.org/project/arity/)
+[![npm](https://badge.fury.io/js/@arity-cli%2Farity-cli.svg?icon=si%3Anpm)](https://www.npmjs.com/package/arity-cli)
 [![CRAN](https://www.r-pkg.org/badges/version/arity)](https://CRAN.R-project.org/package=arity)
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20662733-blue)](https://doi.org/10.5281/zenodo.20662733)
 
