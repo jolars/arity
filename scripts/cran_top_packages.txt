@@ -56,6 +56,7 @@ RcppHNSW
 RcppParallel
 RcppProgress
 RcppTOML
+RcppThread
 Rdpack
 Rsolnp
 Rtsne
@@ -63,6 +64,7 @@ S7
 SQUAREM
 Seurat
 SeuratObject
+SnowballC
 SparseM
 StanHeaders
 TH.data
