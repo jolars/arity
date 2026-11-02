@@ -10,6 +10,7 @@ import {
 import { useData, useRoute } from "vitepress";
 import DefaultTheme from "vitepress/theme";
 import { mountCharts } from "./bench-charts.mjs";
+import Playground from "./Playground.vue";
 import "./style.css";
 import "./bench-charts.css";
 
@@ -40,5 +41,8 @@ const Charts = defineComponent({
 
 export default {
   extends: DefaultTheme,
+  enhanceApp({ app }) {
+    app.component("ArityPlayground", Playground);
+  },
   Layout: () => h(Fragment, [h(DefaultTheme.Layout), h(Charts)]),
 };

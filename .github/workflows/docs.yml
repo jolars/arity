@@ -6,9 +6,12 @@ on:
     paths:
       - "docs/**"
       - "src/**"
+      - "crates/**"
       - "examples/docgen.rs"
       - "build.rs"
       - "Cargo.*"
+      - "rust-toolchain.toml"
+      - "Taskfile.yml"
       - "benches/*results.json"
       - "arity.schema.json"
       - "scripts/arity-installer.*"
@@ -35,6 +38,12 @@ jobs:
           fetch-depth: 0
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
       - name: Cache cargo registry
         uses: actions/cache@v6
         with:

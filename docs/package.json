@@ -6,7 +6,10 @@
     "node": ">=22"
   },
   "scripts": {
+    "playground:wasm": "wasm-pack build ../crates/arity-wasm --target web --release --out-dir ../../docs/public/playground/pkg -- --locked",
+    "predev": "npm run playground:wasm && node scripts/prepare.mjs",
     "dev": "vitepress dev",
+    "prebuild": "npm run playground:wasm",
     "build": "node scripts/prepare.mjs && vitepress build && node scripts/export-markdown.mjs",
     "preview": "wrangler dev",
     "check": "node --test markdown-worker.test.mjs tests/*.test.mjs && node scripts/check-site.mjs",
@@ -14,6 +17,13 @@
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
+    "@codemirror/commands": "^6",
+    "@codemirror/language": "^6",
+    "@codemirror/legacy-modes": "^6",
+    "@codemirror/lint": "^6",
+    "@codemirror/state": "^6",
+    "@codemirror/theme-one-dark": "^6",
+    "@codemirror/view": "^6",
     "vitepress": "^1.6.4",
     "vue": "^3.5.0",
     "wrangler": "^4.156.2"

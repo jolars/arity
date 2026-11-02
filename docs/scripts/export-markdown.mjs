@@ -8,12 +8,15 @@ import {
   expandIncludes,
   pageUrl,
   sourceRoot,
+  withoutPlayground,
 } from "./content.mjs";
 
 const renderer = await createMarkdownRenderer(sourceRoot);
 for (const chapter of chapters()) {
   const file = join(sourceRoot, chapter);
-  const source = expandIncludes(readFileSync(file, "utf8"), file);
+  const source = withoutPlayground(
+    expandIncludes(readFileSync(file, "utf8"), file),
+  );
   const env = {};
   renderer.render(source, env);
   const frontmatter = env.frontmatter ?? {};
@@ -54,7 +57,9 @@ const printable = [];
 const contents = [];
 for (const chapter of chapters().filter((chapter) => chapter !== "index.md")) {
   const file = join(sourceRoot, chapter);
-  const source = expandIncludes(readFileSync(file, "utf8"), file);
+  const source = withoutPlayground(
+    expandIncludes(readFileSync(file, "utf8"), file),
+  );
   const title = source.match(/^# (.+)$/m)?.[1].replaceAll("`", "") ?? chapter;
   contents.push(
     `<li><a href="${pageUrl(chapter)}">${renderer.utils.escapeHtml(title)}</a></li>`,

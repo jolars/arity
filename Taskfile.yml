@@ -213,8 +213,12 @@ tasks:
     desc: Regenerate reference pages and serve VitePress with live reload
     deps: [docs-gen, docs-install]
     cmds:
-      - node docs/scripts/prepare.mjs
       - npm --prefix docs run dev
+
+  playground-wasm:
+    desc: Build the browser bindings for the R playground
+    cmds:
+      - npm --prefix docs run playground:wasm
 
   docs-build:
     desc: Build VitePress, Markdown variants, and public downloads

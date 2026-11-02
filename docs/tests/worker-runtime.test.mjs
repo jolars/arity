@@ -27,6 +27,8 @@ before(
         "127.0.0.1",
         "--port",
         String(port),
+        "--inspector-port",
+        "0",
         "--show-interactive-dev-session=false",
       ],
       {
@@ -106,6 +108,32 @@ test("overview, project quickstart, and installation have separate pages", async
       assert.doesNotMatch(markdown, /cargo install arity/);
     }
   }
+});
+
+test("the playground serves HTML, readable Markdown, and executable Wasm assets", async () => {
+  const html = await fetch(`${origin}/playground.html`);
+  assert.equal(html.status, 200);
+  const page = await html.text();
+  assert.match(page, /pg-input/);
+  assert.match(page, /pg-output/);
+  const markdown = await fetch(`${origin}/playground.html`, {
+    headers: { accept: "text/markdown" },
+  });
+  assert.equal(markdown.status, 200);
+  const text = await markdown.text();
+  assert.match(text, /^# Playground/);
+  assert.match(text, /stays in your browser/);
+  assert.doesNotMatch(text, /ArityPlayground|<script/);
+  const script = await fetch(`${origin}/playground/pkg/arity_wasm.js`);
+  assert.equal(script.status, 200);
+  assert.match(script.headers.get("content-type"), /javascript/);
+  await script.body?.cancel();
+  const wasm = await fetch(`${origin}/playground/pkg/arity_wasm_bg.wasm`);
+  assert.equal(wasm.status, 200);
+  assert.equal(wasm.headers.get("content-type"), "application/wasm");
+  assert.ok(await WebAssembly.compile(await wasm.arrayBuffer()));
+  const print = await fetch(`${origin}/print.html`);
+  assert.doesNotMatch(await print.text(), /ArityPlayground/);
 });
 
 test("the printable documentation and contents retain their public URLs", async () => {

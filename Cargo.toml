@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/arity-parser", "crates/arity-formatter"]
+members = ["crates/arity-parser", "crates/arity-formatter", "crates/arity-wasm"]
 
 [workspace.package]
 edition = "2024"

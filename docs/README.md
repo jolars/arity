@@ -22,6 +22,15 @@ download bytes, tests the local Worker, and runs a deployment dry run.
 required; the development shell provides Node and the NixOS dynamic loader used
 by Wrangler's bundled runtime.
 
+The R playground at `/playground.html` uses the unpublished `arity-wasm` crate.
+The documentation development and production commands build its JavaScript and
+WebAssembly assets automatically with `wasm-pack`, which the development shell
+provides. To rebuild just those assets, run
+`compute run -- task playground-wasm`. Generated bundles under
+`public/playground/pkg/` are ignored. CodeMirror is bundled by Vite and loaded
+only when the playground opens. Shared links contain formatting settings, never
+the input code.
+
 Navigation lives in `.vitepress/config.mjs`. Generated references and benchmark
 partials still come from `task docs-gen`. Includes use VitePress's
 `<!--@include: ./file.md -->` syntax. Files copied unchanged live in `public/`;

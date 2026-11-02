@@ -101,12 +101,11 @@ jobs:
 
       # `arity-formatter` is embedded by the dprint Wasm plugin
       # (github.com/jolars/dprint-plugin-arity), which builds only for
-      # wasm32-unknown-unknown. Nothing else in the workspace targets wasm, so
-      # this job is the only thing keeping the member crates free of
-      # filesystem/thread/time dependencies.
-      - name: Build arity-formatter for wasm
+      # wasm32-unknown-unknown. The playground's browser bindings share these
+      # engines, so keep both consumers free of native-only dependencies.
+      - name: Build formatter and browser bindings for wasm
         run: >
-          cargo build -p arity-formatter --release
+          cargo build -p arity-formatter -p arity-wasm --release --locked
           --target wasm32-unknown-unknown --features schema
 
   zed:

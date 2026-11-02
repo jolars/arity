@@ -138,6 +138,7 @@ export default defineConfig({
     nav: [
       { text: "Guide", link: "/introduction.html" },
       { text: "Reference", link: "/reference/cli.html" },
+      { text: "Playground", link: "/playground.html" },
       { text: "Performance", link: "/guide/performance.html" },
     ],
     sidebar: [
@@ -147,6 +148,7 @@ export default defineConfig({
           { text: "Overview", link: "/introduction.html" },
           { text: "Getting started", link: "/guide/getting-started.html" },
           { text: "Installation", link: "/installation.html" },
+          { text: "Playground", link: "/playground.html" },
         ],
       },
       {

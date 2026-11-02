@@ -59,6 +59,7 @@ devenv.local.yaml
 /docs/public/install
 /docs/public/install.ps1
 /docs/public/arity.schema.json
+/docs/public/playground/pkg/
 /docs/.dev.vars*
 /docs/.env*
 roxygen2-ref

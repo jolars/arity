@@ -30,6 +30,10 @@ export function pageUrl(path) {
   return "/" + path.replace(/(^|\/)index\.md$/, "$1").replace(/\.md$/, ".html");
 }
 
+export function withoutPlayground(source) {
+  return source.replace(/^<ArityPlayground\s*\/>\r?\n?/gm, "");
+}
+
 export function expandIncludes(source, file, stack = [file]) {
   return source.replace(/<!--\s*@include:\s*(.*?)\s*-->/g, (_, name) => {
     const included = resolve(dirname(file), name);
