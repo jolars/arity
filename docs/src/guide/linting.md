@@ -1,10 +1,10 @@
 # Linting
 
 Arity reports problems in R source and package metadata. It checks code without
-running R. [Install Arity](../getting-started.md#installation), then run the
-linter from your project directory.
+running R. [Install Arity](../installation.md), then run the linter from your
+project directory.
 
-## Check Files
+## Check files
 
 Check one file or a whole project:
 
@@ -36,9 +36,9 @@ arity lint --output concise .
 arity lint --output json .
 ```
 
-## Choose Rules
+## Choose rules
 
-The [Lint Rules](../reference/rules.md) reference explains each rule and its
+The [Lint rules](../reference/rules.md) reference explains each rule and its
 default behavior. To check a particular rule for one run:
 
 ```sh
@@ -90,7 +90,7 @@ require changes to NAMESPACE and native sources.
 character vectors. The rule uses the declared R compatibility floor and stays
 silent when the floor is absent or at least 4.0.
 
-## Apply Fixes
+## Apply fixes
 
 Apply safe fixes in place, then format the rewritten code:
 
@@ -107,7 +107,7 @@ To include fixes that may change behavior, explicitly opt in with
 `arity lint --fix --unsafe-fixes .` and review the resulting diff. The rule
 reference describes the available fixes.
 
-## Suppress a Finding
+## Suppress a finding
 
 When a rule is inappropriate at one site, put a directive before that statement:
 
@@ -121,5 +121,5 @@ Prefer a named rule and a reason. For a whole file, use
 and the rules that check suppression comments are covered in
 [Directives](../reference/directives.md). Parse errors cannot be suppressed.
 
-Use [Editor Setup](editors.md) for diagnostics and fixes while editing, or
+Use [Editor setup](editors.md) for diagnostics and fixes while editing, or
 [Integrations](integrations.md) to run lint checks in CI and pre-commit.

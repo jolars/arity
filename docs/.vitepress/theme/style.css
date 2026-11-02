@@ -1,0 +1,18 @@
+:root {
+  --vp-c-brand-1: #356b97;
+  --vp-c-brand-2: #28577d;
+  --vp-c-brand-3: #356b97;
+}
+
+.dark {
+  --vp-c-brand-1: #8dbfe7;
+  --vp-c-brand-2: #acd2ee;
+  --vp-c-brand-3: #356b97;
+}
+
+@media print {
+  .bench-chart,
+  .bench-chart-block noscript {
+    display: none;
+  }
+}

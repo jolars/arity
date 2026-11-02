@@ -30,13 +30,13 @@ and IDEs.
 Arity is available from several sources:
 
 - **CRAN**: `install.packages("arity")` in R (formatter bindings; see [R package
-  usage](https://arity.cc/getting-started.html#r-package-cran))
+  usage](https://arity.cc/installation.html#r-package-cran))
 - **crates.io**: `cargo install arity`
 - **Homebrew**: `brew install jolars/tap/arity`
 - **npm**: `npm install -g arity-cli` (bundles a prebuilt binary)
 - **PyPI**: `uv tool install arity`/`pipx install arity`
 - **mise/Aqua**: see the [installation
-  guide](https://arity.cc/getting-started.html#mise-and-aqua)
+  guide](https://arity.cc/installation.html#mise-and-aqua)
 - **Prebuilt binaries**: from the [releases
   page](https://github.com/jolars/arity/releases)
 - **VS Code/Open VSX**: the **Arity** extension (also works in Positron)
@@ -46,7 +46,7 @@ Arity is available from several sources:
 - **NixOS**: the `arity` package is available in
   [nixpkgs](https://search.nixos.org/packages?channel=unstable&show=arity&from=0&size=50&sort=relevance&type=packages)
 
-### Install Script
+### Install script
 
 The installer scripts pick the right release artifact for your platform and
 install to a user-local directory by default. They download the matching Arity
@@ -95,7 +95,7 @@ file's directory to the repository root. Run `arity init` to scaffold a
 commented starter file. See the [configuration
 reference](https://arity.cc/reference/configuration.html) for every key.
 
-## Editor Integration
+## Editor integration
 
 `arity lsp` starts a stdio-based language server offering formatting,
 diagnostics with quick fixes, hover, completion, signature help,
@@ -112,7 +112,7 @@ files from the console. See [RStudio
 setup](https://arity.cc/guide/editors.html#rstudio) for installation and
 configuration.
 
-## Pre-Commit Hook
+## pre-commit hook
 
 [arity-pre-commit](https://github.com/jolars/arity-pre-commit) provides
 [pre-commit](https://pre-commit.com) hooks for linting and formatting. It
@@ -168,7 +168,7 @@ rules from it as well as some of its architecture.
 
 Full documentation lives at [arity.cc](https://arity.cc):
 
-- [Getting started](https://arity.cc/getting-started.html)
+- [Getting started](https://arity.cc/guide/getting-started.html)
 - [Editor setup](https://arity.cc/guide/editors.html)
 - [Configuration](https://arity.cc/reference/configuration.html)
 - [CLI reference](https://arity.cc/reference/cli.html)

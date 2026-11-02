@@ -1,8 +1,8 @@
-//! Rendering the mdBook benchmark page from the committed benchmark artifact.
+//! Rendering the documentation benchmark page from the committed benchmark artifact.
 //!
 //! [`render_partials`] is the single source of truth shared by the docs
 //! generator (`examples/docgen.rs`, which writes the generated partials into
-//! the mdBook source tree) and its test (`tests/benchmarks_docs.rs`). It reads
+//! the documentation source tree) and its test (`tests/benchmarks_docs.rs`). It reads
 //! the machine-readable `benches/benchmark_results.json` produced by
 //! `scripts/bench.sh` and renders two Markdown partials:
 //!
@@ -10,7 +10,7 @@
 //! - a **body**: one `###` section per benchmarked operation (formatter,
 //!   linter), each holding one `####` chart per scope (single files, projects).
 //!   Every chart is an interactive Vega-Lite dot plot (driven by
-//!   `docs/theme/bench-charts.js`) plus a collapsed HTML fallback table. The
+//!   `docs/.vitepress/theme/bench-charts.mjs`) plus a collapsed HTML fallback table. The
 //!   page includes it under a `## Results` heading, so sections nest as `###`.
 //!
 //! The renderer is deliberately **tool-generic**: within each chart it treats
@@ -107,7 +107,7 @@ struct BenchResult {
 
 /// One dot in a chart: a (document, tool) timing, its ratio to the arity
 /// baseline, and the numbers the tooltip shows. Serialized inline into the page
-/// for `docs/theme/bench-charts.js` to plot with Vega-Lite.
+/// for `docs/.vitepress/theme/bench-charts.mjs` to plot with Vega-Lite.
 #[derive(Serialize)]
 struct ChartPoint {
     document: String,
@@ -124,7 +124,7 @@ struct ChartPoint {
 ///
 /// `json` is the contents of `benches/benchmark_results.json`, or `None` when
 /// the artifact is missing. On a missing or unparseable artifact both partials
-/// degrade to an "unavailable" note, so `mdbook build` never breaks on a fresh
+/// degrade to an "unavailable" note, so `task docs-build` never breaks on a fresh
 /// checkout that has not run `task bench` yet.
 pub fn render_partials(json: Option<&str>) -> (String, String) {
     match json.and_then(|s| serde_json::from_str::<Benchmarks>(s).ok()) {
@@ -194,7 +194,7 @@ fn render_body(b: &Benchmarks) -> String {
 }
 
 /// One chart: an interactive Vega-Lite dot plot (driven by
-/// `docs/theme/bench-charts.js`, wired via `book.toml`'s `additional-js`) plus a
+/// `docs/.vitepress/theme/bench-charts.mjs`, mounted by the VitePress theme) plus a
 /// collapsed HTML table with the same numbers as a no-JS/print fallback.
 ///
 /// The chart data rides inline in a `<script type="application/json">`; the JS

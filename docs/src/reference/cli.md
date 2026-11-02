@@ -1,4 +1,4 @@
-# Command-Line Help for `arity`
+# Command-line help for `arity`
 
 Arity: a language server, formatter, and linter for R
 

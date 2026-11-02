@@ -1,4 +1,4 @@
-# Configuration Reference
+# Configuration reference
 
 For a walkthrough of creating and sharing a project config, see the
 [configuration guide](../guide/configuration.md).

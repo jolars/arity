@@ -67,7 +67,7 @@ fn generate_cli_markdown() -> Result<()> {
     let cmd = Cli::command();
     let docs_dir = PathBuf::from("docs/src/reference");
 
-    // Only proceed if the mdBook source exists (it isn't shipped in the crate).
+    // Only proceed if the documentation source exists (it isn't shipped in the crate).
     if !docs_dir.exists() {
         return Ok(());
     }
@@ -75,7 +75,7 @@ fn generate_cli_markdown() -> Result<()> {
     let markdown = clapdown::render(
         &cmd,
         &clapdown::Options::new()
-            .title("Command-Line Help for `arity`")
+            .title("Command-line help for `arity`")
             .footer(false)
             .table_of_contents(false),
     );

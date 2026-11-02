@@ -2,4 +2,19 @@ name = "arity-markdown"
 main = "markdown-worker.mjs"
 compatibility_date = "2026-10-05"
 workers_dev = false
-routes = [{ pattern = "arity.cc/*", zone_name = "arity.cc" }]
+routes = [{ pattern = "arity.cc", custom_domain = true }]
+
+[assets]
+directory = ".vitepress/dist"
+binding = "ASSETS"
+html_handling = "none"
+not_found_handling = "404-page"
+# Pages need negotiation even when a matching HTML asset exists.
+run_worker_first = ["/", "/*.html", "/_markdown/getting-started.md"]
+
+[observability]
+enabled = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.1

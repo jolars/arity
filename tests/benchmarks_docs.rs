@@ -1,6 +1,6 @@
 //! Tests for the benchmark docs renderer (`arity::bench_docs`), the single
 //! source of truth shared by the docs generator (`examples/docgen.rs`) that
-//! writes the mdBook benchmark partials from `benches/benchmark_results.json`.
+//! writes the documentation benchmark partials from `benches/benchmark_results.json`.
 
 use arity::bench_docs::render_partials;
 

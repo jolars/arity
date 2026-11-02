@@ -18,7 +18,7 @@
 #
 # The JSON artifact feeds the docs benchmark page (docs/src/guide/performance.md):
 # `cargo run --example docgen` renders it into the generated partials at doc-gen
-# time, and `mdbook build docs` builds the site. The benchmark itself is never
+# time, and `task docs-build` builds the site. The benchmark itself is never
 # re-run at site-build time or in CI -- only this script rewrites the numbers.
 #
 # This is a *visibility* tool, not a quality gate and not a parity target. It

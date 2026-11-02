@@ -1,4 +1,4 @@
-# Editor Setup
+# Editor setup
 
 For formatting inside RStudio, see the [RStudio section](#rstudio). The other
 editor integrations below use Arity's language server.
@@ -91,8 +91,8 @@ settings apply; file exclusions and lint configuration do not. See the [R
 package documentation](https://github.com/jolars/arity-r#configuration) for
 configuration overrides and supported selections.
 
-With the [CRAN package](../getting-started.md#r-package-cran), format saved
-files from the console:
+With the [CRAN package](../installation.md#r-package-cran), format saved files
+from the console:
 
 ```r
 arity::format_file("R/example.R")

@@ -50,8 +50,17 @@ devenv.local.yaml
 /test.R
 /images/trials
 
-# mdBook build output
-/docs/book
+# Documentation dependencies and generated output
+**/node_modules/
+/docs/.vitepress/cache/
+/docs/.vitepress/dist/
+/docs/.vitepress/.temp/
+/docs/.wrangler/
+/docs/public/install
+/docs/public/install.ps1
+/docs/public/arity.schema.json
+/docs/.dev.vars*
+/docs/.env*
 roxygen2-ref
 /.lighthouse
 

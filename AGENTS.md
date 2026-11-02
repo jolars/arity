@@ -474,7 +474,9 @@ discovered config; `--config` forces a path and `--no-config` ignores config.
 
 ## Documentation, benchmarks, and profiles
 
-`docs/` is mdBook. Never hand-edit generated pages:
+`docs/` uses VitePress and Cloudflare Workers Static Assets. Use sentence case
+for page titles, headings, and navigation labels. Preserve proper names,
+acronyms, and code identifiers. Never hand-edit generated pages:
 
   | Generated page                                       | Source                                |
   | ---------------------------------------------------- | ------------------------------------- |
@@ -484,8 +486,10 @@ discovered config; `--config` forces a path and `--no-config` ignores config.
 
 Regenerate all with `task docs-gen`; pinning-test failures mean regenerate, not
 edit snapshots. Other prose is hand-written and panache-formatted. New pages
-need `SUMMARY.md` entries. Canonical/sitemap examples skip mdBook redirect
-stubs.
+need sidebar entries in `docs/.vitepress/config.mjs`. Page metadata and the
+sitemap come from VitePress. Preserve `.html` routes and the legacy anchor
+fixture in `docs/tests/legacy-routes.json`; `task docs-check` validates them
+and exercises the local Worker. Deployment instructions live in `docs/README.md`.
 
 Benchmarks are measured, never asserted. `task bench` compares formatter and
 linter tools at synthetic and real-package scopes and rewrites tracked

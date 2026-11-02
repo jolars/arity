@@ -1,6 +1,35 @@
-# Getting Started
+# Installation
 
-## Installation
+<span id="getting-started"></span>
+
+Arity is distributed as a single binary. Use the installer below for the command
+line, or choose a package manager you already use.
+
+For VS Code or Positron, the [Arity extension](guide/editors.md#vs-codepositron)
+includes the binary, so you can start with [editor setup](guide/editors.md). For
+formatting inside RStudio, install the [R package](#r-package-cran).
+
+## Install script
+
+The installer selects the release for your platform and installs to a user-local
+directory.
+
+::: code-group
+
+```sh [macOS/Linux]
+curl --proto '=https' --tlsv1.2 -sSf https://arity.cc/install | sh
+```
+
+```powershell [Windows]
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://arity.cc/install.ps1 | iex"
+```
+
+:::
+
+Set `ARITY_INSTALL_DIR` to change the destination or `ARITY_TAG` to pin a
+release.
+
+## Package managers
 
 ### Cargo
 
@@ -82,37 +111,19 @@ Commit `aqua.yaml` to share the selected version. Both tools use the
 [`jolars/arity` registry
 entry](https://github.com/aquaproj/aqua-registry/tree/main/pkgs/jolars/arity).
 
-### Install Script
-
-The installer selects the release for your platform and installs to a user-local
-directory. On macOS or Linux:
-
-```sh
-curl --proto '=https' --tlsv1.2 -sSf https://arity.cc/install | sh
-```
-
-On Windows, run this in PowerShell:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://arity.cc/install.ps1 | iex"
-```
-
-Set `ARITY_INSTALL_DIR` to change the destination or `ARITY_TAG` to pin a
-release.
-
-### Prebuilt Binaries
+## Prebuilt binaries
 
 Download an archive from the [releases
 page](https://github.com/jolars/arity/releases) and put the `arity` binary on
 your `PATH`.
 
-### Editor Extensions
+## Editor extensions
 
 The [VS Code and Open VSX extension](guide/editors.md#vs-codepositron) bundles
 the binary and starts the language server automatically. The [Zed
 extension](guide/editors.md#zed) can download it or use an installed copy.
 
-### From Source
+## From source
 
 Clone the repository and build a release binary:
 
@@ -124,7 +135,7 @@ cargo build --release
 
 The binary is written to `target/release/arity`.
 
-### R Package (CRAN)
+## R package (CRAN)
 
 To use the formatter inside R, install the [`arity`
 package](https://CRAN.R-project.org/package=arity):
@@ -136,36 +147,14 @@ install.packages("arity")
 See the [R package documentation](https://github.com/jolars/arity-r) for details
 and [RStudio setup](guide/editors.md#rstudio) for use in the editor.
 
-## First Run
+## Verify the installation {#first-run}
 
-With the CLI installed, run these commands in a terminal.
+Check that Arity is available in your terminal:
 
-Format a file in place:
-
-```bash
-arity format file.R
+```sh
+arity --version
 ```
 
-Check formatting without writing changes:
-
-```bash
-arity format --check file.R
-```
-
-Lint a file (or pipe from stdin):
-
-```bash
-arity lint file.R
-```
-
-Run the language server over stdio (for editor integration):
-
-```bash
-arity lsp
-```
-
-Continue with [Formatting](guide/formatting.md), [Linting](guide/linting.md), or
-[Configuration](guide/configuration.md) for day-to-day use. See [Editor
-Setup](guide/editors.md) for your editor, [Integrations](guide/integrations.md)
-for automation, and the [CLI Reference](reference/cli.md) for all commands and
-options.
+Continue with [Getting started](guide/getting-started.md) to format and lint
+your first file, or [Editor setup](guide/editors.md) to use Arity in your
+editor.

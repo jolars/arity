@@ -95,7 +95,7 @@ the rule's correctness actually requires.
   on the single-file path the renderer uses, so it declares the synthetic
   package its examples live in via `doc_package`.
 - `docs/src/reference/rules.md`—**generated**; never hand-edit it, and never
-  add a `SUMMARY.md` entry for a rule (the reference is one page).
+  add a sidebar entry for a rule (the reference is one page).
 - `TODO.md`—the live roadmap. Check off the rule's item (with a one-line
   note on scope/safety, mirroring the other landed entries).
 

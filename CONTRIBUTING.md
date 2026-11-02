@@ -21,7 +21,7 @@ MSRV is declared as `rust-version` in [`Cargo.toml`](Cargo.toml).
 
 The recommended setup uses [`devenv`](https://devenv.sh)/Nix, which provisions
 the toolchain, `R` (with `roxygen2`, `commonmark`, `styler`), and every
-auxiliary tool (`go-task`, `mdbook`, `cargo-insta`, `cargo-audit`, `cargo-deny`,
+auxiliary tool (`go-task`, `node`, `cargo-insta`, `cargo-audit`, `cargo-deny`,
 `air-formatter`, `jarl`, `hyperfine`, and more):
 
 ```sh
@@ -60,8 +60,8 @@ parser and formatter live in `crates/arity-parser` and `crates/arity-formatter`
 with their own `tests/` (see [`AGENTS.md`](AGENTS.md) for the module tour). The
 repo also carries the distribution and documentation surfaces: `editors/code`
 (VS Code extension), `npm/` and `pyproject.toml` (npm and PyPI wrappers around
-the binary), `docs/` (the mdBook site), `benches/` plus `scripts/bench.sh`, and
-`scripts/` (the R helpers that regenerate the bundled base-R and CRAN symbol
+the binary), `docs/` (the VitePress site), `benches/` plus `scripts/bench.sh`,
+and `scripts/` (the R helpers that regenerate the bundled base-R and CRAN symbol
 lists).
 
 ## Quality gates
@@ -295,14 +295,20 @@ broken output.
 
 ## Documentation
 
-The docs site (`docs/`) is an [mdBook](https://rust-lang.github.io/mdBook/).
-Some reference pages are generated: `build.rs` writes the CLI reference from the
-clap definitions, and `cargo run --example docgen` renders the per-rule pages
-(by running the real linter on each rule's examples), the version stamp, and the
-benchmark partials. Regenerate with `task docs-gen` and preview with
-`task docs-preview`. Don't hand-edit generated pages --- the rendered rule docs
-are pinned by `tests/rule_docs.rs` and the benchmark partials by
-`tests/benchmarks_docs.rs`, so they can't drift from behavior.
+The docs site (`docs/`) uses [VitePress](https://vitepress.dev/) and Cloudflare
+Workers Static Assets. Use sentence case for titles and headings, preserving
+proper names, acronyms, and code identifiers. Some reference pages are
+generated: `build.rs` writes the CLI reference from the clap definitions, and
+`cargo run --example docgen` renders the per-rule pages (by running the real
+linter on each rule's examples), the version stamp, and the benchmark partials.
+Regenerate with `task docs-gen` and preview with `task docs-preview`. Don't
+hand-edit generated pages --- the rendered rule docs are pinned by
+`tests/rule_docs.rs` and the benchmark partials by `tests/benchmarks_docs.rs`,
+so they can't drift from behavior.
+
+Run `compute run -- task docs-check` to check the built site and local Worker.
+Use `task docs-worker` for a Worker preview. See
+[docs/README.md](docs/README.md) for deployment and URL compatibility details.
 
 ## Performance
 

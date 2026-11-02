@@ -6,7 +6,7 @@ covers common setup tasks; the [configuration
 reference](../reference/configuration.md) lists all keys, defaults, and
 resolution rules.
 
-## Create a Project Config
+## Create a project config
 
 Run this in a project that does not yet have an `arity.toml`:
 
@@ -33,7 +33,7 @@ the top for completion and validation in editors that support TOML schema
 directives. See [editor support](../reference/configuration.md#editor-support)
 for other ways to associate the schema.
 
-## Choose the Configuration Source
+## Choose the configuration source
 
 For each input file, Arity uses the nearest `arity.toml`, searching upward to
 the repository root. When there is no project config, `ARITY_CONFIG` can point
@@ -51,7 +51,7 @@ CLI options such as `--line-width` override the corresponding setting for one
 run. See [discovery](../reference/configuration.md#discovery) for fallback paths
 and language-server behavior.
 
-## Share Settings Between Projects
+## Share settings between projects
 
 Use `extend` when a project should inherit another file:
 
@@ -66,7 +66,7 @@ The path is relative to the file declaring it. The project's values override
 inherited values. Tables merge by key, while `extend-exclude` adds patterns to
 the inherited exclusions.
 
-## Exclude Files
+## Exclude files
 
 Use `extend-exclude` to add gitignore-style patterns while retaining Arity's
 built-in exclusions:
@@ -86,7 +86,7 @@ arity format --force-exclude generated/example.R
 Set `exclude` only when you want to replace the default list. For a local
 exception within a source file, use [directives](../reference/directives.md).
 
-## Adjust Formatting and Linting
+## Adjust formatting and linting
 
 Use `[format]` for layout settings and `[lint]` for rule selection. Start with
 the [formatting](formatting.md) and [linting](linting.md) guides, then consult

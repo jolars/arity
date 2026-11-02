@@ -1,10 +1,10 @@
 # Formatting
 
 Arity formats R source, roxygen comments, and package `DESCRIPTION` files. Start
-with [installation](../getting-started.md#installation), then run the formatter
-from your project directory.
+with [installation](../installation.md), then run the formatter from your
+project directory.
 
-## Format Files
+## Format files
 
 Format one file in place, or pass a directory to format the files inside it:
 
@@ -18,7 +18,7 @@ honor `.gitignore` and the exclusions in `arity.toml`. They include package-root
 `DESCRIPTION` files as well as R source. See [Configuration](configuration.md)
 to exclude generated or vendored files.
 
-## Check Without Writing
+## Check without writing
 
 Use `--check` to report files that need formatting without changing them:
 
@@ -31,7 +31,7 @@ need formatting. Add `--quiet` to show the file list and summary without the
 diffs. See [Integrations](integrations.md) to run this check in CI or
 pre-commit.
 
-## Format Standard Input
+## Format standard input
 
 Pass `-` to read a buffer from standard input and write the formatted text to
 standard output:
@@ -48,10 +48,10 @@ cat DESCRIPTION | arity format --stdin-filename DESCRIPTION -
 ```
 
 `--check` requires file paths. For an editor buffer, consume the formatted
-standard output instead. [Editor Setup](editors.md) covers the language server
+standard output instead. [Editor setup](editors.md) covers the language server
 and RStudio integration.
 
-## Choose Formatting Settings
+## Choose formatting settings
 
 Put shared settings in `arity.toml` so the CLI and language server use the same
 style:
@@ -68,7 +68,7 @@ setting, including line endings and the switches for roxygen and `DESCRIPTION`
 formatting. `DESCRIPTION` continuation lines use four spaces regardless of the R
 indentation setting.
 
-## Preserve Selected Layout
+## Preserve selected layout
 
 Use a formatter directive when a particular statement needs hand-written layout:
 

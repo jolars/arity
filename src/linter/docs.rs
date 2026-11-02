@@ -59,8 +59,8 @@ fn example_path(rule: &AnyRule) -> PathBuf {
     }
 }
 
-/// The fenced-block language an example is rendered under. mdBook ships stock
-/// highlight.js, which has no DCF grammar — and `yaml`, the nearest thing,
+/// The fenced-block language an example is rendered under. DCF has no matching
+/// highlighting grammar, and `yaml`, the nearest thing,
 /// would highlight a lie about continuation lines.
 fn example_language(rule: &AnyRule) -> &'static str {
     match rule {

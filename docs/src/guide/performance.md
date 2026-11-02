@@ -89,7 +89,7 @@ only a package's `R/` directory is measured.
 
 ## Setup
 
-{{#include benchmarks_meta.md}}
+<!--@include: ./benchmarks_meta.md -->
 
 ## Results
 
@@ -97,7 +97,7 @@ Each operation gets its own section below, split into single files and whole
 projects. The `arity` baseline sits on the dashed line at 1 in every chart;
 faster tools fall below it, slower tools rise above.
 
-{{#include benchmarks_results.md}}
+<!--@include: ./benchmarks_results.md -->
 
 ## Language-server latency and memory
 
@@ -225,4 +225,4 @@ aborts the run without replacing the artifact. Harness correctness tests run
 with `python3 -m unittest discover -s benches -p 'test_lsp.py'`; they do not run
 the servers or assert performance thresholds.
 
-{{#include benchmarks_lsp.md}}
+<!--@include: ./benchmarks_lsp.md -->

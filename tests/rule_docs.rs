@@ -2,7 +2,7 @@
 //! metadata by running the real linter, and pinned by snapshot so the docs
 //! cannot drift from behavior. The generator (`examples/docgen.rs`) assembles
 //! the same `render_rule_doc` sections into the single `reference/rules.md`
-//! page in the mdBook source tree.
+//! page in the documentation source tree.
 
 use arity::linter::docs::{lint_example, render_rule_doc, render_rules_page};
 use arity::linter::rules::{all_rules, rules_by_category};

@@ -1,5 +1,6 @@
 {
   config,
+  lib,
   pkgs,
   ...
 }:
@@ -16,7 +17,6 @@
     pkgs.cargo-insta
     pkgs.go-task
     pkgs.jarl
-    pkgs.mdbook
     pkgs.llvmPackages.bintools
     pkgs.biome
     pkgs.prettier
@@ -34,6 +34,15 @@
     pkgs.yamlfmt
     pkgs.vsce
   ];
+
+  # npm's workerd executable needs the Nix dynamic linker on Linux.
+  env = lib.optionalAttrs pkgs.stdenv.isLinux {
+    MINIFLARE_WORKERD_PATH = "${pkgs.writeShellScript "arity-workerd" ''
+      cd "${config.devenv.root}/docs"
+      binary=$(node -e 'const {createRequire}=require("node:module"); const wrangler=createRequire(require.resolve("wrangler/package.json")); const miniflare=createRequire(wrangler.resolve("miniflare/package.json")); process.stdout.write(miniflare("workerd").default);')
+      exec "${pkgs.stdenv.cc.bintools.dynamicLinker}" "$binary" "$@"
+    ''}";
+  };
 
   languages = {
     rust = {

@@ -1,0 +1,26 @@
+{
+  "name": "arity-docs",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "node scripts/prepare.mjs && vitepress build && node scripts/export-markdown.mjs",
+    "preview": "wrangler dev",
+    "check": "node --test markdown-worker.test.mjs tests/*.test.mjs && node scripts/check-site.mjs",
+    "deploy:check": "wrangler deploy --dry-run",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.4",
+    "vue": "^3.5.0",
+    "wrangler": "^4.156.2"
+  },
+  "overrides": {
+    "vitepress": {
+      "vite": "^6.4.5"
+    }
+  }
+}

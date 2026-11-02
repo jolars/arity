@@ -2,7 +2,7 @@
 
 Use Arity in CI, Git hooks, and other formatting tools.
 
-For editor and language-server setup, see [Editor Setup](editors.md) instead.
+For editor and language-server setup, see [Editor setup](editors.md) instead.
 
 ## GitHub Actions
 
@@ -204,5 +204,5 @@ configuration](https://panache.bz/reference/configuration.html#external-code-lin
 
 ## mise-en-place
 
-Use [mise or Aqua](../getting-started.md#mise-and-aqua) to install and pin the
+Use [mise or Aqua](../installation.md#mise-and-aqua) to install and pin the
 Arity CLI for a project.

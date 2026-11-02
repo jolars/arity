@@ -1,11 +1,7 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.5/schema.json",
-  // Biome lints and formats the repo's first-party JavaScript/TypeScript: the
-  // VS Code extension and the npm launcher shim. Everything else is out of
-  // scope on purpose — prettier still owns `docs/theme/`'s CSS and `.hbs`
-  // template (biome does not format Handlebars), JSON is left to whatever
-  // wrote it, and `docs/theme/bench-charts.js` is a browser script that has
-  // never been linted; bringing it in is a follow-up, not a silent exclusion.
+  // Biome checks the VS Code extension and npm launcher shim. Documentation
+  // scripts and styles use Prettier; generated JSON stays generator-owned.
   "files": {
     "includes": ["editors/code/src/**/*.ts", "npm/**/*.js", "!**/node_modules"]
   },

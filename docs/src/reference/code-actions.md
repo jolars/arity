@@ -7,7 +7,7 @@ offers two families: **quick fixes**, which come from a lint finding, and
 diagnostic.
 
 In VS Code and Positron both families are gated by
-`arity.languageFeatures.enable` (see [Editor Setup](../guide/editors.md)).
+`arity.languageFeatures.enable` (see [Editor setup](../guide/editors.md)).
 
 ## Quick fixes
 
@@ -29,7 +29,7 @@ intended sequence is fix, then format.
 
 ## Refactors
 
-### Add/Update roxygen documentation
+### Add/update roxygen documentation
 
 A `refactor` action that generates or extends the
 [roxygen2](https://roxygen2.r-lib.org) block for the function under the cursor.

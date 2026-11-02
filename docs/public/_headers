@@ -1,0 +1,9 @@
+/arity.schema.json
+  Content-Type: application/schema+json; charset=utf-8
+  Access-Control-Allow-Origin: *
+/install
+  Content-Type: text/plain; charset=utf-8
+/install.ps1
+  Content-Type: text/plain; charset=utf-8
+/_markdown/*.md
+  Content-Type: text/markdown; charset=utf-8

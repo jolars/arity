@@ -194,41 +194,52 @@ tasks:
       - cargo bench --bench format_edits
 
   docs-gen:
-    desc: Regenerate generated mdBook pages and the arity.toml schema
+    desc: Regenerate reference pages and the arity.toml schema
     cmds:
       - UPDATE_EXPECTED=1 cargo test config_schema
       - cargo run --example docgen
 
-  docs-preview:
-    desc: Regenerate generated pages and serve the mdBook locally
-    deps:
-      - docs-gen
+  docs-install:
+    desc: Install locked documentation dependencies
     cmds:
-      - mdbook serve docs --open
+      - npm --prefix docs ci
+    sources:
+      - docs/package.json
+      - docs/package-lock.json
+    generates:
+      - docs/node_modules/.package-lock.json
+
+  docs-preview:
+    desc: Regenerate reference pages and serve VitePress with live reload
+    deps: [docs-gen, docs-install]
+    cmds:
+      - node docs/scripts/prepare.mjs
+      - npm --prefix docs run dev
 
   docs-build:
-    desc: Regenerate generated pages and build the mdBook
-    deps:
-      - docs-gen
+    desc: Build VitePress, Markdown variants, and public downloads
+    deps: [docs-gen, docs-install]
     cmds:
-      - mdbook build docs
-      - install -m 0644 arity.schema.json docs/book/arity.schema.json
-      - task: docs-canonical
-      - task: docs-sitemap
+      - npm --prefix docs run build
 
-  docs-canonical:
-    desc: Inject <link rel="canonical"> into each rendered page
+  docs-check:
+    desc: Check built pages, legacy links, downloads, and the local Worker
+    deps: [docs-build]
     cmds:
-      - >-
-        cargo run --quiet --example canonical --
-        docs/book https://arity.cc/
+      - npm --prefix docs run check
+      - npm --prefix docs run deploy:check
 
-  docs-sitemap:
-    desc: Generate docs/book/sitemap.xml from the rendered book
+  docs-worker:
+    desc: Build and preview the site through the local Cloudflare Worker
+    deps: [docs-build]
     cmds:
-      - >-
-        cargo run --quiet --example sitemap --
-        docs/book https://arity.cc/
+      - npm --prefix docs run preview
+
+  docs-deploy:
+    desc: Check and deploy the site to Cloudflare Workers
+    deps: [docs-check]
+    cmds:
+      - npm --prefix docs run deploy
 
   docs-lighthouse:
     desc: Run a Lighthouse desktop audit on the built docs (perf, a11y, best-practices, SEO)
@@ -239,7 +250,7 @@ tasks:
     cmds:
       - mkdir -p .lighthouse
       - >-
-        python3 -m http.server {{.PORT}} --directory docs/book
+        npm --prefix docs run preview -- --port {{.PORT}}
         >/dev/null 2>&1 &
         SERVER_PID=$!;
         trap "kill $SERVER_PID 2>/dev/null" EXIT;
