@@ -46,7 +46,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -64,7 +64,7 @@ jobs:
       - name: Check Worker deployment
         run: npm --prefix docs run deploy:check
       - name: Upload checked site
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: documentation
           path: docs/.vitepress/dist
@@ -83,14 +83,14 @@ jobs:
       url: https://arity.cc
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: docs/package-lock.json
       - run: npm --prefix docs ci
       - name: Download checked site
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: documentation
           path: docs/.vitepress/dist
