@@ -7,7 +7,7 @@ VSX](https://img.shields.io/open-vsx/v/jolars/arity?logo=vsix)](https://open-vsx
 [![VS
 Code](https://vsmarketplacebadges.dev/version-short/jolars.arity.svg?logo=vsix)](https://marketplace.visualstudio.com/items?itemName=jolars.arity)
 [![PyPi](https://img.shields.io/pypi/v/arity?logo=python&label=PyPi)](https://pypi.org/project/arity/)
-[![npm](https://img.shields.io/npm/v/@arity-cli/arity-cli?logo=npm&label=npm)](https://www.npmjs.com/package/arity-cli)
+[![npm](https://img.shields.io/npm/v/arity-cli?logo=npm&label=npm)](https://www.npmjs.com/package/arity-cli)
 [![CRAN](https://www.r-pkg.org/badges/version/arity)](https://CRAN.R-project.org/package=arity)
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.20662733-blue)](https://doi.org/10.5281/zenodo.20662733)
 
