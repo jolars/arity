@@ -38,11 +38,13 @@ assignment (`name <- function(...)`), including inside the body. The function
 must be the direct value of the assignment, so a function nested in a call on
 the right-hand side does not qualify.
 
-**Add** --- when no roxygen block immediately precedes the function, insert a
-skeleton above it: a title placeholder, one `@param` per formal in declaration
-order, and `@return`, at the statement's own indentation. A blank line between a
-block and the function detaches it, following roxygen2's own rule, so a detached
-block counts as no block.
+#### Add
+
+When no roxygen block immediately precedes the function, insert a skeleton above
+it: a title placeholder, one `@param` per formal in declaration order, and
+`@return`, at the statement's own indentation. A blank line between a block and
+the function detaches it, following roxygen2's own rule, so a detached block
+counts as no block.
 
 ```r
 add <- function(x, y = 1) {
@@ -64,10 +66,11 @@ add <- function(x, y = 1) {
 }
 ```
 
-**Update** --- when a block is already attached but some formals are
-undocumented, insert only the missing `@param` lines, in formal order, after the
-last existing `@param` (or after the introductory prose if there is no `@param`
-yet):
+#### Update
+
+When a block is already attached but some formals are undocumented, insert only
+the missing `@param` lines, in formal order, after the last existing `@param`
+(or after the introductory prose if there is no `@param` yet):
 
 ```r
 #' Add two numbers
