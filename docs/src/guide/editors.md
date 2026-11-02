@@ -1,17 +1,10 @@
 # Editor setup
 
-For formatting inside RStudio, see the [RStudio section](#rstudio). The other
-editor integrations below use Arity's language server.
-
 Arity ships a language server, started with `arity lsp` (stdio, JSON-RPC). It
 offers formatting, diagnostics with quick fixes, hover, completion, signature
 help, go-to-definition and find-references, rename, document and workspace
 symbols, semantic tokens, folding and selection ranges, document links, document
 color swatches, inlay hints, and call and type hierarchy.
-
-Renaming reaches beyond symbols: moving or renaming an `.R` file, or a folder of
-them, rewrites the `source()` paths that referred to it, and rebases the moved
-files' own `source()` paths to their new location.
 
 Editors can also start the server for `.Rd` and `.rd` files, making workspace
 symbol search available before you open an R file. Arity does not yet provide
