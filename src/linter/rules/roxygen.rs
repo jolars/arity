@@ -126,19 +126,66 @@ pub(crate) fn inherits_docs(block: &RoxygenBlock) -> bool {
 /// cannot drift.
 #[derive(Debug, Default)]
 pub(crate) struct RoxygenTopics {
-    topics: std::collections::BTreeMap<String, Vec<TopicMember>>,
+    topics: crate::project::PackageTopics,
 }
 
 impl RoxygenTopics {
     pub(crate) fn build(root: &SyntaxNode) -> Self {
         Self {
-            topics: crate::project::file_roxygen_topics(root),
+            topics: crate::project::PackageTopics::from_topics(
+                crate::project::file_roxygen_topics(root),
+            ),
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn members(&self, key: &str) -> &[TopicMember] {
-        self.topics.get(key).map_or(&[], Vec::as_slice)
+        self.topics.members(key)
     }
+}
+
+/// Unknown destinations do not justify missing-section or coverage findings.
+pub(crate) enum TopicMembers<'a> {
+    Known(&'a [TopicMember]),
+    Local(TopicMember),
+    Unknown,
+}
+
+impl TopicMembers<'_> {
+    pub(crate) fn members(&self) -> Option<impl Iterator<Item = &TopicMember>> {
+        let (members, local) = match self {
+            Self::Known(members) => (*members, false),
+            Self::Local(member) => (std::slice::from_ref(member), true),
+            Self::Unknown => return None,
+        };
+        Some(
+            members
+                .iter()
+                .filter(move |member| local || member.generates_topic),
+        )
+    }
+}
+
+pub(crate) fn topic_has_title(block: &RoxygenBlock, ctx: &RuleContext<'_>) -> bool {
+    topic_members(block, ctx).map_or_else(
+        || has_title(block),
+        |topic| {
+            topic
+                .members()
+                .is_none_or(|mut members| members.any(|member| member.has_title))
+        },
+    )
+}
+
+pub(crate) fn topic_has_value(block: &RoxygenBlock, ctx: &RuleContext<'_>) -> bool {
+    topic_members(block, ctx).map_or_else(
+        || block.has_tag("return") || block.has_tag("returns"),
+        |topic| {
+            topic
+                .members()
+                .is_none_or(|mut members| members.any(|member| member.has_value))
+        },
+    )
 }
 
 /// The blocks that merge into this block's topic — the block itself plus every
@@ -149,6 +196,10 @@ impl RoxygenTopics {
 /// false-positives whenever the joiner that supplies a `@param`, a `@return`,
 /// or a title sits in a sibling `R/` file.
 ///
+/// A block that generates no topic can instead name an alias in a rendered
+/// topic. Ambiguous aliases stay unknown, and missing aliases retain local
+/// checks without borrowing an unrelated same-named topic.
+///
 /// `None` when the topic is not resolvable *from this block*: it joins someone
 /// else's topic (so it is not the owner and is never judged) or names no topic
 /// at all. A caller that gets `None` must fall back to judging the block alone,
@@ -156,15 +207,27 @@ impl RoxygenTopics {
 pub(crate) fn topic_members<'a>(
     block: &RoxygenBlock,
     ctx: &'a RuleContext<'_>,
-) -> Option<&'a [TopicMember]> {
+) -> Option<TopicMembers<'a>> {
     if joins_other_topic(block) {
         return None;
     }
     let key = topic_key(block)?;
-    Some(match ctx.topics {
-        Some(package) => package.members(&key),
-        None => ctx.roxygen_topics().members(&key),
-    })
+    let topics = ctx.topics.unwrap_or_else(|| &ctx.roxygen_topics().topics);
+    if crate::project::generates_rd_topic(block) {
+        return Some(TopicMembers::Known(topics.members(&key)));
+    }
+    if let Some(binding) = documented_binding_name(block) {
+        match topics.for_alias(crate::semantic::symbols::unbacktick(&binding)) {
+            crate::project::AliasTopic::Members(members) => {
+                return Some(TopicMembers::Known(members));
+            }
+            crate::project::AliasTopic::Ambiguous => return Some(TopicMembers::Unknown),
+            crate::project::AliasTopic::Missing => {}
+        }
+    }
+    // A missing alias retains the ordinary undocumented-export checks. It
+    // must not borrow a same-named topic whose aliases deliberately omit it.
+    Some(TopicMembers::Local(crate::project::topic_member(block)))
 }
 
 /// Tags that only drive the `NAMESPACE` (or toggle parsing modes) and never

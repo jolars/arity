@@ -837,6 +837,50 @@ const TOPIC_A: &str =
 const TOPIC_B: &str =
     "#' @rdname add\n#' @param y The other number.\nadd2 <- function(x, y) x + y\n";
 
+const ALIAS_TOPIC: &str = "#' Manual\n#' @name manual\n#' @aliases g\n#' @usage g(x)\n#' @param x Value.\n#' @return Value.\nNULL\n";
+
+#[test]
+fn roxygen_alias_projection_backdates_across_prose_offsets_and_bodies() {
+    let exported = "#' @export\ng <- function(x) x\n";
+    let (mut db, a, b) = package_ab(ALIAS_TOPIC, exported);
+    let before = project_roxygen_topics(&db).clone();
+    for docs in [
+        ALIAS_TOPIC.replace("Manual", "A longer title"),
+        format!("\n\n{ALIAS_TOPIC}"),
+        ALIAS_TOPIC.replace("Value.", "A different description."),
+    ] {
+        db.clear_query_log();
+        db.set_file_text(a, docs.as_str());
+        assert_eq!(project_roxygen_topics(&db), &before);
+        assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectRoxygenTopics));
+    }
+    db.clear_query_log();
+    db.set_file_text(b, "#' @export\ng <- function(x) { x + 1 }\n");
+    assert_eq!(project_roxygen_topics(&db), &before);
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectRoxygenTopics));
+}
+
+#[test]
+fn roxygen_alias_and_usage_edits_rebuild_the_topic_index() {
+    for docs in [
+        ALIAS_TOPIC.replace("@aliases g", "@aliases h"),
+        ALIAS_TOPIC.replace("g(x)", "g(x, extra)"),
+        ALIAS_TOPIC.replace("@usage g(x)", "@usage NULL"),
+        ALIAS_TOPIC.replace("@aliases g", "@aliases NULL g"),
+    ] {
+        let (mut db, a, _b) = package_ab(ALIAS_TOPIC, "#' @export\ng <- function(x) x\n");
+        let before = project_roxygen_topics(&db).clone();
+        db.clear_query_log();
+        db.set_file_text(a, docs.as_str());
+        assert_ne!(project_roxygen_topics(&db), &before, "{docs}");
+        assert_eq!(
+            count_by_kind(&db.query_log()).get(&QueryKind::ProjectRoxygenTopics),
+            Some(&1),
+            "{docs}",
+        );
+    }
+}
+
 #[test]
 fn body_edit_does_not_rebuild_project_roxygen_topics() {
     // The firewall: the topic projection is range-free and turns only on the

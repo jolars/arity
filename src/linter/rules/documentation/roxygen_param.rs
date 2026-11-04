@@ -26,10 +26,11 @@ use rowan::ast::AstNode as _;
 use crate::ast::{RoxygenBlock, RoxygenTag};
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::roxygen::{
-    ParamDoc, documented_function, documents_s3_method, has_title, inherits_params, param_doc,
-    topic_members,
+    ParamDoc, documented_binding_name, documented_function, documents_s3_method, inherits_params,
+    param_doc, topic_has_title, topic_members,
 };
 use crate::linter::rules::{Example, Rule, RuleContext};
+use crate::semantic::symbols::unbacktick;
 use crate::syntax::{SyntaxElement, SyntaxKind};
 
 pub struct RoxygenParam;
@@ -44,7 +45,9 @@ const EXAMPLES: &[Example] = &[Example {
 #[derive(Default)]
 struct TopicParams {
     formals: Vec<String>,
+    required: Vec<String>,
     documented: Vec<String>,
+    has_signatures: bool,
     has_unknown_formals: bool,
 }
 
@@ -68,15 +71,29 @@ fn topic_params(block: &RoxygenBlock, ctx: &RuleContext<'_>) -> Option<TopicPara
     if inherits_params(block) {
         return None;
     }
-    let members = topic_members(block, ctx)?;
+    let topic = topic_members(block, ctx)?;
+    let members = topic.members()?;
+    let binding = documented_binding_name(block).unwrap_or_default();
     let mut params = TopicParams::default();
     for member in members {
-        let formals = member.formals.as_ref()?;
         if member.inherits_params {
-            params.documented.extend(formals.iter().cloned());
+            params.documented.extend(
+                member
+                    .formals
+                    .iter()
+                    .flatten()
+                    .map(|name| unbacktick(name).to_owned()),
+            );
             params.has_unknown_formals = true;
         }
-        params.formals.extend(formals.iter().cloned());
+        params.has_unknown_formals |= member.usage.unknown;
+        for signature in &member.usage.signatures {
+            params.has_signatures = true;
+            params.formals.extend(signature.formals.iter().cloned());
+            if signature.name == unbacktick(&binding) {
+                params.required.extend(signature.formals.iter().cloned());
+            }
+        }
         params
             .documented
             .extend(member.documented_params.iter().cloned());
@@ -114,7 +131,11 @@ impl Rule for RoxygenParam {
          or that join a topic owned elsewhere are exempt from the coverage \
          checks, and a titleless S3 method (registered with `S3method()`, so it \
          generates no `.Rd`) is exempt from the missing-`@param` check; \
-         duplicates are always reported."
+         duplicates are always reported. Explicit `@usage` supplies the checked \
+         signatures. Export-only blocks can resolve documentation through aliases, \
+         but an alias alone adds no parameter requirements when its function is \
+         absent from the topic's usage. Unsupported usage does not hide missing \
+         documentation on independently known signatures."
     }
 
     fn examples(&self) -> &'static [Example] {
@@ -142,13 +163,14 @@ impl Rule for RoxygenParam {
         }
         let function = documented_function(&block);
         let topic = topic_params(&block, ctx);
-        let judge_coverage = function.is_some() && topic.is_some();
+        let judge_coverage =
+            function.is_some() && topic.as_ref().is_some_and(|topic| topic.has_signatures);
         // A registered S3 method with no title generates no `.Rd`, so it has no
         // parameter list that could be incomplete—the generic's topic documents
         // the arguments. A `@param` naming a nonexistent formal is still a
         // block-vs-function mismatch, so only the missing direction is dropped.
         let judge_missing =
-            judge_coverage && !(documents_s3_method(&block, ctx) && !has_title(&block));
+            judge_coverage && !(documents_s3_method(&block, ctx) && !topic_has_title(&block, ctx));
         let topic = topic.unwrap_or_default();
         // The block's own formals are what the missing-`@param` findings point
         // at; the topic's union is what they are judged against.
@@ -193,7 +215,10 @@ impl Rule for RoxygenParam {
                         ));
                     }
                     for (name, range) in names {
-                        if documented.contains(&name) {
+                        if documented
+                            .iter()
+                            .any(|doc| unbacktick(doc) == unbacktick(&name))
+                        {
                             sink.push(diagnostic(
                                 range,
                                 format!("`@param {name}` is documented more than once"),
@@ -203,7 +228,7 @@ impl Rule for RoxygenParam {
                         }
                         if judge_coverage
                             && !topic.has_unknown_formals
-                            && !topic.contains_formal(&name)
+                            && !topic.contains_formal(unbacktick(&name))
                         {
                             sink.push(diagnostic(
                                 range,
@@ -225,7 +250,11 @@ impl Rule for RoxygenParam {
             return;
         }
         for formal in formals {
-            if !documented.contains(&formal.name) && !topic.is_documented(&formal.name) {
+            let name = unbacktick(&formal.name);
+            if topic.required.iter().any(|required| required == name)
+                && !documented.iter().any(|doc| unbacktick(doc) == name)
+                && !topic.is_documented(name)
+            {
                 sink.push(diagnostic(
                     formal.name_token.text_range(),
                     format!(

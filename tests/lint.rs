@@ -7322,6 +7322,8 @@ fn roxygen_param_negatives() {
         "#' Add\n#' @param\n#' x The x value.\nf <- function(x) x\n",
         // @inheritParams pulls the missing docs in from elsewhere.
         "#' Add\n#' @inheritParams other\n#' @export\nf <- function(x, y) x\n",
+        // Suppressing usage does not make the existing argument prose invalid.
+        "#' Add\n#' @usage NULL\n#' @param x X.\nf <- function(x) x\n",
         // In a merged topic a param may belong to a sibling function.
         "#' @rdname topic\n#' @param extra E.\nf <- function(x) x\n",
         // @noRd blocks generate no topic, so there is no argument list to be
@@ -7397,12 +7399,7 @@ fn roxygen_param_merged_topic_negatives() {
 
 #[test]
 fn roxygen_param_inherited_joiner_preserves_owner_coverage() {
-    for tag in [
-        "inheritParams other",
-        "inherit other",
-        "template args",
-        "usage g(inherited)",
-    ] {
+    for tag in ["inheritParams other", "inherit other", "template args"] {
         let src = format!(
             "#' Backend\n#' @param x X.\n#' @param bogus Unknown surface.\n\
              f <- function(x, hooks) x\n\n\
@@ -7419,7 +7416,9 @@ fn roxygen_param_inherited_joiner_preserves_owner_coverage() {
 fn roxygen_param_inherited_joiner_covers_shared_formal() {
     let src = "#' Backend\n#' @param x X.\nf <- function(x, shared) x\n\n\
                #' @rdname f\n#' @inheritParams other\ng <- function(shared) shared\n";
-    assert!(roxygen_param_findings(src).is_empty());
+    for source in [src.to_owned(), src.replace("shared", "`shared`")] {
+        assert!(roxygen_param_findings(&source).is_empty(), "{source}");
+    }
 }
 
 #[test]
@@ -7564,6 +7563,223 @@ fn cross_file_findings(rule: &str, a_r: &str, b_r: &str, file_name: &str) -> Vec
                 .collect()
         })
         .unwrap_or_default()
+}
+
+const MANUAL_TOPIC: &str = "#' Manual documentation\n#' @name manual\n#' @aliases g\n#' @usage g(x)\n#' @param x Value.\n#' @return Value.\nNULL\n";
+
+fn roxygen_coverage_findings(src: &str) -> Vec<arity::linter::Diagnostic> {
+    diagnostics_selecting(src, &["roxygen-title", "roxygen-param", "roxygen-return"])
+}
+
+#[test]
+fn roxygen_manual_alias_resolves_export_only_block() {
+    for export in ["#' @export\n", "#' @export\n#' @keywords internal\n"] {
+        let src = format!("{MANUAL_TOPIC}\n{export}g <- function(x) x\n");
+        assert!(arity::parser::parse(&src).diagnostics.is_empty());
+        assert_eq!(arity::parser::reconstruct(&src), src);
+        let findings = roxygen_coverage_findings(&src);
+        assert!(findings.is_empty(), "{findings:?}");
+        for rule in ["roxygen-title", "roxygen-param", "roxygen-return"] {
+            assert!(
+                cross_file_findings(
+                    rule,
+                    MANUAL_TOPIC,
+                    &format!("{export}g <- function(x) x\n"),
+                    "b.R"
+                )
+                .is_empty(),
+                "cross-file {rule}"
+            );
+        }
+    }
+}
+
+#[test]
+fn roxygen_manual_alias_does_not_add_a_helper_usage() {
+    for usage in ["", "#' @usage NULL\n"] {
+        let docs = MANUAL_TOPIC.replace("#' @usage g(x)\n", usage);
+        let src = format!("{docs}\n#' @export\ng <- function(helper_only) helper_only\n");
+        let findings = roxygen_coverage_findings(&src);
+        assert!(findings.is_empty(), "{findings:?}");
+    }
+}
+
+#[test]
+fn roxygen_manual_alias_resolves_mode_toggles_and_backticks() {
+    for toggle in ["md", "noMd"] {
+        let docs = MANUAL_TOPIC
+            .replace(
+                "#' Manual documentation",
+                &format!("#' @{toggle}\n#' @title Manual documentation"),
+            )
+            .replace("@aliases g", "@aliases g_name")
+            .replace("g(x)", "`g_name`(x)");
+        let src = format!("{docs}\n#' @export\n`g_name` <- function(x) x\n").replace('\n', "\r\n");
+        let findings = roxygen_coverage_findings(&src);
+        assert!(findings.is_empty(), "{findings:?}");
+    }
+}
+
+#[test]
+fn roxygen_manual_alias_preserves_missing_usage_parameter_and_span() {
+    let docs = MANUAL_TOPIC.replace("g(x)", "g(x, extra)");
+    let src = format!("{docs}\n#' @export\ng <- function(x, extra) x\n");
+    let findings = roxygen_coverage_findings(&src);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].rule, "roxygen-param");
+    assert_eq!(&src[findings[0].range], "extra");
+    assert!(usize::from(findings[0].range.start()) > src.find("function").unwrap());
+    let exported = "#' @export\ng <- function(x, extra) x\n";
+    let result = lint_package_files(
+        "export(g)\n",
+        &[("a.R", docs.as_str()), ("b.R", exported)],
+        &LintConfig::default(),
+    );
+    let report = result
+        .reports
+        .iter()
+        .find(|report| report.path.ends_with("b.R"))
+        .unwrap();
+    let findings: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.rule == "roxygen-param")
+        .collect();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(&exported[findings[0].range], "extra");
+}
+
+#[test]
+fn roxygen_manual_usage_does_not_require_omitted_implementation_parameters() {
+    let src = format!("{MANUAL_TOPIC}\n#' @export\ng <- function(x, helper_only = NULL) x\n");
+    let findings = roxygen_coverage_findings(&src);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn roxygen_manual_alias_does_not_supply_an_explicit_topics_missing_sections() {
+    let src =
+        format!("{MANUAL_TOPIC}\n#' @param x Value.\n#' @export\ng <- function(x, extra) x\n");
+    let findings = roxygen_coverage_findings(&src);
+    for rule in ["roxygen-title", "roxygen-param", "roxygen-return"] {
+        assert!(
+            findings.iter().any(|d| d.rule == rule),
+            "{rule}: {findings:?}"
+        );
+    }
+}
+
+#[test]
+fn roxygen_manual_alias_requires_a_rendered_topic_and_an_alias() {
+    for docs in [
+        MANUAL_TOPIC.replace("#' @aliases g\n", ""),
+        MANUAL_TOPIC.replace("#' @aliases g", "#' @aliases NULL"),
+        MANUAL_TOPIC.replace("#' @name manual", "#' @name manual\n#' @noRd"),
+        MANUAL_TOPIC.replace("#' @name manual\n", ""),
+        MANUAL_TOPIC.replace("#' Manual documentation\n", ""),
+    ] {
+        let src = format!("{docs}\n#' @export\ng <- function(x) x\n");
+        let findings = roxygen_coverage_findings(&src);
+        for rule in ["roxygen-title", "roxygen-param", "roxygen-return"] {
+            assert!(
+                findings.iter().any(|d| d.rule == rule),
+                "{rule}: {findings:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn roxygen_manual_alias_collision_does_not_merge_topics() {
+    let other = MANUAL_TOPIC
+        .replace("@name manual", "@name other")
+        .replace("#' @return Value.\n", "");
+    let src = format!("{MANUAL_TOPIC}\n{other}\n#' @export\ng <- function(x) x\n");
+    assert!(roxygen_coverage_findings(&src).is_empty());
+}
+
+#[test]
+fn roxygen_manual_default_alias_and_null_work_for_a_same_named_topic() {
+    let docs = MANUAL_TOPIC
+        .replace("@name manual", "@name g")
+        .replace("#' @aliases g\n", "");
+    let src = format!("{docs}\n#' @export\ng <- function(x) x\n");
+    assert!(roxygen_coverage_findings(&src).is_empty());
+    let src = src.replace("@name g", "@name g\n#' @aliases NULL");
+    let findings = roxygen_coverage_findings(&src);
+    assert_eq!(findings.len(), 3, "{findings:?}");
+}
+
+#[test]
+fn roxygen_manual_aliases_do_not_cross_packages() {
+    let dir = tempdir().unwrap();
+    for (pkg, src) in [
+        ("pkg_a", "#' @export\ng <- function(x) x\n"),
+        ("pkg_b", MANUAL_TOPIC),
+    ] {
+        let root = dir.path().join(pkg);
+        std::fs::create_dir_all(root.join("R")).unwrap();
+        std::fs::write(root.join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
+        std::fs::write(root.join("NAMESPACE"), "export(g)\n").unwrap();
+        std::fs::write(root.join("R/a.R"), src).unwrap();
+    }
+    let result = check_paths(&[dir.path().to_path_buf()]).unwrap();
+    let report = result
+        .reports
+        .iter()
+        .find(|report| {
+            report.path.starts_with(dir.path().join("pkg_a")) && report.path.ends_with("a.R")
+        })
+        .unwrap();
+    for rule in ["roxygen-title", "roxygen-param", "roxygen-return"] {
+        assert!(
+            report.diagnostics.iter().any(|diag| diag.rule == rule),
+            "{rule}: {report:?}"
+        );
+    }
+}
+
+#[test]
+fn roxygen_manual_unknown_usage_preserves_known_member_coverage() {
+    let src = "#' Owner\n#' @param x Value.\nf <- function(x, extra) x\n\n#' @rdname f\n#' @usage \\method{g}{class}(other)\nNULL\n";
+    let findings = roxygen_param_findings(src);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(&src[findings[0].range], "extra");
+}
+
+#[test]
+fn roxygen_manual_usage_checks_recoverable_signatures() {
+    let src = "#' Owner\n#' @usage f(x, extra = list(1, 2), ...)\n#' @param x Value.\n#' @param bogus Incorrect.\nf <- function(x, extra = NULL, ...) x\n";
+    let findings = roxygen_param_findings(src);
+    assert_eq!(findings.len(), 3, "{findings:?}");
+    for name in ["bogus", "extra", "..."] {
+        assert!(
+            findings.iter().any(|d| &src[d.range] == name),
+            "{findings:?}"
+        );
+    }
+}
+
+#[test]
+fn roxygen_manual_infix_usage_and_multiline_aliases() {
+    let src = "#' Assignment\n#' @md\n#' @name assignment\n#' @aliases NULL\n#'   %packages%\n#' @usage\n#' left \\%packages\\% packages\n#' @param left Assignment.\n#' @param packages Packages.\n#' @return The assignment.\nNULL\n\n#' @export\n`%packages%` <- function(left, packages) left\n";
+    let findings = roxygen_coverage_findings(src);
+    assert!(findings.is_empty(), "{findings:?}");
+    let findings = roxygen_coverage_findings(&src.replace("#' @param packages Packages.\n", ""));
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert!(
+        findings[0]
+            .message
+            .body
+            .contains("`packages` is not documented")
+    );
+}
+
+#[test]
+fn roxygen_manual_aliases_cover_future_helpers_without_usage() {
+    let src = "#' Mandelbrot\n#' @aliases as.raster.Mandelbrot plot.Mandelbrot mandelbrot_tiles\n#' @param ... Arguments.\n#' @return Counts.\nmandelbrot <- function(...) NULL\n\n#' @export\n#' @keywords internal\nas.raster.Mandelbrot <- function(x, ...) x\n\n#' @export\n#' @keywords internal\nplot.Mandelbrot <- function(x, y, ...) x\n\n#' @export\nmandelbrot_tiles <- function(xmid, nrow, ncol) xmid\n\n#' Globals\n#' @aliases as.FutureGlobals\n#' @param object Values.\n#' @return Globals.\nFutureGlobals <- function(object) object\n\n#' @export\nas.FutureGlobals <- function(x, ...) x\n";
+    let findings = roxygen_coverage_findings(src);
+    assert!(findings.is_empty(), "{findings:?}");
 }
 
 #[test]

@@ -25,7 +25,11 @@ use rowan::{TextRange, TextSize};
 use smol_str::SmolStr;
 
 use crate::ast::{AssignmentExpr, FunctionExpr, RoxygenBlock, RoxygenSection};
+use crate::semantic::symbols::unbacktick;
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
+
+mod usage;
+pub use usage::{TopicUsage, UsageSignature};
 
 /// One roxygen block's contribution to an Rd topic.
 ///
@@ -34,6 +38,13 @@ use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 /// (`.claude/rules/semantic.md`).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, salsa::SalsaValue)]
 pub struct TopicMember {
+    /// Whether this block asks roxygen2 to generate documentation, rather than
+    /// contributing only namespace or indexing metadata.
+    pub generates_topic: bool,
+    /// Effective explicit and default aliases, with `@aliases NULL` applied.
+    pub aliases: Vec<String>,
+    /// Callable signatures in this block's generated or explicit usage.
+    pub usage: TopicUsage,
     /// A leading prose paragraph or an explicit `@title` — roxygen2 writes no
     /// `.Rd` without one, and the first value the merged topic offers wins.
     pub has_title: bool,
@@ -48,15 +59,17 @@ pub struct TopicMember {
     /// The documented function's formal argument names. `None` when the
     /// documented statement is not a plain `name <- function(...)` (a
     /// `setMethod`, an R6 class call, `"_PACKAGE"`), whose formals are
-    /// invisible to a static reader — also making the argument surface
-    /// unknowable.
+    /// invisible to a static reader. Explicit usage can still recover their
+    /// documented argument surface.
     pub formals: Option<Vec<String>>,
     /// Every name this block documents with `@param`, in document order.
     pub documented_params: Vec<String>,
 }
 
 /// Group `root`'s roxygen blocks by the Rd topic they resolve to, in document
-/// order. Blocks that name no topic are dropped: they merge with nothing.
+/// order. Blocks that name no topic or opt out with `@noRd` are dropped.
+/// Members retain whether they actually generate documentation, so namespace
+/// blocks cannot manufacture usage in an aliased topic.
 ///
 /// The per-file half of the package-wide index — [`crate::project::graph`]
 /// folds one of these per member into
@@ -64,6 +77,9 @@ pub struct TopicMember {
 pub fn file_roxygen_topics(root: &SyntaxNode) -> BTreeMap<String, Vec<TopicMember>> {
     let mut topics: BTreeMap<String, Vec<TopicMember>> = BTreeMap::new();
     for block in root.descendants().filter_map(RoxygenBlock::cast) {
+        if block.has_tag("noRd") {
+            continue;
+        }
         if let Some(key) = topic_key(&block) {
             topics
                 .entry(key.to_string())
@@ -79,10 +95,17 @@ pub fn topic_member(block: &RoxygenBlock) -> TopicMember {
     let mut documented_params = Vec::new();
     for section in block.sections() {
         if let Some(ParamDoc::Named { names, .. }) = param_doc(&section) {
-            documented_params.extend(names.into_iter().map(|(name, _)| name.to_string()));
+            documented_params.extend(
+                names
+                    .into_iter()
+                    .map(|(name, _)| unbacktick(&name).to_owned()),
+            );
         }
     }
     TopicMember {
+        generates_topic: generates_rd_topic(block),
+        aliases: effective_aliases(block),
+        usage: usage::topic_usage(block),
         has_title: has_title(block),
         has_value: block.has_tag("return") || block.has_tag("returns"),
         inherits_params: inherits_params(block),
@@ -100,16 +123,105 @@ pub fn inherits_params(block: &RoxygenBlock) -> bool {
     block.tags().any(|tag| {
         matches!(
             tag.name().as_deref(),
-            Some(
-                "inherit"
-                    | "inheritParams"
-                    | "inheritSection"
-                    | "inheritDotParams"
-                    | "template"
-                    | "usage"
-            )
+            Some("inherit" | "inheritParams" | "inheritSection" | "inheritDotParams" | "template")
         )
     })
+}
+
+/// Whether a block contributes a topic rather than namespace or indexing metadata.
+/// Mirrors roxygen2's `needs_doc` after its title and tag-alias normalization.
+pub fn generates_rd_topic(block: &RoxygenBlock) -> bool {
+    !block.has_tag("noRd")
+        && (has_title(block)
+            || block.tags().any(|tag| {
+                matches!(
+                    tag.name().as_deref(),
+                    Some(
+                        "description"
+                            | "param"
+                            | "return"
+                            | "returns"
+                            | "example"
+                            | "examples"
+                            | "examplesIf"
+                            | "name"
+                            | "rdname"
+                            | "details"
+                            | "inherit"
+                            | "describeIn"
+                    )
+                )
+            }))
+}
+
+fn effective_aliases(block: &RoxygenBlock) -> Vec<String> {
+    let mut aliases: Vec<String> = block
+        .sections()
+        .filter_map(|section| {
+            (section.tag()?.name().as_deref() == Some("aliases")).then(|| section_value(&section))
+        })
+        .flat_map(|value| {
+            value
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    if aliases.iter().any(|alias| alias == "NULL") {
+        aliases.retain(|alias| alias != "NULL");
+    } else {
+        let binding = documented_binding_name(block).map(|name| unbacktick(&name).to_owned());
+        let name = block
+            .tags()
+            .find_map(|tag| {
+                (tag.name().as_deref() == Some("name"))
+                    .then(|| tag.value_text())
+                    .flatten()
+            })
+            .or_else(|| binding.clone());
+        aliases.extend(name);
+        aliases.extend(binding);
+    }
+    aliases.sort();
+    aliases.dedup();
+    aliases
+}
+
+/// Recover a tag's full value from CST leaves, including continuation lines.
+/// Dropping only markers and their one-space prefix preserves embedded code.
+fn section_value(section: &RoxygenSection) -> String {
+    let Some(head_end) = section.tag().and_then(|tag| {
+        tag.syntax()
+            .children_with_tokens()
+            .find(|element| element.kind() == SyntaxKind::ROXYGEN_TAG_NAME)
+            .map(|element| element.text_range().end())
+    }) else {
+        return String::new();
+    };
+    let mut value = String::new();
+    let mut after_marker = false;
+    for token in section
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+    {
+        if token.text_range().end() <= head_end {
+            continue;
+        }
+        match token.kind() {
+            SyntaxKind::ROXYGEN_MARKER => {
+                after_marker = true;
+                continue;
+            }
+            SyntaxKind::WHITESPACE if after_marker => {
+                value.push_str(token.text().strip_prefix(' ').unwrap_or(token.text()))
+            }
+            SyntaxKind::COMMENT => {}
+            _ => value.push_str(token.text()),
+        }
+        after_marker = false;
+    }
+    value.trim().to_string()
 }
 
 /// Whether this block merges into a topic named by someone else (`@rdname`,

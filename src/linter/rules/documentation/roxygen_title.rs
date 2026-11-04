@@ -13,7 +13,7 @@
 //! `name <- function(...)`.
 //!
 //! The title belongs to the *topic*, so a block that owns a topic is satisfied
-//! by any block merging into it that supplies one ([`topic_members`]) —
+//! by any block merging into it that supplies one ([`topic_has_title`]) —
 //! anywhere in the package, since that is where roxygen2 merges topics;
 //! roxygen2's `\title` keeps the first value the merged topic offers.
 
@@ -22,8 +22,8 @@ use rowan::ast::AstNode as _;
 use crate::ast::RoxygenBlock;
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::roxygen::{
-    asks_for_rd_on_its_own, documented_function, documents_s3_method, has_title, inherits_docs,
-    topic_members, wants_rd_topic,
+    asks_for_rd_on_its_own, documented_function, documents_s3_method, inherits_docs,
+    topic_has_title, wants_rd_topic,
 };
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -34,17 +34,6 @@ const EXAMPLES: &[Example] = &[Example {
     caption: "A documented, exported function with no title paragraph:",
     source: "#' @param x A number.\n#' @export\nadd_one <- function(x) x + 1\n",
 }];
-
-/// Whether the topic this block renders into has a title: a leading prose
-/// paragraph or `@title` on the block itself or on any block merging into the
-/// same topic, anywhere in the package. Falls back to the block alone when the
-/// topic is not resolvable.
-fn topic_has_title(block: &RoxygenBlock, ctx: &RuleContext<'_>) -> bool {
-    match topic_members(block, ctx) {
-        Some(members) => members.iter().any(|member| member.has_title),
-        None => has_title(block),
-    }
-}
 
 impl Rule for RoxygenTitle {
     fn id(&self) -> &'static str {
@@ -60,7 +49,9 @@ impl Rule for RoxygenTitle {
          merge into or inherit another topic (`@rdname`, `@describeIn`, \
          `@inherit*`, `@template`) and `@noRd` blocks are skipped, and a block \
          owning a topic is satisfied by a title on any block merging into it, \
-         anywhere in the package—the title belongs to the topic. Skipped too is a bare \
+         anywhere in the package—the title belongs to the topic. An export-only \
+         block can also find its title in a topic listing its name as an alias. \
+         Skipped too is a bare \
          `@export` on a function the package's NAMESPACE registers with \
          `S3method()`—that generates no topic and no undocumented export."
     }

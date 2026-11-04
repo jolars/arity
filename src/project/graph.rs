@@ -789,9 +789,58 @@ pub fn project_classes(db: &dyn IncrementalDb) -> ClassIndex {
 #[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub struct PackageTopics {
     by_topic: BTreeMap<String, Vec<TopicMember>>,
+    by_alias: BTreeMap<String, Vec<String>>,
+}
+
+/// An alias can identify one topic, no topic, or several distinct topics.
+#[derive(Debug, Clone, Copy)]
+pub enum AliasTopic<'a> {
+    Missing,
+    Ambiguous,
+    Members(&'a [TopicMember]),
 }
 
 impl PackageTopics {
+    pub(crate) fn from_topics(by_topic: BTreeMap<String, Vec<TopicMember>>) -> Self {
+        let mut topics = Self {
+            by_topic,
+            by_alias: BTreeMap::new(),
+        };
+        topics.index_aliases();
+        topics
+    }
+
+    fn index_aliases(&mut self) {
+        self.by_alias.clear();
+        for (key, members) in &self.by_topic {
+            if !members
+                .iter()
+                .any(|member| member.generates_topic && member.has_title)
+            {
+                continue;
+            }
+            for alias in members
+                .iter()
+                .filter(|member| member.generates_topic)
+                .flat_map(|member| &member.aliases)
+            {
+                let keys = self.by_alias.entry(alias.clone()).or_default();
+                if keys.last() != Some(key) {
+                    keys.push(key.clone());
+                }
+            }
+        }
+    }
+
+    /// Look up documentation without merging distinct topics sharing an alias.
+    pub fn for_alias(&self, alias: &str) -> AliasTopic<'_> {
+        match self.by_alias.get(alias).map(Vec::as_slice) {
+            None | Some([]) => AliasTopic::Missing,
+            Some([key]) => AliasTopic::Members(self.members(key)),
+            Some(_) => AliasTopic::Ambiguous,
+        }
+    }
+
     /// The blocks merging into `key`, in package order, or empty when no block
     /// resolves to that topic.
     pub fn members(&self, key: &str) -> &[TopicMember] {
@@ -851,6 +900,9 @@ pub fn project_roxygen_topics(db: &dyn IncrementalDb) -> RoxygenTopicIndex {
                 .or_default()
                 .extend(members.iter().cloned());
         }
+    }
+    for package in index.by_package.values_mut() {
+        package.index_aliases();
     }
     index
 }

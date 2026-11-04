@@ -26,8 +26,8 @@ pub use description::{
 };
 pub use exports::{DefKind, file_def_sites, file_exports, file_free_reads, file_qualified_reads};
 pub use graph::{
-    ClassIndex, DefIndex, ExternalResolution, PackageCollation, PackageDeclarations, PackageInfo,
-    PackageTopics, PackageUsage, Project, ProjectMember, ReadIndex, ReverseSources,
+    AliasTopic, ClassIndex, DefIndex, ExternalResolution, PackageCollation, PackageDeclarations,
+    PackageInfo, PackageTopics, PackageUsage, Project, ProjectMember, ReadIndex, ReverseSources,
     RoxygenTopicIndex, Visibility, attached_names, discover_packages, expected_r_sources,
     external_resolution, package_facts_for, package_usage, package_usage_for, project_classes,
     project_defs, project_graph, project_promises, project_reads, project_roxygen_topics,
@@ -39,8 +39,9 @@ pub use promises::{
     PromiseSummaries, file_promise_seeds,
 };
 pub use roxygen::{
-    ParamDoc, TopicMember, documented_binding_name, documented_function, file_roxygen_topics,
-    has_title, inherits_params, joins_other_topic, param_doc, topic_key, topic_member,
+    ParamDoc, TopicMember, TopicUsage, UsageSignature, documented_binding_name,
+    documented_function, file_roxygen_topics, generates_rd_topic, has_title, inherits_params,
+    joins_other_topic, param_doc, topic_key, topic_member,
 };
 pub use scope::{
     FileFacts, FileScope, LayeredSet, PathSetView, ProjectScope, ReadBinding, ReadSite,

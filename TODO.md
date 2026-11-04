@@ -448,7 +448,7 @@ remains needs broader modeling rather than a name-shaped exemption:
   `roxygen2:::parse_text()` returns one block with
   `title,param,return,export`; the parser fix must preserve the ordinary comment
   byte-for-byte and keep full and incremental parses equivalent.
-- [ ] **Resolve manual roxygen aliases and usage across blocks.** A block with
+- [x] **Resolve manual roxygen aliases and usage across blocks.** A block with
   `@usage g(x)`, `@param x`, `@return`, and `@aliases g` can document a later
   export-only `g <- function(x) x`; roxygen2 generates the shared topic, while
   arity reports missing title, parameters, and return on `g`. Future's

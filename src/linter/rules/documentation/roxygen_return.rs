@@ -11,7 +11,7 @@
 //!
 //! The `\value` section belongs to the *topic*, so a block that owns a topic
 //! is satisfied by any block merging into it that carries `@return`
-//! ([`topic_members`]) — anywhere in the package, since that is where roxygen2
+//! ([`topic_has_value`]) — anywhere in the package, since that is where roxygen2
 //! merges topics.
 
 use rowan::ast::AstNode as _;
@@ -19,7 +19,7 @@ use rowan::ast::AstNode as _;
 use crate::ast::RoxygenBlock;
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::roxygen::{
-    documented_function, documents_s3_method, has_title, inherits_docs, topic_members,
+    documented_function, documents_s3_method, inherits_docs, topic_has_title, topic_has_value,
 };
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -30,17 +30,6 @@ const EXAMPLES: &[Example] = &[Example {
     caption: "An exported function with no `@return`:",
     source: "#' Add one\n#' @param x A number.\n#' @export\nadd_one <- function(x) x + 1\n",
 }];
-
-/// Whether the topic this block renders into describes its value: `@return`
-/// (or its `@returns` alias) on the block itself or on any block merging into
-/// the same topic, anywhere in the package. Falls back to the block alone when
-/// the topic is not resolvable.
-fn documents_value(block: &RoxygenBlock, ctx: &RuleContext<'_>) -> bool {
-    match topic_members(block, ctx) {
-        Some(members) => members.iter().any(|member| member.has_value),
-        None => block.has_tag("return") || block.has_tag("returns"),
-    }
-}
 
 impl Rule for RoxygenReturn {
     fn id(&self) -> &'static str {
@@ -56,7 +45,9 @@ impl Rule for RoxygenReturn {
          merge into or inherit another topic (`@rdname`, `@inherit`, …) are \
          skipped, and a block owning a topic is satisfied by a `@return` on any \
          block merging into it, anywhere in the package—the `\\value` section \
-         belongs to the topic. A titleless S3 method is skipped too (registered with \
+         belongs to the topic. An export-only block can also find its value \
+         documentation in a topic listing its name as an alias. \
+         A titleless S3 method is skipped too (registered with \
          `S3method()`, so it is not exported and generates no `.Rd`); the \
          generic's topic owns the value."
     }
@@ -82,7 +73,7 @@ impl Rule for RoxygenReturn {
         if block.has_tag("noRd")
             || inherits_docs(&block)
             || documented_function(&block).is_none()
-            || documents_value(&block, ctx)
+            || topic_has_value(&block, ctx)
         {
             return;
         }
@@ -90,7 +81,7 @@ impl Rule for RoxygenReturn {
         // writes no `.Rd` at all—so there is no `\value` section for CRAN to
         // want. The generic's topic is where the value is described. A titled
         // method does generate a topic and is judged like any other function.
-        if documents_s3_method(&block, ctx) && !has_title(&block) {
+        if documents_s3_method(&block, ctx) && !topic_has_title(&block, ctx) {
             return;
         }
         sink.push(Diagnostic {
