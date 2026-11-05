@@ -75,7 +75,7 @@ criterion = { version = "0.8.2", default-features = false, features = [
   "cargo_bench_support",
 ] }
 insta = "1.48.0"
-jsonschema = { version = "0.49.2", default-features = false }
+jsonschema = { version = "0.60.2", default-features = false }
 schemars = "1.2.2"
 similar-asserts = "2.0.0"
 
@@ -112,6 +112,6 @@ strip = "none"
 
 [build-dependencies]
 clap = { version = "4.6.6", features = ["derive"] }
-clapdown = "0.2.0"
+clapdown = "0.3.0"
 clap_complete = "4.6.9"
 clap_mangen = "0.3.2"
