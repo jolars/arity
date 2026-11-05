@@ -6,8 +6,9 @@ use wasm_bindgen::prelude::*;
 
 /// A parse diagnostic using JavaScript's UTF-16 string positions.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[wasm_bindgen(getter_with_clone)]
+#[wasm_bindgen]
 pub struct Diagnostic {
+    #[wasm_bindgen(getter_with_clone)]
     pub message: String,
     /// Zero-based UTF-16 start offset.
     pub start: u32,
