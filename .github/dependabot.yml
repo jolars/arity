@@ -9,9 +9,7 @@ updates:
         patterns:
           - "*"
   - package-ecosystem: "cargo"
-    directories:
-      - "/"
-      - "/crates/*"
+    directory: "/"
     schedule:
       interval: "weekly"
     groups:
