@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.29.1](https://github.com/jolars/arity/compare/v0.29.0...v0.29.1) (2026-11-06)
+
+### Bug Fixes
+
+- **ci:** update Cargo dependencies from workspace root ([`600b0a0`](https://github.com/jolars/arity/commit/600b0a00f5b095f0003c2d2c2481b9ef0e088028))
+- **wasm:** clone only string diagnostic getters ([`99608a2`](https://github.com/jolars/arity/commit/99608a291bece32835596c68bbad1921faec3441))
+- **roxygen:** resolve manual aliases and usage ([`67f55bc`](https://github.com/jolars/arity/commit/67f55bcb5f0b3f31be968d1884a6c19d111e661b))
+
 ## [0.29.0](https://github.com/jolars/arity/compare/v0.28.0...v0.29.0) (2026-10-30)
 
 ### Features
