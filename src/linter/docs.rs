@@ -2,14 +2,13 @@
 //!
 //! [`render_rule_doc`] renders one rule's section and [`render_rules_page`]
 //! assembles them all into the single `docs/src/reference/rules.md` page,
-//! index included. Both are shared by the snapshot test (`tests/rule_docs.rs`)
+//! grouped by category. Both are shared by the snapshot test (`tests/rule_docs.rs`)
 //! and the docs generator (`examples/docgen.rs`), so the pinned docs and the
 //! generated page can never diverge. Rendering runs the *real* linter on each
 //! example, so the diagnostics and autofix before/after always reflect current
 //! behavior.
 //!
-//! The page is generated whole, catalogue and all — there is no hand-maintained
-//! index to fall out of step with the registry when a rule is added.
+//! The whole page comes from the registry, so new rules appear automatically.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -157,17 +156,15 @@ fn lint_example_in_package(
         .collect()
 }
 
-/// Render the whole rule reference: preamble, a per-category index, and every
+/// Render the whole rule reference: preamble and every
 /// documented rule's section, in registry order.
 ///
 /// Rules are keyed by ID, and the heading `### `id`` gives each one the anchor
-/// `#id` — the stable deep link the index (and any page linking to a rule)
-/// uses.
+/// `#id` — the stable deep link other pages use to link to a rule.
 pub fn render_rules_page() -> String {
     let mut out = String::from(PAGE_PREAMBLE);
 
-    // A rule with no examples has nothing to show, so it is left out of both the
-    // index and the body rather than listed as an empty section.
+    // A rule with no examples has nothing to show, so omit its empty section.
     let categories: Vec<_> = rules_by_category()
         .into_iter()
         .map(|(category, rules)| {
@@ -179,19 +176,6 @@ pub fn render_rules_page() -> String {
         })
         .filter(|(_, rules)| !rules.is_empty())
         .collect();
-
-    // The index labels its groups in bold rather than with headings: a second
-    // `## Correctness` would take the `#correctness-1` anchor and split the
-    // category's identity across two links.
-    for (category, rules) in &categories {
-        let _ = writeln!(out);
-        let _ = writeln!(out, "**{}**", category.title());
-        let _ = writeln!(out);
-        for rule in rules {
-            let id = rule.id();
-            let _ = writeln!(out, "- [`{id}`](#{id})");
-        }
-    }
 
     for (category, rules) in &categories {
         let _ = writeln!(out);

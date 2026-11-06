@@ -196,7 +196,7 @@ tasks:
   docs-gen:
     desc: Regenerate reference pages and the arity.toml schema
     cmds:
-      - UPDATE_EXPECTED=1 cargo test config_schema
+      - UPDATE_EXPECTED=1 cargo test --lib config_schema
       - cargo run --example docgen
 
   docs-install:

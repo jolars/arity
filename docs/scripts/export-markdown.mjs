@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { createMarkdownRenderer } from "vitepress";
+import { faviconHead } from "./favicon.mjs";
 import {
   chapters,
   chartPayloads,
@@ -84,12 +85,20 @@ for (const chapter of chapters().filter((chapter) => chapter !== "index.md")) {
 const stylesheet = readdirSync(join(distRoot, "assets")).find((file) =>
   /^style\..*\.css$/.test(file),
 );
+const faviconHtml = faviconHead
+  .map(
+    ([tag, attributes]) =>
+      `<${tag} ${Object.entries(attributes)
+        .map(([name, value]) => `${name}="${renderer.utils.escapeHtml(value)}"`)
+        .join(" ")}>`,
+  )
+  .join("");
 for (const [name, body] of [
   ["print", printable.join("\n<hr>\n")],
   ["toc", `<h1>Contents</h1><ul>${contents.join("\n")}</ul>`],
 ]) {
   writeFileSync(
     join(distRoot, `${name}.html`),
-    `<!doctype html><html lang="en-US"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Arity ${name === "print" ? "documentation" : "contents"}</title><link rel="stylesheet" href="/assets/${stylesheet}"><style>main{max-width:900px;margin:auto;padding:24px}.bench-data[hidden]{display:none}.bench-chart{display:none}@media print{main{padding:0}}</style></head><body><main class="vp-doc">${body}</main></body></html>`,
+    `<!doctype html><html lang="en-US"><head><meta charset="utf-8">${faviconHtml}<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Arity ${name === "print" ? "documentation" : "contents"}</title><link rel="stylesheet" href="/assets/${stylesheet}"><style>main{max-width:900px;margin:auto;padding:24px}.bench-data[hidden]{display:none}.bench-chart{display:none}@media print{main{padding:0}}</style></head><body><main class="vp-doc">${body}</main></body></html>`,
   );
 }

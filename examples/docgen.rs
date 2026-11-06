@@ -2,7 +2,7 @@
 //!
 //! Run with `cargo run --example docgen`. This renders the same markdown the
 //! snapshot test pins ([`arity::linter::docs::render_rules_page`]) — every
-//! documented rule's section plus the index over them — and writes it as the
+//! documented rule's section, grouped by category — and writes it as the
 //! single `reference/rules.md` page in the documentation source tree. It also stamps
 //! the crate version into `version.md`, included by the introduction page.
 //!

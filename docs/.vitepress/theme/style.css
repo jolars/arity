@@ -10,6 +10,66 @@
   --vp-c-brand-3: #356b97;
 }
 
+.VPHomeHero {
+  --arity-hero-size: 240px;
+}
+
+.VPHomeHero.has-image .container {
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  text-align: center;
+}
+
+.VPHomeHero.has-image .main {
+  order: 2;
+  width: 100%;
+}
+
+/* Keep the page heading available to screen readers. */
+.VPHomeHero .heading {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+.VPHomeHero .image {
+  order: 1;
+  margin: 0;
+}
+
+.VPHomeHero .image-container {
+  width: var(--arity-hero-size);
+  height: var(--arity-hero-size);
+  transform: none;
+}
+
+/* The wider canvas gives the fade room without shrinking the lettering. */
+.VPHomeHero .image-src {
+  max-width: var(--arity-hero-size);
+  max-height: var(--arity-hero-size);
+}
+
+.VPHomeHero.has-image .main .actions {
+  justify-content: center;
+  padding-top: 0;
+}
+
+@media (min-width: 640px) {
+  .VPHomeHero {
+    --arity-hero-size: 320px;
+  }
+}
+
+@media (min-width: 960px) {
+  .VPHomeHero {
+    --arity-hero-size: 400px;
+  }
+}
+
 .playground-page .VPDoc:not(.has-sidebar) .container,
 .playground-page .VPDoc:not(.has-sidebar) .content,
 .playground-page .VPDoc .content-container {

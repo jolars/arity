@@ -2,10 +2,27 @@
 
 <span id="arity"></span>
 
-Arity is a formatter, linter, and language server for R. It keeps formatting
-consistent, finds common mistakes, and provides diagnostics and navigation in
-your editor. It also understands roxygen documentation and package `DESCRIPTION`
-files.
+Arity is a formatter, linter, and language server for R. It keeps your code
+consistent and gives you feedback as you write.
+
+## What Arity does
+
+- **Format consistently.** Format R code, roxygen documentation, and package
+  `DESCRIPTION` files.
+- **Find problems early.** Catch common mistakes, apply safe fixes, and run the
+  same checks locally and in CI.
+- **Work in your editor.** Get completions, diagnostics, navigation, and
+  refactoring through the language server, with formatting on save.
+
+## Built on your code
+
+Arity parses your code into a lossless syntax tree and updates its analysis as
+you type. Formatting is deterministic, and formatting an already-formatted file
+changes nothing. The same parser powers the formatter, linter, and language
+server.
+
+See the [performance comparisons](guide/performance.md) for measurements of the
+formatter, linter, and language server.
 
 ## Choose your setup {#quick-start}
 

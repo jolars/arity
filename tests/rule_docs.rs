@@ -20,8 +20,8 @@ fn rule_docs_render() {
     }
 }
 
-/// The assembled page carries every rule: a linked index entry and the rule's
-/// own section, under its category heading. Guards the generator against a rule
+/// The assembled page carries every rule's section under its category heading,
+/// without a separate linked index. Guards the generator against a rule
 /// that is registered but silently missing from the reference.
 #[test]
 fn rules_page_covers_every_rule() {
@@ -40,15 +40,14 @@ fn rules_page_covers_every_rule() {
                 "rule reference has no section for `{id}`",
             );
             assert!(
-                page.contains(&format!("- [`{id}`](#{id})")),
-                "rule reference index has no entry for `{id}`",
+                !page.contains(&format!("- [`{id}`](#{id})")),
+                "rule reference has a redundant index entry for `{id}`",
             );
         }
     }
 }
 
-/// The page's sections appear in registry order, so the index reads top to
-/// bottom like the body it links into.
+/// The page's sections appear in registry order.
 #[test]
 fn rules_page_sections_follow_registry_order() {
     let page = render_rules_page();

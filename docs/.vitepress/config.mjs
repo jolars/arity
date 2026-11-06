@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineConfig } from "vitepress";
 import { legacyAliases } from "../scripts/anchors.mjs";
+import { faviconHead } from "../scripts/favicon.mjs";
 import {
   chartPayloads,
   description,
@@ -81,7 +82,7 @@ export default defineConfig({
     },
   },
   head: [
-    ["link", { rel: "icon", href: "/favicon.svg", type: "image/svg+xml" }],
+    ...faviconHead,
     ["meta", { property: "og:type", content: "website" }],
     ["meta", { property: "og:site_name", content: "Arity" }],
     ["meta", { property: "og:image", content: `${origin}/images/og.png` }],

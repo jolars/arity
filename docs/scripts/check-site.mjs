@@ -80,7 +80,9 @@ for (const chapter of chapters()) {
 const home = readFileSync(join(distRoot, "_markdown/index.md"), "utf8");
 assert.match(home, /^# Arity\n/);
 assert.doesNotMatch(home, /\bundefined\b/);
-assert.match(home, /Format consistently/);
+assert.match(home, /\[What is Arity\?\]\(\/introduction\.html\)/);
+assert.match(home, /\[Get started\]\(\/guide\/getting-started\.html\)/);
+assert.match(home, /\[Source code\]\(https:\/\/github\.com\/jolars\/arity\)/);
 const sitemap = readFileSync(join(distRoot, "sitemap.xml"), "utf8");
 for (const path of pages.keys())
   if (path !== "/index.html")
