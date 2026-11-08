@@ -20,6 +20,32 @@ const pages = new Map(
   ]),
 );
 pages.set("/index.html", pages.get("/"));
+const contributing = pages.get("/development/contributing.html");
+assert.ok(contributing, "Missing contributing guide");
+assert.match(
+  contributing,
+  /href="https:\/\/github\.com\/jolars\/arity\/blob\/main\/AGENTS\.md"/,
+);
+assert.match(contributing, /href="\/development\/changelog\.html"/);
+assert.match(
+  contributing,
+  /href="https:\/\/github\.com\/jolars\/arity\/edit\/main\/CONTRIBUTING\.md"/,
+);
+assert.ok(pages.has("/development/changelog.html"), "Missing changelog");
+const changelog = readFileSync(
+  join(distRoot, "_markdown/development/changelog.md"),
+  "utf8",
+);
+assert.match(changelog, /^# Changelog\n/);
+for (const release of readFileSync(
+  join(projectRoot, "CHANGELOG.md"),
+  "utf8",
+).matchAll(/^## .+$/gm))
+  assert.ok(changelog.includes(release[0]), `Missing release: ${release[0]}`);
+assert.match(
+  readFileSync(join(distRoot, "_markdown/development/contributing.md"), "utf8"),
+  /\]\(https:\/\/github\.com\/jolars\/arity\/blob\/main\/AGENTS\.md\)/,
+);
 const ids = (html) =>
   new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]));
 const failures = [];

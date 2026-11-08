@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - "CONTRIBUTING.md"
+      - "CHANGELOG.md"
       - "docs/**"
       - "src/**"
       - "crates/**"

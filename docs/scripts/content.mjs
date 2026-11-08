@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,6 +7,11 @@ export const projectRoot = resolve(docsRoot, "..");
 export const sourceRoot = join(docsRoot, "src");
 export const distRoot = join(docsRoot, ".vitepress/dist");
 export const origin = "https://arity.cc";
+export const repository = "https://github.com/jolars/arity";
+export const repositoryPages = {
+  "development/contributing.md": "CONTRIBUTING.md",
+  "development/changelog.md": "CHANGELOG.md",
+};
 export const description =
   "Arity is a language server, formatter, and linter for R.";
 export const partials = [
@@ -28,6 +33,25 @@ export function chapters(directory = sourceRoot) {
 
 export function pageUrl(path) {
   return "/" + path.replace(/(^|\/)index\.md$/, "$1").replace(/\.md$/, ".html");
+}
+
+export function repositoryLinks(source, chapter) {
+  if (!repositoryPages[chapter]) return source;
+  return source.replace(
+    /\]\((?![a-z][a-z\d+.-]*:|[\/#])([^\s)]+)\)/gi,
+    (_, target) => {
+      const page = Object.entries(repositoryPages).find(
+        ([, file]) => file === target,
+      )?.[0];
+      if (page) return `](${pageUrl(page)})`;
+      const kind = statSync(join(projectRoot, target), {
+        throwIfNoEntry: false,
+      })?.isDirectory()
+        ? "tree"
+        : "blob";
+      return `](${repository}/${kind}/main/${target})`;
+    },
+  );
 }
 
 export function withoutPlayground(source) {

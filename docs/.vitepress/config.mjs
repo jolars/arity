@@ -10,10 +10,13 @@ import {
   origin,
   pageUrl,
   partials,
+  projectRoot,
+  repository,
+  repositoryLinks,
+  repositoryPages,
   sourceRoot,
 } from "../scripts/content.mjs";
 
-const repository = "https://github.com/jolars/arity";
 const version = readFileSync(join(sourceRoot, "version.md"), "utf8").trim();
 const guide = [
   "Formatting",
@@ -46,6 +49,20 @@ const referencePaths = [
   "directives",
 ];
 
+function lastModified(chapter) {
+  const source = repositoryPages[chapter]
+    ? join(projectRoot, repositoryPages[chapter])
+    : join(sourceRoot, chapter);
+  try {
+    return execFileSync("git", ["log", "-1", "--format=%cs", "--", source], {
+      encoding: "utf8",
+    }).trim();
+  } catch {
+    // Source archives have no Git history.
+    return "";
+  }
+}
+
 export default defineConfig({
   title: "Arity",
   description,
@@ -57,6 +74,13 @@ export default defineConfig({
   vite: { publicDir: join(sourceRoot, "../public") },
   markdown: {
     config(md) {
+      for (const kind of ["html_inline", "html_block"]) {
+        const render = md.renderer.rules[kind];
+        md.renderer.rules[kind] = (tokens, index, options, env, renderer) =>
+          repositoryPages[env.relativePath]
+            ? md.utils.escapeHtml(tokens[index].content)
+            : render(tokens, index, options, env, renderer);
+      }
       const render = md.renderer.rules.heading_open;
       md.renderer.rules.heading_open = (
         tokens,
@@ -76,7 +100,8 @@ export default defineConfig({
             : "")
         );
       };
-      md.core.ruler.before("normalize", "arity-charts", (state) => {
+      md.core.ruler.before("normalize", "arity-content", (state) => {
+        state.src = repositoryLinks(state.src, state.env.relativePath);
         state.src = chartPayloads(state.src, md.utils.escapeHtml);
       });
     },
@@ -101,6 +126,11 @@ export default defineConfig({
   ],
   transformPageData(page) {
     if (page.relativePath === "404.md") return;
+    if (repositoryPages[page.relativePath]) {
+      page.frontmatter.repositorySource = repositoryPages[page.relativePath];
+      const date = lastModified(page.relativePath);
+      if (date) page.lastUpdated = Date.parse(date);
+    }
     const title = page.title === "Arity" ? "Arity" : `${page.title} | Arity`;
     const url = origin + pageUrl(page.relativePath);
     const summary = page.description || description;
@@ -120,16 +150,8 @@ export default defineConfig({
       return items.map((item) => {
         const source =
           item.url === "" ? "index.md" : item.url.replace(/\.html$/, ".md");
-        try {
-          const date = execFileSync(
-            "git",
-            ["log", "-1", "--format=%cs", "--", join(sourceRoot, source)],
-            { encoding: "utf8" },
-          ).trim();
-          if (date) item.lastmod = date;
-        } catch {
-          /* Source archives have no Git history. */
-        }
+        const date = lastModified(source);
+        if (date) item.lastmod = date;
         return item;
       });
     },
@@ -139,6 +161,7 @@ export default defineConfig({
     nav: [
       { text: "Guide", link: "/introduction.html" },
       { text: "Reference", link: "/reference/cli.html" },
+      { text: "Development", link: "/development/contributing.html" },
       { text: "Playground", link: "/playground.html" },
       { text: "Performance", link: "/guide/performance.html" },
     ],
@@ -166,10 +189,20 @@ export default defineConfig({
           link: `/reference/${referencePaths[index]}.html`,
         })),
       },
+      {
+        text: "Development",
+        items: [
+          { text: "Contributing", link: "/development/contributing.html" },
+          { text: "Changelog", link: "/development/changelog.html" },
+        ],
+      },
     ],
     outline: [2, 3],
     socialLinks: [{ icon: "github", link: repository }],
-    editLink: { pattern: `${repository}/edit/main/docs/src/:path` },
+    editLink: {
+      pattern: (page) =>
+        `https://github.com/jolars/arity/edit/main/${page.frontmatter.repositorySource ?? `docs/src/${page.filePath}`}`,
+    },
     search: { provider: "local" },
     footer: { message: `${version} · Released under the MIT license.` },
   },

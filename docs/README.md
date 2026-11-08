@@ -38,6 +38,11 @@ partials still come from `task docs-gen`. Includes use VitePress's
 repository sources. The pinned Vite override keeps stable VitePress on a patched
 version compatible with its Vue plugin.
 
+The Development section includes the repository's `CONTRIBUTING.md` and
+`CHANGELOG.md` directly. Edit the root contributing guide to update its page;
+Versionary generates the changelog. Repository links in these pages point to
+GitHub, and links between them stay on the site.
+
 ## Published URLs and Markdown
 
 The site retains `.html` chapter URLs, the print and contents views, and the

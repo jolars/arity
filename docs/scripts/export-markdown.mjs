@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { createMarkdownRenderer } from "vitepress";
+import config from "../.vitepress/config.mjs";
 import { faviconHead } from "./favicon.mjs";
 import {
   chapters,
@@ -8,17 +9,18 @@ import {
   distRoot,
   expandIncludes,
   pageUrl,
+  repositoryLinks,
   sourceRoot,
   withoutPlayground,
 } from "./content.mjs";
 
-const renderer = await createMarkdownRenderer(sourceRoot);
+const renderer = await createMarkdownRenderer(sourceRoot, config.markdown);
 for (const chapter of chapters()) {
   const file = join(sourceRoot, chapter);
   const source = withoutPlayground(
-    expandIncludes(readFileSync(file, "utf8"), file),
+    repositoryLinks(expandIncludes(readFileSync(file, "utf8"), file), chapter),
   );
-  const env = {};
+  const env = { relativePath: chapter };
   renderer.render(source, env);
   const frontmatter = env.frontmatter ?? {};
   let markdown = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
@@ -47,7 +49,10 @@ for (const chapter of chapters()) {
       "",
     )
     .replace(/<span id="[^"]+"[^>]*><\/span>/g, "")
-    .replace(/\]\(([^\s)]+)\.md(?=[)#])/g, "]($1.html");
+    .replace(
+      /\]\((?![a-z][a-z\d+.-]*:|\/\/)([^\s)]+)\.md(?=[)#])/gi,
+      "]($1.html",
+    );
   const target = join(distRoot, "_markdown", chapter);
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, markdown.trim() + "\n");
@@ -59,7 +64,7 @@ const contents = [];
 for (const chapter of chapters().filter((chapter) => chapter !== "index.md")) {
   const file = join(sourceRoot, chapter);
   const source = withoutPlayground(
-    expandIncludes(readFileSync(file, "utf8"), file),
+    repositoryLinks(expandIncludes(readFileSync(file, "utf8"), file), chapter),
   );
   const title = source.match(/^# (.+)$/m)?.[1].replaceAll("`", "") ?? chapter;
   contents.push(
@@ -78,7 +83,9 @@ for (const chapter of chapters().filter((chapter) => chapter !== "index.md")) {
   );
   printable.push(
     renderer
-      .render(chartPayloads(absoluteLinks, renderer.utils.escapeHtml))
+      .render(chartPayloads(absoluteLinks, renderer.utils.escapeHtml), {
+        relativePath: chapter,
+      })
       .replaceAll("<details", "<details open"),
   );
 }

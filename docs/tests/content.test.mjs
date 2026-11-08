@@ -1,11 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createMarkdownRenderer } from "vitepress";
+import config from "../.vitepress/config.mjs";
 import {
   chartPayloads,
   expandIncludes,
   pageUrl,
+  sourceRoot,
   withoutPlayground,
 } from "../scripts/content.mjs";
+
+test("repository pages render angle brackets literally and preserve inline code", async () => {
+  const renderer = await createMarkdownRenderer(sourceRoot, config.markdown);
+  const html = renderer.render("Arc<str> and `Arc<str>`", {
+    relativePath: "development/changelog.md",
+  });
+  assert.match(html, /Arc&lt;str&gt; and <code[^>]*>Arc&lt;str&gt;<\/code>/);
+  assert.match(
+    renderer.render("<details>Details</details>", {
+      relativePath: "guide/formatting.md",
+    }),
+    /<details>Details<\/details>/,
+  );
+});
 
 test("keeps chart JSON inert and preserves literal dollar replacement sequences", () => {
   const json = '[{"document":"$& <script> \\\"quoted\\\""}]';
