@@ -5166,6 +5166,7 @@ centre
 change_scale
 coef_var
 coerce_to_numeric
+collapse_levels
 colnames_to_row
 column_as_rownames
 contr.deviation
@@ -8524,6 +8525,7 @@ hline_top
 hrule
 htmltools_value
 hyperlink_text
+image_raster
 indentation
 information_data_cell
 information_data_chunk
@@ -8532,6 +8534,7 @@ init_flextable_defaults
 italic
 keep_with_next
 labelizor
+layout_lines
 line_spacing
 linerange
 lollipop
@@ -9237,7 +9240,6 @@ register_liberationmono
 register_liberationsans
 register_liberationserif
 rm_fonts_cache
-set_dummy_conf
 str_metrics
 strings_sizes
 sys_fonts
@@ -16934,11 +16936,14 @@ html_format
 latex_format
 mark
 markdown_options
+pkg_articles
 pkg_citation
 pkg_code
 pkg_desc
+pkg_examples
 pkg_manual
 pkg_news
+pkg_site
 raw_text
 reactor
 roam
@@ -20590,6 +20595,7 @@ headers_replace_all_text
 headers_replace_img_at_bkm
 headers_replace_text_at_bkm
 hyperlink_ftext
+image_dims
 image_to_base64
 layout_dedupe_ph_labels
 layout_default
@@ -20955,13 +20961,16 @@ up_down_counter_add
 with_active_span
 
 [otelsdk]
+add_span_processor
 logger_provider_file
 logger_provider_http
+logger_provider_memory
 logger_provider_stdstream
 meter_provider_file
 meter_provider_http
 meter_provider_memory
 meter_provider_stdstream
+remove_span_processor
 tracer_provider_file
 tracer_provider_http
 tracer_provider_memory
@@ -21442,9 +21451,9 @@ test_wald
 variance_decomposition
 
 [permute]
+allPartitions
 allPerms
 as.allPerms
-Blocks
 check
 getAllperms
 getBlocks
@@ -21463,10 +21472,13 @@ getObserved
 getPlots
 getRow
 getStrata
+getSymmetric
 getType
 getWithin
 how
 numPerms
+permutations
+permutator
 permute
 Plots
 setAllperms<-
@@ -21484,11 +21496,14 @@ setObserved<-
 setPlots<-
 setRow<-
 setStrata<-
+setSymmetric<-
 setType<-
 setWithin<-
 shuffle
 shuffleFree
 shuffleGrid
+shufflePartition
+shufflePartitionSet
 shuffleSeries
 shuffleSet
 shuffleStrata
@@ -34446,6 +34461,7 @@ matrowall
 matrowany
 matrowsum
 natozero
+need.all.or.none
 niceround
 NNdist2segments
 numalign
