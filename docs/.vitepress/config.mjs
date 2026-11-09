@@ -172,7 +172,6 @@ export default defineConfig({
           { text: "Overview", link: "/introduction.html" },
           { text: "Getting started", link: "/guide/getting-started.html" },
           { text: "Installation", link: "/installation.html" },
-          { text: "Playground", link: "/playground.html" },
         ],
       },
       {
