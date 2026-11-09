@@ -2713,6 +2713,39 @@ warning: description-empty-person
   = help: Fill the person in, or delete the call: R reads `person()` as a zero-length person vector and drops it silently.
 ```
 
+### `description-authors-at-r-required`
+
+Flag a `DESCRIPTION` without an `Authors@R` field.
+
+[Writing R Extensions](https://cran.r-project.org/doc/manuals/r-devel/R-exts.html#The-DESCRIPTION-file) requires this field for CRAN submissions, even when valid `Author` and `Maintainer` fields are present. This rule is **off by default** because packages need not target CRAN. Enable it with `--select description-authors-at-r-required`.
+
+`description-missing-field` checks R's required metadata independently. A present `Authors@R` field, even an empty or invalid one, is left to `description-authors-at-r` to validate. Files with no fields are left alone.
+
+There is no autofix: contributor names, roles, and contact details require the author's input.
+
+This rule is **disabled by default**; enable it with `select`.
+
+Legacy author fields satisfy R, but CRAN also requires `Authors@R`:
+
+```text
+Package: mypkg
+Version: 0.1.0
+Title: A Test Package
+Description: Demonstrate package metadata checks.
+License: GPL-3
+Author: Jane Doe [aut, cre]
+Maintainer: Jane Doe <jane@example.com>
+```
+
+```text
+warning: description-authors-at-r-required
+ --> DESCRIPTION:1:1
+  |
+1 | Package: mypkg
+  | ^^^^^^^ CRAN submissions require an `Authors@R` field
+  = help: Add `Authors@R` with the package's contributors and their roles.
+```
+
 ### `unused-dependency`
 
 Flag an `Imports:` entry that nothing in the package reaches.

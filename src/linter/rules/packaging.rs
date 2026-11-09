@@ -8,6 +8,7 @@
 
 mod authors;
 mod description_authors_at_r;
+mod description_authors_at_r_required;
 mod description_date_format;
 mod description_duplicate_field;
 mod description_empty_person;
@@ -29,6 +30,7 @@ mod undeclared_dependency;
 mod unused_dependency;
 
 pub use description_authors_at_r::DescriptionAuthorsAtR;
+pub use description_authors_at_r_required::DescriptionAuthorsAtRRequired;
 pub use description_date_format::DescriptionDateFormat;
 pub use description_duplicate_field::DescriptionDuplicateField;
 pub use description_empty_person::DescriptionEmptyPerson;

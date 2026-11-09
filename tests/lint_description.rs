@@ -728,6 +728,96 @@ fn a_differently_cased_field_is_not_a_duplicate() {
 }
 
 // ---------------------------------------------------------------------------
+// description-authors-at-r-required
+// ---------------------------------------------------------------------------
+
+const AUTHORS_AT_R_REQUIRED: &str = "description-authors-at-r-required";
+
+fn legacy_authors_description() -> String {
+    let (metadata, _) = COMPLETE_DESCRIPTION.split_once("Authors@R:").unwrap();
+    format!("{metadata}Author: Test User [aut, cre]\nMaintainer: Test User <test@example.com>\n")
+}
+
+fn authors_at_r_required_findings(source: &str) -> Vec<arity::linter::Diagnostic> {
+    let config = LintConfig {
+        select: Some(vec![AUTHORS_AT_R_REQUIRED.to_string()]),
+        ..LintConfig::default()
+    };
+    check_description_document(Path::new("DESCRIPTION"), source, &config)
+        .expect("linting should succeed")
+}
+
+#[test]
+fn authors_at_r_required_reports_absence_despite_valid_legacy_fields() {
+    let source = legacy_authors_description();
+    assert!(!ids(&source).contains(&"description-missing-field"));
+    let findings = authors_at_r_required_findings(&source);
+    assert_eq!(findings.len(), 1);
+    let finding = &findings[0];
+    assert_eq!(finding.rule, AUTHORS_AT_R_REQUIRED);
+    assert_eq!(finding.severity, arity::linter::Severity::Warning);
+    assert!(finding.message.body.contains("CRAN"));
+    assert!(finding.fix.is_none());
+    assert_eq!(
+        &source[usize::from(finding.range.start())..usize::from(finding.range.end())],
+        "Package"
+    );
+}
+
+#[test]
+fn authors_at_r_required_is_off_by_default() {
+    assert!(!ids(&legacy_authors_description()).contains(&AUTHORS_AT_R_REQUIRED));
+}
+
+#[test]
+fn authors_at_r_required_leaves_present_values_to_the_content_rule() {
+    for value in [
+        "",
+        "   ",
+        "person()",
+        "not valid R!",
+        "computed_authors()",
+        "\n    person(\"Test\", \"User\", role = \"aut\")",
+    ] {
+        let source = format!("{}Authors@R: {value}\n", legacy_authors_description());
+        assert!(
+            authors_at_r_required_findings(&source).is_empty(),
+            "{source}"
+        );
+    }
+    assert!(authors_at_r_required_findings(COMPLETE_DESCRIPTION).is_empty());
+}
+
+#[test]
+fn authors_at_r_required_ignores_files_without_fields() {
+    for source in ["", "\n", "# Just a comment.\r\n"] {
+        assert!(authors_at_r_required_findings(source).is_empty());
+    }
+}
+
+#[test]
+fn authors_at_r_required_spans_the_first_field_after_comments() {
+    let source = "# Metadata for Jos\u{e9}.\r\nVersion: 0.1.0\r\n";
+    let findings = authors_at_r_required_findings(source);
+    assert_eq!(findings.len(), 1);
+    let range = findings[0].range;
+    assert_eq!(
+        &source[usize::from(range.start())..usize::from(range.end())],
+        "Version"
+    );
+}
+
+#[test]
+fn authors_at_r_required_supports_its_own_suppression() {
+    let source = legacy_authors_description();
+    for rule in [AUTHORS_AT_R_REQUIRED, "description-missing-field"] {
+        let suppressed = format!("# arity-lint skip-file {rule}: deliberate\n{source}");
+        let findings = authors_at_r_required_findings(&suppressed);
+        assert_eq!(findings.is_empty(), rule == AUTHORS_AT_R_REQUIRED);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // description-missing-field
 // ---------------------------------------------------------------------------
 

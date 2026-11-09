@@ -751,7 +751,7 @@ Tier 2—needs a small bundled table or the project layer:
 
 Tier 3—argued for default-off, or against:
 
-- [ ] `description-authors-at-r-required`, **default off**. R-exts: "For CRAN,
+- [x] `description-authors-at-r-required`, **default off**. R-exts: "For CRAN,
   providing 'Authors@R' is required", and CRAN incoming emits
   `authors_at_R_missing` whenever the field is absent—*even with* a valid
   `Author` plus `Maintainer`, which is precisely the case
@@ -760,7 +760,8 @@ Tier 3—argued for default-off, or against:
   non-CRAN package; a package targeting CRAN opts in. Keep it a separate ID
   from `description-missing-field` for that reason—one is "R rejects this",
   the other is "CRAN rejects this", and they want different defaults and
-  different suppressions.
+  different suppressions. Done: a packaging warning for an absent field,
+  independent of valid legacy fields; syntax-only, with no autofix.
 
 - [ ] `description-title-case`, **default off**. Porting `tools::toTitleCase`
   faithfully means porting its stopword list and the perl-regex carve-out

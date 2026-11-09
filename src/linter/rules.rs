@@ -236,6 +236,7 @@ fn packaging_rules() -> Vec<AnyRule> {
         AnyRule::Dcf(Box::new(packaging::DescriptionEncoding)),
         AnyRule::Dcf(Box::new(packaging::DescriptionAuthorsAtR)),
         AnyRule::Dcf(Box::new(packaging::DescriptionEmptyPerson)),
+        AnyRule::Dcf(Box::new(packaging::DescriptionAuthorsAtRRequired)),
         AnyRule::Dcf(Box::new(packaging::UnusedDependency)),
     ]
 }
