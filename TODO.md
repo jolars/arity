@@ -735,16 +735,17 @@ Tier 2—needs a small bundled table or the project layer:
   share into it would make that gate's claim conditional. Separate ids keep the
   claim exact and let this one be suppressed on its own.
 
-- [ ] Emails appear in exactly three places in a `DESCRIPTION`—`Maintainer`,
-  `Authors@R`'s `email =`, and the rare `Contact` field—so there is **no**
-  general "lint emails" rule to write. Validate them where they occur, in
-  the two rules above, against R's regexp. A shared helper is the whole
-  abstraction that is warranted.
-- [ ] `description-collate-mismatch`. `Collate` must name every `.R` file and
-  only files that exist. `DescriptionFacts::collate` is already computed and
-  the file set comes from the project layer. A file missing from `Collate` is
-  real breakage, not style. A fix means editing a list, so it belongs to
-  stage 5.
+- [ ] Malformed maintainer addresses derived from `Authors@R` (extend
+  `description-authors-at-r`; no fix). `description-malformed-maintainer`
+  already validates explicit `Maintainer` addresses against R's regexp, but
+  the `Authors@R` rule checks only whether an email is present. Extract the
+  existing address validator into a shared helper and validate the derived
+  maintainer when its address is statically known and R would check it.
+  Pin the gap against R: `person("Jane", "Doe", role = c("aut", "cre"),
+  email = "invalid")` derives `Jane Doe <invalid>` and triggers
+  `bad_maintainer`. Extend the oracle gate to cover that signal, and withhold
+  findings when derivation is unknown. This does not justify blanket checks
+  on every contributor's email or on free-text `Contact` values.
 - [x] `description-unknown-field` (packaging; syn; no fix, default on). Done as
   a *near-miss* check, not a whitelist: it reports a unique edit-distance-1
   match against the formatter-owned standard field list, plus whitespace
@@ -773,7 +774,23 @@ Tier 3—argued for default-off, or against:
 
 ### Phase 5—Package-aware rules
 
-Gated on the package being attached (`model.loaded_packages()`).
+- [ ] `description-collate-mismatch` (packaging; package context; no fix,
+  default on). When a collate specification is present, report missing source
+  files, entries that do not name eligible source files, and duplicate entries;
+  R rejects all three during installation. Match R's quoted-list parsing and
+  source-file selection, including `.[RrSsQq]` files and OS subdirectories.
+  Check Unix and Windows separately, with `Collate.unix` or `Collate.windows`
+  overriding `Collate`. `DescriptionFacts::collate` is not sufficient: it
+  unions the fields into a set, loses duplicates, and splits quoted filenames
+  on whitespace. Preserve each field's entries and obtain an independent disk
+  inventory; the project's expected source set already includes nonexistent
+  Collate entries. Keep rules free of filesystem reads and stay silent when
+  package inventory is unavailable. Pin failures and valid quoted and
+  platform-specific cases against R's installation helper. Defer autofixes:
+  inserting a missing file requires choosing its execution order.
+
+The package-specific rules below are gated on the package being attached
+(`model.loaded_packages()`).
 
 - [ ] `pkg/testthat/` as one cohesive PR (shared `expect_*` matcher):
   `expect-true-false`, `expect-length`, `expect-named`, `expect-null`,
