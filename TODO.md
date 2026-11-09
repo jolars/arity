@@ -735,17 +735,14 @@ Tier 2—needs a small bundled table or the project layer:
   share into it would make that gate's claim conditional. Separate ids keep the
   claim exact and let this one be suppressed on its own.
 
-- [ ] Malformed maintainer addresses derived from `Authors@R` (extend
-  `description-authors-at-r`; no fix). `description-malformed-maintainer`
-  already validates explicit `Maintainer` addresses against R's regexp, but
-  the `Authors@R` rule checks only whether an email is present. Extract the
-  existing address validator into a shared helper and validate the derived
-  maintainer when its address is statically known and R would check it.
-  Pin the gap against R: `person("Jane", "Doe", role = c("aut", "cre"),
-  email = "invalid")` derives `Jane Doe <invalid>` and triggers
-  `bad_maintainer`. Extend the oracle gate to cover that signal, and withhold
-  findings when derivation is unknown. This does not justify blanket checks
-  on every contributor's email or on free-text `Contact` values.
+- [x] Malformed maintainer addresses derived from `Authors@R` (extend
+  `description-authors-at-r`; no fix). Done: explicit and derived
+  maintainers share R's address validator. The rule spans the creator's
+  first nonempty email literal, honors an explicit `Maintainer`, and
+  withholds findings when derivation is unknown. The oracle gate now covers
+  `bad_maintainer`, with controls for multiple emails, explicit overrides,
+  contributors, and quoted addresses. Contributor emails and free-text
+  `Contact` values remain outside this check.
 - [x] `description-unknown-field` (packaging; syn; no fix, default on). Done as
   a *near-miss* check, not a whitelist: it reports a unique edit-distance-1
   match against the formatter-owned standard field list, plus whitespace

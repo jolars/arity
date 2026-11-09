@@ -43,16 +43,11 @@
 //! a given name or separates two maintainers — which is the same question again.
 
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
+use crate::linter::rules::packaging::maintainer::{ORPHANED, is_valid_maintainer_field};
 use crate::linter::rules::packaging::scalar_field::{escape, value};
 use crate::linter::rules::{DcfRule, DcfRuleContext, Example};
 
 pub struct DescriptionMalformedMaintainer;
-
-/// R's second alternative: the package has no maintainer, spelled in capitals.
-const ORPHANED: &str = "ORPHANED";
-
-/// The local-part character class of R's regexp, less the alphanumerics.
-const LOCAL_SPECIALS: &str = "!#$%*/?|^{}`~&'+=_-";
 
 const EXAMPLES: &[Example] = &[
     Example {
@@ -174,65 +169,12 @@ impl DcfRule for DescriptionMalformedMaintainer {
     }
 }
 
-/// R's `^[[:space:]]*(.*<LOCAL@DOMAIN>|ORPHANED)[[:space:]]*$`, with the value
-/// already trimmed by [`value`].
-///
-/// The `.*` is greedy and neither half of the address can hold a `<`, so the
-/// address R matches is the one opened by the value's **last** `<` and closed by
-/// its final `>` — which is the whole of what [`bracketed_address`] finds.
-fn is_valid_maintainer_field(maintainer: &str) -> bool {
-    maintainer == ORPHANED || bracketed_address(maintainer).is_some_and(is_valid_address)
-}
-
-/// The text R's regexp would read as the address: between the last `<` and a
-/// final `>`. `None` when the value does not end in one.
-fn bracketed_address(maintainer: &str) -> Option<&str> {
-    let inner = maintainer.strip_suffix('>')?;
-    let open = inner.rfind('<')?;
-    Some(&inner[open + 1..])
-}
-
 /// Whether the value holds a `<...>` at all, which is what separates "this
 /// address is wrong" from "there is no address here".
 fn contains_an_address(maintainer: &str) -> bool {
     maintainer
         .find('<')
         .is_some_and(|open| maintainer[open + 1..].contains('>'))
-}
-
-/// R's `LOCAL@DOMAIN`. The domain half admits no `@`, so the separator is the
-/// last one — which is also what lets a quoted local part contain one.
-fn is_valid_address(address: &str) -> bool {
-    let Some((local, domain)) = address.rsplit_once('@') else {
-        return false;
-    };
-    is_valid_local_part(local) && is_valid_domain(domain)
-}
-
-/// R's `(\".+\"|(ATOM+\.)*ATOM+)`. The quoted form is a single `.+` between
-/// quotes, so it takes any characters at all — including a `\"` or an `@`.
-fn is_valid_local_part(local: &str) -> bool {
-    if local.len() > 2 && local.starts_with('"') && local.ends_with('"') {
-        return true;
-    }
-    local
-        .split('.')
-        .all(|atom| !atom.is_empty() && atom.chars().all(is_local_char))
-}
-
-/// R's `([ABC...z0-9!#$%*/?|^{}`~&'+=_-]`, spelled out as ASCII in the regexp
-/// and so read as ASCII here — the name half is `.*` and takes any text, but the
-/// address is not.
-fn is_local_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || LOCAL_SPECIALS.contains(c)
-}
-
-/// R's `([A-Za-z0-9-]+\.)*[A-Za-z0-9-]+`: no empty label, no TLD requirement,
-/// and a leading `-` in a label is allowed.
-fn is_valid_domain(domain: &str) -> bool {
-    domain.split('.').all(|label| {
-        !label.is_empty() && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-    })
 }
 
 /// CRAN's `Maintainer_invalid_or_multi_person`: its regexp reads the **first**

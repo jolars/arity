@@ -1631,6 +1631,7 @@ fn a_maintainer_r_accepts_is_not_flagged() {
         "R Core Team <R-core@r-project.org>",
         "Jane Doe <jane@example>",             // no TLD is required
         "Jane Doe <\"jane doe\"@example.com>", // a quoted local part
+        "Jane Doe <\"a<b\"@example.com>",
         "Jane Doe <jane+x@sub.example.co.uk>",
         "Jane Doe <jane@-example.com>", // a domain label may start with `-`
         "Jos\u{e9} Caf\u{e9} <jose@example.com>",
@@ -1830,6 +1831,86 @@ fn a_creator_without_an_email_is_flagged() {
         ["person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"))"],
     );
     assert!(messages(&text, AUTHORS_AT_R)[0].contains("email"));
+}
+
+#[test]
+fn derived_maintainer_invalid_email_is_reported() {
+    for email in [
+        "\"invalid\"",
+        "\"  invalid  \"",
+        "c(\"invalid\", \"valid@example.com\")",
+        "c(NULL, NA, \" \", \"invalid\")",
+    ] {
+        let text = authored(&format!(
+            "person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = {email})"
+        ));
+        let findings: Vec<_> =
+            check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+                .unwrap()
+                .into_iter()
+                .filter(|d| d.rule == AUTHORS_AT_R)
+                .collect();
+        assert_eq!(findings.len(), 1, "{email}: {findings:?}");
+        let finding = &findings[0];
+        let start: usize = finding.range.start().into();
+        let end: usize = finding.range.end().into();
+        assert_eq!(
+            text[start..end].trim_matches('"').trim(),
+            "invalid",
+            "the finding should span the first nonempty email literal"
+        );
+        assert!(messages(&text, AUTHORS_AT_R)[0].contains("malformed"));
+        assert!(finding.fix.is_none());
+    }
+}
+
+#[test]
+fn derived_maintainer_accepts_addresses_r_accepts() {
+    for email in [
+        "\"jane@example.com\"",
+        "\"  jane@example.com  \"",
+        "\"jane@example\"",
+        "\"jane@-example\"",
+        "'\"jane doe\"@example'",
+        "'\"a<b\"@example'",
+        "'\"a>b\"@example'",
+        "\"bad> <jane@example.com\"",
+        "c(\"jane@example.com\", \"invalid\")",
+        "c(\" \", NA, \"jane@example.com\")",
+    ] {
+        let text = authored(&format!(
+            "person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = {email})"
+        ));
+        assert!(authors_hits(&text).is_empty(), "{email}");
+    }
+}
+
+#[test]
+fn derived_maintainer_does_not_check_explicit_maintainers_or_other_people() {
+    let text =
+        authored("person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = \"invalid\")");
+    for maintainer in ["Jane Doe <jane@example.com>", "", "ORPHANED", "invalid"] {
+        let explicit = format!("{text}Maintainer: {maintainer}\n");
+        assert!(authors_hits(&explicit).is_empty(), "{maintainer}");
+    }
+    let text = authored(
+        "c(person(\"Jane\", role = c(\"aut\", \"cre\"), email = \"jane@example.com\"), \
+         person(\"John\", role = \"ctb\", email = \"invalid\"))",
+    );
+    assert!(authors_hits(&text).is_empty());
+}
+
+#[test]
+fn derived_maintainer_withholds_findings_when_derivation_is_unknown() {
+    for value in [
+        "person(\"Jane\", role = c(\"aut\", \"cre\"), email = address)",
+        "person(given = name, role = c(\"aut\", \"cre\"), email = \"invalid\")",
+        "person(\"Jane\", role = roles, email = \"invalid\")",
+        "c(person(\"Jane\", role = c(\"aut\", \"cre\"), email = \"invalid\"), \
+         person(\"John\", role = roles, email = \"john@example.com\"))",
+    ] {
+        assert!(authors_hits(&authored(value)).is_empty(), "{value}");
+    }
 }
 
 /// The same defect from the other two directions: no `cre` at all, and a `cre`

@@ -18,6 +18,8 @@
 //! - a person with **no name** or **no role**, credited nowhere at all;
 //! - a **role R does not know**, which `person()` drops on the floor;
 //! - **more than one `cre`**, where R stores exactly one maintainer;
+//! - a **malformed derived maintainer address**, when no explicit `Maintainer`
+//!   overrides it. R uses the creator's first nonempty email;
 //! - a **malformed or duplicated ORCID iD or ROR ID**. Both identifiers are
 //!   self-validating — an ORCID carries a MOD 11-2 check digit — so this needs
 //!   no network, which is the whole reason it can be a lint.
@@ -48,6 +50,7 @@ use crate::linter::rules::packaging::authors::{
     self, Authors, Literal, Person, Value, is_known_role, is_orcid_url, is_valid_orcid,
     is_valid_ror,
 };
+use crate::linter::rules::packaging::maintainer::is_valid_maintainer_field;
 use crate::linter::rules::packaging::scalar_field::{escape, folded, value};
 use crate::linter::rules::{DcfRule, DcfRuleContext, Example};
 
@@ -61,6 +64,11 @@ const EXAMPLES: &[Example] = &[
                   `Maintainer` and refuses to build without:",
         source: "Package: mypkg\nVersion: 0.1.0\n\
                  Authors@R: person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"))\n",
+    },
+    Example {
+        caption: "A creator whose email produces a malformed `Maintainer`:",
+        source: "Package: mypkg\nVersion: 0.1.0\n\
+                 Authors@R: person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), email = \"invalid\")\n",
     },
     Example {
         caption: "A person credited nowhere, because `person()` drops anyone with \
@@ -97,7 +105,10 @@ impl DcfRule for DescriptionAuthorsAtR {
          out—\"Authors@R field gives no person with maintainer role, valid \
          email address and non-empty name\"—so \
          `person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"))` is a package that \
-         does not build.\n\nThe rest of R's \
+         does not build. When no explicit `Maintainer` field overrides it, R \
+         also checks the derived maintainer's address against its email regexp. \
+         The creator's first nonempty email supplies that address; malformed \
+         literal addresses are reported here.\n\nThe rest of R's \
          `.check_package_description_authors_at_R_field` is reported by the same \
          rule: a field that is not R, or that holds a call R refuses to \
          evaluate (only `person`, `as.person`, `c`, `list`, `paste`, and \
@@ -209,7 +220,7 @@ fn check_authors_at_r(ctx: &DcfRuleContext<'_>, sink: &mut Vec<Diagnostic>) {
             "Give the package's maintainer `role = \"cre\"`, a name, and an \
              `email`: that is the person `R CMD build` derives `Maintainer` from.",
         )),
-        1 => {}
+        1 => check_derived_maintainer(ctx, creators[0], sink),
         n => sink.push(finding(
             source.range,
             format!("`Authors@R` gives the `cre` role to {n} people"),
@@ -217,6 +228,35 @@ fn check_authors_at_r(ctx: &DcfRuleContext<'_>, sink: &mut Vec<Diagnostic>) {
              and credit the rest with `aut` or `ctb`.",
         )),
     }
+}
+
+fn check_derived_maintainer(ctx: &DcfRuleContext<'_>, person: &Person, sink: &mut Vec<Diagnostic>) {
+    // Even an empty explicit field prevents R from using the derived value.
+    if ctx.document.field("Maintainer").is_some() || person.has_name() != Some(true) {
+        return;
+    }
+    let Some(email) = person
+        .email
+        .literals()
+        .iter()
+        .find(|email| !email.text.trim().is_empty())
+    else {
+        return;
+    };
+    // The regexp accepts any display name. Keep the brackets because R can
+    // match an address after another `<` inside the supplied email itself.
+    if is_valid_maintainer_field(&format!("<{}>", email.text.trim())) {
+        return;
+    }
+    sink.push(finding(
+        email.range,
+        format!(
+            "`{}` is a malformed email address for the derived `Maintainer`",
+            escape(email.text.trim()),
+        ),
+        "Supply an address R accepts, such as `email = \"name@example.com\"`. \
+         R uses the creator's first nonempty email to derive `Maintainer`.",
+    ));
 }
 
 /// The people carrying `cre`, or `None` when a computed role means arity cannot

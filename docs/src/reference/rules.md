@@ -2576,7 +2576,7 @@ Encoding: UTF-8
 
 Flag an `Authors@R` field R will not read the way its author meant it.
 
-`R CMD build` derives `Author` and `Maintainer` from this field, and the derivation is exacting: it needs a person with the `cre` role, a non-empty name, **and** an email. Without one it errors out—"Authors@R field gives no person with maintainer role, valid email address and non-empty name"—so `person("Jane", "Doe", role = c("aut", "cre"))` is a package that does not build.
+`R CMD build` derives `Author` and `Maintainer` from this field, and the derivation is exacting: it needs a person with the `cre` role, a non-empty name, **and** an email. Without one it errors out—"Authors@R field gives no person with maintainer role, valid email address and non-empty name"—so `person("Jane", "Doe", role = c("aut", "cre"))` is a package that does not build. When no explicit `Maintainer` field overrides it, R also checks the derived maintainer's address against its email regexp. The creator's first nonempty email supplies that address; malformed literal addresses are reported here.
 
 The rest of R's `.check_package_description_authors_at_R_field` is reported by the same rule: a field that is not R, or that holds a call R refuses to evaluate (only `person`, `as.person`, `c`, `list`, `paste`, and `paste0` are allowed); a person with no name or no role, who is credited nowhere at all; a role outside the MARC relator table, which `person()` silently drops; more than one `cre`, where R stores exactly one maintainer; and a malformed or duplicated ORCID iD or ROR ID. Both identifiers are self-validating—an ORCID carries a MOD 11-2 check digit—so no network is involved.
 
@@ -2603,6 +2603,23 @@ warning: description-authors-at-r
 3 | Authors@R: person("Jane", "Doe", role = c("aut", "cre"))
   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the package's `cre` has no email address, so R can derive no `Maintainer`
   = help: Add `email = "name@example.com"`. `R CMD build` needs a `cre` with a name and an address, and errors out without one.
+```
+
+A creator whose email produces a malformed `Maintainer`:
+
+```text
+Package: mypkg
+Version: 0.1.0
+Authors@R: person("Jane", "Doe", role = c("aut", "cre"), email = "invalid")
+```
+
+```text
+warning: description-authors-at-r
+ --> DESCRIPTION:3:66
+  |
+3 | Authors@R: person("Jane", "Doe", role = c("aut", "cre"), email = "invalid")
+  |                                                                  ^^^^^^^^^ `invalid` is a malformed email address for the derived `Maintainer`
+  = help: Supply an address R accepts, such as `email = "name@example.com"`. R uses the creator's first nonempty email to derive `Maintainer`.
 ```
 
 A person credited nowhere, because `person()` drops anyone with no role:

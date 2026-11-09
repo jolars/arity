@@ -211,7 +211,7 @@ const GATES: &[Gate] = &[
         backing: Backing::Signal,
         findings: Findings::All,
     },
-    // Thirteen signals, three checkers, two fields — the widest gate here, and
+    // Fourteen signals, three checkers, three fields — the widest gate here, and
     // presence-backed for the usual reason: most of them are logical flags, and
     // the ones that do name an offender name R's *formatted* person
     // (`Jane Doe <jane@example.com> [aut, cre]`), which is not text that appears
@@ -235,6 +235,7 @@ const GATES: &[Gate] = &[
     Gate {
         rule: "description-authors-at-r",
         signals: &[
+            "bad_maintainer",
             "bad_authors_at_R_field",
             "bad_authors_at_R_field_has_no_author",
             "bad_authors_at_R_field_has_no_valid_maintainer",
@@ -735,6 +736,55 @@ const PLANTED: &[(&str, &str)] = &[
         "authors-cre-without-email",
         "Package: testpkg\nVersion: 0.1.0\n\
          Authors@R: person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"))\n",
+    ),
+    (
+        "authors-cre-with-malformed-email",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Authors@R: person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), \
+         email = \"invalid\")\n",
+    ),
+    (
+        "authors-first-nonempty-email-is-malformed",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Authors@R: person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), \
+         email = c(NA, \" \", \"  invalid  \", \"jane@example.com\"))\n",
+    ),
+    (
+        "authors-only-first-nonempty-email-matters",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Authors@R: person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), \
+         email = c(\" \", \"  jane@example.com  \", \"invalid\"))\n",
+    ),
+    (
+        "authors-explicit-maintainer-overrides-malformed-email",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Maintainer: Jane Doe <jane@example.com>\n\
+         Authors@R: person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), \
+         email = \"invalid\")\n",
+    ),
+    (
+        "authors-contributor-email-is-not-validated",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Authors@R: c(person(\"Jane\", role = c(\"aut\", \"cre\"), \
+         email = \"jane@example.com\"), \
+         person(\"John\", role = \"ctb\", email = \"invalid\"))\n",
+    ),
+    (
+        "authors-derived-email-with-angle-brackets",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Authors@R: person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), \
+         email = '\"a<b\"@example')\n",
+    ),
+    (
+        "authors-derived-email-with-address-prefix",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Authors@R: person(\"Jane\", \"Doe\", role = c(\"aut\", \"cre\"), \
+         email = \"bad> <jane@example.com\")\n",
+    ),
+    (
+        "maintainer-quoted-local-part-with-angle-bracket",
+        "Package: testpkg\nVersion: 0.1.0\n\
+         Maintainer: Jane Doe <\"a<b\"@example.com>\n",
     ),
     (
         "authors-bad-orcid",

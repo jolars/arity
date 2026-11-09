@@ -22,6 +22,7 @@ mod description_text_format;
 mod description_title_format;
 mod description_unknown_field;
 mod description_version_constraint;
+mod maintainer;
 mod routine_registration;
 mod scalar_field;
 mod undeclared_dependency;
