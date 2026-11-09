@@ -27,6 +27,7 @@
 //! sharing a name, disambiguated by module path — never glob-import both.
 
 pub mod ast;
+pub mod collate;
 pub mod deps;
 pub mod parser;
 pub mod syntax;
