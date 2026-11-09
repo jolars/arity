@@ -674,10 +674,11 @@ Tier 1—pure grammar, R is the oracle, no new machinery. None takes a fix:
   broader CRAN/editorial clauses remain independently pinned because that R
   signal does not speak to them.
 
-- [ ] `description-date-format`. `Date`, if present, must be ISO 8601
+- [x] `description-date-format`. `Date`, if present, must be ISO 8601
   `yyyy-mm-dd`. Deliberately **not** porting CRAN's "over a month old" and
   "in the future" clauses: a lint whose result changes overnight with no edit
-  is a bad lint.
+  is a bad lint. Done; static calendar validation includes leap years, with
+  no autofix.
 
 - [ ] Extend `description-version-constraint` rather than adding a rule: it
   catches a missing or non-comparison operator but not an invalid version

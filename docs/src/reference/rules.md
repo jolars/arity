@@ -2449,6 +2449,30 @@ Title: Model Fitting
 Description: See <https://example.com> for details.
 ```
 
+### `description-date-format`
+
+Require the optional `Date` field to contain a valid calendar date in ISO 8601 `yyyy-mm-dd` form, with a four-digit year from 0000 to 9999, a two-digit month, and a two-digit day. Check month lengths and leap years as well as spelling. Missing or empty values are ignored.
+
+The date's age and whether it lies in the future are deliberately unchecked: lint results must not change overnight without an edit. No autofix is offered because choosing the intended date requires the author.
+
+This rule is **enabled by default**.
+
+A date with an ambiguous order:
+
+```text
+Package: mypkg
+Date: 09/11/2026
+```
+
+```text
+warning: description-date-format
+ --> DESCRIPTION:2:7
+  |
+2 | Date: 09/11/2026
+  |       ^^^^^^^^^^ `Date` must be a valid calendar date in `yyyy-mm-dd` form
+  = help: Write the intended date with a four-digit year and two-digit month and day.
+```
+
 ### `description-encoding`
 
 Flag text outside R's ISO-8859 byte set in a `DESCRIPTION` with no `Encoding` field, and non-ASCII text in fields R requires to be ASCII: `Package`, `Version`, `License`, and `Encoding`.

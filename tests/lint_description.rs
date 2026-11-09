@@ -2785,3 +2785,58 @@ fn description_title_matches_literal_package_names_case_insensitively() {
         );
     }
 }
+
+#[test]
+fn description_date_format_rejects_invalid_dates_without_a_fix() {
+    for date in [
+        "2026/11/09",
+        "2026-1-09",
+        "26-11-09",
+        "2026-11-9",
+        "2026-00-09",
+        "2026-13-09",
+        "2026-11-00",
+        "2026-04-31",
+        "2025-02-29",
+        "1900-02-29",
+        "2026-11-09T12:00:00",
+        "２０２６-11-09",
+        "2026-11-09\n    extra",
+    ] {
+        let text = format!("{COMPLETE_DESCRIPTION}Date: {date}\n");
+        let diagnostics =
+            check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+                .unwrap();
+        let hits: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.rule == "description-date-format")
+            .collect();
+        assert_eq!(hits.len(), 1, "{date:?}: {hits:?}");
+        assert!(hits[0].fix.is_none());
+        let start: usize = hits[0].range.start().into();
+        let end: usize = hits[0].range.end().into();
+        assert_eq!(&text[start..end], date);
+    }
+}
+
+#[test]
+fn description_date_format_accepts_valid_dates_without_reading_the_clock() {
+    for date in [
+        "2000-02-29",
+        "2024-02-29",
+        "2026-04-30",
+        "1900-02-28",
+        "0000-01-01",
+        "0001-01-01",
+        "9999-12-31",
+        "2026-11-09",
+    ] {
+        assert!(
+            !ids(&format!("{COMPLETE_DESCRIPTION}Date: {date}\r\n"))
+                .contains(&"description-date-format"),
+            "{date}"
+        );
+    }
+    assert!(!ids(COMPLETE_DESCRIPTION).contains(&"description-date-format"));
+    assert!(!ids(&format!("{COMPLETE_DESCRIPTION}Date:\n")).contains(&"description-date-format"));
+}
