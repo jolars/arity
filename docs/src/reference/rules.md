@@ -2347,6 +2347,44 @@ warning: description-malformed-maintainer
   = help: Quote the name (`"Doe, Jane" <jane@example.com>`), so the comma does not read as a second maintainer.
 ```
 
+### `description-title-format`
+
+Check the package `Title` field: it must occupy one physical line, contain at most 65 Unicode characters, and avoid a trailing period unless R's `et al.` or space-prefixed `...` exception applies. R accepts those exceptions anywhere in the title.
+
+The title must not equal the package name or begin with that name followed by a space or colon (case-insensitively), matching CRAN's redundancy check. The usethis placeholder `What the package does...` must be replaced. These findings are report-only because choosing title wording requires the author's judgment.
+
+This rule is **enabled by default**.
+
+A title ending in a period:
+
+```text
+Package: mypkg
+Title: Model Fitting.
+```
+
+```text
+warning: description-title-format
+ --> DESCRIPTION:2:21
+  |
+2 | Title: Model Fitting.
+  |                     ^ the `Title` field must not end in a period
+```
+
+A title repeating the package name:
+
+```text
+Package: mypkg
+Title: mypkg: Model Fitting
+```
+
+```text
+warning: description-title-format
+ --> DESCRIPTION:2:8
+  |
+2 | Title: mypkg: Model Fitting
+  |        ^^^^^^^^^^^^^^^^^^^^ the `Title` field redundantly repeats the package name
+```
+
 ### `description-text-format`
 
 Check the package `Description` field against R's sentence-level and CRAN's lexical conventions. The text must begin with a capital and end in `.`, `!`, or `?` (optionally followed by one quote or closing parenthesis). It must not begin by repeating the package name or Title, or with `This package`, `Functions for`, `The package`, `A package`, `In this package`, or `In the package`.

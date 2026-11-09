@@ -214,6 +214,14 @@ const GATES: &[Gate] = &[
         backing: Backing::Signal,
         findings: Findings::All,
     },
+    // R's signal covers final punctuation; the source-line, length, and
+    // editorial checks have separate regression tests.
+    Gate {
+        rule: "description-title-format",
+        signals: &["bad_Title"],
+        backing: Backing::Signal,
+        findings: Findings::MessageContains("must not end in a period"),
+    },
     // `bad_Description` backs exactly the final-punctuation clause. The rule's
     // remaining clauses come from CRAN's incoming checks and DESCRIPTION prose
     // conventions, so requiring this one coarse signal for those findings
@@ -230,7 +238,6 @@ const GATES: &[Gate] = &[
 /// earmarked for. Listing them is the point: this is the work-list, and moving
 /// one into [`GATES`] is what "the rule landed" means.
 const PLANNED: &[(&str, &str)] = &[
-    ("bad_Title", "description-title-format"),
     // `bad_authors_at_R_field_*` is otherwise gated; these three are the ones
     // `description-authors-at-r` deliberately leaves to R.
     //
@@ -581,6 +588,18 @@ const PLANTED: &[(&str, &str)] = &[
     (
         "bad-title-trailing-period",
         "Package: testpkg\nVersion: 0.1.0\nTitle: A Title Ending In A Period.\n",
+    ),
+    (
+        "title-period-exceptions",
+        "Package: testpkg\nVersion: 0.1.0\nTitle: Models of Smith et al. Revisited.\n",
+    ),
+    (
+        "title-ellipsis-exception",
+        "Package: testpkg\nVersion: 0.1.0\nTitle: Models ... Revisited.\n",
+    ),
+    (
+        "title-unspaced-ellipsis",
+        "Package: testpkg\nVersion: 0.1.0\nTitle: Models...\n",
     ),
     (
         "bad-description-no-final-punctuation",

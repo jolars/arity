@@ -2684,3 +2684,104 @@ fn a_lone_description_is_silent() {
     .expect("linting should not error");
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
+
+fn titled_as(title: &str) -> String {
+    COMPLETE_DESCRIPTION.replace("Title: A Test Package", &format!("Title: {title}"))
+}
+
+#[test]
+fn description_title_rejects_each_defect_without_a_fix() {
+    for (title, message) in [
+        ("Model\n    Fitting", "continuation"),
+        ("Model Fitting.", "period"),
+        (&"é".repeat(66), "65"),
+        ("TESTPKG", "package name"),
+        ("Testpkg: Model Fitting", "package name"),
+        ("testpkg Model Fitting", "package name"),
+        ("What the package does...", "placeholder"),
+    ] {
+        let text = titled_as(title);
+        let diagnostics =
+            check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+                .unwrap();
+        let hits: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.rule == "description-title-format")
+            .collect();
+        assert!(
+            hits.iter().any(|d| d.message.body.contains(message)),
+            "{title:?}: {hits:?}"
+        );
+        assert!(hits.iter().all(|d| d.fix.is_none()));
+    }
+}
+
+#[test]
+fn description_title_accepts_valid_titles_and_r_period_exceptions() {
+    for title in [
+        "Model Fitting",
+        "Models of Smith et al.",
+        "Models ...",
+        "Models ... With More.",
+        "Methods of Smith et al. Revisited.",
+        "testpkgExtra Models",
+        "testpkg.models",
+        "Models for testpkg",
+        &"é".repeat(65),
+    ] {
+        assert!(
+            messages(&titled_as(title), "description-title-format").is_empty(),
+            "{title:?}"
+        );
+    }
+    // R's exception needs whitespace before the ellipsis, or between `et` and `al.`.
+    for title in ["Models...", "Models etal."] {
+        assert!(!messages(&titled_as(title), "description-title-format").is_empty());
+    }
+}
+
+#[test]
+fn description_title_spans_survive_comments_crlf_and_unicode() {
+    let text = titled_as("Café\r\n# Interleaved comment.\r\n    Models.");
+    let diagnostics =
+        check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+            .unwrap();
+    let hits: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.rule == "description-title-format")
+        .collect();
+    assert_eq!(hits.len(), 2);
+    let spans: Vec<_> = hits
+        .iter()
+        .map(|d| &text[usize::from(d.range.start())..usize::from(d.range.end())])
+        .collect();
+    assert_eq!(spans, ["Models.", "."]);
+}
+
+#[test]
+fn description_title_ignores_missing_and_empty_values() {
+    for text in [
+        COMPLETE_DESCRIPTION.replace("Title: A Test Package\n", ""),
+        titled_as(""),
+    ] {
+        assert!(messages(&text, "description-title-format").is_empty());
+    }
+}
+
+#[test]
+fn description_title_matches_literal_package_names_case_insensitively() {
+    for (name, title, expected) in [
+        ("my.pkg", "MY.PKG: Models", true),
+        ("my.pkg", "myXpkg: Models", false),
+        ("café", "CAFÉ: Models", true),
+        ("café", "CAFÉ", true),
+        ("testpkg", "TESTPKG\tModels", true),
+    ] {
+        let text = titled_as(title).replace("Package: testpkg", &format!("Package: {name}"));
+        assert_eq!(
+            !messages(&text, "description-title-format").is_empty(),
+            expected,
+            "{name}: {title}",
+        );
+    }
+}

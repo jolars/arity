@@ -229,6 +229,7 @@ fn packaging_rules() -> Vec<AnyRule> {
         AnyRule::Dcf(Box::new(packaging::DescriptionMalformedName)),
         AnyRule::Dcf(Box::new(packaging::DescriptionMalformedVersion)),
         AnyRule::Dcf(Box::new(packaging::DescriptionMalformedMaintainer)),
+        AnyRule::Dcf(Box::new(packaging::DescriptionTitleFormat)),
         AnyRule::Dcf(Box::new(packaging::DescriptionTextFormat)),
         AnyRule::Dcf(Box::new(packaging::DescriptionEncoding)),
         AnyRule::Dcf(Box::new(packaging::DescriptionAuthorsAtR)),

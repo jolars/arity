@@ -648,12 +648,16 @@ Tier 1—pure grammar, R is the oracle, no new machinery. None takes a fix:
   the missing `Maintainer`; regression cases cover names, roles, empty people,
   email presence, multiple creators, explicit fields, and computed values.
 
-- [ ] `description-title-format`. The parts R and CRAN actually enforce: no
+- [x] `description-title-format`. The parts R and CRAN actually enforce: no
   continuation lines (R-exts says Title *cannot* have any, and
   `Field::value_lines` makes that a one-liner), no trailing period with R's
   own `et al.`/`...` carve-out, no more than 65 Unicode characters (package
   listings may truncate beyond that), Title equal to or redundantly containing
   the package name, and the `usethis` placeholder `What the package does...`.
+  Shipped as a default-on packaging warning without fixes. Redundancy follows
+  CRAN: the name alone or a name prefix followed by a space or colon. The
+  punctuation clause is gated against R; Unicode length, physical lines,
+  placeholder text, and diagnostic spans have dedicated regression tests.
 
 - [x] `description-text-format` (packaging; syn; safe fix, default on). On the
   `Description` field: must end in
