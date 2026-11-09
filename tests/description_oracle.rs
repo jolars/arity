@@ -525,6 +525,26 @@ const PLANTED: &[(&str, &str)] = &[
         "Package: testpkg\nVersion: 0.1.0\nDepends: R (>= r12345)\n",
     ),
     (
+        "dep-version-single-component",
+        "Package: testpkg\nVersion: 0.1.0\nImports: dplyr (>= 1)\n",
+    ),
+    (
+        "dep-version-empty-component",
+        "Package: testpkg\nVersion: 0.1.0\nSuggests: dplyr (>= 1..0)\n",
+    ),
+    (
+        "dep-package-svn-revision",
+        "Package: testpkg\nVersion: 0.1.0\nImports: dplyr (>= r12345)\n",
+    ),
+    (
+        "dep-r-invalid-version",
+        "Package: testpkg\nVersion: 0.1.0\nDepends: R (>= latest)\n",
+    ),
+    (
+        "dep-version-mixed-separators",
+        "Package: testpkg\nVersion: 0.1.0\nImports: dplyr (>= 1.2-3)\n",
+    ),
+    (
         "dep-bad-name",
         "Package: testpkg\nVersion: 0.1.0\nImports: 3dplyr\n",
     ),

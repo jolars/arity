@@ -2105,11 +2105,11 @@ warning: description-unknown-field
 
 ### `description-version-constraint`
 
-Flag a dependency entry whose parenthesized part is not a version constraint.
+Flag a dependency entry whose parenthesized part is not a version constraint or compares against an invalid version string.
 
 R reads `pkg (>= 1.0.0)`: an operator and a version. Anything else—`dplyr (1.0.0)`, `dplyr (>=)`, `dplyr (latest)`—states no bound at all, and R's dependency check enforces nothing. The line reads as a requirement and behaves as none, so the package installs against exactly the versions its author meant to exclude.
 
-Checked in all five dependency fields, `R` included: `Depends: R (>= 4.1)` is the most common constraint in any `DESCRIPTION`.
+Checked in all five dependency fields, `R` included: `Depends: R (>= 4.1)` is the most common constraint in any `DESCRIPTION`. Versions must contain at least two runs of ASCII digits separated by dots or hyphens, such as `1.0` or `1.2-3`. SVN revisions such as `r12345` are allowed only for `Depends: R`. Values such as `latest`, `v1.0`, and `1..0` are invalid.
 
 There is no autofix. `dplyr (1.0.0)` most likely means `>=`, but it could mean `==` or `>`, and guessing would invent a requirement the author never wrote.
 
@@ -2136,6 +2136,22 @@ warning: description-version-constraint
 3 | Imports: dplyr (1.0.0)
   |          ^^^^^^^^^^^^^ the version constraint on `dplyr` states no bound, so R enforces nothing here
   = help: Write a comparison operator and a version, as in `(>= 1.0.0)`.
+```
+
+A comparison against an invalid version:
+
+```text
+Package: mypkg
+Imports: dplyr (>= latest)
+```
+
+```text
+warning: description-version-constraint
+ --> DESCRIPTION:2:10
+  |
+2 | Imports: dplyr (>= latest)
+  |          ^^^^^^^^^^^^^^^^^ the version constraint on `dplyr` uses an invalid version `latest`
+  = help: Use a numeric version such as `1.0` or `1.2-3`.
 ```
 
 ### `description-package-in-multiple-fields`

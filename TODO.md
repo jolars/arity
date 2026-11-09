@@ -680,10 +680,11 @@ Tier 1—pure grammar, R is the oracle, no new machinery. None takes a fix:
   is a bad lint. Done; static calendar validation includes leap years, with
   no autofix.
 
-- [ ] Extend `description-version-constraint` rather than adding a rule: it
+- [x] Extend `description-version-constraint` rather than adding a rule: it
   catches a missing or non-comparison operator but not an invalid version
   *string* (`dplyr (>= latest)`). Note R's special case allowing `r12345` svn
-  revisions, but only for `Depends: R`.
+  revisions, but only for `Depends: R`. Done; reuses numeric version
+  validation, checks all parsed bounds, and reports without an autofix.
 
 Tier 2—needs a small bundled table or the project layer:
 

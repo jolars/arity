@@ -948,6 +948,102 @@ fn version_constraint_spans_the_whole_entry() {
     assert_eq!(&text[start..end], "dplyr (1.0.0)");
 }
 
+#[test]
+fn version_constraint_rejects_invalid_versions() {
+    for field in ["Depends", "Imports", "Suggests", "LinkingTo", "Enhances"] {
+        for version in [
+            "latest", "1", "v1.0", "1..0", "1.0-", "1.0rc1", "1. 0", "１.０",
+        ] {
+            for op in [">=", ">", "<=", "<", "==", "!="] {
+                let text = format!("{COMPLETE_DESCRIPTION}{field}: dplyr ({op} {version})\n");
+                let findings = check_description_document(
+                    Path::new("DESCRIPTION"),
+                    &text,
+                    &LintConfig::default(),
+                )
+                .expect("linting should not error");
+                let hits: Vec<_> = findings
+                    .iter()
+                    .filter(|d| d.rule == "description-version-constraint")
+                    .collect();
+                assert_eq!(hits.len(), 1, "{field}: dplyr ({op} {version})");
+                assert!(hits[0].fix.is_none());
+                assert!(hits[0].message.body.contains("invalid version"));
+            }
+        }
+    }
+}
+
+#[test]
+fn version_constraint_accepts_numeric_versions() {
+    for version in [
+        "1.0",
+        "1.2-3",
+        "0.01.002",
+        "1-2.3-4.5",
+        "123456789012345678901234567890.0",
+    ] {
+        let text = format!("{COMPLETE_DESCRIPTION}Imports: dplyr (>= {version})\n");
+        assert!(
+            !ids(&text).contains(&"description-version-constraint"),
+            "{version}"
+        );
+    }
+}
+
+#[test]
+fn version_constraint_allows_svn_revisions_only_for_depends_r() {
+    for field in ["Depends", "Imports", "Suggests", "LinkingTo", "Enhances"] {
+        for name in ["R", "Rcpp", "dplyr"] {
+            for version in ["r12345", "r0", "r", "R12345", "r123.45", "r１２３"] {
+                let text = format!("{COMPLETE_DESCRIPTION}{field}: {name} (>= {version})\n");
+                let valid = field == "Depends" && name == "R" && matches!(version, "r12345" | "r0");
+                assert_eq!(
+                    ids(&text).contains(&"description-version-constraint"),
+                    !valid,
+                    "{field}: {name} (>= {version})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn version_constraint_checks_every_parsed_bound_once_per_entry() {
+    for constraints in [">= 1.0, < latest", ">= latest, < 2.0", ">= latest, < nope"] {
+        let text = format!("{COMPLETE_DESCRIPTION}Imports: dplyr ({constraints})\n");
+        let findings =
+            check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+                .expect("linting should not error");
+        assert_eq!(
+            findings
+                .iter()
+                .filter(|d| d.rule == "description-version-constraint")
+                .count(),
+            1,
+            "{constraints}"
+        );
+    }
+    let text = format!("{COMPLETE_DESCRIPTION}Imports: dplyr (>= 1.0, < 2.0)\n");
+    assert!(!ids(&text).contains(&"description-version-constraint"));
+}
+
+#[test]
+fn version_constraint_invalid_version_spans_entry_across_crlf_continuation() {
+    let text = format!(
+        "{COMPLETE_DESCRIPTION}Imports:\r\n    dplyr (>=\r\n    latest), rlang (>= 1.0)\r\n"
+    );
+    let findings =
+        check_description_document(Path::new("DESCRIPTION"), &text, &LintConfig::default())
+            .expect("linting should not error");
+    let hits: Vec<_> = findings
+        .iter()
+        .filter(|d| d.rule == "description-version-constraint")
+        .collect();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(&text[hits[0].range], "dplyr (>=\r\n    latest)");
+}
+
 // ---------------------------------------------------------------------------
 // description-package-in-multiple-fields
 // ---------------------------------------------------------------------------

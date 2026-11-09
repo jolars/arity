@@ -180,7 +180,7 @@ fn declares_base_priority(ctx: &DcfRuleContext<'_>) -> bool {
 /// The separator is consumed inside the loop and the final digit run falls out
 /// of it, which is what encodes the two-component floor: reaching the end of the
 /// string having seen no separator means the repeated group never matched.
-fn is_valid_package_version(version: &str) -> bool {
+pub(super) fn is_valid_package_version(version: &str) -> bool {
     let mut rest = version;
     let mut separators = 0usize;
     loop {
