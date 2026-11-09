@@ -2936,3 +2936,154 @@ fn description_date_format_accepts_valid_dates_without_reading_the_clock() {
     assert!(!ids(COMPLETE_DESCRIPTION).contains(&"description-date-format"));
     assert!(!ids(&format!("{COMPLETE_DESCRIPTION}Date:\n")).contains(&"description-date-format"));
 }
+
+// ---------------------------------------------------------------------------
+// description-license
+// ---------------------------------------------------------------------------
+
+fn licensed_as(license: &str) -> String {
+    COMPLETE_DESCRIPTION.replace(
+        "License: MIT + file LICENSE",
+        &format!("License: {license}"),
+    )
+}
+
+fn license_findings(text: &str) -> Vec<arity::linter::Diagnostic> {
+    check_description_document(Path::new("DESCRIPTION"), text, &LintConfig::default())
+        .unwrap()
+        .into_iter()
+        .filter(|d| d.rule == "description-license")
+        .collect()
+}
+
+#[test]
+fn description_license_accepts_r_license_specifications() {
+    for license in [
+        "GPL-2",
+        "GPL-3 | file LICENCE",
+        "MIT+file LICENSE",
+        "BSD_2_clause + file LICENCE",
+        "GPL (>= 2) | BSD_3_clause + file LICENSE",
+        "LGPL (>= 2.0, < 3) | Mozilla Public License",
+        "Artistic-2.0 | AGPL-3 + file LICENSE",
+        "Apache License (== 2.0)",
+        "Apache License Version 2.0",
+        "GNU General Public License version 2",
+        "LGPL (== 2-1)",
+        "GPL (!= 2)",
+        "GPL (<= 2.0)",
+        "GPL (> 2, < 4)",
+        "MPL-2.0",
+        "CeCILL-2.1",
+        "CECILL-2.1",
+        "CC BY-NC-SA 4.0",
+        "CC0",
+        "Zlib",
+        "FreeBSD",
+        "BSL-1.0",
+        "file LICENSE",
+        "file LICENCE",
+        "Unlimited",
+        "GPL\t( >= 2,\n    < 4 ) |\n    MIT + file LICENSE",
+    ] {
+        assert!(
+            license_findings(&licensed_as(license)).is_empty(),
+            "{license}"
+        );
+    }
+    for text in ["Package: testpkg\n", "Package: testpkg\nLicense:  \n"] {
+        assert!(license_findings(text).is_empty());
+    }
+}
+
+#[test]
+fn description_license_reports_unknown_or_malformed_components_without_a_fix() {
+    for license in [
+        "Public domain",
+        "GPL-4",
+        "Apache-2.0",
+        "mit",
+        "MIT (>= 1)",
+        "GPL (>= 99)",
+        "GPL (>= 3, < 3)",
+        "GPL (=> 2)",
+        "GPL (>= latest)",
+        "GPL (>= 1..0)",
+        "GPL (2)",
+        "GPL (>= 2,)",
+        "file license",
+        "MIT + LICENSE",
+        "MIT + file LICENSE + file LICENCE",
+        "Unlimited + file LICENSE",
+        "GPL 2.0 + file LICENSE",
+        "GPL, BSD",
+    ] {
+        let text = licensed_as(license);
+        let findings = license_findings(&text);
+        assert_eq!(findings.len(), 1, "{license}: {findings:?}");
+        assert!(findings[0].fix.is_none(), "{license}");
+        assert_eq!(
+            &text[usize::from(findings[0].range.start())..usize::from(findings[0].range.end())],
+            license,
+        );
+    }
+    for license in ["| GPL-2", "GPL-2 || MIT", "GPL-2 |"] {
+        assert_eq!(
+            license_findings(&licensed_as(license)).len(),
+            1,
+            "{license}"
+        );
+    }
+}
+
+#[test]
+fn description_license_fixes_only_exact_r_legacy_mappings() {
+    for (before, after) in [
+        ("GPL 2.0", "GPL-2"),
+        ("GPL version 2 or later", "GPL (>= 2)"),
+        ("Artistic 2.0", "Artistic-2.0"),
+        ("GPL or LGPL by your choice", "GPL | LGPL"),
+        ("Unlimited use and distribution.", "Unlimited"),
+        ("GPL 2.0 | MIT", "GPL-2 | MIT"),
+        ("GPL 2.0 | Artistic 2.0", "GPL-2 | Artistic-2.0"),
+    ] {
+        let text = licensed_as(before);
+        let findings = license_findings(&text);
+        assert!(!findings.is_empty(), "{before}");
+        let fixes: Vec<_> = findings.iter().map(|d| d.fix.clone().unwrap()).collect();
+        assert!(
+            fixes
+                .iter()
+                .all(|f| f.applicability == arity::linter::Applicability::Safe)
+        );
+        assert_eq!(apply_fixes(&text, &fixes, false).output, licensed_as(after));
+    }
+    for license in ["gpl 2.0", "GPL v99", "GPL  2.0"] {
+        let findings = license_findings(&licensed_as(license));
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].fix.is_none());
+    }
+}
+
+#[test]
+fn description_license_fixed_output_is_parseable_and_clean() {
+    for text in [
+        licensed_as("GPL 2.0"),
+        licensed_as("GPL 2.0 | Artistic 2.0").replace('\n', "\r\n"),
+        licensed_as("GPL-3 |\r\n# Keep this comment.\r\n    GPL 2.0  |\r\n    file LICENCE")
+            .replace("A Test Package", "A Café Package"),
+    ] {
+        let findings = license_findings(&text);
+        assert!(!findings.is_empty());
+        let fixes: Vec<_> = findings.iter().map(|d| d.fix.clone().unwrap()).collect();
+        let fixed = apply_fixes(&text, &fixes, false).output;
+        let expected = text
+            .replace("GPL 2.0", "GPL-2")
+            .replace("Artistic 2.0", "Artistic-2.0");
+        assert_eq!(fixed, expected);
+        let parsed = arity::dcf::parse(&fixed);
+        assert!(parsed.diagnostics.is_empty(), "{fixed}");
+        assert_eq!(parsed.cst.text().to_string(), fixed);
+        assert!(license_findings(&fixed).is_empty());
+    }
+}

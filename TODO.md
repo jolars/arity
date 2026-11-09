@@ -688,13 +688,12 @@ Tier 1—pure grammar, R is the oracle, no new machinery. None takes a fix:
 
 Tier 2—needs a small bundled table or the project layer:
 
-- [ ] `description-license`. Validate the spec grammar (`|` alternatives,
-  `+ file LICENSE`, version restrictions, `file LICENCE`, `Unlimited`)
-  against R's license db, which is ~50 stable entries and bundles like the
-  CRAN symbol lists already do. The payoff:
-  `tools:::.standardizable_license_specs_db` is an exact
-  `"GPL 2.0" -> "GPL-2"` mapping table, making this the only rule in the set
-  with a genuinely **safe autofix**.
+- [x] `description-license` (packaging; syn; safe fix, default on). Validate
+  the spec grammar (`|` alternatives, `+ file LICENSE`, version restrictions,
+  `file LICENCE`, `Unlimited`) against R's bundled license database. Done;
+  bundled names, versions, and exact legacy mappings validate specifications
+  statically. Fixes require a valid mapped target and preserve license file
+  pointers; other findings are report-only.
 
 - [x] `description-encoding` (packaging; syn; safe fix, default on). Text outside
   R's byte-level ISO-8859 set with no `Encoding` field (`missing_encoding`), and

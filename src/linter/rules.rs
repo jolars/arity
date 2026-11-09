@@ -232,6 +232,7 @@ fn packaging_rules() -> Vec<AnyRule> {
         AnyRule::Dcf(Box::new(packaging::DescriptionTitleFormat)),
         AnyRule::Dcf(Box::new(packaging::DescriptionTextFormat)),
         AnyRule::Dcf(Box::new(packaging::DescriptionDateFormat)),
+        AnyRule::Dcf(Box::new(packaging::DescriptionLicense)),
         AnyRule::Dcf(Box::new(packaging::DescriptionEncoding)),
         AnyRule::Dcf(Box::new(packaging::DescriptionAuthorsAtR)),
         AnyRule::Dcf(Box::new(packaging::DescriptionEmptyPerson)),

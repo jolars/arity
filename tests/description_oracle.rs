@@ -47,6 +47,58 @@ use std::process::{Command, Stdio};
 use arity::config::LintConfig;
 use arity::linter::check_description_document;
 
+/// License validation is a separate tools API, rather than a component of
+/// `.check_package_description`. Exercise every database name and legacy
+/// mapping, including restrictions whose expansion contains no known version.
+#[test]
+#[ignore = "R license database oracle; run via `task description-oracle`"]
+fn description_license_matches_r_license_database() {
+    let Some(rscript) = locate_rscript() else {
+        eprintln!("license-oracle: Rscript not found; skipping.");
+        return;
+    };
+    let output = Command::new(rscript)
+        .arg("--vanilla")
+        .arg(manifest_path("tests/oracle/license_oracle.R"))
+        .output()
+        .expect("run the R license oracle");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = String::from_utf8(output.stdout).unwrap();
+    let mut checked = 0;
+    for line in report.lines() {
+        let mut columns = line.splitn(3, '\t');
+        let canonical = columns.next().unwrap() == "1";
+        let replacement = columns.next().unwrap();
+        let spec = columns.next().unwrap();
+        let source = format!("Package: testpkg\nLicense: {spec}\n");
+        let findings: Vec<_> =
+            check_description_document(Path::new("DESCRIPTION"), &source, &LintConfig::default())
+                .unwrap()
+                .into_iter()
+                .filter(|d| d.rule == "description-license")
+                .collect();
+        assert_eq!(findings.is_empty(), canonical, "{spec}: {findings:?}");
+        if !canonical && !replacement.is_empty() {
+            let fixes: Vec<_> = findings.iter().filter_map(|d| d.fix.clone()).collect();
+            assert_eq!(
+                arity::linter::apply_fixes(&source, &fixes, false).output,
+                format!("Package: testpkg\nLicense: {replacement}\n"),
+                "{spec}",
+            );
+        }
+        checked += 1;
+    }
+    assert!(
+        checked > 500,
+        "license oracle exercised only {checked} cases"
+    );
+    eprintln!("license-oracle: {checked} specifications checked.");
+}
+
 /// A rule arity ships, and the signals that justify its findings.
 ///
 /// The check is containment, not equality: arity must not report what R

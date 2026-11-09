@@ -2489,6 +2489,53 @@ warning: description-date-format
   = help: Write the intended date with a four-digit year and two-digit month and day.
 ```
 
+### `description-license`
+
+Validate `License` against R's bundled license database. Accept license names and abbreviations, supported versions and version restrictions, `|` alternatives, `+ file LICENSE` or `+ file LICENCE`, standalone file pointers, and `Unlimited`. Version restrictions must select at least one version in the database. Missing or empty fields are left to `description-missing-field`.
+
+Exact legacy spellings from R's standardization table, such as `GPL 2.0`, have a safe fix when their replacement is valid. Other unknown or malformed components have no autofix because choosing a license requires the author. This rule checks the specification, not license file existence, file contents, or whether additional terms are legally permitted.
+
+This rule is **enabled by default**.
+
+An exact legacy spelling with a standard replacement:
+
+```text
+Package: mypkg
+License: GPL 2.0
+```
+
+```text
+warning: description-license
+ --> DESCRIPTION:2:10
+  |
+2 | License: GPL 2.0
+  |          ^^^^^^^ `GPL 2.0` is a nonstandard license specification
+  = help: Use `GPL-2`.
+```
+
+After applying the fix:
+
+```text
+Package: mypkg
+License: GPL-2
+```
+
+A version restriction that selects no known license:
+
+```text
+Package: mypkg
+License: GPL (>= 99)
+```
+
+```text
+warning: description-license
+ --> DESCRIPTION:2:10
+  |
+2 | License: GPL (>= 99)
+  |          ^^^^^^^^^^^ `GPL (>= 99)` is not a valid R license specification
+  = help: Use a license specification from R's license database or a `file LICENSE` pointer.
+```
+
 ### `description-encoding`
 
 Flag text outside R's ISO-8859 byte set in a `DESCRIPTION` with no `Encoding` field, and non-ASCII text in fields R requires to be ASCII: `Package`, `Version`, `License`, and `Encoding`.
