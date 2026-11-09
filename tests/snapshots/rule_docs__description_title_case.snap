@@ -1,0 +1,45 @@
+---
+source: tests/rule_docs.rs
+expression: render_rule_doc(&rule)
+---
+### `description-title-case`
+
+Check English package titles against [R's `tools::toTitleCase()`](https://search.r-project.org/R/refmans/tools/html/toTitleCase.html), with CRAN's additional exemption for single-quoted software names. R's stopwords, technical terms, mixed-case names, and capitalization after punctuation determine the suggested title.
+
+This rule is **off by default** because technical names and editorial choices often need exceptions. Enable it with `--select description-title-case`. It checks titles when `Language` is absent, `en`, or starts with `en-`. Missing or empty titles and titles equal to the package name are left to other rules, matching CRAN's gating.
+
+There is no autofix: the author must decide which capitalization suits the package and its software names.
+
+This rule is **disabled by default**; enable it with `select`.
+
+Capitalize principal words while preserving stopwords:
+
+```text
+Package: mypkg
+Title: Statistical methods for data analysis
+```
+
+```text
+warning: description-title-case
+ --> DESCRIPTION:2:8
+  |
+2 | Title: Statistical methods for data analysis
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Title` field should use English title case
+  = help: Consider: Statistical Methods for Data Analysis
+```
+
+Preserve the spelling of quoted software names:
+
+```text
+Package: mypkg
+Title: fitting models with 'mixed-effects software'
+```
+
+```text
+warning: description-title-case
+ --> DESCRIPTION:2:8
+  |
+2 | Title: fitting models with 'mixed-effects software'
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Title` field should use English title case
+  = help: Consider: Fitting Models with 'mixed-effects software'
+```

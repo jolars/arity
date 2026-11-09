@@ -818,6 +818,114 @@ fn authors_at_r_required_supports_its_own_suppression() {
 }
 
 // ---------------------------------------------------------------------------
+// description-title-case
+// ---------------------------------------------------------------------------
+
+fn title_case_findings(source: &str) -> Vec<arity::linter::Diagnostic> {
+    let config = LintConfig {
+        select: Some(vec!["description-title-case".to_string()]),
+        ..LintConfig::default()
+    };
+    check_description_document(Path::new("DESCRIPTION"), source, &config).unwrap()
+}
+
+#[test]
+fn description_title_case_reports_without_a_fix_and_is_off_by_default() {
+    let source = "Package: testpkg\nTitle: Statistical methods for data analysis\n";
+    assert!(!ids(source).contains(&"description-title-case"));
+    let findings = title_case_findings(source);
+    assert_eq!(findings.len(), 1);
+    let finding = &findings[0];
+    assert_eq!(finding.rule, "description-title-case");
+    assert_eq!(finding.severity, arity::linter::Severity::Warning);
+    assert!(finding.fix.is_none());
+    assert_eq!(
+        finding.message.suggestion.as_deref(),
+        Some("Consider: Statistical Methods for Data Analysis")
+    );
+    assert_eq!(
+        &source[usize::from(finding.range.start())..usize::from(finding.range.end())],
+        "Statistical methods for data analysis"
+    );
+}
+
+#[test]
+fn description_title_case_respects_language_missing_values_and_package_names() {
+    for source in [
+        "",
+        "# Only a comment.\n",
+        "Package: testpkg\n",
+        "Title:   \n",
+        "Package: testpkg\nTitle: testpkg\n",
+        "Package: TestPkg\nTitle: TESTPKG\n",
+        "Title: un titre en français\nLanguage: fr\n",
+        "Title: deutsche statistik\nLanguage: de,en\n",
+        "Title: deutsche statistik\nLanguage: \n",
+        "Title: A Test Package\n",
+        "Title: Models for 'mixed-effects software' with LaTeX\n",
+    ] {
+        assert!(title_case_findings(source).is_empty(), "{source}");
+    }
+    for language in ["en", "en-US", "en-GB"] {
+        let source = format!("Title: statistical methods\nLanguage: {language}\n");
+        assert_eq!(title_case_findings(&source).len(), 1, "{source}");
+    }
+}
+
+#[test]
+fn description_title_case_preserves_spans_across_unicode_comments_and_crlf() {
+    let source = "# Metadata.\r\nTitle: Über die\r\n# A comment.\r\n    straße\r\n";
+    let findings = title_case_findings(source);
+    assert_eq!(findings.len(), 1);
+    let finding = &findings[0];
+    assert_eq!(
+        finding.message.suggestion.as_deref(),
+        Some("Consider: Über Die Straße")
+    );
+    assert_eq!(
+        &source[usize::from(finding.range.start())..usize::from(finding.range.end())],
+        "Über die\r\n# A comment.\r\n    straße"
+    );
+}
+
+#[test]
+fn description_title_case_supports_suppression() {
+    let source = "# arity-lint skip description-title-case: deliberate capitalization\nTitle: statistical methods\n";
+    assert!(title_case_findings(source).is_empty());
+}
+
+#[test]
+fn description_title_case_matches_pinned_r_titles() {
+    let corpus: serde_json::Value =
+        serde_json::from_str(include_str!("oracle/description-title-case.json")).unwrap();
+    let cases = corpus["cases"].as_array().unwrap();
+    assert!(
+        cases
+            .iter()
+            .filter(|case| case["origin"].as_str().unwrap().starts_with("CRAN/"))
+            .count()
+            >= 100
+    );
+    for case in cases {
+        let title = case["title"].as_str().unwrap();
+        let expected = case["expected"].as_str().unwrap();
+        let source = format!("Package: testpkg\nTitle: {title}\n");
+        let findings = title_case_findings(&source);
+        if title == expected {
+            assert!(findings.is_empty(), "{case}: {findings:?}");
+        } else {
+            assert_eq!(findings.len(), 1, "{case}: {findings:?}");
+            assert_eq!(
+                findings[0].message.suggestion,
+                Some(format!("Consider: {expected}")),
+                "{case}"
+            );
+            assert!(findings[0].fix.is_none());
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // description-missing-field
 // ---------------------------------------------------------------------------
 

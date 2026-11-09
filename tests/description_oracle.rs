@@ -4,8 +4,9 @@
 //! the Packaging rules are pinned against the code that actually decides —
 //! `tools:::.check_package_description(strict = TRUE)`, the `Authors@R` checker
 //! at its strict tier, the `duplicates` half of `.check_package_description2`,
-//! and the version, `Maintainer`, and `Author` components of
-//! `.check_package_CRAN_incoming`. The last
+//! and the version, `Maintainer`, `Author`, and title-case components of
+//! `.check_package_CRAN_incoming`. The title-case clause runs independently
+//! through `tools::toTitleCase` so unrelated missing fields cannot abort it. The last
 //! two are cherry-picked rather than taken whole, because most of what those
 //! checkers report is about files, URLs, network state, and installed packages,
 //! which a text-only oracle has no business simulating. The driver is
@@ -46,6 +47,29 @@ use std::process::{Command, Stdio};
 
 use arity::config::LintConfig;
 use arity::linter::check_description_document;
+
+/// The ordinary DCF tests compare the rule with these pinned recommendations.
+/// This live check detects changes in R's tables or capitalization behavior.
+#[test]
+#[ignore = "R title-case oracle; run via `task description-oracle`"]
+fn description_title_case_pins_match_r() {
+    let Some(rscript) = locate_rscript() else {
+        eprintln!("title-case oracle: Rscript not found; skipping.");
+        return;
+    };
+    let output = Command::new(rscript)
+        .arg("--vanilla")
+        .arg(manifest_path("tests/oracle/title_case_oracle.R"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("run the R title-case oracle");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    eprint!("{}", String::from_utf8_lossy(&output.stdout));
+}
 
 /// License validation is a separate tools API, rather than a component of
 /// `.check_package_description`. Exercise every database name and legacy
@@ -275,6 +299,12 @@ const GATES: &[Gate] = &[
         backing: Backing::Signal,
         findings: Findings::MessageContains("must not end in a period"),
     },
+    Gate {
+        rule: "description-title-case",
+        signals: &["title_case"],
+        backing: Backing::Signal,
+        findings: Findings::All,
+    },
     // `bad_Description` backs exactly the final-punctuation clause. The rule's
     // remaining clauses come from CRAN's incoming checks and DESCRIPTION prose
     // conventions, so requiring this one coarse signal for those findings
@@ -443,7 +473,11 @@ fn is_gated(signal: &str) -> bool {
 /// The source text arity spans for each finding of `rule`.
 fn rule_hits(source: &str, gate: &Gate) -> Vec<String> {
     let path = Path::new("DESCRIPTION");
-    let Ok(diagnostics) = check_description_document(path, source, &LintConfig::default()) else {
+    let config = LintConfig {
+        select: Some(vec![gate.rule.to_string()]),
+        ..LintConfig::default()
+    };
+    let Ok(diagnostics) = check_description_document(path, source, &config) else {
         return Vec::new();
     };
     diagnostics
@@ -553,6 +587,21 @@ fn collect_dir(cases: &mut Vec<(String, String)>, root: &Path, file_name: &str, 
 /// characters**, so a one-letter `Package: p` is itself a `bad_package` and
 /// would contaminate every other case here.
 const PLANTED: &[(&str, &str)] = &[
+    (
+        "title-case",
+        "Package: testpkg\nVersion: 0.1.0\nTitle: statistical methods for data analysis\n\
+         Maintainer: Jane Doe <jane@example.com>\n",
+    ),
+    (
+        "title-case-quoted-software",
+        "Package: testpkg\nVersion: 0.1.0\nTitle: Models for 'mixed-effects software'\n\
+         Maintainer: Jane Doe <jane@example.com>\n",
+    ),
+    (
+        "title-case-non-english",
+        "Package: testpkg\nVersion: 0.1.0\nTitle: un titre en français\nLanguage: fr\n\
+         Maintainer: Jane Doe <jane@example.com>\n",
+    ),
     (
         "clean",
         "Package: testpkg\nVersion: 0.1.0\nTitle: A Test Package\n\

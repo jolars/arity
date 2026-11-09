@@ -763,12 +763,15 @@ Tier 3—argued for default-off, or against:
   different suppressions. Done: a packaging warning for an absent field,
   independent of valid legacy fields; syntax-only, with no autofix.
 
-- [ ] `description-title-case`, **default off**. Porting `tools::toTitleCase`
+- [x] `description-title-case`, **default off**. Porting `tools::toTitleCase`
   faithfully means porting its stopword list and the perl-regex carve-out
   exempting quoted software names. CRAN's own version is the noisiest NOTE in
   the pretest and maintainers routinely override it, so ship it only behind
   the oracle above—pinned against R's `toTitleCase` over a corpus of real
-  titles—and default off, like `unused-dependency`.
+  titles—and default off, like `unused-dependency`. Done: a syntax-only
+  packaging warning with no autofix, R's vocabulary and word-boundary rules,
+  CRAN's quoted-name exemption and English-language gating, 324 pinned title
+  recommendations, and a live R oracle.
 
 ### Phase 5—Package-aware rules
 

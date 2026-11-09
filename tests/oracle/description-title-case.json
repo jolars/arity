@@ -1,0 +1,1627 @@
+{
+  "source": "https://cran.r-project.org/web/packages/packages.rds",
+  "retrieved": "2026-11-09",
+  "r_version": "R version 4.6.1 (2026-06-24)",
+  "cases": [
+    {
+      "origin": "CRAN/a11yShiny",
+      "title": "Accessibility Enhancements to Popular R Shiny Functions",
+      "expected": "Accessibility Enhancements to Popular R Shiny Functions"
+    },
+    {
+      "origin": "CRAN/adheRenceRX",
+      "title": "Assess Medication Adherence from Pharmaceutical Claims Data",
+      "expected": "Assess Medication Adherence from Pharmaceutical Claims Data"
+    },
+    {
+      "origin": "CRAN/aka",
+      "title": "Define Aliases for R Expressions",
+      "expected": "Define Aliases for R Expressions"
+    },
+    {
+      "origin": "CRAN/aod",
+      "title": "Analysis of Overdispersed Data",
+      "expected": "Analysis of Overdispersed Data"
+    },
+    {
+      "origin": "CRAN/arulesViz",
+      "title": "Visualizing Association Rules and Frequent Itemsets",
+      "expected": "Visualizing Association Rules and Frequent Itemsets"
+    },
+    {
+      "origin": "CRAN/avocado",
+      "title": "Weekly Hass Avocado Sales Summary",
+      "expected": "Weekly Hass Avocado Sales Summary"
+    },
+    {
+      "origin": "CRAN/BayesBrainMap",
+      "title": "Estimate Brain Networks and Connectivity with Population-Derived Priors",
+      "expected": "Estimate Brain Networks and Connectivity with Population-Derived Priors"
+    },
+    {
+      "origin": "CRAN/bdDwC",
+      "title": "Darwinizer: Darwin Core (DwC) Field Names Standardization",
+      "expected": "Darwinizer: Darwin Core (DwC) Field Names Standardization"
+    },
+    {
+      "origin": "CRAN/bigparallelr",
+      "title": "Easy Parallel Tools",
+      "expected": "Easy Parallel Tools"
+    },
+    {
+      "origin": "CRAN/BKVerify",
+      "title": "Consistency Auditing of Reported Plant Breeding Statistics",
+      "expected": "Consistency Auditing of Reported Plant Breeding Statistics"
+    },
+    {
+      "origin": "CRAN/boundedHill",
+      "title": "Bayesian Logistic Regression with Lower and Upper Asymptotes",
+      "expected": "Bayesian Logistic Regression with Lower and Upper Asymptotes"
+    },
+    {
+      "origin": "CRAN/bumblebee",
+      "title": "Quantify Disease Transmission Within and Between Population Groups",
+      "expected": "Quantify Disease Transmission Within and Between Population Groups"
+    },
+    {
+      "origin": "CRAN/carsAlgo",
+      "title": "Competitive Adaptive Reweighted Sampling (CARS) Algorithm",
+      "expected": "Competitive Adaptive Reweighted Sampling (CARS) Algorithm"
+    },
+    {
+      "origin": "CRAN/cdtmbnma",
+      "title": "Component, Dose, and Time Network Meta-Analysis with Dose-Dependent Interactions",
+      "expected": "Component, Dose, and Time Network Meta-Analysis with Dose-Dependent Interactions"
+    },
+    {
+      "origin": "CRAN/ChillModels",
+      "title": "Processing Chill and Heat Models for Temperate Fruit Trees",
+      "expected": "Processing Chill and Heat Models for Temperate Fruit Trees"
+    },
+    {
+      "origin": "CRAN/CliftLRD",
+      "title": "Complex-Valued Wavelet Lifting Estimators of the Hurst Exponent for Irregularly Sampled Time Series",
+      "expected": "Complex-Valued Wavelet Lifting Estimators of the Hurst Exponent for Irregularly Sampled Time Series"
+    },
+    {
+      "origin": "CRAN/CNVRG",
+      "title": "Dirichlet Multinomial Modeling of Relative Abundance Data",
+      "expected": "Dirichlet Multinomial Modeling of Relative Abundance Data"
+    },
+    {
+      "origin": "CRAN/compareMCMCs",
+      "title": "Compare MCMC Efficiency from 'nimble' and/or Other MCMC Engines",
+      "expected": "Compare MCMC Efficiency from 'nimble' and/or Other MCMC Engines"
+    },
+    {
+      "origin": "CRAN/ConversationAlign",
+      "title": "Process Text and Compute Linguistic Alignment in Conversation Transcripts",
+      "expected": "Process Text and Compute Linguistic Alignment in Conversation Transcripts"
+    },
+    {
+      "origin": "CRAN/cowplot",
+      "title": "Streamlined Plot Theme and Plot Annotations for 'ggplot2'",
+      "expected": "Streamlined Plot Theme and Plot Annotations for 'ggplot2'"
+    },
+    {
+      "origin": "CRAN/cSEM",
+      "title": "Composite-Based Structural Equation Modeling",
+      "expected": "Composite-Based Structural Equation Modeling"
+    },
+    {
+      "origin": "CRAN/dagitty",
+      "title": "Graphical Analysis of Structural Causal Models",
+      "expected": "Graphical Analysis of Structural Causal Models"
+    },
+    {
+      "origin": "CRAN/dChipIO",
+      "title": "Methods for Reading dChip Files",
+      "expected": "Methods for Reading dChip Files"
+    },
+    {
+      "origin": "CRAN/depcoeff",
+      "title": "Dependency Coefficients",
+      "expected": "Dependency Coefficients"
+    },
+    {
+      "origin": "CRAN/diffusion",
+      "title": "Forecast the Diffusion of New Products",
+      "expected": "Forecast the Diffusion of New Products"
+    },
+    {
+      "origin": "CRAN/dma",
+      "title": "Dynamic Model Averaging",
+      "expected": "Dynamic Model Averaging"
+    },
+    {
+      "origin": "CRAN/DRomics",
+      "title": "Dose Response for Omics",
+      "expected": "Dose Response for Omics"
+    },
+    {
+      "origin": "CRAN/dynutils",
+      "title": "Common Functionality for the 'dynverse' Packages",
+      "expected": "Common Functionality for the 'dynverse' Packages"
+    },
+    {
+      "origin": "CRAN/edgedata",
+      "title": "Datasets that Support the EDGE Server DIY Logic",
+      "expected": "Datasets that Support the EDGE Server DIY Logic"
+    },
+    {
+      "origin": "CRAN/EMMREML",
+      "title": "Fitting Mixed Models with Known Covariance Structures",
+      "expected": "Fitting Mixed Models with Known Covariance Structures"
+    },
+    {
+      "origin": "CRAN/equiBSPD",
+      "title": "Equivalent Estimation Balanced Split Plot Designs",
+      "expected": "Equivalent Estimation Balanced Split Plot Designs"
+    },
+    {
+      "origin": "CRAN/ExactCIdiff",
+      "title": "Inductive Confidence Intervals for the Difference Between Two Proportions",
+      "expected": "Inductive Confidence Intervals for the Difference Between Two Proportions"
+    },
+    {
+      "origin": "CRAN/faersquarterlydata",
+      "title": "FDA Adverse Event Reporting System Quarterly Data Extracting Tool",
+      "expected": "FDA Adverse Event Reporting System Quarterly Data Extracting Tool"
+    },
+    {
+      "origin": "CRAN/fdaconcur",
+      "title": "Concurrent Regression and History Index Models for Functional Data",
+      "expected": "Concurrent Regression and History Index Models for Functional Data"
+    },
+    {
+      "origin": "CRAN/Fiscal",
+      "title": "Income Tax Calculations (UK)",
+      "expected": "Income Tax Calculations (UK)"
+    },
+    {
+      "origin": "CRAN/focus",
+      "title": "Online Changepoint Detection in Univariate and Multivariate Data Streams",
+      "expected": "Online Changepoint Detection in Univariate and Multivariate Data Streams"
+    },
+    {
+      "origin": "CRAN/frequentistSSDBinary",
+      "title": "Screened Selection Design with Binary Endpoints",
+      "expected": "Screened Selection Design with Binary Endpoints"
+    },
+    {
+      "origin": "CRAN/gamboostLSS",
+      "title": "Boosting Methods for 'GAMLSS'",
+      "expected": "Boosting Methods for 'GAMLSS'"
+    },
+    {
+      "origin": "CRAN/gendist",
+      "title": "Generated Probability Distribution Models",
+      "expected": "Generated Probability Distribution Models"
+    },
+    {
+      "origin": "CRAN/GetoptLong",
+      "title": "Parsing Command-Line Arguments",
+      "expected": "Parsing Command-Line Arguments"
+    },
+    {
+      "origin": "CRAN/ggplot2movies",
+      "title": "Movies Data",
+      "expected": "Movies Data"
+    },
+    {
+      "origin": "CRAN/GLHD",
+      "title": "Grouped Latin Hypercube Designs with Controlled Correlations",
+      "expected": "Grouped Latin Hypercube Designs with Controlled Correlations"
+    },
+    {
+      "origin": "CRAN/googleVis",
+      "title": "R Interface to Google Charts",
+      "expected": "R Interface to Google Charts"
+    },
+    {
+      "origin": "CRAN/grnn",
+      "title": "General regression neural network",
+      "expected": "General Regression Neural Network"
+    },
+    {
+      "origin": "CRAN/HACSim",
+      "title": "Iterative Extrapolation of Species' Haplotype Accumulation Curves for Genetic Diversity Assessment",
+      "expected": "Iterative Extrapolation of Species' Haplotype Accumulation Curves for Genetic Diversity Assessment"
+    },
+    {
+      "origin": "CRAN/heritability",
+      "title": "Marker-Based Estimation of Heritability Using Individual Plant or Plot Data",
+      "expected": "Marker-Based Estimation of Heritability Using Individual Plant or Plot Data"
+    },
+    {
+      "origin": "CRAN/hotspot",
+      "title": "Software Hotspot Analysis",
+      "expected": "Software Hotspot Analysis"
+    },
+    {
+      "origin": "CRAN/IBLM",
+      "title": "Interpretable Boosted Linear Models",
+      "expected": "Interpretable Boosted Linear Models"
+    },
+    {
+      "origin": "CRAN/image.libfacedetection",
+      "title": "Convolutional Neural Network for Face Detection",
+      "expected": "Convolutional Neural Network for Face Detection"
+    },
+    {
+      "origin": "CRAN/InPosition",
+      "title": "Inference Tests for ExPosition",
+      "expected": "Inference Tests for ExPosition"
+    },
+    {
+      "origin": "CRAN/irrICC",
+      "title": "Intraclass Correlations for Quantifying Inter-Rater Reliability",
+      "expected": "Intraclass Correlations for Quantifying Inter-Rater Reliability"
+    },
+    {
+      "origin": "CRAN/jlmerclusterperm",
+      "title": "Cluster-Based Permutation Analysis for Densely Sampled Time Data",
+      "expected": "Cluster-Based Permutation Analysis for Densely Sampled Time Data"
+    },
+    {
+      "origin": "CRAN/KeyboardSimulator",
+      "title": "Keyboard and Mouse Input Simulation for Windows OS",
+      "expected": "Keyboard and Mouse Input Simulation for Windows OS"
+    },
+    {
+      "origin": "CRAN/lablaster",
+      "title": "Laser Ablation Blast Through Endpoint Detection",
+      "expected": "Laser Ablation Blast Through Endpoint Detection"
+    },
+    {
+      "origin": "CRAN/leakr",
+      "title": "Data Leakage Detection Tools for Machine Learning",
+      "expected": "Data Leakage Detection Tools for Machine Learning"
+    },
+    {
+      "origin": "CRAN/lintr",
+      "title": "A 'Linter' for R Code",
+      "expected": "A 'Linter' for R Code"
+    },
+    {
+      "origin": "CRAN/longitree",
+      "title": "Decision Tree Analysis for Longitudinal Measurement Data",
+      "expected": "Decision Tree Analysis for Longitudinal Measurement Data"
+    },
+    {
+      "origin": "CRAN/magi",
+      "title": "MAnifold-Constrained Gaussian Process Inference",
+      "expected": "MAnifold-Constrained Gaussian Process Inference"
+    },
+    {
+      "origin": "CRAN/MATA",
+      "title": "Model-Averaged Tail Area (MATA) Confidence Interval and Distribution",
+      "expected": "Model-Averaged Tail Area (MATA) Confidence Interval and Distribution"
+    },
+    {
+      "origin": "CRAN/md4r",
+      "title": "Markdown Parser Implemented using the 'MD4C' Library",
+      "expected": "Markdown Parser Implemented using the 'MD4C' Library"
+    },
+    {
+      "origin": "CRAN/MetaNLP",
+      "title": "Natural Language Processing for Meta Analysis",
+      "expected": "Natural Language Processing for Meta Analysis"
+    },
+    {
+      "origin": "CRAN/midr",
+      "title": "Learning from Black-Box Models by Maximum Interpretation Decomposition",
+      "expected": "Learning from Black-Box Models by Maximum Interpretation Decomposition"
+    },
+    {
+      "origin": "CRAN/MKdescr",
+      "title": "Descriptive Statistics",
+      "expected": "Descriptive Statistics"
+    },
+    {
+      "origin": "CRAN/model4you",
+      "title": "Stratified and Personalised Models Based on Model-Based Trees and Forests",
+      "expected": "Stratified and Personalised Models Based on Model-Based Trees and Forests"
+    },
+    {
+      "origin": "CRAN/MPN",
+      "title": "Most Probable Number and Other Microbial Enumeration Techniques",
+      "expected": "Most Probable Number and Other Microbial Enumeration Techniques"
+    },
+    {
+      "origin": "CRAN/multicastR",
+      "title": "A Companion to the Multi-CAST Collection",
+      "expected": "A Companion to the Multi-CAST Collection"
+    },
+    {
+      "origin": "CRAN/mvoutlier",
+      "title": "Multivariate Outlier Detection Based on Robust Methods",
+      "expected": "Multivariate Outlier Detection Based on Robust Methods"
+    },
+    {
+      "origin": "CRAN/neptune",
+      "title": "MLOps Metadata Store - Experiment Tracking and Model Registry for Production Teams",
+      "expected": "MLOps Metadata Store - Experiment Tracking and Model Registry for Production Teams"
+    },
+    {
+      "origin": "CRAN/NISTnls",
+      "title": "Nonlinear least squares examples from NIST",
+      "expected": "Nonlinear Least Squares Examples from NIST"
+    },
+    {
+      "origin": "CRAN/noweb",
+      "title": "The 'noweb' System for R",
+      "expected": "The 'noweb' System for R"
+    },
+    {
+      "origin": "CRAN/oddnet",
+      "title": "Anomaly Detection in Temporal Networks",
+      "expected": "Anomaly Detection in Temporal Networks"
+    },
+    {
+      "origin": "CRAN/OpenML",
+      "title": "Open Machine Learning and Open Data Platform",
+      "expected": "Open Machine Learning and Open Data Platform"
+    },
+    {
+      "origin": "CRAN/OssaNMA",
+      "title": "Optimal Sample Size and Allocation with a Network Meta-Analysis",
+      "expected": "Optimal Sample Size and Allocation with a Network Meta-Analysis"
+    },
+    {
+      "origin": "CRAN/paperplanes",
+      "title": "Distance Recordings from a Paper Plane Folding/Flying Experiment",
+      "expected": "Distance Recordings from a Paper Plane Folding/Flying Experiment"
+    },
+    {
+      "origin": "CRAN/pCODE",
+      "title": "Estimation of an Ordinary Differential Equation Model by Parameter Cascade Method",
+      "expected": "Estimation of an Ordinary Differential Equation Model by Parameter Cascade Method"
+    },
+    {
+      "origin": "CRAN/PGaGEV",
+      "title": "Power Garima-Generalized Extreme Value Distribution",
+      "expected": "Power Garima-Generalized Extreme Value Distribution"
+    },
+    {
+      "origin": "CRAN/pivotaltrackR",
+      "title": "A Client for the 'Pivotal Tracker' API",
+      "expected": "A Client for the 'Pivotal Tracker' API"
+    },
+    {
+      "origin": "CRAN/PNADCperiods",
+      "title": "Identify Reference Periods in Brazil's PNADC Survey Data",
+      "expected": "Identify Reference Periods in Brazil's PNADC Survey Data"
+    },
+    {
+      "origin": "CRAN/powerbiR",
+      "title": "An Interface to the 'Power BI REST APIs'",
+      "expected": "An Interface to the 'Power BI REST APIs'"
+    },
+    {
+      "origin": "CRAN/priorsense",
+      "title": "Prior Diagnostics and Sensitivity Analysis",
+      "expected": "Prior Diagnostics and Sensitivity Analysis"
+    },
+    {
+      "origin": "CRAN/PSLM2015",
+      "title": "Pakistan Social and Living Standards Measurement Survey 2014-15",
+      "expected": "Pakistan Social and Living Standards Measurement Survey 2014-15"
+    },
+    {
+      "origin": "CRAN/QCEWAS",
+      "title": "Fast and Easy Quality Control of EWAS Results Files",
+      "expected": "Fast and Easy Quality Control of EWAS Results Files"
+    },
+    {
+      "origin": "CRAN/quickcode",
+      "title": "Quick and Essential 'R' Tricks for Better Scripts",
+      "expected": "Quick and Essential 'R' Tricks for Better Scripts"
+    },
+    {
+      "origin": "CRAN/randomForestRHF",
+      "title": "Random Hazard Forests",
+      "expected": "Random Hazard Forests"
+    },
+    {
+      "origin": "CRAN/RBMRB",
+      "title": "Interface to the Biological Magnetic Resonance Data Bank ('BMRB')",
+      "expected": "Interface to the Biological Magnetic Resonance Data Bank ('BMRB')"
+    },
+    {
+      "origin": "CRAN/RCTRecruit",
+      "title": "Non-Parametric Recruitment Prediction for Randomized Clinical Trials",
+      "expected": "Non-Parametric Recruitment Prediction for Randomized Clinical Trials"
+    },
+    {
+      "origin": "CRAN/REDCapSync",
+      "title": "Encapsulated 'REDCap' Projects for Synchronized Data Pipelines",
+      "expected": "Encapsulated 'REDCap' Projects for Synchronized Data Pipelines"
+    },
+    {
+      "origin": "CRAN/reptiledbr",
+      "title": "Interface to 'The Reptile Database' Taxon Data",
+      "expected": "Interface to 'The Reptile Database' Taxon Data"
+    },
+    {
+      "origin": "CRAN/RGreenplum",
+      "title": "Interface to 'Greenplum' Database",
+      "expected": "Interface to 'Greenplum' Database"
+    },
+    {
+      "origin": "CRAN/rlcv",
+      "title": "Robust Likelihood Cross Validation Bandwidth Selection",
+      "expected": "Robust Likelihood Cross Validation Bandwidth Selection"
+    },
+    {
+      "origin": "CRAN/RoBMA",
+      "title": "Robust Bayesian Meta-Analyses",
+      "expected": "Robust Bayesian Meta-Analyses"
+    },
+    {
+      "origin": "CRAN/roundRobinR",
+      "title": "Manipulate and Analyze Round Robin Dyadic Data",
+      "expected": "Manipulate and Analyze Round Robin Dyadic Data"
+    },
+    {
+      "origin": "CRAN/rsgl",
+      "title": "An Implementation of the 'SGL' Graphics Language",
+      "expected": "An Implementation of the 'SGL' Graphics Language"
+    },
+    {
+      "origin": "CRAN/rupturesRcpp",
+      "title": "Object-Oriented Interface for Offline Change-Point Detection",
+      "expected": "Object-Oriented Interface for Offline Change-Point Detection"
+    },
+    {
+      "origin": "CRAN/sams",
+      "title": "Merge-Split Samplers for Conjugate Bayesian Nonparametric Models",
+      "expected": "Merge-Split Samplers for Conjugate Bayesian Nonparametric Models"
+    },
+    {
+      "origin": "CRAN/scOntoMatch",
+      "title": "Aligning Ontology Annotation Across Single Cell Datasets with 'scOntoMatch'",
+      "expected": "Aligning Ontology Annotation Across Single Cell Datasets with 'scOntoMatch'"
+    },
+    {
+      "origin": "CRAN/selectr",
+      "title": "Translate CSS Selectors to XPath Expressions",
+      "expected": "Translate CSS Selectors to XPath Expressions"
+    },
+    {
+      "origin": "CRAN/sgeostat",
+      "title": "An Object-Oriented Framework for Geostatistical Modeling in S+",
+      "expected": "An Object-Oriented Framework for Geostatistical Modeling in S+"
+    },
+    {
+      "origin": "CRAN/shinyvalidate",
+      "title": "Input Validation for Shiny Apps",
+      "expected": "Input Validation for Shiny Apps"
+    },
+    {
+      "origin": "CRAN/simsurv",
+      "title": "Simulate Survival Data",
+      "expected": "Simulate Survival Data"
+    },
+    {
+      "origin": "CRAN/smlePH",
+      "title": "Sieve Maximum Full Likelihood Estimation for the Right-Censored Proportional Hazards Model",
+      "expected": "Sieve Maximum Full Likelihood Estimation for the Right-Censored Proportional Hazards Model"
+    },
+    {
+      "origin": "CRAN/SouthParkRshiny",
+      "title": "Data and 'Shiny' Application for the Tv Show 'SouthPark'",
+      "expected": "Data and 'Shiny' Application for the Tv Show 'SouthPark'"
+    },
+    {
+      "origin": "CRAN/SpecHelpers",
+      "title": "Spectroscopy Related Utilities",
+      "expected": "Spectroscopy Related Utilities"
+    },
+    {
+      "origin": "CRAN/sqlstrings",
+      "title": "Map 'SQL' Code to R Lists",
+      "expected": "Map 'SQL' Code to R Lists"
+    },
+    {
+      "origin": "CRAN/StatMatch",
+      "title": "Statistical Matching or Data Fusion",
+      "expected": "Statistical Matching or Data Fusion"
+    },
+    {
+      "origin": "CRAN/strollur",
+      "title": "Store and Transfer Amplicon Sequence Data",
+      "expected": "Store and Transfer Amplicon Sequence Data"
+    },
+    {
+      "origin": "CRAN/survrec",
+      "title": "Survival Analysis for Recurrent Event Data",
+      "expected": "Survival Analysis for Recurrent Event Data"
+    },
+    {
+      "origin": "CRAN/tabpfn",
+      "title": "Prior-Data Fitted Network Foundational Model for Tabular Data",
+      "expected": "Prior-Data Fitted Network Foundational Model for Tabular Data"
+    },
+    {
+      "origin": "CRAN/TEQR",
+      "title": "Target Equivalence Range Design",
+      "expected": "Target Equivalence Range Design"
+    },
+    {
+      "origin": "CRAN/tidyBdE",
+      "title": "Retrieve Time Series Data from 'Banco de España'",
+      "expected": "Retrieve Time Series Data from 'Banco de España'"
+    },
+    {
+      "origin": "CRAN/TITAN2",
+      "title": "Threshold Indicator Taxa Analysis",
+      "expected": "Threshold Indicator Taxa Analysis"
+    },
+    {
+      "origin": "CRAN/tramME",
+      "title": "Transformation Models with Mixed Effects",
+      "expected": "Transformation Models with Mixed Effects"
+    },
+    {
+      "origin": "CRAN/tsentiment",
+      "title": "Fetching Tweet Data for Sentiment Analysis",
+      "expected": "Fetching Tweet Data for Sentiment Analysis"
+    },
+    {
+      "origin": "CRAN/UComp",
+      "title": "Automatic Univariate Time Series Modelling of many Kinds",
+      "expected": "Automatic Univariate Time Series Modelling of many Kinds"
+    },
+    {
+      "origin": "CRAN/vacalibration",
+      "title": "Calibration of Computer-Coded Verbal Autopsy Algorithm",
+      "expected": "Calibration of Computer-Coded Verbal Autopsy Algorithm"
+    },
+    {
+      "origin": "CRAN/videogameinsightsR",
+      "title": "Interface to 'Video Game Insights' API for Gaming Market Analytics",
+      "expected": "Interface to 'Video Game Insights' API for Gaming Market Analytics"
+    },
+    {
+      "origin": "CRAN/waterYearType",
+      "title": "Sacramento and San Joaquin Valley Water Year Types",
+      "expected": "Sacramento and San Joaquin Valley Water Year Types"
+    },
+    {
+      "origin": "CRAN/winratiosim",
+      "title": "Simulate Power for Hierarchical Win Ratio Endpoints",
+      "expected": "Simulate Power for Hierarchical Win Ratio Endpoints"
+    },
+    {
+      "origin": "CRAN/xmrr",
+      "title": "Generate XMR Control Chart Data from Time-Series Data",
+      "expected": "Generate XMR Control Chart Data from Time-Series Data"
+    },
+    {
+      "origin": "CRAN/survival",
+      "title": "Survival Analysis",
+      "expected": "Survival Analysis"
+    },
+    {
+      "origin": "CRAN/abba",
+      "title": "Batch Execution of R Programs on 'Kubernetes', 'SLURM', and 'Posit Workbench'",
+      "expected": "Batch Execution of R Programs on 'Kubernetes', 'SLURM', and 'Posit Workbench'"
+    },
+    {
+      "origin": "CRAN/abseil",
+      "title": "'C++' Header Files and Compiled Library from 'Abseil'",
+      "expected": "'C++' Header Files and Compiled Library from 'Abseil'"
+    },
+    {
+      "origin": "CRAN/adbcdrivermanager",
+      "title": "'Arrow' Database Connectivity ('ADBC') Driver Manager",
+      "expected": "'Arrow' Database Connectivity ('ADBC') Driver Manager"
+    },
+    {
+      "origin": "CRAN/adbcpostgresql",
+      "title": "'Arrow' Database Connectivity ('ADBC') 'PostgreSQL' Driver",
+      "expected": "'Arrow' Database Connectivity ('ADBC') 'PostgreSQL' Driver"
+    },
+    {
+      "origin": "CRAN/adbcsqlite",
+      "title": "'Arrow' Database Connectivity ('ADBC') 'SQLite' Driver",
+      "expected": "'Arrow' Database Connectivity ('ADBC') 'SQLite' Driver"
+    },
+    {
+      "origin": "CRAN/adbi",
+      "title": "'DBI' Compliant Database Access Using 'ADBC'",
+      "expected": "'DBI' Compliant Database Access Using 'ADBC'"
+    },
+    {
+      "origin": "CRAN/addinsOutline",
+      "title": "'RStudio' Addins for Show Outline of a R Markdown/'LaTeX' Project",
+      "expected": "'RStudio' Addins for Show Outline of a R Markdown/'LaTeX' Project"
+    },
+    {
+      "origin": "CRAN/adjustedcranlogs",
+      "title": "Remove Automated and Repeated Downloads from 'RStudio' 'CRAN' Download Logs",
+      "expected": "Remove Automated and Repeated Downloads from 'RStudio' 'CRAN' Download Logs"
+    },
+    {
+      "origin": "CRAN/adobeanalyticsr",
+      "title": "R Client for 'Adobe Analytics' API 2.0",
+      "expected": "R Client for 'Adobe Analytics' API 2.0"
+    },
+    {
+      "origin": "CRAN/AdverseEvents",
+      "title": "'shiny' Application for Adverse Event Analysis of 'OnCore' Data",
+      "expected": "'shiny' Application for Adverse Event Analysis of 'OnCore' Data"
+    },
+    {
+      "origin": "CRAN/agua",
+      "title": "'tidymodels' Integration with 'h2o'",
+      "expected": "'tidymodels' Integration with 'h2o'"
+    },
+    {
+      "origin": "CRAN/agvgd",
+      "title": "An R Implementation of the 'Align-GVGD' Method",
+      "expected": "An R Implementation of the 'Align-GVGD' Method"
+    },
+    {
+      "origin": "CRAN/AHMbook",
+      "title": "Functions and Data for the Book 'Applied Hierarchical Modeling in Ecology' Vols 1 and 2",
+      "expected": "Functions and Data for the Book 'Applied Hierarchical Modeling in Ecology' Vols 1 and 2"
+    },
+    {
+      "origin": "CRAN/ahocorasick",
+      "title": "Fast Multi-Pattern String Matching with the 'Aho-Corasick' Algorithm",
+      "expected": "Fast Multi-Pattern String Matching with the 'Aho-Corasick' Algorithm"
+    },
+    {
+      "origin": "CRAN/aieconindex",
+      "title": "Access the 'Anthropic Economic Index' Dataset",
+      "expected": "Access the 'Anthropic Economic Index' Dataset"
+    },
+    {
+      "origin": "CRAN/algo",
+      "title": "Implement an Address Search Auto Completion Menu on 'Shiny' Text Inputs Using the 'Algolia Places' 'Javascript' Library",
+      "expected": "Implement an Address Search Auto Completion Menu on 'Shiny' Text Inputs Using the 'Algolia Places' 'Javascript' Library"
+    },
+    {
+      "origin": "CRAN/AlignLV",
+      "title": "Multiple Group Item Response Theory Alignment Helpers for 'lavaan' and 'mirt'",
+      "expected": "Multiple Group Item Response Theory Alignment Helpers for 'lavaan' and 'mirt'"
+    },
+    {
+      "origin": "CRAN/allofus",
+      "title": "Interface for 'All of Us' Researcher Workbench",
+      "expected": "Interface for 'All of Us' Researcher Workbench"
+    },
+    {
+      "origin": "CRAN/alphavantagepf",
+      "title": "'Alphavantage Financial Data' API R Wrapper and Shiny Interface",
+      "expected": "'Alphavantage Financial Data' API R Wrapper and Shiny Interface"
+    },
+    {
+      "origin": "CRAN/ALSBinary",
+      "title": "'ALS-Binary': Allele Size to Binary Converter",
+      "expected": "'ALS-Binary': Allele Size to Binary Converter"
+    },
+    {
+      "origin": "CRAN/ggplot2",
+      "title": "Create Elegant Data Visualisations Using the Grammar of Graphics",
+      "expected": "Create Elegant Data Visualisations Using the Grammar of Graphics"
+    },
+    {
+      "origin": "CRAN/dplyr",
+      "title": "A Grammar of Data Manipulation",
+      "expected": "A Grammar of Data Manipulation"
+    },
+    {
+      "origin": "CRAN/data.table",
+      "title": "Extension of `data.frame`",
+      "expected": "Extension of `data.frame`"
+    },
+    {
+      "origin": "CRAN/rpart",
+      "title": "Recursive Partitioning and Regression Trees",
+      "expected": "Recursive Partitioning and Regression Trees"
+    },
+    {
+      "origin": "CRAN/rgl",
+      "title": "3D Visualization Using OpenGL",
+      "expected": "3D Visualization Using OpenGL"
+    },
+    {
+      "origin": "CRAN/Rcpp",
+      "title": "Seamless R and C++ Integration",
+      "expected": "Seamless R and C++ Integration"
+    },
+    {
+      "origin": "CRAN/eulerr",
+      "title": "Area-Proportional Euler and Venn Diagrams",
+      "expected": "Area-Proportional Euler and Venn Diagrams"
+    },
+    {
+      "origin": "CRAN/SLOPE",
+      "title": "Sorted L1 Penalized Estimation",
+      "expected": "Sorted L1 Penalized Estimation"
+    },
+    {
+      "origin": "CRAN/knitr",
+      "title": "A General-Purpose Package for Dynamic Report Generation in R",
+      "expected": "A General-Purpose Package for Dynamic Report Generation in R"
+    },
+    {
+      "origin": "CRAN/roxygen2",
+      "title": "In-Line Documentation for R",
+      "expected": "In-Line Documentation for R"
+    },
+    {
+      "origin": "lowercase/CRAN/a11yShiny",
+      "title": "accessibility enhancements to popular r shiny functions",
+      "expected": "Accessibility Enhancements to Popular r Shiny Functions"
+    },
+    {
+      "origin": "lowercase/CRAN/adheRenceRX",
+      "title": "assess medication adherence from pharmaceutical claims data",
+      "expected": "Assess Medication Adherence from Pharmaceutical Claims Data"
+    },
+    {
+      "origin": "lowercase/CRAN/aka",
+      "title": "define aliases for r expressions",
+      "expected": "Define Aliases for r Expressions"
+    },
+    {
+      "origin": "lowercase/CRAN/aod",
+      "title": "analysis of overdispersed data",
+      "expected": "Analysis of Overdispersed Data"
+    },
+    {
+      "origin": "lowercase/CRAN/arulesViz",
+      "title": "visualizing association rules and frequent itemsets",
+      "expected": "Visualizing Association Rules and Frequent Itemsets"
+    },
+    {
+      "origin": "lowercase/CRAN/avocado",
+      "title": "weekly hass avocado sales summary",
+      "expected": "Weekly Hass Avocado Sales Summary"
+    },
+    {
+      "origin": "lowercase/CRAN/BayesBrainMap",
+      "title": "estimate brain networks and connectivity with population-derived priors",
+      "expected": "Estimate Brain Networks and Connectivity with Population-Derived Priors"
+    },
+    {
+      "origin": "lowercase/CRAN/bdDwC",
+      "title": "darwinizer: darwin core (dwc) field names standardization",
+      "expected": "Darwinizer: Darwin Core (Dwc) Field Names Standardization"
+    },
+    {
+      "origin": "lowercase/CRAN/bigparallelr",
+      "title": "easy parallel tools",
+      "expected": "Easy Parallel Tools"
+    },
+    {
+      "origin": "lowercase/CRAN/BKVerify",
+      "title": "consistency auditing of reported plant breeding statistics",
+      "expected": "Consistency Auditing of Reported Plant Breeding Statistics"
+    },
+    {
+      "origin": "lowercase/CRAN/boundedHill",
+      "title": "bayesian logistic regression with lower and upper asymptotes",
+      "expected": "Bayesian Logistic Regression with Lower and Upper Asymptotes"
+    },
+    {
+      "origin": "lowercase/CRAN/bumblebee",
+      "title": "quantify disease transmission within and between population groups",
+      "expected": "Quantify Disease Transmission Within and Between Population Groups"
+    },
+    {
+      "origin": "lowercase/CRAN/carsAlgo",
+      "title": "competitive adaptive reweighted sampling (cars) algorithm",
+      "expected": "Competitive Adaptive Reweighted Sampling (Cars) Algorithm"
+    },
+    {
+      "origin": "lowercase/CRAN/cdtmbnma",
+      "title": "component, dose, and time network meta-analysis with dose-dependent interactions",
+      "expected": "Component, Dose, and Time Network Meta-Analysis with Dose-Dependent Interactions"
+    },
+    {
+      "origin": "lowercase/CRAN/ChillModels",
+      "title": "processing chill and heat models for temperate fruit trees",
+      "expected": "Processing Chill and Heat Models for Temperate Fruit Trees"
+    },
+    {
+      "origin": "lowercase/CRAN/CliftLRD",
+      "title": "complex-valued wavelet lifting estimators of the hurst exponent for irregularly sampled time series",
+      "expected": "Complex-Valued Wavelet Lifting Estimators of the Hurst Exponent for Irregularly Sampled Time Series"
+    },
+    {
+      "origin": "lowercase/CRAN/CNVRG",
+      "title": "dirichlet multinomial modeling of relative abundance data",
+      "expected": "Dirichlet Multinomial Modeling of Relative Abundance Data"
+    },
+    {
+      "origin": "lowercase/CRAN/compareMCMCs",
+      "title": "compare mcmc efficiency from 'nimble' and/or other mcmc engines",
+      "expected": "Compare Mcmc Efficiency from 'nimble' and/or Other Mcmc Engines"
+    },
+    {
+      "origin": "lowercase/CRAN/ConversationAlign",
+      "title": "process text and compute linguistic alignment in conversation transcripts",
+      "expected": "Process Text and Compute Linguistic Alignment in Conversation Transcripts"
+    },
+    {
+      "origin": "lowercase/CRAN/cowplot",
+      "title": "streamlined plot theme and plot annotations for 'ggplot2'",
+      "expected": "Streamlined Plot Theme and Plot Annotations for 'ggplot2'"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models A methods",
+      "expected": "Models a Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "a models",
+      "expected": "a Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models AN methods",
+      "expected": "Models an Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "an models",
+      "expected": "An Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models AND methods",
+      "expected": "Models and Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "and models",
+      "expected": "And Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models ARE methods",
+      "expected": "Models are Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "are models",
+      "expected": "Are Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models AS methods",
+      "expected": "Models as Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "as models",
+      "expected": "As Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models AT methods",
+      "expected": "Models at Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "at models",
+      "expected": "At Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models BE methods",
+      "expected": "Models be Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "be models",
+      "expected": "Be Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models BUT methods",
+      "expected": "Models but Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "but models",
+      "expected": "But Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models BY methods",
+      "expected": "Models by Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "by models",
+      "expected": "By Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models EN methods",
+      "expected": "Models en Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "en models",
+      "expected": "En Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models FOR methods",
+      "expected": "Models for Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "for models",
+      "expected": "For Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models IF methods",
+      "expected": "Models if Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "if models",
+      "expected": "If Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models IN methods",
+      "expected": "Models in Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "in models",
+      "expected": "In Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models IS methods",
+      "expected": "Models is Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "is models",
+      "expected": "Is Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models NOR methods",
+      "expected": "Models nor Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "nor models",
+      "expected": "Nor Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models NOT methods",
+      "expected": "Models not Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "not models",
+      "expected": "Not Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models OF methods",
+      "expected": "Models of Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "of models",
+      "expected": "Of Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models ON methods",
+      "expected": "Models on Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "on models",
+      "expected": "On Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models OR methods",
+      "expected": "Models or Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "or models",
+      "expected": "Or Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models PER methods",
+      "expected": "Models per Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "per models",
+      "expected": "Per Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models SO methods",
+      "expected": "Models so Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "so models",
+      "expected": "So Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models THE methods",
+      "expected": "Models the Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "the models",
+      "expected": "The Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models TO methods",
+      "expected": "Models to Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "to models",
+      "expected": "To Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models V methods",
+      "expected": "Models v Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "v models",
+      "expected": "v Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models V. methods",
+      "expected": "Models v. Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "v. models",
+      "expected": "V. Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models VIA methods",
+      "expected": "Models via Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "via models",
+      "expected": "Via Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models VS methods",
+      "expected": "Models vs Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "vs models",
+      "expected": "Vs Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models VS. methods",
+      "expected": "Models vs. Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "vs. models",
+      "expected": "Vs. Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models FROM methods",
+      "expected": "Models from Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "from models",
+      "expected": "From Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models INTO methods",
+      "expected": "Models into Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "into models",
+      "expected": "Into Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models THAN methods",
+      "expected": "Models than Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "than models",
+      "expected": "Than Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models THAT methods",
+      "expected": "Models that Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "that models",
+      "expected": "That Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models WITH methods",
+      "expected": "Models with Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "with models",
+      "expected": "With Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using 2D models",
+      "expected": "Using 2D Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using 3D models",
+      "expected": "Using 3D Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using AIC models",
+      "expected": "Using AIC Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using BayesX models",
+      "expected": "Using BayesX Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using GoF models",
+      "expected": "Using GoF Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using HTML models",
+      "expected": "Using HTML Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using LaTeX models",
+      "expected": "Using LaTeX Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using MonetDB models",
+      "expected": "Using MonetDB Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using OpenBUGS models",
+      "expected": "Using OpenBUGS Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using TeX models",
+      "expected": "Using TeX Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using U.S. models",
+      "expected": "Using U.S. Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using U.S.A. models",
+      "expected": "Using U.S.A. Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using WinBUGS models",
+      "expected": "Using WinBUGS Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using aka models",
+      "expected": "Using aka Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using et models",
+      "expected": "Using et Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using al. models",
+      "expected": "Using al. Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using ggplot2 models",
+      "expected": "Using ggplot2 Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using i.e. models",
+      "expected": "Using i.e. Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using jar models",
+      "expected": "Using jar Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using jars models",
+      "expected": "Using jars Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using ncdf models",
+      "expected": "Using ncdf Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using netCDF models",
+      "expected": "Using netCDF Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using rgl models",
+      "expected": "Using rgl Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using rpart models",
+      "expected": "Using rpart Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using xls models",
+      "expected": "Using xls Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using xlsx models",
+      "expected": "Using xlsx Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using all models",
+      "expected": "Using all Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using above models",
+      "expected": "Using above Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using after models",
+      "expected": "Using after Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using along models",
+      "expected": "Using along Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using also models",
+      "expected": "Using also Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using among models",
+      "expected": "Using among Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using any models",
+      "expected": "Using any Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using both models",
+      "expected": "Using both Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using can models",
+      "expected": "Using can Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using few models",
+      "expected": "Using few Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using it models",
+      "expected": "Using it Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using less models",
+      "expected": "Using less Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using log models",
+      "expected": "Using log Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using many models",
+      "expected": "Using many Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using may models",
+      "expected": "Using may Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using more models",
+      "expected": "Using more Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using over models",
+      "expected": "Using over Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using some models",
+      "expected": "Using some Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using their models",
+      "expected": "Using their Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using then models",
+      "expected": "Using then Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using this models",
+      "expected": "Using this Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using under models",
+      "expected": "Using under Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using until models",
+      "expected": "Using until Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using using models",
+      "expected": "Using using Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using von models",
+      "expected": "Using von Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using when models",
+      "expected": "Using when Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using where models",
+      "expected": "Using where Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using which models",
+      "expected": "Using which Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using will models",
+      "expected": "Using will Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using without models",
+      "expected": "Using without Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using yet models",
+      "expected": "Using yet Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using you models",
+      "expected": "Using you Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using your models",
+      "expected": "Using your Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "small- and large-scale analysis",
+      "expected": "Small- and Large-Scale Analysis"
+    },
+    {
+      "origin": "synthetic",
+      "title": "a small fox is jumping",
+      "expected": "a Small Fox is Jumping"
+    },
+    {
+      "origin": "synthetic",
+      "title": "a pangram: the quick brown fox jumps over the lazy dog",
+      "expected": "a Pangram: The Quick Brown Fox Jumps over the Lazy Dog"
+    },
+    {
+      "origin": "synthetic",
+      "title": "asking -- 'is a small fox jumping?'",
+      "expected": "Asking -- 'is a small fox jumping?'"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Fitting 'mixed-effects models' with R",
+      "expected": "Fitting 'mixed-effects models' with R"
+    },
+    {
+      "origin": "synthetic",
+      "title": "models -- and methods",
+      "expected": "Models -- and Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "models - AND methods",
+      "expected": "Models - AND Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "models:  the methods",
+      "expected": "Models:  the Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "models: the methods",
+      "expected": "Models: The Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "models/the methods",
+      "expected": "Models/the Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "models(the methods)",
+      "expected": "Models(the Methods)"
+    },
+    {
+      "origin": "synthetic",
+      "title": "models, the methods",
+      "expected": "Models, the Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "\"a small fox\" and \"the other fox\"",
+      "expected": "\"a Small Fox\" and \"The Other Fox\""
+    },
+    {
+      "origin": "synthetic",
+      "title": "Using 'foo'.bar and 'baz-quux'",
+      "expected": "Using 'foo'.bar and 'baz-quux'"
+    },
+    {
+      "origin": "synthetic",
+      "title": "'some software' works",
+      "expected": "'some software' Works"
+    },
+    {
+      "origin": "synthetic",
+      "title": "models'other software' works",
+      "expected": "Models'other Software' Works"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models ‘other software’ work",
+      "expected": "Models ‘other Software’ Work"
+    },
+    {
+      "origin": "synthetic",
+      "title": "models:'other software' work",
+      "expected": "Models:'other software' Work"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models 'unclosed software works",
+      "expected": "Models 'Unclosed Software Works"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Models '' work",
+      "expected": "Models '' Work"
+    },
+    {
+      "origin": "synthetic",
+      "title": "all mixedCase tEST ALLCAPS R x i eBay .test 3d",
+      "expected": "all mixedCase tEST ALLCAPS R x i eBay .test 3d"
+    },
+    {
+      "origin": "synthetic",
+      "title": "Über die straße",
+      "expected": "Über Die Straße"
+    },
+    {
+      "origin": "synthetic",
+      "title": "école et modèles",
+      "expected": "École et Modèles"
+    },
+    {
+      "origin": "synthetic",
+      "title": "ßeta analysis",
+      "expected": "ßeta Analysis"
+    },
+    {
+      "origin": "synthetic",
+      "title": "İSTANBUL models",
+      "expected": "İSTANBUL Models"
+    },
+    {
+      "origin": "synthetic",
+      "title": "models - for the end",
+      "expected": "Models - for the End"
+    },
+    {
+      "origin": "synthetic",
+      "title": "models - For the end",
+      "expected": "Models - For the End"
+    },
+    {
+      "origin": "synthetic",
+      "title": "models  and methods",
+      "expected": "Models  and Methods"
+    },
+    {
+      "origin": "synthetic",
+      "title": "models\tAND methods",
+      "expected": "Models and Methods"
+    }
+  ]
+}

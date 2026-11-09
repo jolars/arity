@@ -26,7 +26,8 @@
 #       only its version, Maintainer, and Author components, on the same
 #       grounds: the CRAN pretest is mostly about files, URLs, and network
 #       state, but these are functions of the DESCRIPTION text and nothing else
-#       covers them.
+#       covers them. Its independent title-case clause runs separately below
+#       so incomplete metadata cannot prevent it from checking a title.
 #
 # Reads DESCRIPTION text from stdin, writes a line-oriented report to stdout.
 # stderr is diagnostic noise; a non-zero exit means "could not process" and the
@@ -218,6 +219,25 @@ if (!is.null(cran)) {
   # the wrong key and so belong to the same rule as the field itself.
   emit_component("author_starts_with_Author", cran$author_starts_with_Author)
   emit_component("author_should_be_authors_at_R", cran$author_should_be_authors_at_R)
+}
+
+# The incoming checker can abort on an unrelated missing field before reaching
+# Title. Execute its independent clause directly so partial metadata is still
+# checked against R's implementation, including CRAN's quoted-name exemption.
+title <- trimws(as.vector(db["Title"]))
+language <- db["Language"]
+package <- db["Package"]
+if (!is.na(title) &&
+    (is.na(package) || tolower(title) != tolower(package)) &&
+    (is.na(language) || language == "en" || startsWith(language, "en-"))) {
+  title <- gsub("[\n\t]", " ", title)
+  title2 <- tools::toTitleCase(title)
+  pattern <- "(^|(?<=[ \t[:punct:]]))'[^']*'($|(?=[ \t[:punct:]]))"
+  matches <- gregexpr(pattern, title, perl = TRUE)
+  regmatches(title2, matches) <- regmatches(title, matches)
+  if (title != title2) {
+    emit("title_case", c(title, title2))
+  }
 }
 
 cat(seen, sep = "\n")
