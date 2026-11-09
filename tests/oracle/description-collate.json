@@ -1,0 +1,1082 @@
+{
+  "r_version": "R version 4.6.1 (2026-06-24)",
+  "cases": [
+    {
+      "name": "no specification",
+      "description": "",
+      "files": [
+        "a.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "",
+          "entries": [],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "",
+          "entries": [],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "missing source",
+      "description": "Collate: ghost.R\n",
+      "files": [
+        "a.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "ghost.R"
+          ],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "ineligible"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "ghost.R"
+          ],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "ineligible"
+        }
+      }
+    },
+    {
+      "name": "unlisted source",
+      "description": "Collate: a.R\n",
+      "files": [
+        "a.R",
+        "b.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a.R"
+          ],
+          "sources": [
+            "a.R",
+            "b.R"
+          ],
+          "failure": "unlisted"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a.R"
+          ],
+          "sources": [
+            "a.R",
+            "b.R"
+          ],
+          "failure": "unlisted"
+        }
+      }
+    },
+    {
+      "name": "duplicate source",
+      "description": "Collate: 'a.R' a.R\n",
+      "files": [
+        "a.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a.R",
+            "a.R"
+          ],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "duplicate"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a.R",
+            "a.R"
+          ],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "duplicate"
+        }
+      }
+    },
+    {
+      "name": "quoted names",
+      "description": "Collate: 'a b.R' \"c d.R\"\n",
+      "files": [
+        "a b.R",
+        "c d.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a b.R",
+            "c d.R"
+          ],
+          "sources": [
+            "a b.R",
+            "c d.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a b.R",
+            "c d.R"
+          ],
+          "sources": [
+            "a b.R",
+            "c d.R"
+          ],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "quoted apostrophe",
+      "description": "Collate: 'a\\'b.R'\n",
+      "files": [
+        "a'b.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a'b.R"
+          ],
+          "sources": [
+            "a'b.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a'b.R"
+          ],
+          "sources": [
+            "a'b.R"
+          ],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "literal backslashes",
+      "description": "Collate: 'a\\b.R'\n",
+      "files": [
+        "a\\b.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a\\b.R"
+          ],
+          "sources": [
+            "a\\b.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a\\b.R"
+          ],
+          "sources": [
+            "a\\b.R"
+          ],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "quotes only at token start",
+      "description": "Collate: a'b.R\n",
+      "files": [
+        "a'b.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a'b.R"
+          ],
+          "sources": [
+            "a'b.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a'b.R"
+          ],
+          "sources": [
+            "a'b.R"
+          ],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "adjacent quoted entries",
+      "description": "Collate: 'a.R'\"b.R\"\n",
+      "files": [
+        "a.R",
+        "b.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a.R",
+            "b.R"
+          ],
+          "sources": [
+            "a.R",
+            "b.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a.R",
+            "b.R"
+          ],
+          "sources": [
+            "a.R",
+            "b.R"
+          ],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "unterminated quote",
+      "description": "Collate: 'a.R\n",
+      "files": [
+        "a.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a.R\n"
+          ],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "ineligible"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a.R\n"
+          ],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "ineligible"
+        }
+      }
+    },
+    {
+      "name": "multiline quoted name",
+      "description": "Collate: 'a\n    b.R'\n",
+      "files": [
+        "a b.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a b.R"
+          ],
+          "sources": [
+            "a b.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a b.R"
+          ],
+          "sources": [
+            "a b.R"
+          ],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "comment between entries",
+      "description": "Collate: a.R\n# comment\n    b.R\n",
+      "files": [
+        "a.R",
+        "b.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a.R",
+            "b.R"
+          ],
+          "sources": [
+            "a.R",
+            "b.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a.R",
+            "b.R"
+          ],
+          "sources": [
+            "a.R",
+            "b.R"
+          ],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "all eligible extensions",
+      "description": "Collate: a.R b.r c.S d.s e.q\n",
+      "files": [
+        "a.R",
+        "b.r",
+        "c.S",
+        "d.s",
+        "e.q"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a.R",
+            "b.r",
+            "c.S",
+            "d.s",
+            "e.q"
+          ],
+          "sources": [
+            "a.R",
+            "b.r",
+            "c.S",
+            "d.s",
+            "e.q"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a.R",
+            "b.r",
+            "c.S",
+            "d.s",
+            "e.q"
+          ],
+          "sources": [
+            "a.R",
+            "b.r",
+            "c.S",
+            "d.s",
+            "e.q"
+          ],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "uppercase Q excluded",
+      "description": "Collate: a.Q\n",
+      "files": [
+        "a.Q"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a.Q"
+          ],
+          "sources": [],
+          "failure": "ineligible"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a.Q"
+          ],
+          "sources": [],
+          "failure": "ineligible"
+        }
+      }
+    },
+    {
+      "name": "hidden excluded",
+      "description": "Collate: .a.R\n",
+      "files": [
+        ".a.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            ".a.R"
+          ],
+          "sources": [],
+          "failure": "ineligible"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            ".a.R"
+          ],
+          "sources": [],
+          "failure": "ineligible"
+        }
+      }
+    },
+    {
+      "name": "underscore excluded",
+      "description": "Collate: _a.R\n",
+      "files": [
+        "_a.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "_a.R"
+          ],
+          "sources": [],
+          "failure": "ineligible"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "_a.R"
+          ],
+          "sources": [],
+          "failure": "ineligible"
+        }
+      }
+    },
+    {
+      "name": "unicode initial excluded",
+      "description": "Collate: éclair.R\n",
+      "files": [
+        "éclair.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "éclair.R"
+          ],
+          "sources": [],
+          "failure": "ineligible"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "éclair.R"
+          ],
+          "sources": [],
+          "failure": "ineligible"
+        }
+      }
+    },
+    {
+      "name": "unicode interior eligible",
+      "description": "Collate: aé.R\n",
+      "files": [
+        "aé.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "aé.R"
+          ],
+          "sources": [
+            "aé.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "aé.R"
+          ],
+          "sources": [
+            "aé.R"
+          ],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "numeric initial eligible",
+      "description": "Collate: 1.R\n",
+      "files": [
+        "1.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "1.R"
+          ],
+          "sources": [
+            "1.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "1.R"
+          ],
+          "sources": [
+            "1.R"
+          ],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "template excluded",
+      "description": "Collate: a.R.in\n",
+      "files": [
+        "a.R.in"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a.R.in"
+          ],
+          "sources": [],
+          "failure": "ineligible"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a.R.in"
+          ],
+          "sources": [],
+          "failure": "ineligible"
+        }
+      }
+    },
+    {
+      "name": "nested directory excluded",
+      "description": "Collate: nested/a.R\n",
+      "files": [
+        "nested/a.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "nested/a.R"
+          ],
+          "sources": [],
+          "failure": "ineligible"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "nested/a.R"
+          ],
+          "sources": [],
+          "failure": "ineligible"
+        }
+      }
+    },
+    {
+      "name": "empty specification",
+      "description": "Collate:\n",
+      "files": [
+        "a.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "unlisted"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "unlisted"
+        }
+      }
+    },
+    {
+      "name": "empty source directory",
+      "description": "Collate:\n",
+      "files": [],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [],
+          "sources": [],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [],
+          "sources": [],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "platform overrides",
+      "description": "Collate: stale.R\nCollate.unix: a.R unix/u.R\nCollate.windows: a.R windows/w.R\n",
+      "files": [
+        "a.R",
+        "unix/u.R",
+        "windows/w.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate.unix",
+          "entries": [
+            "a.R",
+            "unix/u.R"
+          ],
+          "sources": [
+            "a.R",
+            "unix/u.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate.windows",
+          "entries": [
+            "a.R",
+            "windows/w.R"
+          ],
+          "sources": [
+            "a.R",
+            "windows/w.R"
+          ],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "platform fallback",
+      "description": "Collate: a.R windows/w.R\nCollate.unix: a.R unix/u.R\n",
+      "files": [
+        "a.R",
+        "unix/u.R",
+        "windows/w.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate.unix",
+          "entries": [
+            "a.R",
+            "unix/u.R"
+          ],
+          "sources": [
+            "a.R",
+            "unix/u.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a.R",
+            "windows/w.R"
+          ],
+          "sources": [
+            "a.R",
+            "windows/w.R"
+          ],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "one platform only",
+      "description": "Collate.unix: a.R unix/u.R\n",
+      "files": [
+        "a.R",
+        "unix/u.R",
+        "windows/w.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate.unix",
+          "entries": [
+            "a.R",
+            "unix/u.R"
+          ],
+          "sources": [
+            "a.R",
+            "unix/u.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "",
+          "entries": [],
+          "sources": [
+            "a.R",
+            "windows/w.R"
+          ],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "other platform entry",
+      "description": "Collate: a.R unix/u.R\n",
+      "files": [
+        "a.R",
+        "unix/u.R",
+        "windows/w.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a.R",
+            "unix/u.R"
+          ],
+          "sources": [
+            "a.R",
+            "unix/u.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a.R",
+            "unix/u.R"
+          ],
+          "sources": [
+            "a.R",
+            "windows/w.R"
+          ],
+          "failure": "ineligible"
+        }
+      }
+    },
+    {
+      "name": "dot slash is not normalized",
+      "description": "Collate: ./a.R\n",
+      "files": [
+        "a.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "./a.R"
+          ],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "ineligible"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "./a.R"
+          ],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "ineligible"
+        }
+      }
+    },
+    {
+      "name": "hash is literal",
+      "description": "Collate: a#b.R\n",
+      "files": [
+        "a#b.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a#b.R"
+          ],
+          "sources": [
+            "a#b.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a#b.R"
+          ],
+          "sources": [
+            "a#b.R"
+          ],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "fallback duplicate",
+      "description": "Collate: a.R a.R\nCollate.unix: a.R\n",
+      "files": [
+        "a.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate.unix",
+          "entries": [
+            "a.R"
+          ],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a.R",
+            "a.R"
+          ],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "duplicate"
+        }
+      }
+    },
+    {
+      "name": "last field wins",
+      "description": "Collate: ghost.R\nCollate: a.R\n",
+      "files": [
+        "a.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a.R"
+          ],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a.R"
+          ],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "empty quoted list",
+      "description": "Collate: ''\n",
+      "files": [],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [],
+          "sources": [],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [],
+          "sources": [],
+          "failure": "ok"
+        }
+      }
+    },
+    {
+      "name": "empty quoted entry before source",
+      "description": "Collate: '' a.R\n",
+      "files": [
+        "a.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "",
+            "a.R"
+          ],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "ineligible"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "",
+            "a.R"
+          ],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "ineligible"
+        }
+      }
+    },
+    {
+      "name": "empty quoted entry after source",
+      "description": "Collate: a.R ''\n",
+      "files": [
+        "a.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a.R",
+            ""
+          ],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "ineligible"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a.R",
+            ""
+          ],
+          "sources": [
+            "a.R"
+          ],
+          "failure": "ineligible"
+        }
+      }
+    },
+    {
+      "name": "two empty quoted entries",
+      "description": "Collate: '' ''\n",
+      "files": [],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "",
+            ""
+          ],
+          "sources": [],
+          "failure": "duplicate"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "",
+            ""
+          ],
+          "sources": [],
+          "failure": "duplicate"
+        }
+      }
+    },
+    {
+      "name": "trailing quoted backslash",
+      "description": "Collate: 'a\\\n",
+      "files": [],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a\\\n"
+          ],
+          "sources": [],
+          "failure": "ineligible"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a\\\n"
+          ],
+          "sources": [],
+          "failure": "ineligible"
+        }
+      }
+    },
+    {
+      "name": "literal doubled backslashes",
+      "description": "Collate: 'a\\\\b.R'\n",
+      "files": [
+        "a\\\\b.R"
+      ],
+      "expected": {
+        "unix": {
+          "field": "Collate",
+          "entries": [
+            "a\\\\b.R"
+          ],
+          "sources": [
+            "a\\\\b.R"
+          ],
+          "failure": "ok"
+        },
+        "windows": {
+          "field": "Collate",
+          "entries": [
+            "a\\\\b.R"
+          ],
+          "sources": [
+            "a\\\\b.R"
+          ],
+          "failure": "ok"
+        }
+      }
+    }
+  ]
+}

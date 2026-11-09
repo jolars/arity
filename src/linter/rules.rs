@@ -32,6 +32,7 @@ use crate::ast::{BinaryExpr, CallExpr};
 use crate::config::{CompatConfig, CompatVersion, LintConfig, RulesConfig};
 use crate::dcf;
 use crate::linter::rules::roxygen::RoxygenTopics;
+use crate::project::collate::PackageSourceInventory;
 use crate::project::description::{DescriptionCompat, DescriptionFacts};
 use crate::project::{ExternalResolution, FileScope, PackageTopics, PackageUsage};
 use crate::rindex::provider::CompositeProvider;
@@ -238,6 +239,7 @@ fn packaging_rules() -> Vec<AnyRule> {
         AnyRule::Dcf(Box::new(packaging::DescriptionEmptyPerson)),
         AnyRule::Dcf(Box::new(packaging::DescriptionAuthorsAtRRequired)),
         AnyRule::Dcf(Box::new(packaging::DescriptionTitleCase)),
+        AnyRule::Dcf(Box::new(packaging::DescriptionCollateMismatch)),
         AnyRule::Dcf(Box::new(packaging::UnusedDependency)),
     ]
 }
@@ -1079,6 +1081,10 @@ pub struct DcfRuleContext<'a> {
     /// that needs it must stay silent, exactly as the version-aware rules do
     /// without a floor.
     pub usage: Option<&'a PackageUsage>,
+    /// Eligible on-disk sources for each installation platform. Independent of
+    /// the graph's expected source set, which includes nonexistent Collate
+    /// entries. `None` when the caller has no usable disk inventory.
+    pub sources: Option<&'a PackageSourceInventory>,
     /// Per-rule option tables from `[lint.rules.<id>]`. See [`RuleContext::config`].
     pub config: &'a RulesConfig,
     /// The document's `# arity-ignore` directives, used by [`run_dcf_rules`] to
@@ -1103,6 +1109,7 @@ pub fn run_dcf_rules(
     document: &dcf::Document,
     facts: &DescriptionFacts,
     usage: Option<&PackageUsage>,
+    sources: Option<&PackageSourceInventory>,
 ) -> Vec<Diagnostic> {
     let suppressions = SuppressionMap::build_dcf(root);
     let ctx = DcfRuleContext {
@@ -1111,6 +1118,7 @@ pub fn run_dcf_rules(
         document,
         facts,
         usage,
+        sources,
         config: &resolved.rules_config,
         suppressions: &suppressions,
         enabled_rules: &resolved.enabled,
@@ -1262,6 +1270,7 @@ mod tests {
             &parsed.cst,
             &document,
             &facts,
+            None,
             None,
         )
     }

@@ -6,6 +6,7 @@
 //! feeds cross-file name resolution.
 
 pub mod classes;
+pub mod collate;
 pub mod deps;
 pub mod description;
 pub mod exports;

@@ -20,6 +20,7 @@ use crate::incremental::{
     file_exports, file_free_reads, file_qualified_reads, file_roxygen_topics, package_references,
     parsed_tree_root, semantic_model, source_edges, top_level_events,
 };
+use crate::project::collate::PackageSourceInventory;
 use crate::project::description::DescriptionFacts;
 use crate::project::{
     PackageUsage, expected_r_sources, external_resolution, package_facts_for, package_root,
@@ -366,7 +367,9 @@ pub fn check_paths_with_index(
         .map_with(db.clone(), |worker, (path, content)| {
             let worker = &*worker;
             let usage = package_usage_for(worker, &path);
-            let (status, diagnostics) = lint_description_source(&path, &content, &rules, usage);
+            let sources = path.parent().and_then(PackageSourceInventory::read);
+            let (status, diagnostics) =
+                lint_description_source(&path, &content, &rules, usage, sources.as_ref());
             let source = (!diagnostics.is_empty()).then(|| Arc::<str>::from(content));
             LintFileReport {
                 path,
@@ -733,7 +736,8 @@ pub fn check_description_in_project(
 ) -> Vec<Diagnostic> {
     let db = analysis.as_db();
     let usage = package_usage_for(db, path);
-    lint_description_source(path, content, rules, usage).1
+    let sources = path.parent().and_then(PackageSourceInventory::read);
+    lint_description_source(path, content, rules, usage, sources.as_ref()).1
 }
 
 /// Lint one `DESCRIPTION` buffer: parse it as DCF, and either report the
@@ -752,6 +756,7 @@ pub(crate) fn lint_description_source(
     content: &str,
     rules: &ResolvedRules,
     usage: Option<&PackageUsage>,
+    sources: Option<&PackageSourceInventory>,
 ) -> (LintStatus, Vec<Diagnostic>) {
     let parsed = crate::dcf::parse(content);
     if !parsed.diagnostics.is_empty() {
@@ -764,7 +769,8 @@ pub(crate) fn lint_description_source(
 
     let document = parsed.document();
     let facts = DescriptionFacts::from_document(&document);
-    let mut diagnostics = run_dcf_rules(rules, path, &parsed.cst, &document, &facts, usage);
+    let mut diagnostics =
+        run_dcf_rules(rules, path, &parsed.cst, &document, &facts, usage, sources);
     for d in &mut diagnostics {
         d.path = path.to_path_buf();
     }
@@ -792,7 +798,7 @@ pub fn check_description_document(
     if let Some(rule) = unknown.into_iter().next() {
         return Err(LintError::UnknownRule { rule });
     }
-    Ok(lint_description_source(path, content, &rules, None).1)
+    Ok(lint_description_source(path, content, &rules, None, None).1)
 }
 
 /// Like [`check_document`] but with a caller-supplied symbol provider.

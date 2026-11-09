@@ -48,6 +48,27 @@ use std::process::{Command, Stdio};
 use arity::config::LintConfig;
 use arity::linter::check_description_document;
 
+#[test]
+#[ignore = "R installation Collate oracle; run via `task description-oracle`"]
+fn description_collate_pins_match_r() {
+    let Some(rscript) = locate_rscript() else {
+        eprintln!("collate oracle: Rscript not found; skipping.");
+        return;
+    };
+    let output = Command::new(rscript)
+        .arg("--vanilla")
+        .arg(manifest_path("tests/oracle/collate_oracle.R"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("run the R installation Collate oracle");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    eprint!("{}", String::from_utf8_lossy(&output.stdout));
+}
+
 /// The ordinary DCF tests compare the rule with these pinned recommendations.
 /// This live check detects changes in R's tables or capitalization behavior.
 #[test]

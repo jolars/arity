@@ -139,19 +139,18 @@ impl DescriptionFacts {
         // `fields()` is record-blind on purpose: a stray blank line splits a
         // DESCRIPTION into two DCF records, and a `Collate` after that split
         // still names files R will load. R picks an OS-specific
-        // `Collate@unix`/`Collate@windows` over plain `Collate`; we union every
+        // `Collate.unix`/`Collate.windows` over plain `Collate`; we union every
         // `Collate*`, since over-including only tightens completeness.
         let mut collate = BTreeSet::new();
         for field in document.fields() {
             if !field.name().starts_with("Collate") {
                 continue;
             }
-            for entry in field.folded_value().split_whitespace() {
-                let name = entry.trim_matches(['\'', '"']);
-                if !name.is_empty() {
-                    collate.insert(name.to_string());
-                }
-            }
+            collate.extend(
+                crate::dcf::collate::collate_entries(&field)
+                    .into_iter()
+                    .map(|entry| entry.name.to_string()),
+            );
         }
 
         DescriptionFacts {
@@ -530,6 +529,17 @@ mod tests {
         assert_eq!(
             facts.collate,
             ["a.R".to_string(), "b.R".to_string(), "c.R".to_string()].into()
+        );
+    }
+
+    #[test]
+    fn collate_facts_preserve_quoted_filenames() {
+        let facts = DescriptionFacts::from_text(
+            "Collate: 'a b.R' 'a b.R'\nCollate.windows: \"windows/c d.R\"\n",
+        );
+        assert_eq!(
+            facts.collate,
+            ["a b.R".to_string(), "windows/c d.R".to_string()].into()
         );
     }
 

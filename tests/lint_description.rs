@@ -62,6 +62,256 @@ fn rules_reported(result: &LintResult) -> Vec<&'static str> {
         .collect()
 }
 
+// description-collate-mismatch
+
+const COLLATE_MISMATCH: &str = "description-collate-mismatch";
+
+fn collate_findings(fields: &str, files: &[&str]) -> (String, Vec<arity::linter::Diagnostic>) {
+    let source = format!("{COMPLETE_DESCRIPTION}{fields}");
+    let (_dir, root) = package(&source, "", &[]);
+    for name in files {
+        let path = root.join("R").join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "NULL\n").unwrap();
+    }
+    let config = LintConfig {
+        select: Some(vec![COLLATE_MISMATCH.to_string()]),
+        ..Default::default()
+    };
+    let result = check_paths_with_config(&[root.join("DESCRIPTION")], &config).unwrap();
+    (source, description_report(&result).diagnostics.clone())
+}
+
+#[test]
+fn collate_reports_missing_unlisted_and_duplicate_files_without_fixes() {
+    let (source, findings) =
+        collate_findings("Collate: 'a.R'\n    'ghost.R' 'a.R'\n", &["a.R", "b.R"]);
+    assert_eq!(findings.len(), 3, "{findings:?}");
+    for finding in &findings {
+        assert_eq!(finding.rule, COLLATE_MISMATCH);
+        assert_eq!(finding.severity, arity::linter::Severity::Warning);
+        assert!(finding.fix.is_none());
+    }
+    let spans: Vec<_> = findings.iter().map(|d| &source[d.range]).collect();
+    assert_eq!(spans, ["Collate", "'ghost.R'", "'a.R'"]);
+    assert!(findings.iter().any(|d| d.message.body.contains("b.R")));
+}
+
+#[test]
+fn collate_matches_quoted_lists_and_platform_overrides() {
+    for (fields, files) in [
+        ("", vec!["a.R"]),
+        ("Collate: 'a b.R' \"c.R\"\n", vec!["a b.R", "c.R"]),
+        (
+            "Collate: 'a.R'\n# a DCF comment\n    b.R\n",
+            vec!["a.R", "b.R"],
+        ),
+        (
+            "Collate: stale.R\nCollate.unix: a.R unix/u.R\nCollate.windows: a.R windows/w.R\n",
+            vec!["a.R", "unix/u.R", "windows/w.R"],
+        ),
+        (
+            "Collate.unix: a.R unix/u.R\n",
+            vec!["a.R", "unix/u.R", "windows/w.R"],
+        ),
+    ] {
+        let (_, findings) = collate_findings(fields, &files);
+        assert!(findings.is_empty(), "{fields}: {findings:?}");
+    }
+}
+
+#[test]
+fn collate_checks_both_platforms_and_keeps_their_entries_separate() {
+    let (source, findings) = collate_findings(
+        "Collate: a.R\nCollate.windows: a.R windows/no.R\n",
+        &["a.R", "unix/u.R", "windows/w.R"],
+    );
+    assert_eq!(findings.len(), 3, "{findings:?}");
+    assert_eq!(&source[findings[0].range], "Collate");
+    assert_eq!(&source[findings[1].range], "Collate.windows");
+    assert_eq!(&source[findings[2].range], "windows/no.R");
+}
+
+#[test]
+fn collate_uses_rs_and_lowercase_q_extensions_and_r_filename_selection() {
+    let (_, findings) = collate_findings(
+        "Collate: a.R b.r c.S d.s e.q\n",
+        &[
+            "a.R",
+            "b.r",
+            "c.S",
+            "d.s",
+            "e.q",
+            "ignored.Q",
+            ".hidden.R",
+            "_ignored.R",
+            "x.R.in",
+            "nested/no.R",
+        ],
+    );
+    assert!(findings.is_empty(), "{findings:?}");
+    for name in [
+        "ignored.Q",
+        ".hidden.R",
+        "_ignored.R",
+        "x.R.in",
+        "nested/no.R",
+    ] {
+        let (_, findings) = collate_findings(&format!("Collate: {name}\n"), &[name]);
+        assert_eq!(findings.len(), 1, "{name}: {findings:?}");
+    }
+}
+
+#[test]
+fn collate_empty_specification_reports_unlisted_files() {
+    let (source, findings) = collate_findings("Collate:\n", &["a.R"]);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(&source[findings[0].range], "Collate");
+    assert!(collate_findings("Collate:\n", &[]).1.is_empty());
+}
+
+#[test]
+fn collate_is_default_on_and_obeys_suppressions() {
+    let source = format!("{COMPLETE_DESCRIPTION}Collate: ghost.R\n");
+    let (_dir, root) = package(&source, "", &[]);
+    let result = check_paths(&[root.join("DESCRIPTION")]).unwrap();
+    assert!(rules_reported(&result).contains(&COLLATE_MISMATCH));
+    assert!(collate_findings(
+        "# arity-lint skip description-collate-mismatch: generated at install time\nCollate: ghost.R\n",
+        &[],
+    ).1.is_empty());
+}
+
+#[test]
+fn collate_stays_silent_without_a_package_inventory() {
+    let source = "Collate: ghost.R ghost.R\n";
+    assert!(
+        !check_description_document(Path::new("DESCRIPTION"), source, &LintConfig::default())
+            .unwrap()
+            .iter()
+            .any(|d| d.rule == COLLATE_MISMATCH)
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("DESCRIPTION");
+    std::fs::write(&path, source).unwrap();
+    let result = check_paths(&[path]).unwrap();
+    assert!(!rules_reported(&result).contains(&COLLATE_MISMATCH));
+}
+
+#[test]
+fn collate_editor_analysis_uses_unsaved_fields_and_refreshes_the_disk_inventory() {
+    use arity::incremental::IncrementalDatabase;
+    use arity::linter::check::check_description_in_project;
+    use arity::linter::rules::ResolvedRules;
+
+    let (_dir, root) = package("Package: testpkg\nCollate: a.R\n", "", &[("a.R", "NULL\n")]);
+    let path = root.join("DESCRIPTION");
+    let source = "Package: testpkg\nCollate: a.R b.R\n";
+    let config = LintConfig {
+        select: Some(vec![COLLATE_MISMATCH.to_string()]),
+        ..Default::default()
+    };
+    let (rules, unknown) = ResolvedRules::resolve(&config);
+    assert!(unknown.is_empty());
+    let db = IncrementalDatabase::default();
+    let findings = check_description_in_project(&db.snapshot(), &path, source, &rules);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(&source[findings[0].range], "b.R");
+    std::fs::write(root.join("R/b.R"), "NULL\n").unwrap();
+    assert!(check_description_in_project(&db.snapshot(), &path, source, &rules).is_empty());
+    assert!(
+        check_description_document(&path, source, &config)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn collate_matches_pinned_r_installation_checks() {
+    use arity::dcf::collate::collate_entries;
+    use arity::project::collate::PackageSourceInventory;
+
+    let corpus: serde_json::Value =
+        serde_json::from_str(include_str!("oracle/description-collate.json")).unwrap();
+    for case in corpus["cases"].as_array().unwrap() {
+        let label = case["name"].as_str().unwrap();
+        let fields = case["description"].as_str().unwrap();
+        let files: Vec<_> = case["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        // Unix permits literal backslashes in basenames. Windows treats them
+        // as separators, so those disk fixtures cannot be recreated there.
+        // The parser's backslash cases run on every platform in dcf_collate.
+        if cfg!(windows) && files.iter().any(|name| name.contains('\\')) {
+            continue;
+        }
+        let source = format!("{COMPLETE_DESCRIPTION}{fields}");
+        let (_dir, root) = package(&source, "", &[]);
+        for name in &files {
+            let path = root.join("R").join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "NULL\n").unwrap();
+        }
+        let inventory = PackageSourceInventory::read(&root).unwrap();
+        let document = arity::dcf::parse(&source).document();
+        let (_, findings) = collate_findings(fields, &files);
+        for (os, platform, actual_sources) in [
+            ("unix", "Unix", &inventory.unix),
+            ("windows", "Windows", &inventory.windows),
+        ] {
+            let expected = &case["expected"][os];
+            let sources: Vec<_> = actual_sources.iter().map(String::as_str).collect();
+            assert_eq!(
+                serde_json::to_value(sources).unwrap(),
+                expected["sources"],
+                "{label} ({os})"
+            );
+            let field = expected["field"].as_str().unwrap();
+            if !field.is_empty() {
+                let entries: Vec<_> = collate_entries(&document.field(field).unwrap())
+                    .into_iter()
+                    .map(|entry| entry.name.to_string())
+                    .collect();
+                assert_eq!(
+                    serde_json::to_value(entries).unwrap(),
+                    expected["entries"],
+                    "{label} ({os})"
+                );
+            }
+            let bodies: Vec<_> = findings
+                .iter()
+                .filter(|d| d.message.body.contains(platform))
+                .map(|d| d.message.body.as_str())
+                .collect();
+            // R stops at its first failure. Arity can report all three kinds
+            // together, so compare in the same order as the installer.
+            let failure = if bodies
+                .iter()
+                .any(|body| body.contains("listed more than once"))
+            {
+                "duplicate"
+            } else if bodies
+                .iter()
+                .any(|body| body.contains("does not name an eligible"))
+            {
+                "ineligible"
+            } else if bodies.iter().any(|body| body.contains("is missing from")) {
+                "unlisted"
+            } else {
+                "ok"
+            };
+            assert_eq!(
+                failure,
+                expected["failure"].as_str().unwrap(),
+                "{label} ({os}): {findings:?}"
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Discovery and the driver pass
 // ---------------------------------------------------------------------------

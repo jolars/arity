@@ -775,20 +775,24 @@ Tier 3—argued for default-off, or against:
 
 ### Phase 5—Package-aware rules
 
-- [ ] `description-collate-mismatch` (packaging; package context; no fix,
-  default on). When a collate specification is present, report missing source
-  files, entries that do not name eligible source files, and duplicate entries;
-  R rejects all three during installation. Match R's quoted-list parsing and
-  source-file selection, including `.[RrSsQq]` files and OS subdirectories.
-  Check Unix and Windows separately, with `Collate.unix` or `Collate.windows`
-  overriding `Collate`. `DescriptionFacts::collate` is not sufficient: it
-  unions the fields into a set, loses duplicates, and splits quoted filenames
-  on whitespace. Preserve each field's entries and obtain an independent disk
-  inventory; the project's expected source set already includes nonexistent
-  Collate entries. Keep rules free of filesystem reads and stay silent when
-  package inventory is unavailable. Pin failures and valid quoted and
+- [x] `description-collate-mismatch` (packaging; package context; no fix,
+  default on). When a collate specification is present, report missing
+  source files, entries that do not name eligible source files, and
+  duplicate entries; R rejects all three during installation. Match R's
+  quoted-list parsing and source-file selection, including `.R`, `.r`, `.S`,
+  `.s`, and `.q` files and OS subdirectories (R excludes uppercase `.Q`).
+  Check Unix and Windows separately, with `Collate.unix` or
+  `Collate.windows` overriding `Collate`. `DescriptionFacts::collate` is not
+  sufficient: it unions the fields into a set and loses duplicates. Preserve
+  each field's entries and obtain an independent disk inventory; the
+  project's expected source set already includes nonexistent Collate
+  entries. Keep rules free of filesystem reads and stay silent when package
+  inventory is unavailable. Pin failures and valid quoted and
   platform-specific cases against R's installation helper. Defer autofixes:
-  inserting a missing file requires choosing its execution order.
+  inserting a missing file requires choosing its execution order. Done: a
+  default-on, syntax-only packaging warning with an independent disk
+  inventory, shared parser-owned quoted lists, and 37 installation-oracle
+  cases pinned for both platforms; no autofix.
 
 The package-specific rules below are gated on the package being attached
 (`model.loaded_packages()`).
