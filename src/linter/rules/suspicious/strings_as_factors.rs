@@ -50,7 +50,7 @@ impl Rule for StringsAsFactors {
         let Some(call) = el.as_node().cloned().and_then(CallExpr::cast) else {
             return;
         };
-        if matchers::callee_name(&call).as_deref() != Some("data.frame")
+        if call.callee_name().as_deref() != Some("data.frame")
             || !base_call(&call, ctx)
             || !ctx
                 .r_compat_floor()
@@ -99,9 +99,9 @@ fn base_call(call: &CallExpr, ctx: &RuleContext<'_>) -> bool {
         return access.package == "base";
     }
     ctx.resolves_to_base(call)
-        && !ctx.project.is_some_and(|scope| {
-            matchers::callee_name(call).is_some_and(|name| scope.resolves(&name))
-        })
+        && !ctx
+            .project
+            .is_some_and(|scope| call.callee_name().is_some_and(|name| scope.resolves(&name)))
 }
 
 fn known_character(value: &SyntaxElement, ctx: &RuleContext<'_>) -> bool {
@@ -111,7 +111,7 @@ fn known_character(value: &SyntaxElement, ctx: &RuleContext<'_>) -> bool {
     let Some(call) = value.as_node().cloned().and_then(CallExpr::cast) else {
         return false;
     };
-    if matchers::callee_name(&call).as_deref() != Some("c") || !base_call(&call, ctx) {
+    if call.callee_name().as_deref() != Some("c") || !base_call(&call, ctx) {
         return false;
     }
     let args = matchers::args(&call);

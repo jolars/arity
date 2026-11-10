@@ -82,7 +82,7 @@ fn is_list_call(mut operand: SyntaxElement, ctx: &RuleContext<'_>) -> bool {
             return false;
         };
         return matches!(
-            matchers::callee_name(&call).as_deref(),
+            call.callee_name().as_deref(),
             Some("list" | "pairlist" | "lapply" | "Map")
         ) && ctx.resolves_to_base(&call)
             && call.callee_token().is_some_and(|callee| {

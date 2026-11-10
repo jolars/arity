@@ -8,7 +8,6 @@ use rowan::ast::AstNode as _;
 
 use crate::ast::{BlockExpr, CallExpr, FunctionExpr, ParenExpr};
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
-use crate::linter::rules::matchers;
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::semantic::symbols::unbacktick;
 use crate::syntax::{SyntaxElement, SyntaxKind};
@@ -62,7 +61,9 @@ impl Rule for TerminalClose {
         else {
             return;
         };
-        if !matchers::callee_name(&call).is_some_and(|name| unbacktick(&name) == "close")
+        if !call
+            .callee_name()
+            .is_some_and(|name| unbacktick(&name) == "close")
             || !ctx.resolves_to_base(&call)
         {
             return;

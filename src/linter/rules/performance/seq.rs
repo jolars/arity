@@ -107,7 +107,7 @@ impl Rule for Seq {
             }
             (format!("seq_len({})", token.text()), rhs.text_range())
         } else if let Some(call) = rhs.as_node().and_then(|n| CallExpr::cast(n.clone())) {
-            let Some(name) = matchers::callee_name(&call) else {
+            let Some(name) = call.callee_name() else {
                 return;
             };
             let Some(arg) = matchers::sole_positional(&call) else {

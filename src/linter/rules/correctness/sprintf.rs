@@ -50,7 +50,7 @@ impl Rule for Sprintf {
         let Some(call) = el.as_node().cloned().and_then(CallExpr::cast) else {
             return;
         };
-        let Some(name) = matchers::callee_name(&call) else {
+        let Some(name) = call.callee_name() else {
             return;
         };
         if !matches!(name.as_str(), "sprintf" | "gettextf") || !is_base_call(&call, ctx) {
@@ -212,7 +212,7 @@ fn literal_formats(value: &SyntaxElement, ctx: &RuleContext<'_>) -> Option<Vec<S
         return matchers::string_literal(token).map(|_| vec![token.clone()]);
     }
     let call = value.as_node().cloned().and_then(CallExpr::cast)?;
-    if matchers::callee_name(&call).as_deref() != Some("c") || !is_base_call(&call, ctx) {
+    if call.callee_name().as_deref() != Some("c") || !is_base_call(&call, ctx) {
         return None;
     }
     matchers::args(&call)

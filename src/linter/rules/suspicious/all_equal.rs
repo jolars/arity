@@ -107,9 +107,7 @@ fn tested_all_equal(
         }
         SyntaxKind::CALL_EXPR => {
             let outer = CallExpr::cast(node)?;
-            if matchers::callee_name(&outer).as_deref() != Some("isFALSE")
-                || !ctx.resolves_to_base(&outer)
-            {
+            if outer.callee_name().as_deref() != Some("isFALSE") || !ctx.resolves_to_base(&outer) {
                 return None;
             }
             let argument = matchers::sole_positional(&outer)?;

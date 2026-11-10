@@ -107,8 +107,7 @@ rule_meta!(
 );
 impl MatrixApply {
     fn check_call(&self, el: &SyntaxElement, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
-        let Some(call) = call(el).filter(|c| matchers::callee_name(c).as_deref() == Some("apply"))
-        else {
+        let Some(call) = call(el).filter(|c| c.callee_name().as_deref() == Some("apply")) else {
             return;
         };
         let a = values(&call);
@@ -184,8 +183,7 @@ rule_meta!(
 );
 impl WhichGrepl {
     fn check_call(&self, el: &SyntaxElement, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
-        let Some(outer) = call(el).filter(|c| matchers::callee_name(c).as_deref() == Some("which"))
-        else {
+        let Some(outer) = call(el).filter(|c| c.callee_name().as_deref() == Some("which")) else {
             return;
         };
         let Some(inner_el) = matchers::sole_positional(&outer) else {
@@ -223,8 +221,7 @@ rule_meta!(
 );
 impl RepLen {
     fn check_call(&self, el: &SyntaxElement, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
-        let Some(call) = call(el).filter(|c| matchers::callee_name(c).as_deref() == Some("rep"))
-        else {
+        let Some(call) = call(el).filter(|c| c.callee_name().as_deref() == Some("rep")) else {
             return;
         };
         let a = values(&call);
@@ -262,7 +259,7 @@ rule_meta!(
 impl SystemFile {
     fn check_call(&self, el: &SyntaxElement, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         let Some(outer) = call(el) else { return };
-        let name = matchers::callee_name(&outer);
+        let name = outer.callee_name();
         let a = values(&outer);
         let (inner, mut components, package) = if name.as_deref() == Some("system.file") {
             if a.len() != 2 || a[0].name.is_some() || a[1].name.as_deref() != Some("package") {
@@ -360,9 +357,7 @@ impl Rule for List2df {
 }
 impl List2df {
     fn check_call(&self, el: &SyntaxElement, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
-        let Some(call) =
-            call(el).filter(|c| matchers::callee_name(c).as_deref() == Some("do.call"))
-        else {
+        let Some(call) = call(el).filter(|c| c.callee_name().as_deref() == Some("do.call")) else {
             return;
         };
         if ctx
@@ -401,9 +396,7 @@ rule_meta!(
 );
 impl LengthLevels {
     fn check_call(&self, el: &SyntaxElement, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
-        let Some(outer) =
-            call(el).filter(|c| matchers::callee_name(c).as_deref() == Some("length"))
-        else {
+        let Some(outer) = call(el).filter(|c| c.callee_name().as_deref() == Some("length")) else {
             return;
         };
         let Some(inner_el) = matchers::sole_positional(&outer) else {

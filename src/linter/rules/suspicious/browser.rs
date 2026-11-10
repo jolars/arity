@@ -62,7 +62,7 @@ impl Rule for Browser {
         let Some(call) = el.as_node().cloned().and_then(CallExpr::cast) else {
             return;
         };
-        if matchers::callee_name(&call).as_deref() != Some("browser") {
+        if call.callee_name().as_deref() != Some("browser") {
             return;
         }
         // Confirm the callee is base R's `browser`, not a user redefinition or a

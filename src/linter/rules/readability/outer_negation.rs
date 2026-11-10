@@ -59,7 +59,7 @@ impl Rule for OuterNegation {
         let Some(call) = CallExpr::cast(node.clone()) else {
             return;
         };
-        let other = match matchers::callee_name(&call).as_deref() {
+        let other = match call.callee_name().as_deref() {
             Some("any") => "all",
             Some("all") => "any",
             _ => return,

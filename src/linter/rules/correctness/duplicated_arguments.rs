@@ -48,7 +48,7 @@ impl Rule for DuplicatedArguments {
         // `c()` takes `...` and repeated names are legal and idiomatic (cli
         // message vectors: `c("i" = ..., "i" = ...)`), so duplicates there are
         // not a mistake. Everything else (including `list()`) stays flagged.
-        if matchers::callee_name(&call).as_deref() == Some("c") {
+        if call.callee_name().as_deref() == Some("c") {
             return;
         }
         let mut seen: HashSet<String> = HashSet::new();

@@ -4,9 +4,9 @@
 
 use rowan::ast::AstNode as _;
 
-use crate::ast::{BinaryExpr, CallExpr};
+use crate::ast::{BinaryExpr, CallExpr, HasArgList as _};
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
-use crate::linter::rules::{Example, Rule, RuleContext, matchers};
+use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
 
 pub struct RoutineRegistration;
@@ -52,7 +52,7 @@ impl Rule for RoutineRegistration {
         let Some(call) = el.as_node().cloned().and_then(CallExpr::cast) else {
             return;
         };
-        let Some(name) = matchers::callee_name(&call) else {
+        let Some(name) = call.callee_name() else {
             return;
         };
         if !matches!(name.as_str(), ".Call" | ".C" | ".Fortran" | ".External") {
@@ -70,8 +70,9 @@ impl Rule for RoutineRegistration {
         {
             return;
         }
-        let Some(head) = matchers::named_arg(&call, ".NAME")
-            .or_else(|| matchers::nth_arg(&call, 0))
+        let Some(head) = call
+            .named_arg(".NAME")
+            .or_else(|| call.nth_positional(0))
             .and_then(|el| el.into_token())
             .filter(|token| token.kind() == SyntaxKind::STRING)
         else {

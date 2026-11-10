@@ -216,7 +216,7 @@ fn is_logical(el: &SyntaxElement, ctx: &RuleContext<'_>) -> bool {
             .is_some_and(|inner| is_logical(&inner, ctx)),
         SyntaxKind::CALL_EXPR => CallExpr::cast(node.clone()).is_some_and(|call| {
             matches!(
-                matchers::callee_name(&call).as_deref(),
+                call.callee_name().as_deref(),
                 Some(
                     "grepl"
                         | "nzchar"

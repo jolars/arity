@@ -70,7 +70,7 @@ impl Rule for FixedRegex {
         let Some(call) = CallExpr::cast(node.clone()) else {
             return;
         };
-        let Some(name) = matchers::callee_name(&call) else {
+        let Some(name) = call.callee_name() else {
             return;
         };
         if !REGEX_FUNCTIONS.contains(&name.as_str()) {

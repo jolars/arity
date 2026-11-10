@@ -91,7 +91,7 @@ impl Rule for MissingArgument {
 }
 
 fn check_rejecting_call(call: &CallExpr, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
-    let Some(name) = matchers::callee_name(call) else {
+    let Some(name) = call.callee_name() else {
         return;
     };
     if !matches!(name.as_str(), "list" | "c") {

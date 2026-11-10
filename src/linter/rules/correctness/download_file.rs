@@ -103,7 +103,7 @@ impl Rule for DownloadFile {
         let Some(call) = el.as_node().cloned().and_then(CallExpr::cast) else {
             return;
         };
-        if matchers::callee_name(&call).as_deref() != Some("download.file") {
+        if call.callee_name().as_deref() != Some("download.file") {
             return;
         }
         if !ctx.resolves_to_base(&call) {

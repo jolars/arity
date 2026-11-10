@@ -83,7 +83,7 @@ impl Rule for PipeReturn {
 fn is_base_return(rhs: &SyntaxElement, ctx: &RuleContext<'_>) -> bool {
     match rhs {
         SyntaxElement::Node(node) => CallExpr::cast(node.clone())
-            .filter(|call| matchers::callee_name(call).as_deref() == Some("return"))
+            .filter(|call| call.callee_name().as_deref() == Some("return"))
             .is_some_and(|call| ctx.resolves_to_base(&call)),
         SyntaxElement::Token(token) => {
             token.kind() == SyntaxKind::IDENT

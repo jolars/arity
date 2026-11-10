@@ -10,10 +10,10 @@
   names-only convenience if useful. This lets downstream source extractors such
   as Polydoc recover signatures without re-walking the raw CST.
 
-- [ ] *Optional polish:* migrate the remaining individual lint rules to call the
-  wrappers directly where it reads better than the `matchers` free-fns
-  (`comparison-negation` already uses `UnaryExpr`). Low priority — the fold
-  already put the rules on the typed layer; this is cosmetic and per-rule.
+- [x] Migrate individual lint rules to direct AST methods where they read better
+  than the `matchers` free-fns. Callee names and named/positional argument
+  lookup now use the wrappers directly; shared predicates and adapters remain
+  where they keep the rules clearer.
 
 ## Formatter
 

@@ -6,7 +6,7 @@
 
 use rowan::ast::AstNode as _;
 
-use crate::ast::CallExpr;
+use crate::ast::{CallExpr, HasArgList as _};
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
 use crate::linter::rules::matchers;
 use crate::linter::rules::{Example, Rule, RuleContext};
@@ -38,9 +38,9 @@ impl Rule for RepTimesIgnored {
         let Some(call) = el.as_node().cloned().and_then(CallExpr::cast) else {
             return;
         };
-        if matchers::callee_name(&call).as_deref() != Some("rep")
+        if call.callee_name().as_deref() != Some("rep")
             || !ctx.resolves_to_base(&call)
-            || matchers::named_arg(&call, "length.out").is_none()
+            || call.named_arg("length.out").is_none()
         {
             return;
         }

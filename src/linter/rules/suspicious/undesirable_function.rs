@@ -39,7 +39,6 @@ use rowan::ast::AstNode as _;
 
 use crate::ast::CallExpr;
 use crate::linter::diagnostic::{Diagnostic, ViolationData};
-use crate::linter::rules::matchers;
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::syntax::{SyntaxElement, SyntaxKind};
 
@@ -87,7 +86,7 @@ impl Rule for UndesirableFunction {
         let Some(call) = el.as_node().cloned().and_then(CallExpr::cast) else {
             return;
         };
-        let Some(name) = matchers::callee_name(&call) else {
+        let Some(name) = call.callee_name() else {
             return;
         };
         let Some(suggestion) = ctx.config.undesirable_function.lookup(&name) else {
