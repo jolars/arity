@@ -212,6 +212,7 @@ pub(crate) use read_jobs::*;
 pub(crate) use roxygen_action::*;
 pub(crate) use selection_range::*;
 pub(crate) use semantic_tokens::*;
+use server::ClientCapabilities;
 pub(crate) use settings::*;
 pub(crate) use signature::*;
 pub(crate) use state::*;

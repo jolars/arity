@@ -1677,11 +1677,13 @@ fn cancel_request_returns_request_cancelled() {
 #[test]
 fn document_symbols_follow_live_edits_and_support_untitled_buffers() {
     for uri in [doc_uri(), "untitled:document-symbols"] {
-        let mut h = Harness::start_push();
+        let mut h = Harness::start_with_capabilities(json!({
+            "textDocument": {"documentSymbol": {"hierarchicalDocumentSymbolSupport": true}}
+        }));
         for (version, text) in [
-            (1, "f <- function(x) { y <- x; y }\n"),
-            (2, "# 😀\ng <- function(x) { z <- x; z }\n"),
-            (3, "# 😀\nh <- function(x) { z <- x; z }\n"),
+            (1, "f <- function(x = 1) { y <- x; y }\n"),
+            (2, "# 😀\ng <- function(x = 2) { z <- x; z }\n"),
+            (3, "# 😀\nh <- function(x = 2) { z <- x; z }\n"),
             (4, "reopened <- 1\n"),
         ] {
             if version == 1 {
@@ -1730,6 +1732,91 @@ fn document_symbols_follow_live_edits_and_support_untitled_buffers() {
             assert_eq!(h.recv_response(&id).response_result.unwrap(), expected);
         }
         h.shutdown();
+    }
+}
+
+#[test]
+fn flat_document_symbols_report_enclosing_bindings_and_follow_live_edits() {
+    for support in [None, Some(false)] {
+        for encoding in ["utf-8", "utf-16"] {
+            for uri in [doc_uri(), "untitled:flat-document-symbols"] {
+                let mut capabilities = json!({
+                    "general": {"positionEncodings": [encoding]},
+                });
+                if let Some(support) = support {
+                    capabilities["textDocument"] = json!({
+                        "documentSymbol": {"hierarchicalDocumentSymbolSupport": support}
+                    });
+                }
+                let mut h = Harness::start_with_capabilities(capabilities);
+                for (version, parent) in [(1, "outer"), (2, "other"), (3, "again")] {
+                    let text = format!(
+                        "{parent} <- function(x = 1) {{\n  if (x) {{\n    inner <- function() {{\n      1 -> `café`\n    }}\n  }}\n  {{ leaf <- 2 }} -> right\n}}\nif (TRUE) top <- 3\n"
+                    );
+                    if version == 1 {
+                        h.did_open(uri, &text, version);
+                    } else if version == 3 {
+                        h.notify(
+                            "textDocument/didClose",
+                            json!({"textDocument": {"uri": uri}}),
+                        );
+                        h.did_open(uri, &text, version);
+                    } else {
+                        h.did_change_raw(
+                            uri,
+                            version,
+                            json!([{
+                                "range": {
+                                    "start": {"line": 0, "character": 0},
+                                    "end": {"line": 0, "character": 5}
+                                },
+                                "text": parent
+                            }]),
+                        );
+                    }
+                    let cafe_end = if encoding == "utf-8" { 18 } else { 17 };
+                    let expected = [
+                        (parent, 12, None, 0, 0, 5),
+                        ("inner", 12, Some(parent), 2, 4, 9),
+                        ("`café`", 13, Some("inner"), 3, 11, cafe_end),
+                        ("right", 13, Some(parent), 6, 19, 24),
+                        ("leaf", 13, Some("right"), 6, 4, 8),
+                        ("top", 13, None, 8, 10, 13),
+                    ]
+                    .map(|(name, kind, container, line, start, end)| {
+                        let mut symbol = json!({
+                            "name": name,
+                            "kind": kind,
+                            "location": {
+                                "uri": uri,
+                                "range": {
+                                    "start": {"line": line, "character": start},
+                                    "end": {"line": line, "character": end}
+                                }
+                            }
+                        });
+                        if let Some(container) = container {
+                            symbol["containerName"] = json!(container);
+                        }
+                        symbol
+                    });
+                    // The second request must use the completed-outline cache
+                    // and still adapt it to the negotiated flat response.
+                    for _ in 0..2 {
+                        let id = h.request(
+                            "textDocument/documentSymbol",
+                            json!({"textDocument": {"uri": uri}}),
+                        );
+                        assert_eq!(
+                            h.recv_response(&id).response_result.unwrap(),
+                            json!(expected),
+                            "{support:?}, {encoding}, {uri}, version {version}",
+                        );
+                    }
+                }
+                h.shutdown();
+            }
+        }
     }
 }
 

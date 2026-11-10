@@ -402,8 +402,9 @@ The package-specific rules below are gated on the package being attached
 
 ### Symbols
 
-- [ ] `detail` (signatures) and `container_name` (enclosing binding) for each
-  symbol.
+- [x] Function `detail` (signatures with defaults) in hierarchical document
+  symbols, and `container_name` (enclosing binding) in flat document
+  symbols.
 
 - [ ] **RStudio-style code sections** (outline + folding). R tooling (RStudio,
   and the R languageserver's `section.R`) treats a trailing run of 4+

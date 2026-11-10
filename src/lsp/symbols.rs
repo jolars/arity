@@ -1,5 +1,55 @@
 use super::*;
 use crate::semantic::Binding;
+use crate::syntax::SyntaxElement;
+use lsp_types::SymbolInformation;
+
+/// Adapt the cached outline without cloning its tree for hierarchical clients.
+/// Both response shapes serialize on the read pool.
+pub(crate) fn document_symbol_response<'a>(
+    symbols: &'a [DocumentSymbol],
+    uri: &Uri,
+    hierarchical: bool,
+) -> impl Serialize + 'a {
+    #[derive(Serialize)]
+    #[serde(untagged)]
+    enum SymbolResponse<'a> {
+        Nested(&'a [DocumentSymbol]),
+        Flat(Vec<SymbolInformation>),
+    }
+
+    if hierarchical {
+        SymbolResponse::Nested(symbols)
+    } else {
+        let mut flat = Vec::new();
+        collect_flat_symbols(symbols, uri, None, &mut flat);
+        SymbolResponse::Flat(flat)
+    }
+}
+
+#[expect(
+    deprecated,
+    reason = "SymbolInformation::deprecated is a required field"
+)]
+fn collect_flat_symbols(
+    symbols: &[DocumentSymbol],
+    uri: &Uri,
+    container: Option<&str>,
+    out: &mut Vec<SymbolInformation>,
+) {
+    for symbol in symbols {
+        out.push(SymbolInformation {
+            name: symbol.name.clone(),
+            kind: symbol.kind,
+            tags: symbol.tags.clone(),
+            deprecated: symbol.deprecated,
+            location: Location::new(uri.clone(), symbol.selection_range),
+            container_name: container.map(str::to_owned),
+        });
+        if let Some(children) = &symbol.children {
+            collect_flat_symbols(children, uri, Some(&symbol.name), out);
+        }
+    }
+}
 
 /// Build the outline from cached syntax and semantics when they match the live
 /// buffer, falling back to fresh analysis on a cache miss or cancellation.
@@ -114,8 +164,10 @@ fn document_symbol_for(
         return None;
     }
     let value = assign.value_element();
-    let is_function =
-        matches!(&value, Some(NodeOrToken::Node(n)) if FunctionExpr::can_cast(n.kind()));
+    let function = value
+        .as_ref()
+        .and_then(|value| value.as_node())
+        .and_then(|node| FunctionExpr::cast(node.clone()));
 
     // Nested bindings live in the value side (a function body, or any expression
     // that itself contains assignments). The target side binds no further names.
@@ -126,8 +178,8 @@ fn document_symbol_for(
 
     Some(DocumentSymbol {
         name: binding.name.to_string(),
-        detail: None,
-        kind: if is_function {
+        detail: function.as_ref().and_then(function_detail),
+        kind: if function.is_some() {
             LspSymbolKind::FUNCTION
         } else {
             LspSymbolKind::VARIABLE
@@ -138,6 +190,53 @@ fn document_symbol_for(
         selection_range: text_range_to_lsp_range(line_index, name_token.text_range(), encoding),
         children: (!children.is_empty()).then_some(children),
     })
+}
+
+fn function_detail(function: &FunctionExpr) -> Option<String> {
+    // An unfinished parameter list must not look like a known empty signature.
+    function.rparen_index()?;
+    let args = function
+        .formals()
+        .into_iter()
+        .map(|formal| match formal.default() {
+            Some(default) => format!("{} = {}", formal.name(), default_preview(default)),
+            None => formal.name().to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!("({args})"))
+}
+
+fn default_preview(default: SyntaxElement) -> String {
+    let mut out = String::new();
+    let mut space = false;
+    let mut push_token = |token: SyntaxToken<RLanguage>| {
+        match token.kind() {
+            SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT => space = true,
+            kind if kind.is_roxygen_token() => space = true,
+            _ => {
+                if space && !out.is_empty() {
+                    out.push(' ');
+                }
+                // Only trivia is compacted: whitespace inside a string or a
+                // backtick name is part of its value and must survive intact.
+                out.push_str(token.text());
+                space = false;
+            }
+        }
+    };
+    match default {
+        NodeOrToken::Token(token) => push_token(token),
+        NodeOrToken::Node(node) => {
+            for token in node
+                .descendants_with_tokens()
+                .filter_map(NodeOrToken::into_token)
+            {
+                push_token(token);
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -236,7 +335,8 @@ mod tests {
         // helper uses the loose-file default. Neither can change the outline.
         db.set_roxygen_markdown(file, true);
         for text in [
-            "#' A **documented** function.\n`f f` <- function(x) {\n  y <- x\n  if (x) z <- y\n}\n",
+            "#' A **documented** function.\n`f f` <- function(x = 1) {\n  y <- x\n  if (x) z <- y\n}\n",
+            "#' A **documented** function.\n`f f` <- function(x = c(1, 2)) {\n  y <- x\n  if (x) z <- y\n}\n",
             "label <- '😀'; 1 -> café\nf <- function(x) { x <<- 1; y <- x }\n",
             "f <- function(x) { y <- x;\n",
             "print(1)\n",

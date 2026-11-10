@@ -125,8 +125,10 @@ pub(crate) enum ReadJob {
     DocumentSymbol {
         id: RequestId,
         path: PathBuf,
+        uri: Uri,
         buffer: Arc<TextBuffer>,
         cached: Arc<OnceLock<Vec<DocumentSymbol>>>,
+        hierarchical: bool,
         out: Sender<Outbound>,
     },
     WorkspaceSymbol {
@@ -303,13 +305,16 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
         ReadJob::DocumentSymbol {
             id,
             path,
+            uri,
             buffer,
             cached,
+            hierarchical,
             out,
         } => {
-            let result =
+            let symbols =
                 cached.get_or_init(|| document_symbols_via_db(&snapshot, &path, &buffer, encoding));
-            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
+            let response = document_symbol_response(symbols, &uri, hierarchical);
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, response)));
         }
         ReadJob::WorkspaceSymbol { id, query, out } => {
             let symbols = workspace_symbols_via_db(&snapshot, &query, encoding);

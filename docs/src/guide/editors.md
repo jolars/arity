@@ -6,6 +6,10 @@ help, go-to-definition and find-references, rename, document and workspace
 symbols, semantic tokens, folding and selection ranges, document links, document
 color swatches, inlay hints, and call and type hierarchy.
 
+Document outlines include function signatures with parameter defaults and nested
+bindings. Editors without hierarchical outline support receive a flat list with
+each nested binding labeled by its enclosing binding.
+
 Editors can also start the server for `.Rd` and `.rd` files, making workspace
 symbol search available before you open an R file. Arity does not yet provide
 diagnostics, formatting, or other document features for Rd files.

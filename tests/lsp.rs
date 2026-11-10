@@ -784,6 +784,63 @@ fn document_symbols_list_top_level_functions_and_variables() {
 }
 
 #[test]
+fn document_symbols_include_function_signatures() {
+    for (text, expected) in [
+        ("f <- function() 1\n", "()"),
+        ("f <- \\() 1\n", "()"),
+        (
+            "f <- function(x, na.rm=FALSE, ...) x\n",
+            "(x, na.rm = FALSE, ...)",
+        ),
+        (
+            "f = \\(`two words`=1, ... , after = NULL) 1\n",
+            "(`two words` = 1, ..., after = NULL)",
+        ),
+        (
+            "f <- function(x = c(\n  1, # a default\n  2\n), text = \"a  b\") x\n",
+            "(x = c( 1, 2 ), text = \"a  b\")",
+        ),
+        (
+            "f <- function(x = r\"(first\n  second)\", `a  b` = 2) x\n",
+            "(x = r\"(first\n  second)\", `a  b` = 2)",
+        ),
+        (
+            "f <- function(callback = function() {\n  #' A **default**.\n  1\n}) callback\n",
+            "(callback = function() { 1 })",
+        ),
+    ] {
+        let symbols = compute_document_symbols(text, PositionEncoding::Utf16);
+        assert_eq!(symbols.len(), 1, "{text}");
+        assert_eq!(symbols[0].detail.as_deref(), Some(expected), "{text}");
+    }
+
+    let symbols = compute_document_symbols(
+        "outer <- function(x = 1) { inner <- function(y = 2) y; value <- 3 }\nalias <- outer\n",
+        PositionEncoding::Utf16,
+    );
+    assert_eq!(symbols[0].detail.as_deref(), Some("(x = 1)"));
+    let children = symbols[0].children.as_ref().unwrap();
+    assert_eq!(children[0].detail.as_deref(), Some("(y = 2)"));
+    assert!(children[1].detail.is_none());
+    assert!(symbols[1].detail.is_none());
+}
+
+#[test]
+fn document_symbols_retain_incomplete_functions() {
+    for (text, detail) in [
+        ("f <- function(", None),
+        ("f <- function(x =", None),
+        ("f <- function(x = 1", None),
+        ("f <- function(x = 1)", Some("(x = 1)")),
+    ] {
+        let symbols = compute_document_symbols(text, PositionEncoding::Utf16);
+        assert_eq!(symbols.len(), 1, "{text}");
+        assert_eq!(symbols[0].kind, SymbolKind::FUNCTION, "{text}");
+        assert_eq!(symbols[0].detail.as_deref(), detail, "{text}");
+    }
+}
+
+#[test]
 fn document_symbols_nest_bindings_inside_a_function_body() {
     let text = "f <- function() {\n  g <- function() 1\n  h <- 2\n}\n";
     let symbols = compute_document_symbols(text, PositionEncoding::Utf16);

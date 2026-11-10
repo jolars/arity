@@ -283,18 +283,7 @@ pub(crate) struct GlobalState {
     /// so the follow-up `rename` re-locates the cursor even if the buffer changed
     /// since prepare (the "anchor that survives typing"). Cleared on rename/close.
     rename_anchors: HashMap<Uri, RenameAnchor>,
-    /// True when the client supports the pull diagnostic model: we suppress push
-    /// (no `publishDiagnostics`) and answer `textDocument/diagnostic` instead.
-    pull_mode: bool,
-    /// True when the client advertised `window.workDoneProgress`. Gates all
-    /// server-initiated progress: without it we emit no `window/workDoneProgress/
-    /// create` and no `$/progress` (see [`on_progress`](Self::on_progress)).
-    work_done_progress: bool,
-    /// True when the client advertised `workspace.inlayHint.refreshSupport`.
-    /// Gates [`send_inlay_hint_refresh`](Self::send_inlay_hint_refresh), the only
-    /// way a freshly harvested package index reaches an already-open
-    /// `DESCRIPTION`: inlay hints are pull-only, with no push counterpart.
-    inlay_hint_refresh: bool,
+    client_capabilities: ClientCapabilities,
     /// The position encoding negotiated at `initialize` (see
     /// [`negotiate_position_encoding`](super::server::negotiate_position_encoding)).
     /// Threaded into every byte-offset ↔ LSP-position conversion; a session
@@ -354,18 +343,14 @@ impl GlobalState {
         read_tx: Sender<ReadJob>,
         read_spawner: Spawner,
         editor_settings: EditorSettings,
-        pull_mode: bool,
-        work_done_progress: bool,
-        inlay_hint_refresh: bool,
+        client_capabilities: ClientCapabilities,
         position_encoding: PositionEncoding,
     ) -> Self {
         Self {
             documents: HashMap::new(),
             findings: HashMap::new(),
             rename_anchors: HashMap::new(),
-            pull_mode,
-            work_done_progress,
-            inlay_hint_refresh,
+            client_capabilities,
             position_encoding,
             pending_pull: HashMap::new(),
             report_ids: HashMap::new(),
@@ -796,7 +781,7 @@ impl GlobalState {
     }
 
     /// `textDocument/documentSymbol`: the file's function and variable bindings
-    /// as a hierarchical outline, reusing the lint thread's cached syntax and
+    /// as an outline, reusing the lint thread's cached syntax and
     /// semantics on the read pool. Unchanged buffers reuse the completed outline
     /// without another database snapshot. See [`document_symbols_via_db`].
     fn on_document_symbol(&mut self, req: Request) {
@@ -812,25 +797,29 @@ impl GlobalState {
             return;
         };
         let cached = self.documents[&uri].document_symbols.clone();
+        let hierarchical = self.client_capabilities.hierarchical_document_symbols;
         if cached.get().is_some() {
-            self.register_read(id.clone(), Some((uri, version)));
+            self.register_read(id.clone(), Some((uri.clone(), version)));
             let out = self.out_tx.clone();
             // Large outlines still serialize off-thread, and their replies pass
             // through the normal cancellation and document-version gates.
             self.read_spawner.spawn(move || {
                 let symbols = cached.get().expect("completed outline");
-                let _ = out.send(Outbound::ReadReply(Response::new_ok(id, symbols)));
+                let response = document_symbol_response(symbols, &uri, hierarchical);
+                let _ = out.send(Outbound::ReadReply(Response::new_ok(id, response)));
             });
             return;
         }
         let path = uri::to_path(&uri)
             .unwrap_or_else(|| PathBuf::from(DocumentKind::R.placeholder_file_name()));
-        self.register_read(id.clone(), Some((uri, version)));
+        self.register_read(id.clone(), Some((uri.clone(), version)));
         self.dispatch_read(ReadJob::DocumentSymbol {
             id,
             path,
+            uri,
             buffer,
             cached,
+            hierarchical,
             out: self.out_tx.clone(),
         });
     }
@@ -1457,7 +1446,7 @@ impl GlobalState {
                     {
                         self.respond_diagnostic(id, DiagnosticReport::Full(Vec::new(), None));
                     }
-                    if !self.pull_mode {
+                    if !self.client_capabilities.pull_mode {
                         // Tell the client to clear stale diagnostics.
                         self.publish(uri, Vec::new(), None);
                     }
@@ -1559,7 +1548,7 @@ impl GlobalState {
                     };
                     self.respond_diagnostic(id, report);
                 }
-                if !self.pull_mode {
+                if !self.client_capabilities.pull_mode {
                     self.publish(uri, diags, Some(version));
                 }
             }
@@ -1578,7 +1567,7 @@ impl GlobalState {
     /// for the notification itself. A no-op when the client didn't advertise
     /// `window.workDoneProgress`.
     fn on_progress(&mut self, token: String, work: WorkDoneProgress) {
-        if !self.work_done_progress {
+        if !self.client_capabilities.work_done_progress {
             return;
         }
         if matches!(work, WorkDoneProgress::Begin(_)) {
@@ -1607,7 +1596,7 @@ impl GlobalState {
     fn request_relint_all(&mut self) {
         self.send_inlay_hint_refresh();
         let uris: Vec<Uri> = self.documents.keys().cloned().collect();
-        if self.pull_mode {
+        if self.client_capabilities.pull_mode {
             for uri in &uris {
                 self.findings.remove(uri);
                 self.report_ids.remove(uri);
@@ -1854,7 +1843,7 @@ impl GlobalState {
     /// client didn't advertise `workspace.inlayHint.refreshSupport`; the client's
     /// response is ignored by the main loop.
     fn send_inlay_hint_refresh(&mut self) {
-        if !self.inlay_hint_refresh {
+        if !self.client_capabilities.inlay_hint_refresh {
             return;
         }
         self.next_req_id += 1;
@@ -2054,9 +2043,12 @@ mod cancellation_gate {
             read_tx,
             pool.spawner(),
             EditorSettings::default(),
-            pull_mode,
-            work_done_progress,
-            inlay_hint_refresh,
+            ClientCapabilities {
+                pull_mode,
+                work_done_progress,
+                inlay_hint_refresh,
+                ..ClientCapabilities::default()
+            },
             PositionEncoding::Utf16,
         );
         let rig = Rig {
@@ -2098,81 +2090,84 @@ mod cancellation_gate {
 
     #[test]
     fn document_symbol_repeats_reuse_outline_and_edits_drop_it() {
-        let (mut state, rig) = test_state();
-        let uri = doc_uri();
-        state.documents.insert(
-            uri.clone(),
-            Document::new("x <- 1\n".to_string(), 1, DocumentKind::R),
-        );
-        let request = |id| {
-            Request::new(
-                RequestId::from(id),
-                DocumentSymbolRequest::METHOD.to_string(),
-                serde_json::json!({"textDocument": {"uri": uri}}),
-            )
-        };
-        let complete = |state: &mut GlobalState| {
-            let job = rig.read_rx.try_recv().expect("uncached request dispatched");
+        for hierarchical in [false, true] {
+            let (mut state, rig) = test_state();
+            state.client_capabilities.hierarchical_document_symbols = hierarchical;
+            let uri = doc_uri();
+            state.documents.insert(
+                uri.clone(),
+                Document::new("x <- 1\n".to_string(), 1, DocumentKind::R),
+            );
+            let request = |id| {
+                Request::new(
+                    RequestId::from(id),
+                    DocumentSymbolRequest::METHOD.to_string(),
+                    serde_json::json!({"textDocument": {"uri": uri}}),
+                )
+            };
+            let complete = |state: &mut GlobalState| {
+                let job = rig.read_rx.try_recv().expect("uncached request dispatched");
+                run_read(
+                    IncrementalDatabase::default().snapshot(),
+                    PositionEncoding::Utf16,
+                    job,
+                );
+                let Outbound::ReadReply(response) = rig.out_rx.try_recv().unwrap() else {
+                    panic!("expected read reply");
+                };
+                state.on_read_reply(response);
+                rig.try_response().unwrap().response_result.unwrap()
+            };
+
+            let complete_cached = |state: &mut GlobalState| {
+                let Outbound::ReadReply(response) =
+                    rig.out_rx.recv_timeout(Duration::from_secs(5)).unwrap()
+                else {
+                    panic!("expected cached read reply");
+                };
+                state.on_read_reply(response);
+                assert!(rig.read_rx.try_recv().is_err());
+                rig.try_response().unwrap().response_result.unwrap()
+            };
+
+            state.on_document_symbol(request(1));
+            let original = complete(&mut state);
+            state.on_document_symbol(request(2));
+            assert_eq!(complete_cached(&mut state), original);
+
+            // A read already dispatched for the old buffer must not populate the
+            // edited buffer's cache, even if it finishes after the edit.
+            let doc = state.documents.get_mut(&uri).unwrap();
+            doc.apply_edit(0..1, "y");
+            doc.version = 2;
+            state.on_document_symbol(request(3));
+            let old_job = rig.read_rx.try_recv().unwrap();
+            let doc = state.documents.get_mut(&uri).unwrap();
+            doc.apply_edit(0..1, "z");
+            doc.version = 3;
             run_read(
                 IncrementalDatabase::default().snapshot(),
                 PositionEncoding::Utf16,
-                job,
+                old_job,
             );
             let Outbound::ReadReply(response) = rig.out_rx.try_recv().unwrap() else {
                 panic!("expected read reply");
             };
             state.on_read_reply(response);
-            rig.try_response().unwrap().response_result.unwrap()
-        };
-
-        let complete_cached = |state: &mut GlobalState| {
-            let Outbound::ReadReply(response) =
-                rig.out_rx.recv_timeout(Duration::from_secs(5)).unwrap()
-            else {
-                panic!("expected cached read reply");
-            };
-            state.on_read_reply(response);
-            assert!(rig.read_rx.try_recv().is_err());
-            rig.try_response().unwrap().response_result.unwrap()
-        };
-
-        state.on_document_symbol(request(1));
-        let original = complete(&mut state);
-        state.on_document_symbol(request(2));
-        assert_eq!(complete_cached(&mut state), original);
-
-        // A read already dispatched for the old buffer must not populate the
-        // edited buffer's cache, even if it finishes after the edit.
-        let doc = state.documents.get_mut(&uri).unwrap();
-        doc.apply_edit(0..1, "y");
-        doc.version = 2;
-        state.on_document_symbol(request(3));
-        let old_job = rig.read_rx.try_recv().unwrap();
-        let doc = state.documents.get_mut(&uri).unwrap();
-        doc.apply_edit(0..1, "z");
-        doc.version = 3;
-        run_read(
-            IncrementalDatabase::default().snapshot(),
-            PositionEncoding::Utf16,
-            old_job,
-        );
-        let Outbound::ReadReply(response) = rig.out_rx.try_recv().unwrap() else {
-            panic!("expected read reply");
-        };
-        state.on_read_reply(response);
-        assert_eq!(
-            rig.try_response()
-                .unwrap()
-                .response_result
-                .unwrap_err()
-                .code,
-            CONTENT_MODIFIED,
-        );
-        state.on_document_symbol(request(4));
-        let edited = complete(&mut state);
-        assert_eq!(edited[0]["name"], "z");
-        state.on_document_symbol(request(5));
-        assert_eq!(complete_cached(&mut state), edited);
+            assert_eq!(
+                rig.try_response()
+                    .unwrap()
+                    .response_result
+                    .unwrap_err()
+                    .code,
+                CONTENT_MODIFIED,
+            );
+            state.on_document_symbol(request(4));
+            let edited = complete(&mut state);
+            assert_eq!(edited[0]["name"], "z");
+            state.on_document_symbol(request(5));
+            assert_eq!(complete_cached(&mut state), edited);
+        }
     }
 
     #[test]
