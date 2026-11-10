@@ -393,12 +393,366 @@ The package-specific rules below are gated on the package being attached
   is the first analysis that is real work to keep incremental—revisit after
   B ships and a rule demands it.
 
+## Object-oriented programming
+
+Coverage audit at `12b8191` (2026-11-10), prompted by [issue
+#183](https://github.com/jolars/arity/issues/183). Support S3, S4, Reference
+Classes, R6, and S7 through shared semantic and project facts, with separate
+rules for each system's environments, inheritance, and dispatch. Keep production
+analysis static; unknown runtime behavior must remain unknown.
+
+### Current coverage
+
+Reduced examples for all five systems run in R 4.6.1, parse losslessly, and pass
+formatter verification. R6 was checked at 2.6.1 and S7 at the released 0.2.2.
+These examples establish a baseline, not comprehensive parser or formatter
+coverage. The existing class projection, type hierarchy, field completion, and
+class incrementality checks pass (33 focused tests).
+
+  | System            | What works today                                                                                                                                                                                                                      | Main gaps                                                                                                                                                                                                                              |
+  | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | S3                | Ordinary function definitions; two- and three-argument NAMESPACE `S3method()` entries; conservative dotted-method exemptions in unused checks; implicit reads for `NextMethod()`; exemptions for `.Generic`, `.Method`, and `.Class`. | No structured generic-to-method registry, class evidence, ordered dispatch, or generic-to-method navigation. `.GenericCallEnv` and `.GenericDefEnv` produce false positives; the three existing exemptions apply even outside methods. |
+  | S4                | Literal `setClass()` names and `contains` edges feed type hierarchy; NAMESPACE class/method directives contribute flattened names; package dependency checks recognize use of `methods`.                                              | No slots, generic/method signatures, generated generic bindings, multiple dispatch, or coercion model. Valid `.Methods`, `.defined`, `.target`, and calls to a generic created by `setGeneric()` produce false positives.              |
+  | Reference Classes | Literal `setRefClass()` names and `contains` edges feed type hierarchy; normal R syntax and binding analysis work around the declaration.                                                                                             | No field/method environments, member schemas, generator APIs, or superclass calls. Valid bare field reads and `.self` produce false positives.                                                                                         |
+  | R6                | Literal `R6Class()` names and simple `inherit = Parent` edges feed type hierarchy; normal syntax and ordinary bindings work.                                                                                                          | No public/private/active member model, implicit method environment, constructor signatures, or class mutation model. Valid `self`, `private`, and `super` reads produce false positives, including #183.                               |
+  | S7                | Released `new_class()`/`new_generic()` assignments, `method(...) <- function(...)`, and `@` access parse and format as ordinary R. The reduced examples lint cleanly.                                                                 | No S7-specific class, property, generic, method, inheritance, or dispatch facts. Clean lint output does not establish that these relationships are understood.                                                                         |
+
+The shared implementation has several limits that the work below must replace:
+
+- [`project/classes.rs`](src/project/classes.rs) records only a system and
+  parent names. Bare and namespace-qualified defining calls work, but the match
+  uses the final callee spelling without checking its origin or shadowing. A
+  user-defined `setClass()` creates a phantom class. Named
+  `Class =`/`classname =` arguments are missed, as are unnamed R6 generators.
+  `Generator <- R6Class("Display")` is indexed as `Display`, while a child's
+  `inherit = Generator` records `Generator` as its parent. Duplicate names
+  within a file keep the first declaration, and the project aggregate merges
+  inheritance by unqualified name across packages and systems.
+- [`semantic/builder.rs`](src/semantic/builder.rs) has no class-owned method
+  environments. It globally drops the three recognized implicit method variables
+  and treats every `:=` as a nonbinding update or injection operator. Neither
+  approach is a general OOP model. Class declarations, generator bindings,
+  string-based registrations, and ordinary lexical variables need distinct
+  identities and occurrence roles.
+- [`lsp/completion.rs`](src/lsp/completion.rs) harvests `$`/`@` usage by
+  receiver text across the whole file, plus fields of a few record constructors.
+  `self$` therefore mixes fields from unrelated R6 classes and misses members
+  declared only in `public`, `private`, or `active`. No declared S4 slots or S7
+  properties are inferred. Those field completion items have no signatures or
+  documentation. Document/workspace symbols and call hierarchy primarily
+  describe assigned functions and values; an R6 generator appears as a variable
+  without its methods. Member definition and signature probes return no result.
+- [`rindex/harvest.rs`](src/rindex/harvest.rs) flattens class/method namespace
+  declarations into name sets. The index schema has no OOP relationships;
+  environment contents are discarded by the RDS reader, and S4 objects are
+  opaque apart from attributes. Export names, closure formals, and help are
+  useful foundations, but cannot describe dependency classes and methods.
+- Roxygen recognizes relevant tags, including slots, fields, and properties, but
+  [`project/roxygen.rs`](src/project/roxygen.rs) and its usage projection
+  recover callable definitions mainly from plain function assignments or
+  explicit `@usage`. Class-owned methods and generated constructors do not yet
+  supply a shared documentation surface.
+
+### Implementation order
+
+Follow the stages below. Stages 1–2 establish the model and address the false
+positives behind #183 as part of that model. Build out R6 and Reference Classes
+first, then S3, S4, and S7. Deliver editor capabilities for each supported
+subset as its facts become available; dependency indexing and full dispatch
+coverage need not block useful workspace support.
+
+#### 0. Preserve the coverage baseline
+
+- [ ] Add a hand-registered OOP fixture matrix covering definitions, use sites,
+  incomplete editor input, shadowing, and unsupported dynamic forms for all
+  five systems. Turn the reduced audit examples into permanent regressions
+  before changing behavior. Cover CLI lint and the corresponding LSP paths,
+  not just declaration extraction.
+- [ ] Add a developer-only differential oracle with pinned R, R6, and S7
+  versions. Record class and member declarations, method environments,
+  constructor formals, and dispatch outcomes as small reviewed fixtures
+  usable by pure Rust tests. Keep R execution out of production and ordinary CI.
+  Assert parser losslessness, formatter idempotence, and full and
+  incremental parse agreement for the same examples; add grammar work only
+  for demonstrated syntax gaps.
+
+#### 1. Shared declarations and identity
+
+- [ ] Extend the current class projection into a shared model of classes,
+  generics, methods, members, and the sites that declare or use them.
+  Distinguish a declared class name from its constructor or generator
+  binding and aliases. Include package or lexical owner, OOP system, generic
+  identity, and dispatch signature where relevant. Preserve ambiguous
+  declarations instead of merging unrelated classes or choosing the first
+  method.
+- [ ] Recognize defining and registration calls through resolved callee identity
+  and R argument matching. Cover bare imports, `pkg::` forms, positional and
+  named arguments, aliases whose target is known, and backticked operator
+  and replacement names. Reject shadowed lookalikes. Represent computed
+  names, conditional registration, custom environments, and unresolved
+  aliases explicitly as incomplete facts; do not guess from a name alone.
+- [ ] Keep per-file semantics independent of the project. Project queries
+  combine range-free class, member, and signature facts using package
+  visibility, NAMESPACE, source closures, and Collate; recover spans from
+  the current CST. Reuse `file_class_defs`, `project_classes`, and existing
+  resolution plumbing rather than creating separate registries for lint and
+  LSP. Extend `tests/salsa_incremental.rs`: body/prose edits backdate, while
+  changes to members, parents, registrations, or imports invalidate the
+  appropriate consumers. Keep unrelated packages and source closures
+  isolated.
+
+#### 2. Method environments and generated bindings
+
+- [ ] Model R6 `self`, `private`, and `super` in their actual method
+  environment, covering public and private methods, active bindings,
+  defaults, and nested closures. Distinguish methods from ordinary
+  function-valued fields and functions merely constructed inside a method.
+  Respect local shadowing, known parent and member availability, and
+  uncertain inheritance. Make #183 a regression of this semantic model; do
+  not exempt these names globally or mask every read inside an R6 call.
+- [ ] Model Reference Class bare field and method lookup, `.self`,
+  `.refClassDef`, and inherited helpers such as `callSuper()` and
+  `initFields()`. Distinguish normal methods from external methods with an
+  explicit `.self` parameter. Track field updates through `<<-` without
+  manufacturing file-level lexical bindings or dead-store findings. Share
+  appropriate environment machinery with R6 `portable = FALSE`, while
+  preserving their behavioral differences.
+- [ ] Replace the global S3 and S4 implicit-variable exemption with
+  method-context facts. Cover `.Generic`, `.Method`, `.Class`, `.Group`,
+  `.GenericCallEnv`/`.GenericDefEnv`, and S4's
+  `.Methods`/`.defined`/`.target` where each dispatch mechanism actually
+  supplies them. Preserve conservative behavior when method status is
+  uncertain. Account for literal-name `setGeneric()`/`setReplaceMethod()`
+  effects and registrations that create a generic without an assignment; do
+  not treat every class-name string as a lexical binding. Ensure definition,
+  references, rename, symbols, and unused checks handle implicit identities
+  without fictitious editable definitions.
+
+#### 3. R6 and Reference Class members
+
+- [ ] Extract R6 public and private fields and methods, active bindings,
+  initializer signatures, and generator versus instance APIs. Resolve
+  `inherit` through generator identity, including aliases and
+  namespace-qualified parents, instead of equating the binding and display
+  names. Account for omitted `classname`, `class = FALSE`, `cloneable`,
+  overrides, private inheritance, `super$method()`, and method functions
+  supplied by a resolvable binding.
+
+- [ ] Extract Reference Class `fields`, `methods`, `contains`, field types,
+  accessor functions, initialization, and inherited members. Support
+  generator calls, `$new()`, `getRefClass()`, built-in object methods, and
+  `callSuper()` relative to the owning method. Keep Reference Class fields
+  distinct from S4 slots even though the class participates in S4
+  inheritance.
+
+- [ ] Track statically known `Generator$set(...)` and `Generator$methods(...)`
+  additions or replacements, and methods installed from another file.
+  Respect load order and known class/object locking. Record dynamic
+  mutation, unknown member lists, and custom parent environments as
+  incomplete. Model active/accessor members as executable reads and writes
+  rather than plain stored fields; never execute their functions to obtain
+  completion or type information.
+
+  Semantic references: the [Reference Class
+  manual](https://stat.ethz.ch/R-manual/R-devel/library/methods/html/refClass.html)
+  and [R6 reference](https://r6.r-lib.org/reference/R6Class.html).
+
+#### 4. S3 classes, registration, and dispatch
+
+- [ ] Recover conservative class evidence from literal
+  `structure(..., class = ...)`, `class(x) <- ...`, `oldClass`, and
+  recognizable constructor returns. Preserve class-vector order and
+  distinguish explicit evidence from an unknown runtime class. S3 has no
+  required class declaration: dotted method names alone must not manufacture
+  a formal class hierarchy.
+
+- [ ] Index explicit `UseMethod()` generics, known internal/group generics,
+  `generic.class` methods, and NAMESPACE two-/three-argument and delayed
+  `S3method()` registrations. Include statically recoverable `.S3method()`
+  and `registerS3method()` calls. Keep the generic, class, implementation
+  binding, registration owner, and ordinary export status separate. Retain
+  conservative unused-method protection for possible methods whose generic
+  cannot be resolved; absence from the registry is not proof of dead code.
+
+- [ ] Resolve method candidates using class-vector order, `.default`, and
+  registration visibility. Cover `NextMethod()`, internal generics, group
+  generics, and operator/replacement methods as separate tested cases rather
+  than one dotted-name split. Model `UseMethod()`'s nonreturning control
+  flow and argument forwarding, including the R 4.4 change to generic-local
+  variables. Reuse the existing `NextMethod()` formal-read handling and
+  signature safety gates. Unknown classes or runtime registration yield
+  candidates or unknown results, never a confidently selected
+  implementation.
+
+  Semantic references: [S3
+  dispatch](https://stat.ethz.ch/R-manual/R-devel/library/base/html/UseMethod.html),
+  [group
+  generics](https://stat.ethz.ch/R-manual/R-devel/library/base/html/groupGeneric.html),
+  and [script
+  registration](https://stat.ethz.ch/R-manual/R-devel/library/base/html/S3method.html).
+
+#### 5. S4 classes, slots, and multiple dispatch
+
+- [ ] Extend `setClass()` extraction to slots and legacy `representation`,
+  prototypes, virtual/sealed classes, and multiple inheritance. Add
+  `setClassUnion()`, `setIs()` relationships and coercions, and
+  `setOldClass()` bridges to S3. Distinguish constructor bindings returned
+  by `setClass()` from class metadata installed by the call. Recover
+  declared slot schemas and their inheritance for `new()`, class-generator
+  calls, `@`, `slot()`, and replacement forms. Keep validity and coercion
+  bodies unevaluated.
+
+- [ ] Index `setGeneric()`, `setMethod()`, `setReplaceMethod()`, generic
+  defaults, `signature(...)`, named and positional signatures, and the
+  generic's selected dispatch arguments. Preserve multiple arguments, `ANY`,
+  `missing`, class unions, group generics, and method ownership across
+  packages. Model `standardGeneric()`, `callNextMethod()`, and
+  `selectMethod()` with the same generic and method identities; do not
+  borrow S3's single-class selection rule.
+
+- [ ] Resolve inherited method candidates with explicit ambiguity and
+  incompleteness. Preserve the separate meanings of `exportClasses`,
+  `exportMethods`, `importClassesFrom`, and `importMethodsFrom`, rather than
+  flattening their class and method relationships into lexical name sets.
+  Cover methods for primitives and generics owned by another package.
+  Integrate Reference Class inheritance and S3 bridges without claiming
+  every S4 slot is a Reference Class field.
+
+  Semantic references: [class
+  definitions](https://stat.ethz.ch/R-manual/R-devel/library/methods/html/setClass.html),
+  [generics](https://stat.ethz.ch/R-manual/R-devel/library/methods/html/setGeneric.html),
+  and
+  [methods](https://stat.ethz.ch/R-manual/R-devel/library/methods/html/setMethod.html).
+
+#### 6. S7 classes, properties, and dispatch
+
+- [ ] Extract `new_class()` parents, package identity, stored/dynamic
+  properties, `new_property()` types, defaults, getters, and setters, custom
+  constructors, validators, and `new_object()` context. Derive default
+  constructor signatures from properties and inheritance. Support `@`,
+  `prop()`, `props()`, and replacement forms without assuming that an S7
+  property is an S4 slot or evaluating validation and accessor code.
+
+- [ ] Index `new_generic()` dispatch arguments and
+  `method(generic, signature) <- definition`, including definition bindings,
+  multiple dispatch, unions, base classes, `class_any`, `class_missing`,
+  `S7_dispatch()`, and `super()`. Treat replacement registration as an
+  effect on the generic, not as an ordinary function definition called
+  `method`. Account for external classes and generics and package
+  registration through `methods_register()` and the package hooks supported
+  by the targeted S7 version.
+
+- [ ] Version the S7 oracle and metadata carefully. Released 0.2.2 and the
+  current 0.2.2.9000 development documentation differ: the latter introduces
+  binding `:=` and expanded S4 interoperability. Before supporting that
+  operator, replace the builder's unconditional nonbinding interpretation
+  with resolved S7 operator semantics, preserving data.table and rlang
+  behavior and import and masking precedence. Cover both
+  `Foo <- new_class("Foo", ...)` and the newer naming form without assuming
+  that development APIs exist in every installation. Test supported S3/S4
+  bridges, unions, and external registration against each pinned version
+  instead of inferring compatibility from shared syntax.
+
+  Semantic references: [released S7
+  0.2.2](https://cran.r-project.org/web/packages/S7/index.html),
+  [classes](https://rconsortium.github.io/S7/reference/new_class.html),
+  [generics and
+  methods](https://rconsortium.github.io/S7/articles/generics-methods.html),
+  [development
+  `:=`](https://rconsortium.github.io/S7/reference/named-bind.html),
+  [compatibility](https://rconsortium.github.io/S7/articles/compatibility.html),
+  and [package
+  registration](https://rconsortium.github.io/S7/articles/packages.html).
+
+#### 7. Receiver evidence and dependency metadata
+
+- [ ] Add bounded receiver and class evidence for direct construction, aliases,
+  declared slot, property, and field types, method dispatch parameters, and
+  simple constructor returns. Start with `new("Class")`, S4/Reference Class
+  generators, R6 `$new()`, and S7 constructors. Keep unions of plausible
+  classes, invalidation after reassignment, and unknown results explicit. Do
+  not require whole-program type inference before resolving `self`,
+  `private`, `.self`, or a directly constructed local instance.
+- [ ] Extend the versioned rindex schema and native harvesting to retain
+  available class, member, generic, and method metadata, S3 registration
+  tuples, origins, signatures, and help associations. Preserve the
+  RDS/lazy-load structure needed for S4 metadata, R6 and Reference Class
+  generators, and S7 class and generic objects. Use fixed installed-package
+  fixtures, including malformed and unsupported metadata, rather than the
+  current machine's libraries. Missing metadata remains incomplete; never
+  load a namespace or invoke R to discover production behavior. Keep
+  indexing on its existing isolated pool and preserve the precision of
+  names-only and remote fallbacks.
+
+#### 8. Editor and documentation features
+
+- [ ] Replace textual receiver harvesting with class-owned member resolution
+  when identity is known. Complete visible and inherited fields, slots,
+  properties, and methods with correct kinds, signatures, and help. Scope
+  `self` and `private` to their owning class, distinguish generator and
+  instance APIs, and preserve a clearly limited usage-based fallback for
+  unknown receivers. Add constructor and member signature help and local and
+  project generic signatures; generic calls should show their generic
+  surface and only claim a selected method when dispatch evidence permits
+  it.
+- [ ] Add class, generic, method, and member document and workspace symbols,
+  semantic token roles, hover, definition, references, and implementation
+  navigation. Connect string-based registrations and class references to
+  semantic identities without treating arbitrary matching strings as uses.
+  Extend type hierarchy to the supported S3 evidence and S7 declarations,
+  qualified parents, and aliases. Give member and registered methods their
+  own call-hierarchy items; keep ordinary generic calls, candidate dispatch
+  edges, and superclass calls distinguishable. Keep incoming/outgoing edges
+  consistent and do not invent source locations for installed metadata.
+- [ ] Add conservative class, member, and generic rename only after definitions
+  and references are reliable. Update linked declarations, proven string
+  registrations, member accesses, and method signatures within the known
+  ownership and visibility boundary. Refuse ambiguous or dynamically
+  incomplete renames, preserve quoting, and never rename implicit receiver
+  bindings. Test same-name members in unrelated classes/packages, stale
+  snapshots, live-buffer fallback, and edits that shift every declaration
+  span.
+- [ ] Feed roxygen topic rules and help association from the same declarations:
+  S3 and S4 methods, class slots, Reference Class and R6 fields and methods,
+  and S7 properties and constructors. Recover generated callable surfaces
+  and inherited documentation conservatively rather than duplicating OOP
+  recognition in lint rules. Preserve parser ownership of tag structure and
+  the test-only projector's faithful role; use `roxygen-parity` for actual
+  CST parity gaps.
+
+#### 9. Diagnostics and validation on real packages
+
+- [ ] Make existing undefined, unused, signature, and dependency checks consume
+  the shared facts, including dispatch reachability, active and accessor
+  reads, registration side effects, and generated bindings. Retain
+  conservative exemptions where the new model is incomplete. Do not equate
+  an absent direct call with an unused registered method, or a list-shaped
+  value with an object whose member set is closed.
+- [ ] After the model is established, evaluate precise diagnostics for proven
+  nonexistent or inaccessible members, invalid literal constructor
+  arguments, incompatible generic and method formals, duplicate
+  registrations, and impossible inheritance or signatures. Report only when
+  the required class and registration facts are complete; dynamic objects
+  and open class extensions stay quiet. Use `add-lint-rule` for new rules
+  and avoid autofixes that depend on runtime dispatch, validation, or
+  active-binding behavior.
+- [ ] Run the linter-investigation workflow on pinned packages exercising each
+  system and mixed systems. Verify suspected bugs with R and retain reduced
+  regressions. At every implementation stage, test single-file and package
+  resolution, cross-file edits, NAMESPACE and Collate changes, CLI and LSP
+  agreement, losslessness, and idempotence. Check incremental invalidation
+  and request behavior as the new facts are wired in. Publish the supported
+  static subset and remaining dynamic limitations in the user docs.
+
 ## Language Server
 
 ### Navigation
 
 - [ ] **Go-to-declaration/type-definition/implementation**. Low priority for
-  R's dynamic semantics; likely alias to definition or omit.
+  general R bindings; likely alias to definition or omit. Class/member and
+  generic-method implementation navigation belongs to the
+  [OOP roadmap](#object-oriented-programming), where those relations can be
+  established statically.
 
 ### Symbols
 
