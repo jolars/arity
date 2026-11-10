@@ -1161,6 +1161,48 @@ fn completion_in_a_dependency_field_reaches_the_client() {
 }
 
 #[test]
+fn completion_of_a_description_field_header_reaches_the_client() {
+    let mut h = Harness::start_push();
+    let uri = description_uri();
+    h.did_open_as(uri, "Package: testpkg\n", 1, "r");
+
+    for (text, version, new_text, end) in [
+        ("Package: testpkg\nVer", 2, "Version: ", 3),
+        ("Package: testpkg\nVersion: 0.1.0\n", 3, "Version", 7),
+    ] {
+        h.did_change(uri, text, version);
+        let id = h.request(
+            "textDocument/completion",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": 3 }
+            }),
+        );
+        let result = h
+            .recv_response(&id)
+            .response_result
+            .expect("completion result");
+        let items = result["items"].as_array().expect("a completion list");
+        let version = items
+            .iter()
+            .find(|item| item["label"] == "Version")
+            .unwrap();
+        assert_eq!(version["kind"], 5);
+        assert_eq!(
+            version["textEdit"],
+            json!({
+                "range": {
+                    "start": { "line": 1, "character": 0 },
+                    "end": { "line": 1, "character": end }
+                },
+                "newText": new_text
+            })
+        );
+    }
+    h.shutdown();
+}
+
+#[test]
 fn lint_extend_select_preserves_defaults_and_honors_ignore() {
     let source = "f <- function(a) {\n  a == NA\n  setwd(\".\")\n}\nf(1)\n";
     for (settings, expected) in [

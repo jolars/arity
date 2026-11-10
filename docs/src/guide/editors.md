@@ -257,10 +257,12 @@ without opening an R file first.
 ## DESCRIPTION files
 
 The server also serves a package's `DESCRIPTION`, which is a different grammar
-from R. There it offers the packaging diagnostics, completion of package names
-in `Depends`, `Imports`, `Suggests`, `LinkingTo`, and `Enhances`, and hover
-showing a dependency's installed version and title. An unsaved edit counts
-immediately, so adding a package to `Imports` clears the
+from R. There it offers the packaging diagnostics, completion of canonical field
+names and package names in `Depends`, `Imports`, `Suggests`, `LinkingTo`, and
+`Enhances`, and hover showing a dependency's installed version and title. Field
+names follow the formatter's order, omit fields already declared, and add `: `
+when starting a new header. An unsaved edit counts immediately, so adding a
+package to `Imports` clears the
 [`undeclared-dependency`](../reference/rules.md#undeclared-dependency) findings
 in the R files that use it without saving first.
 

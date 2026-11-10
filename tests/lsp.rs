@@ -13,6 +13,179 @@ use lsp_types::{
     SelectionRange, SymbolKind, TextEdit,
 };
 
+fn description_completions(
+    text: &str,
+    offset: usize,
+    encoding: PositionEncoding,
+) -> Option<lsp_types::CompletionList> {
+    use arity::rindex::remote::RemoteExports;
+    use arity::text::TextBuffer;
+    use lsp_types::CompletionResponse;
+
+    let buffer = TextBuffer::new(text.to_string());
+    arity::lsp::compute_description_completions(
+        text,
+        offset,
+        &IndexedProvider::empty(),
+        &RemoteExports::new(),
+        buffer.line_index(),
+        encoding,
+    )
+    .map(|response| match response {
+        CompletionResponse::List(list) => list,
+        CompletionResponse::Array(_) => panic!("expected a completion list"),
+    })
+}
+
+#[test]
+fn description_field_completion_uses_the_formatter_order() {
+    use arity::formatter::description::field_names;
+    use lsp_types::{CompletionItemKind, CompletionTextEdit};
+
+    let list = description_completions("", 0, PositionEncoding::Utf16)
+        .expect("field names in an empty document");
+    assert!(!list.is_incomplete);
+    let expected: Vec<_> = field_names().collect();
+    let labels = |items: &[lsp_types::CompletionItem]| {
+        items.iter().map(|i| i.label.clone()).collect::<Vec<_>>()
+    };
+    assert_eq!(labels(&list.items), expected);
+    for item in &list.items {
+        assert_eq!(item.kind, Some(CompletionItemKind::FIELD));
+        assert_eq!(item.filter_text.as_deref(), Some(item.label.as_str()));
+        let Some(CompletionTextEdit::Edit(edit)) = &item.text_edit else {
+            panic!("expected an explicit field-name edit: {item:?}");
+        };
+        assert_eq!(edit.range, line_range(0, 0, 0, 0));
+        assert_eq!(edit.new_text, format!("{}: ", item.label));
+    }
+
+    let mut client_order = list.items;
+    client_order.sort_by(|a, b| a.sort_text.cmp(&b.sort_text));
+    assert_eq!(labels(&client_order), expected);
+}
+
+#[test]
+fn description_field_completion_replaces_the_whole_header() {
+    use lsp_types::CompletionTextEdit;
+
+    for (marked, label, expected_range, expected_text) in [
+        ("Pack|age", "Package", line_range(0, 0, 0, 7), "Package: "),
+        (
+            "Package: testpkg\nver|sion\r\n",
+            "Version",
+            line_range(1, 0, 1, 7),
+            "Package: testpkg\nVersion: \r\n",
+        ),
+        (
+            "Title: Café 😀\r\nAuthors@|R: person(\"A\", \"B\")\r\n",
+            "Authors@R",
+            line_range(1, 0, 1, 9),
+            "Title: Café 😀\r\nAuthors@R: person(\"A\", \"B\")\r\n",
+        ),
+        (
+            "Co|llate.windows: 'a.R'\n",
+            "Collate.windows",
+            line_range(0, 0, 0, 15),
+            "Collate.windows: 'a.R'\n",
+        ),
+        (
+            "ver|sion  : 0.1.0\n",
+            "Version",
+            line_range(0, 0, 0, 7),
+            "Version  : 0.1.0\n",
+        ),
+        (
+            "|: value\n",
+            "Package",
+            line_range(0, 0, 0, 0),
+            "Package: value\n",
+        ),
+    ] {
+        let offset = marked.find('|').unwrap();
+        let text = marked.replacen('|', "", 1);
+        for encoding in [PositionEncoding::Utf8, PositionEncoding::Utf16] {
+            let list = description_completions(&text, offset, encoding)
+                .unwrap_or_else(|| panic!("expected field names in {marked:?}"));
+            let item = list.items.iter().find(|item| item.label == label).unwrap();
+            let Some(CompletionTextEdit::Edit(edit)) = &item.text_edit else {
+                panic!("expected an explicit field-name edit: {item:?}");
+            };
+            assert_eq!(edit.range, expected_range, "{marked:?}");
+            let index = arity::text::LineIndex::new(&text);
+            let start = index.position_to_byte(edit.range.start, encoding);
+            let end = index.position_to_byte(edit.range.end, encoding);
+            let mut edited = text.clone();
+            edited.replace_range(start..end, &edit.new_text);
+            assert_eq!(edited, expected_text, "{marked:?}");
+        }
+    }
+}
+
+#[test]
+fn description_field_completion_filters_prefixes_and_existing_fields() {
+    use arity::formatter::description::field_names;
+
+    for prefix in ["", "v", "authors@", "collate.", "classification/acm"] {
+        let text = format!("Package: testpkg\nVersion: 0.1.0\n{prefix}");
+        let list = description_completions(&text, text.len(), PositionEncoding::Utf16)
+            .expect("field names on a new header");
+        let expected: Vec<_> = field_names()
+            .filter(|name| {
+                name.to_ascii_lowercase().starts_with(prefix)
+                    && !matches!(*name, "Package" | "Version")
+            })
+            .collect();
+        let got: Vec<_> = list.items.iter().map(|item| item.label.as_str()).collect();
+        assert_eq!(got, expected, "{prefix:?}");
+    }
+
+    let text = "Version: 0.1.0\n";
+    let list = description_completions(text, 3, PositionEncoding::Utf16)
+        .expect("field names on an existing header");
+    assert!(list.items.iter().any(|item| item.label == "Version"));
+}
+
+#[test]
+fn description_field_completion_on_a_blank_line_follows_a_dependency() {
+    use lsp_types::CompletionTextEdit;
+
+    for text in ["Imports: stats\n", "Imports: stats\n\r\nTitle: A Package\n"] {
+        let offset = "Imports: stats\n".len();
+        let list = description_completions(text, offset, PositionEncoding::Utf16)
+            .expect("field names at column zero on a blank line");
+        let item = list.items.iter().find(|item| item.label == "Type").unwrap();
+        let Some(CompletionTextEdit::Edit(edit)) = &item.text_edit else {
+            panic!("expected an explicit field-name edit: {item:?}");
+        };
+        assert_eq!(edit.range, line_range(1, 0, 1, 0));
+        assert_eq!(edit.new_text, "Type: ");
+        assert!(list.items.iter().all(|item| item.label != "Imports"));
+    }
+}
+
+#[test]
+fn description_field_completion_is_silent_in_values_comments_and_continuations() {
+    for marked in [
+        "Title: Ver|\n",
+        "Description: prose\n    Ver|\n",
+        "Description: prose\n\tImpo|rts: text\n",
+        "# Ver|\n",
+        "Description: prose\n# Ver|\n",
+        "Description: prose\n \t|\n",
+        "Version: 0.1.0|\n",
+        "Imports: dplyr (>= 1.|0)\n",
+        "Package: testpkg\n\n Ver|\n",
+    ] {
+        let offset = marked.find('|').unwrap();
+        let text = marked.replacen('|', "", 1);
+        assert!(
+            description_completions(&text, offset, PositionEncoding::Utf16).is_none(),
+            "{marked:?}"
+        );
+    }
+}
+
 #[test]
 fn description_completion_offers_package_names_with_an_explicit_edit() {
     use arity::rindex::remote::RemoteExports;

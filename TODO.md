@@ -1443,7 +1443,7 @@ rounds, distributions overlapping.
 
 ## DESCRIPTION and package metadata
 
-- [ ] **Complete DESCRIPTION field names in the LSP.** Offer canonical field
+- [x] **Complete DESCRIPTION field names in the LSP.** Offer canonical field
   names (`Package`, `Version`, and so on) while editing a field header.
   Project the candidates and their order from
   `crates/arity-formatter/src/formatter/description/order.rs`; do not maintain

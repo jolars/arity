@@ -1,5 +1,5 @@
-//! Language features for an open `DESCRIPTION`: completion of package names in
-//! dependency fields, and hover over a declared dependency.
+//! Language features for an open `DESCRIPTION`: completion of field names and
+//! dependency package names, and hover over a declared dependency.
 //!
 //! Everything here works off a fresh [`dcf::parse`] rather than a salsa query.
 //! There is no DCF parse query, deliberately: `DescriptionFile` holds text only
@@ -8,19 +8,28 @@
 //! `DESCRIPTION` is a few kilobytes scanned line by line, so the parse is not
 //! worth caching anyway.
 //!
-//! **Every range reported here is a source range**, taken from the CST via
-//! [`dependency_entries`]. Never compute one from `folded_value()`: the folded
-//! text drops the continuation indents, so its offsets do not index the buffer
-//! — and a one-package-per-line `Imports` is the canonical style, not an edge
-//! case.
+//! **Every range reported here is a source range**, taken from the CST (via
+//! [`dependency_entries`] for dependency names). Never compute one from
+//! `folded_value()`: the folded text drops the continuation indents, so its
+//! offsets do not index the buffer — and a one-package-per-line `Imports` is
+//! the canonical style, not an edge case.
 
 use super::*;
 
-use crate::dcf::{dependency_entries, is_dependency_field};
+use crate::dcf::{self, dependency_entries, is_dependency_field};
 
 /// Where the cursor is, for the purposes of completing or hovering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DescriptionContext {
+    /// An existing field header, a partial header without a colon, or a blank
+    /// line at column zero.
+    FieldName {
+        prefix: String,
+        replace: TextRange,
+        needs_colon: bool,
+        /// Other fields must not be offered as duplicate declarations.
+        declared: Vec<SmolStr>,
+    },
     /// Inside a dependency field, where a package name goes.
     DependencyName {
         /// The field it sits in. `Depends` alone may also take `R`.
@@ -39,15 +48,21 @@ pub(crate) enum DescriptionContext {
         /// invite a duplicate declaration.
         declared: Vec<SmolStr>,
     },
-    /// Nowhere interesting: prose, a field name, a comment, or inside a version
-    /// constraint.
+    /// Nowhere interesting: prose, a comment, or inside a version constraint.
     None,
 }
 
 /// Classify `offset` in `text`.
 pub(crate) fn classify(text: &str, offset: usize) -> DescriptionContext {
-    let document = crate::dcf::parse(text).document();
+    if !text.is_char_boundary(offset) {
+        return DescriptionContext::None;
+    }
+    let document = dcf::parse(text).document();
     let at = TextSize::new(offset as u32);
+
+    if let Some(context) = field_name_context(&document, text, at) {
+        return context;
+    }
 
     let Some(field) = document
         .fields()
@@ -55,8 +70,6 @@ pub(crate) fn classify(text: &str, offset: usize) -> DescriptionContext {
     else {
         return DescriptionContext::None;
     };
-    // On the field name or its colon: nothing to complete. Documenting a field
-    // itself is a different feature with a different candidate list.
     if at <= field.name_range().end() || !is_dependency_field(&field.name()) {
         return DescriptionContext::None;
     }
@@ -109,6 +122,49 @@ pub(crate) fn classify(text: &str, offset: usize) -> DescriptionContext {
         on_entry,
         declared: declared_elsewhere(&document, replace),
     }
+}
+
+fn field_name_context(
+    document: &dcf::Document,
+    text: &str,
+    at: TextSize,
+) -> Option<DescriptionContext> {
+    let offset = usize::from(at);
+    let (replace, needs_colon) = if let Some(range) = document
+        .fields()
+        .map(|field| field.name_range())
+        .find(|range| range.contains_inclusive(at))
+    {
+        (range, false)
+    } else if let Some(token) = document
+        .syntax()
+        .descendants()
+        .filter_map(dcf::MalformedLine::cast)
+        .filter_map(|line| line.text())
+        .find(|token| {
+            token.text_range().contains_inclusive(at) && !token.text().starts_with([' ', '\t'])
+        })
+    {
+        // Before the colon is typed, the lossless parser retains the header as
+        // a malformed line. Complete it without requiring a parse-clean buffer.
+        (token.text_range(), true)
+    } else if (offset == 0 || text.as_bytes()[offset - 1] == b'\n')
+        && line_of(text, offset).trim_end_matches('\r').is_empty()
+    {
+        (TextRange::empty(at), true)
+    } else {
+        return None;
+    };
+    Some(DescriptionContext::FieldName {
+        prefix: text[usize::from(replace.start())..offset].to_string(),
+        replace,
+        needs_colon,
+        declared: document
+            .fields()
+            .filter(|field| field.name_range() != replace)
+            .map(|field| field.name())
+            .collect(),
+    })
 }
 
 /// The physical line containing `offset`.
@@ -188,11 +244,12 @@ struct Candidate {
     title: Option<SmolStr>,
 }
 
-/// Complete a package name in a dependency field.
+/// Complete a field header or a package name in a dependency field.
 ///
-/// Tiers, in precedence order: locally harvested packages (which alone can show
-/// a version and a `Title`), the base packages, the bundled CRAN list, then the
-/// remote sidecar. A name present in several tiers keeps its best group.
+/// Field names follow the formatter's canonical order. Package tiers, in
+/// precedence order: locally harvested packages (which alone can show a version
+/// and a `Title`), the base packages, the bundled CRAN list, then the remote
+/// sidecar. A name present in several tiers keeps its best group.
 pub fn compute_description_completions(
     text: &str,
     offset: usize,
@@ -201,15 +258,30 @@ pub fn compute_description_completions(
     line_index: &LineIndex,
     encoding: PositionEncoding,
 ) -> Option<CompletionResponse> {
-    let DescriptionContext::DependencyName {
-        field,
-        prefix,
-        replace,
-        declared,
-        ..
-    } = classify(text, offset)
-    else {
-        return None;
+    let (field, prefix, replace, declared) = match classify(text, offset) {
+        DescriptionContext::FieldName {
+            prefix,
+            replace,
+            needs_colon,
+            declared,
+        } => {
+            return Some(complete_field_names(
+                &prefix,
+                replace,
+                needs_colon,
+                &declared,
+                line_index,
+                encoding,
+            ));
+        }
+        DescriptionContext::DependencyName {
+            field,
+            prefix,
+            replace,
+            declared,
+            ..
+        } => (field, prefix, replace, declared),
+        DescriptionContext::None => return None,
     };
 
     let mut candidates: Vec<Candidate> = Vec::new();
@@ -308,6 +380,44 @@ pub fn compute_description_completions(
         is_incomplete: false,
         items,
     }))
+}
+
+fn complete_field_names(
+    prefix: &str,
+    replace: TextRange,
+    needs_colon: bool,
+    declared: &[SmolStr],
+    line_index: &LineIndex,
+    encoding: PositionEncoding,
+) -> CompletionResponse {
+    let prefix = prefix.to_ascii_lowercase();
+    let range = text_range_to_lsp_range(line_index, replace, encoding);
+    let items = crate::formatter::description::field_names()
+        .enumerate()
+        .filter(|(_, name)| {
+            name.to_ascii_lowercase().starts_with(&prefix)
+                && !declared.iter().any(|field| field == *name)
+        })
+        .map(|(rank, name)| CompletionItem {
+            label: name.to_string(),
+            kind: Some(CompletionItemKind::FIELD),
+            sort_text: Some(format!("{rank:03}")),
+            filter_text: Some(name.to_string()),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                range,
+                new_text: if needs_colon {
+                    format!("{name}: ")
+                } else {
+                    name.to_string()
+                },
+            })),
+            ..Default::default()
+        })
+        .collect();
+    CompletionResponse::List(CompletionList {
+        is_incomplete: false,
+        items,
+    })
 }
 
 /// Hover over a declared dependency: its installed version and its own `Title`.
@@ -527,9 +637,9 @@ Suggests: testthat
     }
 
     #[test]
-    fn completion_on_a_field_name_offers_nothing() {
+    fn completion_on_a_field_name_offers_canonical_field_names() {
         let text = BASE;
-        assert!(labels(text, at(text, "Impo")).is_empty());
+        assert_eq!(labels(text, at(text, "Impo")), ["Imports"]);
     }
 
     #[test]
