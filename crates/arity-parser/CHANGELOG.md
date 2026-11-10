@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.0](https://github.com/jolars/arity/compare/arity-parser-v0.7.0...arity-parser-v0.8.0) (2026-11-10)
+
+### Features
+
+- **parser:** parse quoted `Collate` lists ([`a1898d0`](https://github.com/jolars/arity/commit/a1898d09921f509ab2eb2501a9810cf837413af1))
+
 ## [0.7.0](https://github.com/jolars/arity/compare/arity-parser-v0.6.2...arity-parser-v0.7.0) (2026-10-27)
 
 ### Features
