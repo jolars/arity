@@ -2,21 +2,6 @@
 
 ## Parser
 
-- [x] Add a lossless, typed `NAMESPACE` syntax surface to `arity-parser`.
-  Preserve directive and argument ranges, trivia, malformed constructs, and
-  unsupported directives, and report recoverable diagnostics. Refactor
-  `rindex::harvest::parse_namespace` to consume this surface, but keep
-  export/import, S3, native-registration, and `exportPattern()` interpretation
-  above the parser. Downstream static tools such as Polydoc should be able to
-  use it without depending on the full `arity` crate.
-
-- [x] Comment-aware suppression placement edge cases: a **lint** directive
-  between call or subscript arguments attaches only to the next argument,
-  skipping commas and comment-only argument nodes. Attachment stops at the end
-  of the argument list, leaving a trailing directive dangling. The **format**
-  half is also closed: the formatter acts on statement lists only, and
-  `misplaced-suppression` reports a format directive that lands anywhere else.
-
 ## AST wrappers
 
 - [x] Expose function formals as structured typed AST entries rather than only
@@ -1440,19 +1425,6 @@ rounds, distributions overlapping.
   A names-only sidecar, or a non-JSON format, answers the membership questions
   (`resolve_origin`, `package_indexed`, `attach_members`) without them. Worth
   doing only once the attaching case measures as a real cost.
-
-## DESCRIPTION and package metadata
-
-- [x] **Complete DESCRIPTION field names in the LSP.** Offer canonical field
-  names (`Package`, `Version`, and so on) while editing a field header.
-  Project the candidates and their order from
-  `crates/arity-formatter/src/formatter/description/order.rs`; do not maintain
-  a second ordered list in the LSP.
-
-- [x] **Diagnose whitespace before a DESCRIPTION field colon.** Done through
-  `description-unknown-field`: the CST remains lossless, the diagnostic spans
-  `Package `, and arity's semantic lookup remains deliberately lenient even
-  though R treats that field name as `"Package "`.
 
 ## Misc
 
