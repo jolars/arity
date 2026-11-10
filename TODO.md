@@ -1103,16 +1103,14 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
       conventions appears; `Depends`-driven attachment could also be captured
       statically from `DESCRIPTION` without any probe.
 
-- [ ] Follow-up: prune packages that vanish from CRAN out of the bundled set.
-  The refresh is now **additive**—`scripts/rank_cran_downloads.sh` unions
-  each run's top-N (30-day window) into `scripts/cran_top_packages.txt` and
-  never drops by ranking, and `scripts/dump_cran_symbols.R` preserves a
-  member's last-known exports when it can't be installed this run. So an
-  archived/removed package lingers with stale exports forever: there is no
-  "couldn't produce exports for N consecutive runs --> drop" counter yet. The
-  preserve path is the hook to build it on. Benign (extra coverage, never a
-  wrong answer, since bundled is the lowest-precision tier), so deferred until
-  dead packages actually accumulate.
+- [x] Follow-up: prune confirmed archived CRAN packages from the bundled set.
+  `scripts/dump_cran_symbols.R` checks CRAN's unfiltered source index, then
+  requires an explicit archive notice on a missing package's CRAN page
+  before removing its membership and exports. Failed status checks and
+  failed installs preserve prior coverage. Successful dumps replace each
+  package's entire section, removing symbols and lazy datasets it no longer
+  exports, including when the new section is empty. Local fixture tests run
+  via `task test-cran-symbols` and in CI.
 
 - [x] Thin `FileId` + file-source map (retire the `<mem>` hack). `SourceFile`
   now carries an opaque `FileId` and an *optional* path

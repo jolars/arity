@@ -31,6 +31,11 @@ tasks:
     cmds:
       - RUST_LOG=off cargo test --workspace
 
+  test-cran-symbols:
+    desc: Test CRAN archive and symbol pruning with local fixtures (needs R)
+    cmds:
+      - Rscript --vanilla tests/cran_symbols.R
+
   air-compat:
     desc: Measure soft air-formatter compatibility (writes docs/reports/air-compat.md)
     cmds:

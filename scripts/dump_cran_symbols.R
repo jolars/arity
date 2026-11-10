@@ -9,15 +9,15 @@
 # The package *set* comes from scripts/cran_top_packages.txt, the additive union
 # of the top-N CRAN packages by download count (refresh it with
 # scripts/rank_cran_downloads.sh). This script reads that list and writes one
-# section per package, in sorted order, so the output mirrors the membership
-# set exactly.
+# section per package, in sorted order. Confirmed archived packages are pruned
+# from both the membership list and the generated exports.
 #
-# Membership is additive, so a single flaky install must not drop a package's
-# exports and flicker the file. For each member we therefore PREFER a fresh dump
-# from the installed namespace, but fall back to the package's previously
-# generated section when it can't be loaded this run. A member with neither a
-# fresh nor a prior section is omitted (it has simply never been dumped yet, or
-# has disappeared from CRAN --- the only way a package leaves the bundled set).
+# A single flaky install must not drop a package's exports and flicker the file.
+# For each remaining member we therefore prefer a fresh dump from the installed
+# namespace, replacing its entire prior section so removed exports disappear.
+# When it can't be loaded this run, keep its previously generated section. A
+# member with neither a fresh nor a prior section is omitted until a later run
+# can dump it. Failed installs never count as evidence of archival.
 #
 # Names only (no formals, no help) - those stay with the local on-disk harvest,
 # which is version-exact. This file is an approximate "latest" snapshot.
@@ -34,9 +34,72 @@
 list_file <- file.path("scripts", "cran_top_packages.txt")
 out_file <- file.path("src", "semantic", "cran", "exports.txt")
 
-lines <- trimws(readLines(list_file, warn = FALSE))
+cran_archived_packages <- function(packages) {
+  cran <- "https://cran.r-project.org"
+  # PPM binaries and the default R/OS filters can hide active packages. Only
+  # CRAN's unfiltered source index is suitable for identifying candidates.
+  current <- tryCatch(
+    available.packages(
+      repos = cran,
+      type = "source",
+      filters = list(),
+      ignore_repo_cache = TRUE
+    ),
+    error = function(e) NULL,
+    warning = function(w) NULL
+  )
+  if (is.null(current) || nrow(current) == 0L) {
+    warning(
+      "Could not read the current CRAN source index; skipping archive pruning.",
+      call. = FALSE
+    )
+    return(character())
+  }
+
+  archived <- character()
+  for (pkg in setdiff(packages, current[, "Package"])) {
+    unverified <- function(e) {
+      warning(
+        sprintf(
+          "Could not verify CRAN archive status for %s; preserving it: %s",
+          pkg,
+          conditionMessage(e)
+        ),
+        call. = FALSE
+      )
+      character()
+    }
+    page <- tryCatch(
+      readLines(
+        paste0(cran, "/web/packages/", pkg, "/index.html"),
+        warn = FALSE
+      ),
+      error = unverified,
+      warning = unverified
+    )
+    # Archive directories also contain old versions of active packages. Require
+    # CRAN's explicit removal notice rather than inferring status from a link.
+    if (
+      any(grepl("was removed from the CRAN repository", page, fixed = TRUE)) &&
+        any(grepl("Archived on [0-9]{4}-[0-9]{2}-[0-9]{2}", page))
+    ) {
+      archived <- c(archived, pkg)
+    }
+  }
+  archived
+}
+
+list_lines <- readLines(list_file, warn = FALSE)
+lines <- trimws(list_lines)
 packages <- lines[nzchar(lines) & !startsWith(lines, "#")]
 packages <- sort(unique(packages))
+
+archived <- cran_archived_packages(packages)
+if (length(archived) > 0L) {
+  writeLines(list_lines[!lines %in% archived], list_file)
+  packages <- setdiff(packages, archived)
+  message("pruned archived CRAN packages: ", paste(archived, collapse = ", "))
+}
 
 # Parse the previously generated exports.txt into pkg -> names, so a package
 # that can't be loaded this run can fall back to its last-known section. The
@@ -122,7 +185,6 @@ for (pkg in packages) {
 
 dir.create(dirname(out_file), recursive = TRUE, showWarnings = FALSE)
 con <- file(out_file, open = "wt")
-on.exit(close(con))
 
 writeLines(
   c(
@@ -141,6 +203,7 @@ writeLines(
 for (pkg in names(sections)) {
   writeLines(c(sprintf("[%s]", pkg), sections[[pkg]], ""), con)
 }
+close(con)
 
 if (length(no_data) > 0) {
   warning(

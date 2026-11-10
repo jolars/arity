@@ -8,12 +8,11 @@
 # and never removes a package by ranking. This keeps the bundled symbol set
 # deterministic --- a package arity once resolved stays resolvable, so
 # `undefined-symbol` never silently switches off for a file just because a
-# dependency drifted out of the weekly top-N. Membership only grows; the stable
-# monthly window (DAYS=30) means only sustained-popular packages earn a
-# (permanent) slot, so the union converges rather than tracking weekly noise.
-# Packages that disappear from CRAN are pruned separately, in
-# scripts/dump_cran_symbols.R (when their exports can no longer be produced),
-# never here by ranking.
+# dependency drifted out of the weekly top-N. The stable monthly window
+# (DAYS=30) means only sustained-popular packages earn a slot, so the union
+# converges rather than tracking weekly noise. Confirmed archived packages are
+# pruned separately, in scripts/dump_cran_symbols.R, never here by ranking or
+# because an installation failed.
 #
 # The cranlogs /top API caps at 100 packages, so for a wider bundle we go to the
 # raw daily logs, which list every download. We stream each day's gzipped CSV
@@ -88,7 +87,7 @@ echo "members: $before -> $after (added $((after - before)) this run)" >&2
   echo "# Bundled CRAN package set: the union of the top-N-by-downloads rankings"
   echo "# (RStudio/Posit CRAN logs, $BASE_URL) accumulated over time. Additive ---"
   echo "# a package enters when it reaches the top N and is never removed by"
-  echo "# ranking (only by disappearing from CRAN). Sorted; one package per line."
+  echo "# ranking (only when confirmed archived on CRAN). Sorted; one package per line."
   echo "# Regenerate with: scripts/rank_cran_downloads.sh"
   echo ""
   echo "$union"
