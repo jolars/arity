@@ -90,29 +90,30 @@ jobs:
           cache-bin: "false"
           prefix-key: "v1-rust"
 
-      - name: Install musl toolchain
-        if: endsWith(matrix.target, '-unknown-linux-musl')
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
-
-      # Pin the glibc symbol-version floor (link-time only; the binary still
-      # uses the host's glibc at runtime) so it runs on distros older than the
-      # CI runner.
+      # Zig supplies libc so Linux builds do not depend on Ubuntu package mirrors.
       - name: Install Zig
-        if: matrix.glibc
+        if: runner.os == 'Linux'
         uses: mlugg/setup-zig@v2
         with:
           version: 0.14.1
 
       - name: Install cargo-zigbuild
-        if: matrix.glibc
+        if: runner.os == 'Linux'
         run: cargo install --locked cargo-zigbuild
 
+      # Pin the glibc symbol-version floor (link-time only; the binary still
+      # uses the host's glibc at runtime) so it runs on distros older than the
+      # CI runner.
       - name: Build release binary (zigbuild)
         if: matrix.glibc
         run: cargo zigbuild --release --target ${{ matrix.target }}.${{ matrix.glibc }}
 
+      - name: Build release binary (musl)
+        if: endsWith(matrix.target, '-unknown-linux-musl')
+        run: cargo zigbuild --release --target ${{ matrix.target }}
+
       - name: Build release binary
-        if: ${{ !matrix.glibc }}
+        if: runner.os != 'Linux'
         run: cargo build --release --target ${{ matrix.target }}
 
       # Regression guard: fail if the binary ever requires a glibc newer than
