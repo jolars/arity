@@ -570,15 +570,15 @@ fn walk_replacement_target(ctx: &mut BuildCtx<'_>, target: &SyntaxNode, scope: S
     let Some(call) = CallExpr::cast(target.clone()) else {
         return false;
     };
-    let Some(SyntaxElement::Token(callee)) = call.base() else {
-        return false;
-    };
     let Some(name) = call.callee_name() else {
         return false;
     };
     ctx.model
         .signature_effects
         .record(&format!("{name}<-"), call.syntax().text_range());
+    let Some(SyntaxElement::Token(callee)) = call.base() else {
+        return false;
+    };
     push_ident(
         ctx,
         IdentRef {

@@ -765,20 +765,11 @@ fn opaque_binding_frame(root: &SyntaxNode, range: TextRange) -> bool {
     let binding_frame = root.covering_element(range).parent().and_then(frame);
     root.descendants().filter_map(CallExpr::cast).any(|call| {
         call.callee_name().is_some_and(|name| {
-            matches!(
-                unbacktick(&name),
-                "assign"
-                    | "delayedAssign"
-                    | "makeActiveBinding"
-                    | "eval"
-                    | "evalq"
-                    | "source"
-                    | "sys.source"
-                    | "load"
-                    | "attach"
-                    | "rm"
-                    | "remove"
-            )
+            if replacement_assignment(&call).is_some() {
+                crate::semantic::calls::changes_bindings(&format!("{name}<-"))
+            } else {
+                crate::semantic::calls::changes_bindings(unbacktick(&name))
+            }
         }) && frame(call.syntax().clone()) == binding_frame
     })
 }

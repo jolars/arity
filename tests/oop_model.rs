@@ -81,6 +81,107 @@ fn r6_members_resolve_stable_callable_aliases() {
 }
 
 #[test]
+fn closure_mutations_withhold_callable_alias_proofs() {
+    for mutation in [
+        "formals(helper) <- alist(y = )",
+        "body(helper) <- quote(NULL)",
+        "environment(helper) <- baseenv()",
+        "`formals<-`(helper, value = alist(y = ))",
+        "base::`body<-`(helper, value = quote(NULL))",
+        "base::formals(helper) <- alist(y = )",
+    ] {
+        let source = format!(
+            "helper <- function(x) x\n{mutation}\n\
+             A <- R6::R6Class('A', public = base::list(read = helper))\n\
+             methods::setMethod('g', 'A', helper)\n"
+        );
+        let facts = facts(&source);
+        assert_eq!(facts.oop.members[0].kind, MemberKind::Unknown, "{source}");
+        assert_eq!(facts.oop.methods.len(), 1, "{source}");
+        assert!(facts.oop.methods[0].signature.is_none(), "{source}");
+        assert!(
+            facts.oop.methods[0]
+                .uncertainty
+                .contains(&OopUncertainty::UnresolvedImplementation),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn conventional_s3_methods_do_not_escape_untracked_closures() {
+    for closure in [
+        "f <- function() { g.foo <- function(x) x }",
+        "f <- function() { inner <- function() { g.foo <- function(x) x } }",
+        "lapply(xs, function(x) { g.foo <- function(x) x })",
+        "f <- function() { local <- S7::new_generic('local', 'x'); inner <- function() { g.foo <- function(x) x } }",
+    ] {
+        let source = format!(
+            "g <- function(x) base::UseMethod('g')\n\
+             g.bar <- function(x) x\n{closure}\n"
+        );
+        let facts = facts(&source);
+        assert_eq!(facts.oop.methods.len(), 1, "{source}");
+        assert_eq!(facts.oop.methods[0].name, ClassName::Known("g.bar".into()));
+        assert!(facts.oop.methods[0].key.owner.0.is_empty());
+    }
+    let facts =
+        facts("f <- function() { g <- function(x) base::UseMethod('g'); g.foo <- function(x) x }");
+    assert_eq!(facts.oop.methods.len(), 1);
+    assert_eq!(
+        facts.oop.methods[0].key.owner,
+        facts.oop.generics[0].key.owner
+    );
+    assert_eq!(
+        facts.oop.methods[0].key.owner.0[0].name.as_deref(),
+        Some("f")
+    );
+}
+
+#[test]
+fn s3_dispatch_uses_the_explicit_object() {
+    for (call, expected) in [
+        ("UseMethod('g')", "x"),
+        ("UseMethod('g', y)", "y"),
+        ("UseMethod(object = y, generic = 'g')", "y"),
+        ("UseMethod('g', (y))", "y"),
+        ("UseMethod('g', `some name`)", "some name"),
+    ] {
+        let source = format!("g <- function(x, y, `some name`) {call}\n");
+        let facts = facts(&source);
+        assert_eq!(facts.oop.generics.len(), 1, "{source}");
+        let generic = &facts.oop.generics[0];
+        assert_eq!(
+            generic.dispatch_arguments,
+            vec![ClassName::Known(expected.into())],
+            "{source}"
+        );
+        assert!(
+            !generic
+                .uncertainty
+                .contains(&OopUncertainty::DynamicSignature),
+            "{source}"
+        );
+    }
+    for object in ["make_object(y)", "y$value", "'y'", "NULL", "local"] {
+        let source = format!("g <- function(x, y) UseMethod('g', {object})\n");
+        let facts = facts(&source);
+        let generic = &facts.oop.generics[0];
+        assert_eq!(
+            generic.dispatch_arguments,
+            vec![ClassName::Unknown],
+            "{source}"
+        );
+        assert!(
+            generic
+                .uncertainty
+                .contains(&OopUncertainty::DynamicSignature),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn r6_unknown_member_values_remain_uncertain() {
     for source in [
         "A <- R6::R6Class('A', public = base::list(read = helper))",

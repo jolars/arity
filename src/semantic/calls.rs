@@ -18,28 +18,32 @@ pub(crate) struct SignatureEffects {
 impl SignatureEffects {
     pub(crate) fn record(&mut self, name: &str, range: TextRange) {
         let name = super::symbols::unbacktick(name);
-        self.dynamic_bindings |= name.contains('\\')
-            || matches!(
-                name,
-                "assign"
-                    | "delayedAssign"
-                    | "makeActiveBinding"
-                    | "eval"
-                    | "evalq"
-                    | "source"
-                    | "sys.source"
-                    | "load"
-                    | "attach"
-                    | "rm"
-                    | "remove"
-                    | "formals<-"
-                    | "body<-"
-                    | "environment<-"
-            );
+        self.dynamic_bindings |= changes_bindings(name);
         if matches!(name, "UseMethod" | "NextMethod") {
             self.dispatch_calls.push(range);
         }
     }
+}
+
+pub(crate) fn changes_bindings(name: &str) -> bool {
+    name.contains('\\')
+        || matches!(
+            name,
+            "assign"
+                | "delayedAssign"
+                | "makeActiveBinding"
+                | "eval"
+                | "evalq"
+                | "source"
+                | "sys.source"
+                | "load"
+                | "attach"
+                | "rm"
+                | "remove"
+                | "formals<-"
+                | "body<-"
+                | "environment<-"
+        )
 }
 
 /// Known operations can replace bindings or change closure signatures, so

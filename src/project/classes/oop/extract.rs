@@ -90,6 +90,34 @@ fn signature(value: Option<SyntaxElement>) -> Option<CallableSignature> {
     })
 }
 
+fn s3_dispatch_argument(
+    object: Option<SyntaxElement>,
+    signature: Option<&CallableSignature>,
+) -> Option<String> {
+    let signature = signature?;
+    let Some(mut object) = object else {
+        return signature
+            .parameters
+            .first()
+            .map(|parameter| parameter.name.clone());
+    };
+    while let Some(paren) = object
+        .as_node()
+        .cloned()
+        .and_then(crate::ast::ParenExpr::cast)
+    {
+        object = paren.inner()?;
+    }
+    let token = object
+        .as_token()
+        .filter(|token| token.kind() == SyntaxKind::IDENT)?;
+    signature
+        .parameters
+        .iter()
+        .find(|parameter| parameter.name == unbacktick(token.text()))
+        .map(|parameter| parameter.name.clone())
+}
+
 fn literal(value: &SyntaxElement) -> Option<String> {
     let token = value.as_token()?;
     match token.kind() {
@@ -521,11 +549,11 @@ impl Projection<'_> {
                     }
                 }
             } else if system == OopSystem::S3 {
-                signature
-                    .as_ref()
-                    .and_then(|sig| sig.parameters.first())
-                    .map(|p| vec![ClassName::Known(p.name.clone())])
-                    .unwrap_or_default()
+                let argument = s3_dispatch_argument(value("object"), signature.as_ref());
+                if argument.is_none() {
+                    issues.insert(OopUncertainty::DynamicSignature);
+                }
+                vec![argument.map_or(ClassName::Unknown, ClassName::Known)]
             } else if system == OopSystem::S4 {
                 signature
                     .as_ref()
@@ -1086,6 +1114,16 @@ impl Projection<'_> {
 
     fn s3_methods(&mut self) {
         for assignment in self.root.descendants().filter_map(AssignmentExpr::cast) {
+            // A conventional method does not itself establish an owner key, so
+            // an untracked closure must not inherit its enclosing frame's key.
+            if assignment
+                .syntax()
+                .ancestors()
+                .find(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
+                .is_some_and(|frame| !self.owners.contains_key(&frame.text_range()))
+            {
+                continue;
+            }
             let Some(binding) = assignment.target_name() else {
                 continue;
             };
