@@ -194,7 +194,7 @@ pub struct FileFacts {
 }
 
 /// Cross-file resolution resolved over a set of files.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub struct ProjectScope {
     /// Per file: top-level names reachable from the files it can see.
     visible: HashMap<PathBuf, LayeredSet>,
@@ -250,7 +250,7 @@ pub struct ProjectScope {
 /// backdated re-execution installs an equal-but-distinct `Arc`. Contents are
 /// what matter, so never identify one of these sets by `Arc::ptr_eq` against a
 /// fresh `file_exports`/`source_edges`/`top_level_events` result.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, salsa::SalsaValue)]
 struct Retained {
     top_level_events: Arc<Vec<TopLevelEvent>>,
     exports: Arc<BTreeSet<String>>,

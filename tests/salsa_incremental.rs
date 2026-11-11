@@ -1169,6 +1169,184 @@ fn shared_oop_facts_reach_the_project_with_package_ownership() {
 }
 
 #[test]
+fn project_replacement_generic_objects_do_not_select_the_getter() {
+    let (db, _, _) = package_ab(
+        "gname <- methods::setGeneric('value', function(object) object)\n\
+         methods::setGeneric('value<-', function(object, value) object)\n\
+         methods::setReplaceMethod(gname, 'C', function(object, value) object)\n",
+        "",
+    );
+    let index = project_classes(&db);
+    let file = index.file(Path::new("/pkg/R/a.R")).unwrap();
+    let id = |n: usize| arity::project::classes::OopId {
+        path: file.path.clone(),
+        key: file.facts.oop.generics[n].key.clone(),
+    };
+    assert_eq!(
+        index.generic_candidates(
+            &file.path,
+            file.facts.oop.methods[0].generic.as_ref().unwrap(),
+            false
+        ),
+        vec![id(1)]
+    );
+    assert!(index.methods_for_generic(&id(0)).is_empty());
+    assert_eq!(index.methods_for_generic(&id(1)).len(), 1);
+}
+
+#[test]
+fn project_dispatch_rejects_masked_signature_helpers() {
+    use arity::project::classes::{DispatchClass, OopId, OopUncertainty};
+
+    for (helper, expression) in [
+        ("c", "c(x = 'numeric')"),
+        ("signature", "signature(x = 'numeric')"),
+        ("list", "list(C)"),
+    ] {
+        let registration = if helper == "list" {
+            format!("S7::method(g, {expression}) <- function(x) x\n")
+        } else {
+            format!("methods::setMethod('g', {expression}, function(x) x)\n")
+        };
+        let source = format!("source('b.R')\n{registration}");
+        let (db, _, _) = scripts_ab(
+            &source,
+            &format!(
+                "C <- S7::new_class('C')\n{helper} <- function(...) base::c(x = 'character')\n"
+            ),
+        );
+        let index = project_classes(&db);
+        let file = index.file(Path::new("/s/a.R")).unwrap();
+        let method = index
+            .method(&OopId {
+                path: file.path.clone(),
+                key: file.facts.oop.methods[0].key.clone(),
+            })
+            .unwrap();
+        assert!(
+            method
+                .uncertainty
+                .contains(&OopUncertainty::DynamicSignature),
+            "{source}"
+        );
+        assert_eq!(method.dispatch.len(), 1);
+        assert_eq!(method.dispatch[0].class, DispatchClass::Unknown, "{source}");
+    }
+}
+
+#[test]
+fn project_dispatch_confirms_unmasked_and_qualified_helpers() {
+    use arity::project::classes::{DispatchClass, OopId, OopUncertainty};
+
+    for (helper, expression, qualified) in [
+        ("c", "c(x = 'numeric')", "base::c(x = 'numeric')"),
+        (
+            "signature",
+            "signature(x = 'numeric')",
+            "methods::signature(x = 'numeric')",
+        ),
+        ("list", "list(C)", "base::list(C)"),
+    ] {
+        for (expression, mask) in [(expression, false), (qualified, true)] {
+            let registration = if helper == "list" {
+                format!("S7::method(g, {expression}) <- function(x) x\n")
+            } else {
+                format!("methods::setMethod('g', {expression}, function(x) x)\n")
+            };
+            let source = format!("source('b.R')\n{registration}");
+            let (db, _, _) = scripts_ab(
+                &source,
+                &if mask {
+                    format!("C <- S7::new_class('C')\n{helper} <- function(...) NULL\n")
+                } else {
+                    "C <- S7::new_class('C')\n".into()
+                },
+            );
+            let index = project_classes(&db);
+            let file = index.file(Path::new("/s/a.R")).unwrap();
+            let method = index
+                .method(&OopId {
+                    path: file.path.clone(),
+                    key: file.facts.oop.methods[0].key.clone(),
+                })
+                .unwrap();
+            assert!(method.dispatch_factory.is_some(), "{source}");
+            assert!(
+                !method
+                    .uncertainty
+                    .contains(&OopUncertainty::DynamicSignature),
+                "{source}"
+            );
+            assert_eq!(method.dispatch.len(), 1);
+            assert!(
+                if helper == "list" {
+                    matches!(method.dispatch[0].class, DispatchClass::Generator(_))
+                } else {
+                    method.dispatch[0].class == DispatchClass::Formal("numeric".into())
+                },
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn project_dispatch_rejects_imported_helper_masks() {
+    use arity::project::classes::{ClassName, DispatchClass, OopId, OopUncertainty};
+
+    for namespace in ["importFrom(mask, c)\n", "import(mask)\n"] {
+        let (mut db, _, _) = package_ab(
+            "methods::setGeneric('g', function(x) x, signature = c('x'))\n\
+             methods::setMethod('g', c(x = 'numeric'), function(x) x)\n",
+            "",
+        );
+        db.set_package_metadata(vec![PackageInfo {
+            root: "/pkg".into(),
+            namespace: Some(namespace.into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        db.set_library_index(IndexedProvider::from_indices([index_pkg("mask", &["c"])]));
+        let index = project_classes(&db);
+        let file = index.file(Path::new("/pkg/R/a.R")).unwrap();
+        let method = index
+            .method(&OopId {
+                path: file.path.clone(),
+                key: file.facts.oop.methods[0].key.clone(),
+            })
+            .unwrap();
+        let generic = index
+            .generic(&OopId {
+                path: file.path.clone(),
+                key: file.facts.oop.generics[0].key.clone(),
+            })
+            .unwrap();
+        assert_eq!(
+            method.dispatch[0].class,
+            DispatchClass::Unknown,
+            "{namespace}"
+        );
+        assert!(
+            method
+                .uncertainty
+                .contains(&OopUncertainty::DynamicSignature)
+        );
+        assert_eq!(
+            generic.dispatch_arguments,
+            vec![ClassName::Unknown],
+            "{namespace}"
+        );
+        assert!(
+            generic
+                .uncertainty
+                .contains(&OopUncertainty::DynamicSignature)
+        );
+        assert!(file.facts.oop.methods[0].dispatch_factory.is_some());
+        assert!(file.facts.oop.generics[0].dispatch_factory.is_some());
+    }
+}
+
+#[test]
 fn bare_generic_factories_retain_bindings_for_project_confirmation() {
     for (declaration, namespace) in [
         ("library(S7)\ng <- new_generic('g', 'x')\n", ""),

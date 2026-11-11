@@ -98,18 +98,18 @@ pub(crate) fn prepare_type_hierarchy_via_db(
     let model = SemanticModel::build(&root);
     let facts = file_class_defs(&model, &root);
     let occurrence = class_occurrence_at_offset(&model, &root, offset)?;
-    salsa::Cancelled::catch(AssertUnwindSafe(|| {
+    let prepare = |snapshot: &Analysis| {
         let index = snapshot.class_index_in(path, &facts, &root, &model);
-        let ids = match occurrence {
+        let ids = match &occurrence {
             ClassOccurrence::Declaration(key) => vec![ClassId {
                 path: path.to_path_buf(),
-                key,
+                key: key.clone(),
             }],
             ClassOccurrence::Reference {
                 owner,
                 reference,
                 deferred,
-            } => index.resolve_reference(path, &owner, &reference, deferred),
+            } => index.resolve_reference(path, owner, reference, *deferred),
         };
         let items: Vec<_> = ids
             .iter()
@@ -124,9 +124,12 @@ pub(crate) fn prepare_type_hierarchy_via_db(
             })
             .collect();
         (!items.is_empty()).then_some(items)
-    }))
-    .ok()
-    .flatten()
+    };
+    salsa::Cancelled::catch(AssertUnwindSafe(|| prepare(snapshot))).unwrap_or_else(|_| {
+        // A write elsewhere can cancel this snapshot without changing the live
+        // document. Rebuild its local visibility without touching the old DB.
+        prepare(&IncrementalDatabase::default().snapshot())
+    })
 }
 
 pub(crate) fn supertypes_via_db(
@@ -223,6 +226,55 @@ mod tests {
     }
 
     // --- prepare ------------------------------------------------------------
+
+    #[test]
+    fn closure_reads_prepare_generators_declared_later() {
+        for source in [
+            "f <- function() A$new()\nA <- R6::R6Class('A')\n",
+            "f <- function() Alias$new()\nA <- R6::R6Class('A')\nAlias <- A\n",
+            "f <- function() { g <- function() A$new(); A <- R6::R6Class('A') }\n",
+        ] {
+            let snapshot = rename_workspace(source, "");
+            let items = prepare_at(
+                &snapshot,
+                &ws_path("a.R"),
+                source,
+                source.find("$new").unwrap() - 1,
+            );
+            assert_eq!(items.len(), 1, "{source}");
+            assert_eq!(items[0].name, "A");
+        }
+        let source = "A$new()\nA <- R6::R6Class('A')\n";
+        assert!(prepare_at(&rename_workspace(source, ""), &ws_path("a.R"), source, 0).is_empty());
+    }
+
+    #[test]
+    fn cancelled_preparation_keeps_fresh_local_classes() {
+        let source = "f <- function() A$new()\nA <- R6::R6Class('A')\n";
+        let mut db = IncrementalDatabase::default();
+        let path = ws_path("a.R");
+        let a = db.upsert_file(&path, source);
+        let b = db.upsert_file(&ws_path("b.R"), "x <- 1\n");
+        db.set_workspace_members(vec![a, b], vec![ws_root()]);
+        let snapshot = db.snapshot();
+        let writer = std::thread::spawn(move || db.set_file_text(b, "x <- 2\n"));
+        // Wait for the pending write to cancel this reader before making the
+        // request, so the regression does not depend on request timing.
+        while salsa::Cancelled::catch(AssertUnwindSafe(|| snapshot.class_index())).is_ok() {
+            std::thread::yield_now();
+        }
+        let declaration = prepare_at(&snapshot, &path, source, source.find("'A'").unwrap() + 1);
+        let reference = prepare_at(&snapshot, &path, source, source.find("A$new").unwrap());
+        drop(snapshot);
+        writer.join().unwrap();
+        for items in [declaration, reference] {
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].name, "A");
+            assert_eq!(items[0].uri, uri::from_path(&path).unwrap());
+            assert_eq!(items[0].selection_range.start.line, 1);
+            assert!(items[0].data.is_some());
+        }
+    }
 
     #[test]
     fn untitled_preparation_preserves_the_live_uri() {
