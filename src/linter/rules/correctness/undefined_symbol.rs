@@ -89,7 +89,7 @@ impl Rule for UndefinedSymbol {
                     .filter(|ident| !ident.data_masked)
                     .filter(|ident| !source_resolved.contains(&ident.range))
                     .filter(|ident| !rng_initialized_before(ctx, ident))
-                    .filter(|ident| ctx.model.resolve_local(ident).is_none())
+                    .filter(|ident| ctx.model.is_free_read(ident))
                     .filter(|ident| ident.name != ".packageName" || !ctx.is_package_r_source())
                     .filter(|ident| resolution.unresolved.contains(ident.name.as_str()))
                     // Last: this one walks the tree, so it should only run for
@@ -274,7 +274,7 @@ impl UndefinedSymbol {
                 continue;
             }
             // Skip if it resolves to a local binding.
-            if ctx.model.resolve_local(ident).is_some() {
+            if !ctx.model.is_free_read(ident) {
                 continue;
             }
             // Skip if a sibling file in the same package or source-closure binds

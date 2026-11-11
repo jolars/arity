@@ -143,11 +143,30 @@
         "signature": [
           "Child"
         ]
+      },
+      {
+        "environment": [
+          [
+            ".__active__",
+            "private",
+            "self"
+          ]
+        ],
+        "formals": [
+          {
+            "default": "1",
+            "name": "scale"
+          }
+        ],
+        "generic": "read",
+        "signature": [
+          "Base"
+        ]
       }
     ],
     "system": "r6"
   },
-  "observer": "owner <- environment()\nclass_facts <- function(generator, binding) {\n  member_kinds <- function(values, kind) as.list(setNames(rep(kind, length(values)), names(values)))\n  parent <- generator$get_inherit()\n  list(name = generator$classname, binding = binding,\n       parents = if (is.null(parent)) list() else list(parent$classname),\n       members = c(member_kinds(generator$public_fields, \"public-field\"),\n                   member_kinds(generator$public_methods, \"public-method\"),\n                   member_kinds(generator$private_fields, \"private-field\"),\n                   member_kinds(generator$active, \"active-binding\")))\n}\nfacts <- list(\n  system = \"r6\",\n  classes = list(class_facts(Base, \"Base\"), class_facts(Child, \"Child\")),\n  constructors = list(\n    list(binding = \"Base$new\", formals = formal_facts(Base$new)),\n    list(binding = \"Base$initialize\", formals = formal_facts(Base$public_methods$initialize)),\n    list(binding = \"Child$new\", formals = formal_facts(Child$new)),\n    list(binding = \"Child$initialize\", formals = formal_facts(Child$public_methods$initialize))\n  ),\n  methods = list(\n    method_facts(\"read\", \"Base\", base$read, owner),\n    method_facts(\"read\", \"Child\", child$read, owner)\n  ),\n  dispatch = list(\n    dispatch_facts(\"base$read()\", base, owner),\n    dispatch_facts(\"child$read()\", child, owner),\n    dispatch_facts(\"child$read(scale = 3)\", child, owner),\n    dispatch_facts(\"child$doubled\", child, owner)\n  )\n)\n",
+  "observer": "owner <- environment()\nclass_facts <- function(generator, binding) {\n  member_kinds <- function(values, kind) as.list(setNames(rep(kind, length(values)), names(values)))\n  parent <- generator$get_inherit()\n  list(name = generator$classname, binding = binding,\n       parents = if (is.null(parent)) list() else list(parent$classname),\n       members = c(member_kinds(generator$public_fields, \"public-field\"),\n                   member_kinds(generator$public_methods, \"public-method\"),\n                   member_kinds(generator$private_fields, \"private-field\"),\n                   member_kinds(generator$active, \"active-binding\")))\n}\nfacts <- list(\n  system = \"r6\",\n  classes = list(class_facts(Base, \"Base\"), class_facts(Child, \"Child\")),\n  constructors = list(\n    list(binding = \"Base$new\", formals = formal_facts(Base$new)),\n    list(binding = \"Base$initialize\", formals = formal_facts(Base$public_methods$initialize)),\n    list(binding = \"Child$new\", formals = formal_facts(Child$new)),\n    list(binding = \"Child$initialize\", formals = formal_facts(Child$public_methods$initialize))\n  ),\n  methods = list(\n    method_facts(\"read\", \"Base\", base$read, owner),\n    method_facts(\"read\", \"Child\", child$read, owner),\n    method_facts(\"read\", \"Base\", child$.__enclos_env__$super$read, owner)\n  ),\n  dispatch = list(\n    dispatch_facts(\"base$read()\", base, owner),\n    dispatch_facts(\"child$read()\", child, owner),\n    dispatch_facts(\"child$read(scale = 3)\", child, owner),\n    dispatch_facts(\"child$doubled\", child, owner)\n  )\n)\n",
   "source": "Base <- R6::R6Class(\n  \"Base\",\n  public = list(\n    value = NULL,\n    initialize = function(value = 1) self$value <- value,\n    read = function(scale = 1) self$value * scale\n  )\n)\nChild <- R6::R6Class(\n  \"Child\", inherit = Base,\n  public = list(\n    initialize = function(value = 2, label = \"child\") {\n      super$initialize(value)\n      private$label <- label\n    },\n    read = function(scale = 2) paste(private$label, super$read(scale))\n  ),\n  private = list(label = NULL),\n  active = list(doubled = function() self$value * 2)\n)\nbase <- Base$new()\nchild <- Child$new()\n",
   "versions": {
     "r": "4.6.1",

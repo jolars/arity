@@ -19,6 +19,7 @@ struct Projection<'a> {
     facts: OopFacts,
     sites: Vec<OopSite>,
     method_bodies: Vec<(TextRange, ClassKey)>,
+    method_implementations: Vec<MethodImplementationSite>,
     generic_values: HashMap<TextRange, OopKey>,
     counts: BTreeMap<(ClassOwner, OopSystem, OopKind), u32>,
     include_sites: bool,
@@ -215,7 +216,7 @@ pub(in crate::project::classes) fn project(
     owners: &HashMap<TextRange, ClassOwner>,
     classes: &Extracted,
     include_sites: bool,
-) -> (OopFacts, Vec<OopSite>) {
+) -> (OopFacts, Vec<OopSite>, Vec<MethodImplementationSite>) {
     let mut projection = Projection {
         model,
         root,
@@ -232,6 +233,7 @@ pub(in crate::project::classes) fn project(
         facts: OopFacts::default(),
         sites: Vec::new(),
         method_bodies: Vec::new(),
+        method_implementations: Vec::new(),
         generic_values: HashMap::new(),
         counts: BTreeMap::new(),
         include_sites,
@@ -247,13 +249,24 @@ pub(in crate::project::classes) fn project(
     projection
         .sites
         .sort_by_key(|site| (site.range.start(), site.range.end()));
-    (projection.facts, projection.sites)
+    (
+        projection.facts,
+        projection.sites,
+        projection.method_implementations,
+    )
 }
 
 /// The declaration projection is range-free. Call this against the current CST
 /// to obtain declaration, alias, registration-reference, and member-use spans.
 pub fn oop_sites(model: &SemanticModel, root: &SyntaxNode) -> Vec<OopSite> {
     extract(model, root, true).oop_sites
+}
+
+pub fn method_implementation_sites(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+) -> Vec<MethodImplementationSite> {
+    extract(model, root, false).method_implementations
 }
 
 impl Projection<'_> {
@@ -366,16 +379,18 @@ impl Projection<'_> {
                         if kind == MemberKind::Field && def.system() == ClassSystem::R6 {
                             if callable.is_some() {
                                 MemberKind::Method
-                            } else if implementation.and_then(crate::ast::Expr::cast).is_some_and(
-                                |value| match value {
+                            } else if implementation
+                                .clone()
+                                .and_then(crate::ast::Expr::cast)
+                                .is_some_and(|value| match value {
                                     crate::ast::Expr::Name(name) => name.is_reserved_constant(),
                                     crate::ast::Expr::IntLiteral(_)
                                     | crate::ast::Expr::FloatLiteral(_)
                                     | crate::ast::Expr::StringLiteral(_)
                                     | crate::ast::Expr::ComplexLiteral(_) => true,
                                     _ => false,
-                                },
-                            ) {
+                                })
+                            {
                                 MemberKind::Field
                             } else {
                                 member_issues.insert(OopUncertainty::UnresolvedImplementation);
@@ -407,6 +422,44 @@ impl Projection<'_> {
                             registration: None,
                             uncertainty: member_issues.clone(),
                         });
+                        if def.system() == ClassSystem::R6
+                            && let Some(function) = implementation
+                                .clone()
+                                .and_then(SyntaxElement::into_node)
+                                .and_then(FunctionExpr::cast)
+                        {
+                            let assignment =
+                                direct_assignment(&SyntaxElement::Node(function.syntax().clone()));
+                            let source = assignment
+                                .as_ref()
+                                .and_then(|assignment| {
+                                    Some(MethodImplementationSource::Binding {
+                                        owner: owner_at(assignment.syntax(), self.owners),
+                                        name: unbacktick(&assignment.target_name()?).to_string(),
+                                    })
+                                })
+                                .unwrap_or(MethodImplementationSource::Inline);
+                            let keep_original =
+                                !matches!(source, MethodImplementationSource::Inline);
+                            self.facts
+                                .method_implementations
+                                .push(MethodImplementationDef {
+                                    method: method_key.clone(),
+                                    source,
+                                });
+                            self.method_implementations.push(MethodImplementationSite {
+                                method: method_key.clone(),
+                                function_range: function.syntax().text_range(),
+                                owner_range: call
+                                    .syntax()
+                                    .ancestors()
+                                    .find_map(FunctionExpr::cast)
+                                    .map_or(self.root.text_range(), |owner| {
+                                        owner.syntax().text_range()
+                                    }),
+                                keep_original,
+                            });
+                        }
                         if let Some(body) = arg.value() {
                             self.method_bodies
                                 .push((body.text_range(), def.key.clone()));

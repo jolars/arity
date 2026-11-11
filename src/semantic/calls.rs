@@ -9,7 +9,7 @@ use crate::syntax::{SyntaxKind, SyntaxNode};
 
 /// Call effects gathered during the semantic walk, including quoted and
 /// qualified callees that do not appear among ordinary identifier reads.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct SignatureEffects {
     dynamic_bindings: bool,
     dispatch_calls: Vec<TextRange>,

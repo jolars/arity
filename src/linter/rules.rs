@@ -740,7 +740,7 @@ impl RuleContext<'_> {
         else {
             return false;
         };
-        if self.model.resolve_local(ident).is_some() {
+        if !self.model.is_free_read(ident) {
             return true;
         }
         if self

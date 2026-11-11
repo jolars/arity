@@ -35,7 +35,7 @@ pub fn file_free_reads(model: &SemanticModel) -> BTreeSet<String> {
     model
         .idents()
         .iter()
-        .filter(|ident| model.resolve_local(ident).is_none())
+        .filter(|ident| model.may_read_externally(ident))
         .map(|ident| ident.name.to_string())
         .collect()
 }

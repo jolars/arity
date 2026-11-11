@@ -20,7 +20,8 @@ facts <- list(
   ),
   methods = list(
     method_facts("read", "Base", base$read, owner),
-    method_facts("read", "Child", child$read, owner)
+    method_facts("read", "Child", child$read, owner),
+    method_facts("read", "Base", child$.__enclos_env__$super$read, owner)
   ),
   dispatch = list(
     dispatch_facts("base$read()", base, owner),

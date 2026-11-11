@@ -4,7 +4,7 @@ These fixtures preserve the starting point for the OOP roadmap in `TODO.md`.
 They cover S3, S4, Reference Classes, R6, and released S7 0.2.2 syntax. Each
 system has definitions, use sites, incomplete editor input, shadowed APIs, and
 dynamic declarations. Additional cases reproduce issue #183, receiver completion
-leakage, generator aliases, and named class arguments.
+leakage, generator aliases, named class arguments, and R6 method environments.
 
 The hand-maintained `fixture_names()` in `tests/lsp_protocol/oop.rs` registers
 every input. `matrix.json` declares its parse status, cursor probes, and known
@@ -15,8 +15,9 @@ parsing preserves every byte, including incomplete input.
 The protocol tests run the built CLI against each input and compare its lint
 rules, severities, and spans with diagnostics published by the real LSP server.
 They also request document symbols, definitions, references, completion,
-signatures, and type hierarchy, including parents and children. Each system uses
-one open document that changes between cases, so the tests exercise live edits
+signatures, and type hierarchy, including parents and children. R6 probes also
+check highlights and rename safety for injected bindings. Each system uses one
+open document that changes between cases, so the tests exercise live edits
 without mixing declarations from unrelated fixtures. Configuration and index
 caches live in temporary directories; package indexing is disabled.
 

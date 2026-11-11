@@ -14,7 +14,14 @@ use arity::semantic::SemanticModel;
 use serde::{Deserialize, Serialize};
 
 fn fixture_names() -> &'static [&'static str] {
-    &["s3", "s4", "reference_classes", "r6", "s7"]
+    &[
+        "s3",
+        "s4",
+        "reference_classes",
+        "r6",
+        "r6_environments",
+        "s7",
+    ]
 }
 
 fn root() -> PathBuf {
@@ -245,6 +252,56 @@ fn shared_member_and_method_facts_match_pinned_runtime_observations() {
             for (actual, expected) in parameters.iter().zip(&method.formals) {
                 assert_eq!(actual.name, expected.name, "{name}");
                 assert_eq!(actual.default, expected.default, "{name}");
+            }
+        }
+    }
+}
+
+#[test]
+fn r6_method_environments_match_pinned_runtime_observations() {
+    use arity::semantic::enclosure::Availability;
+    for name in ["r6", "r6_environments"] {
+        let pin = pin(name);
+        let root = parse(&pin.source).cst;
+        let model = SemanticModel::build(&root);
+        let facts = file_class_defs(&model, &root);
+        let path = Path::new("oracle.R");
+        let index = arity::incremental::IncrementalDatabase::default()
+            .snapshot()
+            .class_index_in(path, &facts, &root, &model);
+        for environment in index.r6_method_environments(path) {
+            let class = facts.declaration(&environment.class).unwrap();
+            let observations: Vec<_> = pin
+                .facts
+                .methods
+                .iter()
+                .filter(|method| method.signature == [class.display_name()])
+                .collect();
+            assert!(!observations.is_empty(), "{name}: {}", class.display_name());
+            for (position, binding) in ["self", "private", "super"].iter().enumerate() {
+                let present: Vec<_> = observations
+                    .iter()
+                    .map(|method| {
+                        method
+                            .environment
+                            .iter()
+                            .flatten()
+                            .any(|name| name == binding)
+                    })
+                    .collect();
+                let expected = if present.iter().all(|present| *present) {
+                    Availability::Present
+                } else if present.iter().all(|present| !*present) {
+                    Availability::Absent
+                } else {
+                    Availability::Unknown
+                };
+                assert_eq!(
+                    environment.bindings[position],
+                    expected,
+                    "{name}: {}: {binding}",
+                    class.display_name()
+                );
             }
         }
     }

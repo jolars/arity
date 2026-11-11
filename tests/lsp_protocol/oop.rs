@@ -50,6 +50,8 @@ fn fixture_names() -> &'static [&'static str] {
         "r6/shadowing",
         "r6/dynamic",
         "r6/issue_183",
+        "r6/method_environments",
+        "r6/field_functions",
         "r6/receiver_ownership",
         "r6/generator_alias",
         "r6/named_arguments",
@@ -87,6 +89,9 @@ enum ProbeMethod {
     Completion,
     TypeHierarchy,
     SignatureHelp,
+    PrepareRename,
+    Rename,
+    Highlights,
 }
 
 fn fixture_root() -> PathBuf {
@@ -228,10 +233,16 @@ fn observe_probe(harness: &mut Harness, uri: &str, source: &str, probe: &Probe) 
         ProbeMethod::Completion => "textDocument/completion",
         ProbeMethod::TypeHierarchy => "textDocument/prepareTypeHierarchy",
         ProbeMethod::SignatureHelp => "textDocument/signatureHelp",
+        ProbeMethod::PrepareRename => "textDocument/prepareRename",
+        ProbeMethod::Rename => "textDocument/rename",
+        ProbeMethod::Highlights => "textDocument/documentHighlight",
     };
     let mut params = json!({ "textDocument": { "uri": uri }, "position": position });
     if matches!(probe.method, ProbeMethod::References) {
         params["context"] = json!({ "includeDeclaration": true });
+    }
+    if matches!(probe.method, ProbeMethod::Rename) {
+        params["newName"] = json!("renamed");
     }
     let result = request(harness, method, params);
     if result.is_null() {
@@ -301,6 +312,17 @@ fn observe_probe(harness: &mut Harness, uri: &str, source: &str, probe: &Probe) 
                 .collect();
             json!({ "signatures": signatures, "active_parameter": result["activeParameter"] })
         }
+        ProbeMethod::PrepareRename | ProbeMethod::Rename => result,
+        ProbeMethod::Highlights => json!(
+            result
+                .as_array()
+                .expect("highlights")
+                .iter()
+                .map(|item| {
+                    json!({ "range": byte_range(source, &item["range"]), "kind": item["kind"] })
+                })
+                .collect::<Vec<_>>()
+        ),
     }
 }
 
@@ -334,6 +356,9 @@ fn check_system(system: &str) {
         let source = source(name);
         fs::write(&path, &source).unwrap();
         let cli = cli_findings(&path, &config);
+        if *name == "r6/issue_183" {
+            assert!(cli.is_empty(), "#183: {cli:?}");
+        }
         let version = index as i32 + 1;
         if index == 0 {
             harness.did_open(&uri, &source, version);

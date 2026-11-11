@@ -37,6 +37,7 @@ pub(crate) fn definition_via_db(
         // namespaced name is a package export with no in-tree source location.
         let token = pick_name_token(root, offset)?;
         if token.kind() != SyntaxKind::IDENT
+            || model.blocks_source_navigation(token.text_range())
             || matches!(
                 symbol_query_at(root, offset),
                 Some(SymbolQuery::Namespaced { .. })
@@ -107,6 +108,17 @@ pub(crate) fn references_via_db(
             .min(text.len()) as u32,
     );
     with_document_semantics(snapshot, path, buffer, |root, model| {
+        if let Some(ranges) = generated_occurrences(root, model, offset) {
+            return Some(
+                ranges
+                    .into_iter()
+                    .map(|range| Location {
+                        uri: uri.clone(),
+                        range: text_range_to_lsp_range(line_index, range, encoding),
+                    })
+                    .collect(),
+            );
+        }
         // Intra-file: the cursor names a local binding (or sits on its definition).
         if let Some((target, occ)) = local_occurrences(root, model, offset) {
             let mut locations: Vec<Location> = occ
@@ -140,6 +152,7 @@ pub(crate) fn references_via_db(
         // A namespaced name is a package export with no in-tree reads to collect.
         let token = pick_name_token(root, offset)?;
         if token.kind() != SyntaxKind::IDENT
+            || model.blocks_source_navigation(token.text_range())
             || matches!(
                 symbol_query_at(root, offset),
                 Some(SymbolQuery::Namespaced { .. })
@@ -217,6 +230,9 @@ pub(crate) fn rename_via_db(
 
         // Intra-file: the cursor names a local binding (or sits on its definition).
         if let Some(target) = resolve_local_target(root, model, off) {
+            if !model.binding_rename_is_safe(target.binding) {
+                return None;
+            }
             let intra = rename_edits(model, &target, new_name, line_index, encoding);
             // Cross-file: a top-level binding can be free-read from files that can
             // see this one. Scope to that component; refuse if it isn't safe. Nested
@@ -245,6 +261,7 @@ pub(crate) fn rename_via_db(
         // A namespaced name is a package export with no in-tree sites to rewrite.
         let token = pick_name_token(root, off)?;
         if token.kind() != SyntaxKind::IDENT
+            || model.blocks_source_navigation(token.text_range())
             || matches!(
                 symbol_query_at(root, off),
                 Some(SymbolQuery::Namespaced { .. })
@@ -316,7 +333,19 @@ pub(crate) fn cross_file_rename_edits(
         let Some(file) = snapshot.lookup_file(member) else {
             continue;
         };
-        let member_model = snapshot.semantic_model(file);
+        let member_model = snapshot.runtime_semantic_model(file);
+        if member_model
+            .bindings()
+            .iter()
+            .enumerate()
+            .any(|(index, binding)| {
+                binding.name == name
+                    && member_model.binding_is_file_scope(BindingId::from_index(index))
+                    && !member_model.binding_rename_is_safe(BindingId::from_index(index))
+            })
+        {
+            return None;
+        }
         let Some((defs, reads)) = file_scope_occurrences_in(member_model, name) else {
             continue;
         };
@@ -374,7 +403,8 @@ pub(crate) fn cross_file_reference_locations(
         let Some(file) = snapshot.lookup_file(member) else {
             continue;
         };
-        let Some((defs, reads)) = file_scope_occurrences_in(snapshot.semantic_model(file), name)
+        let Some((defs, reads)) =
+            file_scope_occurrences_in(snapshot.runtime_semantic_model(file), name)
         else {
             continue;
         };
@@ -527,9 +557,12 @@ pub(crate) fn compute_prepare_rename_in(
         return None;
     }
     let root = parsed.cst;
-    let model = SemanticModel::build(&root);
+    let model = crate::project::classes::standalone_semantic_model(&root);
     let off = TextSize::new(offset.min(text.len()) as u32);
     let target = resolve_local_target(&root, &model, off)?;
+    if !model.binding_rename_is_safe(target.binding) {
+        return None;
+    }
     let token = pick_name_token(&root, off)?;
     let node = token.parent()?;
     let offset_in_node = u32::from(target.range.start()) - u32::from(node.text_range().start());
@@ -567,9 +600,12 @@ pub fn compute_rename(
         return None;
     }
     let root = parsed.cst;
-    let model = SemanticModel::build(&root);
+    let model = crate::project::classes::standalone_semantic_model(&root);
     let off = TextSize::new(offset.min(text.len()) as u32);
     let target = resolve_local_target(&root, &model, off)?;
+    if !model.binding_rename_is_safe(target.binding) {
+        return None;
+    }
     let line_index = LineIndex::new(text);
     let edits = rename_edits(&model, &target, new_name, &line_index, encoding);
     (!edits.is_empty()).then_some(edits)
@@ -584,7 +620,7 @@ pub fn compute_rename(
 /// by [`definition_via_db`], which this helper does not see).
 pub fn compute_definition(text: &str, offset: usize) -> Option<TextRange> {
     let root = parse(text).cst;
-    let model = SemanticModel::build(&root);
+    let model = crate::project::classes::standalone_semantic_model(&root);
     let off = TextSize::new(offset.min(text.len()) as u32);
     definition_local_range(&root, &model, off)
 }
@@ -601,8 +637,11 @@ pub fn compute_references(
     include_declaration: bool,
 ) -> Option<Vec<TextRange>> {
     let root = parse(text).cst;
-    let model = SemanticModel::build(&root);
+    let model = crate::project::classes::standalone_semantic_model(&root);
     let off = TextSize::new(offset.min(text.len()) as u32);
+    if let Some(ranges) = generated_occurrences(&root, &model, off) {
+        return Some(ranges);
+    }
     let (_, occ) = local_occurrences(&root, &model, off)?;
     let mut ranges = occ.reads;
     if include_declaration {
@@ -623,8 +662,16 @@ pub fn compute_document_highlights(
     offset: usize,
 ) -> Option<Vec<(TextRange, DocumentHighlightKind)>> {
     let root = parse(text).cst;
-    let model = SemanticModel::build(&root);
+    let model = crate::project::classes::standalone_semantic_model(&root);
     let off = TextSize::new(offset.min(text.len()) as u32);
+    if let Some(ranges) = generated_occurrences(&root, &model, off) {
+        return Some(
+            ranges
+                .into_iter()
+                .map(|range| (range, DocumentHighlightKind::READ))
+                .collect(),
+        );
+    }
     let (_, occ) = local_occurrences(&root, &model, off)?;
     let mut highlights: Vec<(TextRange, DocumentHighlightKind)> =
         Vec::with_capacity(occ.reads.len() + occ.defs.len());
@@ -666,6 +713,14 @@ pub(crate) fn definition_local_range(
 pub(crate) struct LocalOccurrences {
     defs: Vec<TextRange>,
     reads: Vec<TextRange>,
+}
+
+fn generated_occurrences(
+    root: &SyntaxNode,
+    model: &SemanticModel,
+    offset: TextSize,
+) -> Option<Vec<TextRange>> {
+    model.generated_read_ranges(pick_name_token(root, offset)?.text_range())
 }
 
 pub(crate) fn local_occurrences(
