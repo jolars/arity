@@ -60,11 +60,10 @@ pub(crate) fn stable_closure(
         return None;
     }
     // A super-assignment from another frame can replace the closure as well.
-    if model
-        .bindings()
-        .iter()
-        .any(|other| other.name == binding.name && other.kind == BindingKind::Implicit)
-    {
+    if model.bindings().iter().any(|other| {
+        super::symbols::unbacktick(&other.name) == super::symbols::unbacktick(&binding.name)
+            && other.kind == BindingKind::Implicit
+    }) {
         return None;
     }
     let assignment = root

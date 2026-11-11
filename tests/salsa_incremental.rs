@@ -908,6 +908,93 @@ fn class_identity_respects_namespace_imports_and_project_shadowing() {
 }
 
 #[test]
+fn oop_callees_use_namespace_origins_and_reject_project_masks() {
+    let (mut db, _, b) = package_ab(
+        "define <- setGeneric\ninstall <- setMethod\ndefine('g', function(x) x)\ninstall('g', 'C', function(x) x)\nmethod(g, signature = C) <- function(x) x\n",
+        "",
+    );
+    let metadata = |namespace: &str| {
+        vec![PackageInfo {
+            root: "/pkg".into(),
+            namespace: Some(namespace.into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]
+    };
+    let resolved = |db: &IncrementalDatabase| {
+        let index = project_classes(db);
+        let file = index.file(Path::new("/pkg/R/a.R")).unwrap();
+        file.facts
+            .oop
+            .generics
+            .iter()
+            .map(|def| &def.factory)
+            .chain(
+                file.facts
+                    .oop
+                    .methods
+                    .iter()
+                    .filter_map(|def| def.registration.as_ref()),
+            )
+            .map(|reference| index.callee_identity(&file.path, reference).cloned())
+            .collect::<Vec<_>>()
+    };
+    db.set_package_metadata(metadata(
+        "importFrom(methods, setGeneric, setMethod)\nimportFrom(S7, `method<-`)\n",
+    ));
+    assert_eq!(
+        resolved(&db)
+            .iter()
+            .map(|origin| origin.as_ref().map(|id| id.package.as_str()))
+            .collect::<Vec<_>>(),
+        vec![Some("methods"), Some("methods"), Some("S7")]
+    );
+    db.set_package_metadata(metadata(
+        "importFrom(other, setGeneric, setMethod, `method<-`)\n",
+    ));
+    assert!(resolved(&db).iter().all(Option::is_none));
+    db.set_package_metadata(metadata(
+        "importFrom(methods, setGeneric, setMethod)\nimportFrom(S7, `method<-`)\n",
+    ));
+    db.set_file_text(b, "setGeneric <- function(...) NULL\nsetMethod <- function(...) NULL\n`method<-` <- function(...) NULL\n");
+    assert!(resolved(&db).iter().all(Option::is_none));
+}
+
+#[test]
+fn oop_aliases_capture_the_attachment_order_at_their_definition() {
+    let (mut db, _) = script_one(
+        "library(S7)\nmake <- new_generic\nsetter <- `method<-`\nlibrary(other)\ng <- make('g', 'x')\nsetter(g, C, function(x) x)\nnew_generic('other', 'x')\n",
+    );
+    db.set_library_index(IndexedProvider::from_indices([
+        index_pkg("S7", &["new_generic", "method<-"]),
+        index_pkg("other", &["new_generic", "method<-"]),
+    ]));
+    let index = project_classes(&db);
+    let file = index.file(Path::new("/proj/a.R")).unwrap();
+    assert_eq!(file.facts.oop.generics.len(), 2);
+    assert_eq!(
+        index
+            .callee_identity(&file.path, &file.facts.oop.generics[0].factory)
+            .unwrap()
+            .package,
+        "S7"
+    );
+    assert!(
+        index
+            .callee_identity(&file.path, &file.facts.oop.generics[1].factory)
+            .is_none()
+    );
+    let reference = file.facts.oop.methods[0].registration.as_ref().unwrap();
+    assert_eq!(
+        index
+            .callee_identity(&file.path, reference)
+            .unwrap()
+            .package,
+        "S7"
+    );
+}
+
+#[test]
 fn class_identity_parent_and_alias_edits_invalidate_the_graph() {
     let (mut db, a, b) = package_ab(
         "A <- R6::R6Class(\"First\")\nB <- R6::R6Class(\"Second\")\n",

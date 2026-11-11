@@ -511,12 +511,18 @@ coverage need not block useful workspace support.
   Literal S7 classes also feed type hierarchy. Pinned runtime observations and
   incremental tests cover the shared projection; broader call recognition and
   project resolution remain the next steps below.
-- [ ] Recognize defining and registration calls through resolved callee identity
+- [x] Recognize defining and registration calls through resolved callee identity
   and R argument matching. Cover bare imports, `pkg::` forms, positional and
   named arguments, aliases whose target is known, and backticked operator
   and replacement names. Reject shadowed lookalikes. Represent computed
   names, conditional registration, custom environments, and unresolved
   aliases explicitly as incomplete facts; do not guess from a name alone.
+  Class, generic, and method extraction now share callee provenance and
+  checked argument matching. The project index confirms bare origins using
+  imports and the search path. S7 registrations resolve `method<-`, and
+  `setReplaceMethod()` arguments match its wrapper before forwarding.
+  Ambiguous aliases retain possible origins, and uncertain declarations do
+  not establish definite generic aliases or members.
 - [ ] Keep per-file semantics independent of the project. Project queries
   combine range-free class, member, and signature facts using package
   visibility, NAMESPACE, source closures, and Collate; recover spans from

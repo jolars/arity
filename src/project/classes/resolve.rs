@@ -48,6 +48,7 @@ pub struct ClassIndex {
     files: BTreeMap<PathBuf, ClassFile>,
     visible: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
     generator_sources: BTreeMap<(PathBuf, bool, String), BTreeSet<PathBuf>>,
+    callees: BTreeMap<(PathBuf, FunctionRef), FunctionIdentity>,
 }
 
 impl ClassIndex {
@@ -60,6 +61,16 @@ impl ClassIndex {
 
     pub fn oop_files(&self) -> impl Iterator<Item = &ClassFile> {
         self.files.values()
+    }
+
+    /// Confirm a symbolic callee using this file's imports and search path.
+    /// An unresolved alias never acquires a definite origin from its name.
+    pub fn callee_identity(
+        &self,
+        path: &Path,
+        reference: &FunctionRef,
+    ) -> Option<&FunctionIdentity> {
+        self.callees.get(&(path.to_path_buf(), reference.clone()))
     }
 
     pub fn build(files: Vec<ClassFile>, resolution: &ClassResolution<'_>) -> Self {
@@ -77,6 +88,48 @@ impl ClassIndex {
             .map(|binding| binding.name.clone())
             .collect();
         for file in index.files.values() {
+            let references = file
+                .facts
+                .declarations
+                .iter()
+                .map(|def| &def.factory)
+                .chain(
+                    file.facts
+                        .declarations
+                        .iter()
+                        .filter_map(|def| def.parent_vector.as_ref()),
+                )
+                .chain(file.facts.oop.generics.iter().map(|def| &def.factory))
+                .chain(
+                    file.facts
+                        .oop
+                        .methods
+                        .iter()
+                        .filter_map(|def| def.registration.as_ref()),
+                )
+                .chain(
+                    file.facts
+                        .oop
+                        .member_groups
+                        .iter()
+                        .filter_map(|group| group.factory.as_ref()),
+                );
+            for reference in references {
+                for identity in possible_functions(reference) {
+                    if confirms_function(
+                        file,
+                        reference,
+                        &identity.package,
+                        &identity.name,
+                        &index.files,
+                        resolution,
+                    ) {
+                        index
+                            .callees
+                            .insert((file.path.clone(), reference.clone()), identity);
+                    }
+                }
+            }
             index.visible.insert(
                 file.path.clone(),
                 resolution
@@ -100,14 +153,13 @@ impl ClassIndex {
                     path: file.path.clone(),
                     key: def.key.clone(),
                 };
-                if confirms_function(
-                    file,
-                    &def.factory,
-                    def.system().package(),
-                    def.system().callee(),
-                    &index.files,
-                    resolution,
-                ) {
+                if index
+                    .callee_identity(&file.path, &def.factory)
+                    .is_some_and(|identity| {
+                        identity.package == def.system().package()
+                            && identity.name == def.system().callee()
+                    })
+                {
                     index.declarations.insert(
                         id,
                         ResolvedClass {
@@ -377,7 +429,7 @@ fn confirms_function(
             // when its value is not a class factory we know how to summarize.
             if resolution.scope.sees(&file.path).iter().any(|path| {
                 files.get(path).is_some_and(|file| {
-                    file.exports.contains(name)
+                    file.exports.iter().any(|export| unbacktick(export) == name)
                         || (!attached.is_empty()
                             && (file.exports.contains("library")
                                 || file.exports.contains("require")))

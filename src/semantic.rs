@@ -303,7 +303,8 @@ impl SemanticModel {
             .map(BindingId::from_index)
             .filter(|other| {
                 let b = self.binding(*other);
-                b.name == binding.name && self.frame_scope(b.scope) == frame
+                binding_name_key(&b.name) == binding_name_key(&binding.name)
+                    && self.frame_scope(b.scope) == frame
             })
             .collect()
     }
@@ -699,6 +700,15 @@ mod tests {
         assert_eq!(cohort_indices(&m, BindingId::from_index(x_defs[1])), both);
         let y = binding_id_named(&m, "y");
         assert_eq!(m.variable_cohort(y), vec![y]);
+    }
+
+    #[test]
+    fn variable_cohort_groups_plain_and_backticked_reassignments() {
+        let m = model_of("x <- 1\n`x` <- 2\nf <- function(x) x\n");
+        let first = binding_id_named(&m, "x");
+        let quoted = binding_id_named(&m, "`x`");
+        assert_eq!(m.variable_cohort(first), vec![first, quoted]);
+        assert_eq!(m.variable_cohort(quoted), vec![first, quoted]);
     }
 
     #[test]

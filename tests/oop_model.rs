@@ -332,3 +332,347 @@ S7::method(generic, C) <- function(x) x
         DispatchClass::Generator(GeneratorRef::Unknown)
     );
 }
+
+#[test]
+fn s7_registration_resolves_the_replacement_callee_and_matches_its_formals() {
+    let facts = facts(
+        r#"
+g <- S7::new_generic("g", "x")
+C <- S7::new_class("C")
+S7::method(g, signature = C) <- function(x) x
+setter <- S7::`method<-`
+setter(value = function(x) x, generic = g, signature = C)
+`install<-` <- setter
+install(g, C) <- function(x) x
+"#,
+    );
+    assert_eq!(facts.oop.methods.len(), 3);
+    for method in &facts.oop.methods {
+        assert_eq!(method.name, ClassName::Known("g".into()));
+        assert_eq!(
+            method.dispatch[0].class,
+            DispatchClass::Generator(GeneratorRef::Local(facts.declarations[0].key.clone()))
+        );
+        assert_eq!(method.signature.as_ref().unwrap().parameters[0].name, "x");
+        assert_eq!(
+            method.registration,
+            Some(FunctionRef::Qualified {
+                package: "S7".into(),
+                name: "method<-".into(),
+            })
+        );
+        assert!(method.uncertainty.is_empty(), "{method:?}");
+    }
+}
+
+#[test]
+fn getters_and_shadowed_replacement_callees_are_not_registrations() {
+    for source in [
+        "getter <- S7::method\ngetter(g, C) <- function(x) x",
+        "`method<-` <- function(...) NULL\nmethod(g, C) <- function(x) x",
+        "method <- S7::method\n`method<-` <- other::`method<-`\nmethod(g, C) <- function(x) x",
+        "S7::method(g, C)",
+        "other::`method<-`(g, C, function(x) x)",
+    ] {
+        assert!(facts(source).oop.methods.is_empty(), "{source}");
+    }
+    let facts = facts("method <- function(...) NULL\nmethod(g, C) <- function(x) x");
+    assert_eq!(
+        facts.oop.methods.len(),
+        1,
+        "only the setter binding matters"
+    );
+    assert!(
+        facts.oop.methods[0]
+            .uncertainty
+            .contains(&OopUncertainty::UnresolvedCallee)
+    );
+}
+
+#[test]
+fn unresolved_aliases_retain_all_supported_declaration_candidates() {
+    let facts = facts(
+        r#"
+declare <- methods::setGeneric
+if (flag) declare <- S7::new_generic
+declare("g", function(x) x)
+register <- methods::setMethod
+if (flag) register <- base::registerS3method
+register("g", "C", function(x) x)
+if (flag) `install<-` <- S7::`method<-`
+install(g, C) <- function(x) x
+"#,
+    );
+    assert_eq!(facts.oop.generics.len(), 2);
+    assert_eq!(facts.oop.methods.len(), 3);
+    assert!(facts.oop.generic_bindings.is_empty());
+    for issues in facts
+        .oop
+        .generics
+        .iter()
+        .map(|d| &d.uncertainty)
+        .chain(facts.oop.methods.iter().map(|d| &d.uncertainty))
+    {
+        assert!(
+            issues.contains(&OopUncertainty::UnresolvedCallee),
+            "{issues:?}"
+        );
+    }
+}
+
+#[test]
+fn replacement_registration_matches_the_outer_wrapper_before_forwarding() {
+    let facts = facts(
+        r#"
+methods::setReplaceMethod("value", "C", function(object, value) object,
+    valueClass = "C", sealed = TRUE, where = target)
+methods::setReplaceMethod(f = "value", signature = "C", definition = function(object, value) object)
+methods::setReplaceMethod("value", "C", function(object, value) object, "C", TRUE)
+"#,
+    );
+    assert_eq!(facts.oop.methods.len(), 3);
+    for method in &facts.oop.methods {
+        assert_eq!(method.name, ClassName::Known("value<-".into()));
+        assert_eq!(method.dispatch[0].class, DispatchClass::Formal("C".into()));
+        assert!(
+            !method
+                .uncertainty
+                .contains(&OopUncertainty::InvalidArguments)
+        );
+    }
+    assert!(
+        facts.oop.methods[0]
+            .uncertainty
+            .contains(&OopUncertainty::CustomEnvironment)
+    );
+    assert!(
+        !facts.oop.methods[2]
+            .uncertainty
+            .contains(&OopUncertainty::CustomEnvironment)
+    );
+}
+
+#[test]
+fn s4_registration_accepts_proven_generic_objects_including_backticked_names() {
+    let facts = facts(
+        r#"
+methods::setGeneric("value<-", function(object, value) standardGeneric("value<-"))
+alias <- `value<-`
+methods::setMethod(alias, "C", function(object, value) object)
+methods::setMethod(`value<-`, "C", function(object, value) object)
+"#,
+    );
+    assert_eq!(facts.oop.methods.len(), 2);
+    for method in &facts.oop.methods {
+        assert_eq!(method.name, ClassName::Known("value<-".into()));
+        assert_eq!(
+            facts
+                .oop
+                .generic_candidates(method.generic.as_ref().unwrap()),
+            vec![&facts.oop.generics[0]]
+        );
+        assert!(!method.uncertainty.contains(&OopUncertainty::DynamicName));
+    }
+    let shadowed = self::facts(
+        "g <- methods::setGeneric('g', function(x) x)\nf <- function(g) methods::setMethod(g, 'C', function(x) x)",
+    );
+    assert_eq!(shadowed.oop.methods[0].name, ClassName::Unknown);
+}
+
+#[test]
+fn known_callee_aliases_preserve_operator_and_replacement_names() {
+    let facts = facts(
+        r#"
+define <- methods::setGeneric
+install <- methods::setMethod
+define(name = "[<-", def = function(x, i, value) standardGeneric("[<-"))
+install(definition = function(x, i, value) x, signature = "C", f = "[<-")
+register <- base::registerS3method
+register(method = function(e1, e2) e1, class = "C", genname = "+")
+`+.C` <- function(e1, e2) e1
+register("+", "C", `+.C`)
+"#,
+    );
+    assert_eq!(facts.oop.generics.len(), 1);
+    assert_eq!(facts.oop.methods.len(), 3);
+    assert_eq!(facts.oop.methods[0].name, ClassName::Known("[<-".into()));
+    assert_eq!(facts.oop.methods[1].name, ClassName::Known("+".into()));
+    assert_eq!(
+        facts.oop.methods[2].signature.as_ref().unwrap().parameters[0].name,
+        "e1"
+    );
+    assert!(facts.oop.methods.iter().all(|d| d.uncertainty.is_empty()));
+}
+
+#[test]
+fn uncertain_class_origins_do_not_create_definite_members() {
+    let facts = facts(
+        r#"
+make <- R6::R6Class
+if (flag) make <- other::R6Class
+A <- make("A", public = base::list(read = function(x) x))
+"#,
+    );
+    assert_eq!(facts.oop.members.len(), 1);
+    assert!(
+        facts.oop.members[0]
+            .uncertainty
+            .contains(&OopUncertainty::UnresolvedCallee)
+    );
+    assert!(
+        facts.oop.methods[0]
+            .uncertainty
+            .contains(&OopUncertainty::UnresolvedCallee)
+    );
+}
+
+#[test]
+fn conditional_generic_objects_and_unknown_aliases_do_not_choose_declarations() {
+    let facts = facts(
+        r#"
+if (flag) g <- S7::new_generic("g", "x")
+alias <- g
+S7::method(alias, C) <- function(x) x
+"#,
+    );
+    assert!(facts.oop.generic_bindings.is_empty());
+    assert!(
+        facts.oop.methods[0]
+            .generic
+            .as_ref()
+            .unwrap()
+            .local
+            .is_none()
+    );
+    assert!(
+        facts
+            .oop
+            .generic_candidates(facts.oop.methods[0].generic.as_ref().unwrap())
+            .is_empty()
+    );
+    assert!(
+        facts.oop.methods[0]
+            .uncertainty
+            .contains(&OopUncertainty::UnresolvedAlias)
+    );
+}
+
+#[test]
+fn quoted_reassignments_cannot_prove_callee_aliases() {
+    let facts = facts(
+        "register <- methods::setMethod\n`register` <- function(...) NULL\nregister('g', 'C', function(x) x)",
+    );
+    assert_eq!(facts.oop.methods.len(), 1);
+    assert!(
+        facts.oop.methods[0]
+            .uncertainty
+            .contains(&OopUncertainty::UnresolvedCallee)
+    );
+}
+
+#[test]
+fn parenthesized_and_conditional_alias_targets_remain_lossless_and_total() {
+    let facts = facts(
+        r#"
+(R6::R6Class)("A")
+declare <- (methods::setGeneric)
+declare("g", function(x) x)
+register <- if (flag) methods::setMethod else base::registerS3method
+register("g", "C", function(x) x)
+"#,
+    );
+    assert_eq!(facts.declarations.len(), 1);
+    assert_eq!(facts.oop.generics.len(), 1);
+    assert_eq!(facts.oop.methods.len(), 2);
+    assert!(
+        facts
+            .oop
+            .methods
+            .iter()
+            .all(|def| def.uncertainty.contains(&OopUncertainty::UnresolvedCallee))
+    );
+}
+
+#[test]
+fn invalid_registration_arguments_survive_as_incomplete_facts() {
+    for source in [
+        "methods::setMethod(f = 'g', f = 'h', signature = 'C', definition = function(x) x)",
+        "methods::setReplaceMethod('g', 'C', function(x) x, w = target)",
+        "S7::method(g, class = C) <- function(x) x",
+        "S7::method(g, C, value = function(x) x) <- function(x) x",
+        "base::registerS3method('g', 'C', function(x) x, ...)",
+    ] {
+        let facts = facts(source);
+        assert_eq!(facts.oop.methods.len(), 1, "{source}");
+        let method = &facts.oop.methods[0];
+        assert!(
+            method
+                .uncertainty
+                .contains(&OopUncertainty::InvalidArguments),
+            "{source}: {method:?}"
+        );
+        assert_eq!(method.name, ClassName::Unknown);
+    }
+}
+
+#[test]
+fn defining_and_registration_names_require_supported_origins() {
+    for (name, arguments) in [
+        ("R6Class", "'C'"),
+        ("setClass", "'C'"),
+        ("setRefClass", "'C'"),
+        ("new_class", "'C'"),
+        ("setGeneric", "'g', function(x) x"),
+        ("new_generic", "'g', 'x'"),
+        ("setMethod", "'g', 'C', function(x) x"),
+        ("setReplaceMethod", "'g', 'C', function(x) x"),
+        ("registerS3method", "'g', 'C', function(x) x"),
+        ("method<-", "g, C, function(x) x"),
+    ] {
+        for source in [
+            format!("other::`{name}`({arguments})"),
+            format!("f <- function(`{name}`) `{name}`({arguments})"),
+            format!("`{name}` <- function(...) NULL\n`{name}`({arguments})"),
+        ] {
+            let facts = facts(&source);
+            assert!(facts.declarations.is_empty(), "{source}");
+            assert!(facts.oop.generics.is_empty(), "{source}");
+            assert!(facts.oop.methods.is_empty(), "{source}");
+        }
+    }
+    assert!(
+        facts("f <- function(UseMethod) UseMethod('f')")
+            .oop
+            .generics
+            .is_empty()
+    );
+}
+
+#[test]
+fn alias_registration_sites_and_facts_survive_formatting_and_reparse() {
+    let source = "declare <- methods::setGeneric\ndeclare('g',function(x) x)\ninstall <- methods::setMethod\ninstall(definition=function(x) x,signature='C',f='g')\ng7 <- S7::new_generic('g7','x')\n`install7<-` <- S7::`method<-`\ninstall7(g7,signature=C) <- function(x) x\n";
+    let formatted = arity::formatter::format(source).unwrap();
+    assert_eq!(arity::formatter::format(&formatted).unwrap(), formatted);
+    assert_eq!(facts(source), facts(&formatted));
+    let parsed = parse(source);
+    let edit = arity::parser::Edit {
+        range: 7..7,
+        insert: "  ".into(),
+    };
+    let shifted = edit.apply(source);
+    let incremental =
+        arity::parser::reparse(&parsed.cst, source, &parsed.diagnostics, &edit).unwrap();
+    let fresh = parse(&shifted);
+    assert_eq!(incremental.green, fresh.cst.green().to_owned());
+    assert_eq!(incremental.diagnostics, fresh.diagnostics);
+    let before = oop_sites(&SemanticModel::build(&parsed.cst), &parsed.cst);
+    let incremental_root = arity::syntax::SyntaxNode::new_root(incremental.green);
+    let after = oop_sites(&SemanticModel::build(&incremental_root), &incremental_root);
+    assert_eq!(facts(source), facts(&shifted));
+    assert_eq!(before.len(), after.len());
+    for (before, after) in before.iter().zip(after) {
+        assert_eq!(before.target, after.target);
+        assert_eq!(before.role, after.role);
+        assert_eq!(&source[before.range], &shifted[after.range]);
+    }
+}
