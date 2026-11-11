@@ -1,5 +1,15 @@
 use super::super::*;
 
+struct StringVector {
+    entries: Vec<(Option<String>, ClassName, TextRange)>,
+    factory: Option<FunctionRef>,
+}
+
+struct Dispatch {
+    arguments: Vec<(DispatchArgument, TextRange)>,
+    factory: Option<FunctionRef>,
+}
+
 struct Projection<'a> {
     model: &'a SemanticModel,
     root: &'a SyntaxNode,
@@ -364,6 +374,7 @@ impl Projection<'_> {
                             class: Some(def.key.clone()),
                             generic: None,
                             dispatch: Vec::new(),
+                            dispatch_factory: None,
                             signature: callable,
                             registration: None,
                             uncertainty: member_issues.clone(),
@@ -490,9 +501,12 @@ impl Projection<'_> {
             } else {
                 "signature"
             });
+            let mut dispatch_factory = None;
             let dispatch_arguments = if let Some(value) = dispatch_value {
                 match self.string_vector(&value) {
-                    Some(values) => {
+                    Some(vector) => {
+                        dispatch_factory = vector.factory;
+                        let values = vector.entries;
                         if values
                             .iter()
                             .any(|(_, name, _)| *name == ClassName::Unknown)
@@ -541,6 +555,7 @@ impl Projection<'_> {
                 factory: reference,
                 signature,
                 dispatch_arguments,
+                dispatch_factory,
                 uncertainty: issues,
             };
             let binding_possible = def.binding_possible();
@@ -577,27 +592,25 @@ impl Projection<'_> {
         }
     }
 
-    fn string_vector(
-        &self,
-        value: &SyntaxElement,
-    ) -> Option<Vec<(Option<String>, ClassName, TextRange)>> {
+    fn string_vector(&self, value: &SyntaxElement) -> Option<StringVector> {
         if value
             .as_token()
             .is_some_and(|token| token.kind() == SyntaxKind::STRING)
         {
-            return Some(vec![(
-                None,
-                string_name(Some(value.clone())),
-                value.text_range(),
-            )]);
+            return Some(StringVector {
+                entries: vec![(None, string_name(Some(value.clone())), value.text_range())],
+                factory: None,
+            });
         }
         let call = value.as_node().cloned().and_then(CallExpr::cast)?;
         let (reference, name) = factory(self.model, self.root, &call)?;
         if !accepts(&reference, "base") || name != "c" {
             return None;
         }
-        Some(
-            call.arg_list()?
+        Some(StringVector {
+            factory: Some(reference),
+            entries: call
+                .arg_list()?
                 .args()
                 .map(|arg| {
                     (
@@ -608,7 +621,7 @@ impl Projection<'_> {
                     )
                 })
                 .collect(),
-        )
+        })
     }
 
     fn generic_value(&self, value: &SyntaxElement, visiting: &mut BTreeSet<u32>) -> Option<OopKey> {
@@ -803,13 +816,12 @@ impl Projection<'_> {
         )
     }
 
-    fn dispatch(
-        &self,
-        value: Option<SyntaxElement>,
-        system: OopSystem,
-    ) -> Vec<(DispatchArgument, TextRange)> {
+    fn dispatch(&self, value: Option<SyntaxElement>, system: OopSystem) -> Dispatch {
         let Some(value) = value else {
-            return Vec::new();
+            return Dispatch {
+                arguments: Vec::new(),
+                factory: None,
+            };
         };
         if system == OopSystem::S7 {
             let list = value
@@ -821,6 +833,9 @@ impl Projection<'_> {
                         accepts(&reference, "base") && name == "list"
                     })
                 });
+            let dispatch_factory = list
+                .as_ref()
+                .and_then(|call| call_function_ref(self.model, self.root, call));
             let entries: Vec<_> = list
                 .and_then(|call| call.arg_list())
                 .map(|list| {
@@ -834,25 +849,28 @@ impl Projection<'_> {
                         .collect()
                 })
                 .unwrap_or_else(|| vec![(None, Some(value.clone()))]);
-            return entries
-                .into_iter()
-                .map(|(argument, entry)| {
-                    let range = entry
-                        .as_ref()
-                        .map_or(value.text_range(), SyntaxElement::text_range);
-                    (
-                        DispatchArgument {
-                            argument,
-                            class: entry.as_ref().map_or(DispatchClass::Unknown, |entry| {
-                                DispatchClass::Generator(self.generator(entry))
-                            }),
-                        },
-                        range,
-                    )
-                })
-                .collect();
+            return Dispatch {
+                factory: dispatch_factory,
+                arguments: entries
+                    .into_iter()
+                    .map(|(argument, entry)| {
+                        let range = entry
+                            .as_ref()
+                            .map_or(value.text_range(), SyntaxElement::text_range);
+                        (
+                            DispatchArgument {
+                                argument,
+                                class: entry.as_ref().map_or(DispatchClass::Unknown, |entry| {
+                                    DispatchClass::Generator(self.generator(entry))
+                                }),
+                            },
+                            range,
+                        )
+                    })
+                    .collect(),
+            };
         }
-        let entries = self
+        let vector = self
             .string_vector(&value)
             .or_else(|| {
                 let call = value.as_node().cloned().and_then(CallExpr::cast)?;
@@ -860,8 +878,10 @@ impl Projection<'_> {
                 if name != "signature" || !accepts(&reference, "methods") {
                     return None;
                 }
-                Some(
-                    call.arg_list()?
+                Some(StringVector {
+                    factory: Some(reference),
+                    entries: call
+                        .arg_list()?
                         .args()
                         .map(|arg| {
                             (
@@ -872,29 +892,38 @@ impl Projection<'_> {
                             )
                         })
                         .collect(),
-                )
+                })
             })
-            .unwrap_or_else(|| vec![(None, ClassName::Unknown, value.text_range())]);
-        entries
-            .into_iter()
-            .map(|(argument, name, range)| {
-                (
-                    DispatchArgument {
-                        argument,
-                        class: match name {
-                            ClassName::Known(name) if system == OopSystem::S3 => {
-                                DispatchClass::S3(name)
-                            }
-                            ClassName::Known(name) if name == "ANY" => DispatchClass::Any,
-                            ClassName::Known(name) if name == "missing" => DispatchClass::Missing,
-                            ClassName::Known(name) => DispatchClass::Formal(name),
-                            _ => DispatchClass::Unknown,
+            .unwrap_or_else(|| StringVector {
+                entries: vec![(None, ClassName::Unknown, value.text_range())],
+                factory: None,
+            });
+        Dispatch {
+            factory: vector.factory,
+            arguments: vector
+                .entries
+                .into_iter()
+                .map(|(argument, name, range)| {
+                    (
+                        DispatchArgument {
+                            argument,
+                            class: match name {
+                                ClassName::Known(name) if system == OopSystem::S3 => {
+                                    DispatchClass::S3(name)
+                                }
+                                ClassName::Known(name) if name == "ANY" => DispatchClass::Any,
+                                ClassName::Known(name) if name == "missing" => {
+                                    DispatchClass::Missing
+                                }
+                                ClassName::Known(name) => DispatchClass::Formal(name),
+                                _ => DispatchClass::Unknown,
+                            },
                         },
-                    },
-                    range,
-                )
-            })
-            .collect()
+                        range,
+                    )
+                })
+                .collect(),
+        }
     }
 
     fn registered_methods(&mut self) {
@@ -946,6 +975,9 @@ impl Projection<'_> {
                 && let ClassName::Known(name) = &mut generic.name
             {
                 name.push_str("<-");
+                // The getter's object proves its name, not the setter's identity.
+                generic.local = None;
+                generic.owner = key.owner.clone();
             }
             if generic.name == ClassName::Unknown {
                 issues.insert(OopUncertainty::DynamicName);
@@ -978,8 +1010,8 @@ impl Projection<'_> {
                 }),
                 system,
             );
-            if dispatch.is_empty()
-                || dispatch.iter().any(|(arg, _)| {
+            if dispatch.arguments.is_empty()
+                || dispatch.arguments.iter().any(|(arg, _)| {
                     matches!(
                         arg.class,
                         DispatchClass::Unknown | DispatchClass::Generator(GeneratorRef::Unknown)
@@ -1005,7 +1037,12 @@ impl Projection<'_> {
                 name: generic.name.clone(),
                 class: None,
                 generic: Some(generic.clone()),
-                dispatch: dispatch.iter().map(|(arg, _)| arg.clone()).collect(),
+                dispatch: dispatch
+                    .arguments
+                    .iter()
+                    .map(|(arg, _)| arg.clone())
+                    .collect(),
+                dispatch_factory: dispatch.factory,
                 signature,
                 registration: Some(reference),
                 uncertainty: issues,
@@ -1023,7 +1060,7 @@ impl Projection<'_> {
                     OopTarget::Generic(generic),
                 );
             }
-            for (arg, range) in dispatch {
+            for (arg, range) in dispatch.arguments {
                 let reference = match arg.class {
                     DispatchClass::Formal(name) => ParentRef::Formal(name),
                     DispatchClass::Generator(generator) => ParentRef::Generator(generator),
@@ -1107,6 +1144,7 @@ impl Projection<'_> {
                         argument: signature.parameters.first().map(|p| p.name.clone()),
                         class: DispatchClass::S3(class),
                     }],
+                    dispatch_factory: None,
                     signature: Some(signature.clone()),
                     registration: None,
                     uncertainty: issues,
@@ -1251,7 +1289,7 @@ impl Projection<'_> {
                 if let Some(value) = value
                     && let Some(classes) = self.string_vector(&value)
                 {
-                    for (_, class, range) in classes {
+                    for (_, class, range) in classes.entries {
                         if let ClassName::Known(name) = class {
                             // S3 tags are uses of a dispatch name, not declarations
                             // of a unique class object or a constructor binding.

@@ -511,6 +511,50 @@ methods::setReplaceMethod("value", "C", function(object, value) object, "C", TRU
 }
 
 #[test]
+fn replacement_generic_objects_resolve_the_setter_independently() {
+    for registration in ["gname", "alias", "'value'"] {
+        let facts = facts(&format!(
+            "gname <- methods::setGeneric('value', function(object) object)\n\
+             methods::setGeneric('value<-', function(object, value) object)\n\
+             alias <- gname\n\
+             methods::setReplaceMethod({registration}, 'C', function(object, value) object)\n"
+        ));
+        let reference = facts.oop.methods[0].generic.as_ref().unwrap();
+        assert_eq!(reference.name, ClassName::Known("value<-".into()));
+        assert_eq!(
+            facts.oop.generic_candidates(reference),
+            vec![&facts.oop.generics[1]]
+        );
+        assert!(
+            facts
+                .oop
+                .methods_for_generic(&facts.oop.generics[0].key)
+                .is_empty()
+        );
+        assert_eq!(
+            facts
+                .oop
+                .methods_for_generic(&facts.oop.generics[1].key)
+                .len(),
+            1
+        );
+    }
+    let facts = facts(
+        "gname <- methods::setGeneric('value', function(object) object)\n\
+         f <- function() {\n\
+             methods::setGeneric('value<-', function(object, value) object)\n\
+             methods::setReplaceMethod(gname, 'C', function(object, value) object)\n\
+         }\n",
+    );
+    assert_eq!(
+        facts
+            .oop
+            .generic_candidates(facts.oop.methods[0].generic.as_ref().unwrap()),
+        vec![&facts.oop.generics[1]]
+    );
+}
+
+#[test]
 fn s4_registration_accepts_proven_generic_objects_including_backticked_names() {
     let facts = facts(
         r#"

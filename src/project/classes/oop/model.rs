@@ -80,6 +80,8 @@ pub struct GenericDef {
     pub factory: FunctionRef,
     pub signature: Option<CallableSignature>,
     pub dispatch_arguments: Vec<ClassName>,
+    /// A literal vector's helper must be confirmed before its shape is known.
+    pub dispatch_factory: Option<FunctionRef>,
     pub uncertainty: BTreeSet<OopUncertainty>,
 }
 
@@ -128,6 +130,8 @@ pub struct MethodDef {
     pub class: Option<ClassKey>,
     pub generic: Option<GenericRef>,
     pub dispatch: Vec<DispatchArgument>,
+    /// Retain the helper origin just as class inheritance retains `parent_vector`.
+    pub dispatch_factory: Option<FunctionRef>,
     pub signature: Option<CallableSignature>,
     pub registration: Option<FunctionRef>,
     pub uncertainty: BTreeSet<OopUncertainty>,

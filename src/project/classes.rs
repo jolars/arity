@@ -379,18 +379,19 @@ pub fn class_occurrence_at_offset(
         .collect();
     // Resolve ordinary generator uses through the same lexical binding proof as
     // inheritance, rather than treating an arbitrary identifier as a class name.
-    let target = generator_ref(model, root, &value, &keys, &mut BTreeSet::new(), false);
+    let parent = token.parent()?;
+    let deferred = parent
+        .ancestors()
+        .any(|node| node.kind() == SyntaxKind::FUNCTION_EXPR);
+    let target = generator_ref(model, root, &value, &keys, &mut BTreeSet::new(), deferred);
     let owner = owner_at(
-        &token.parent()?,
+        &parent,
         &owner_map(root, &extracted.facts.declarations, &extracted.locations),
     );
     Some(ClassOccurrence::Reference {
         owner,
         reference: ParentRef::Generator(target),
-        deferred: token
-            .parent()?
-            .ancestors()
-            .any(|node| node.kind() == SyntaxKind::FUNCTION_EXPR),
+        deferred,
     })
 }
 

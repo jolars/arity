@@ -50,12 +50,14 @@ pub struct ClassIndex {
     pub supertypes: BTreeMap<ClassId, BTreeSet<ClassId>>,
     pub subtypes: BTreeMap<ClassId, BTreeSet<ClassId>>,
     files: BTreeMap<PathBuf, ClassFile>,
-    visible: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
+    /// Keep the shared scope so arbitrary live reads can resolve on demand,
+    /// without a file-by-declaration-name Cartesian product of cached results.
+    scope: Arc<ProjectScope>,
     namespace: namespace::NamespaceVisibility,
-    generic_sources: BTreeMap<(PathBuf, bool, String), BTreeSet<PathBuf>>,
     incomplete: BTreeSet<PathBuf>,
-    generator_sources: BTreeMap<(PathBuf, bool, String), BTreeSet<PathBuf>>,
     callees: BTreeMap<(PathBuf, FunctionRef), FunctionIdentity>,
+    uncertain_methods: BTreeMap<OopId, MethodDef>,
+    uncertain_generics: BTreeMap<OopId, GenericDef>,
 }
 
 impl ClassIndex {
@@ -86,46 +88,15 @@ impl ClassIndex {
                 .into_iter()
                 .map(|file| (file.path.clone(), file))
                 .collect(),
+            scope: Arc::new(resolution.scope.clone()),
             ..Self::default()
         };
         index.namespace = namespace::NamespaceVisibility::build(&index.files, resolution);
-        let generator_names: BTreeSet<_> = index
-            .files
-            .values()
-            .flat_map(|file| file.facts.generators.iter())
-            .map(|binding| binding.name.clone())
-            .collect();
-        let generic_names: BTreeSet<_> = index
-            .files
-            .values()
-            .flat_map(|file| {
-                file.facts
-                    .oop
-                    .generic_bindings
-                    .iter()
-                    .map(|binding| binding.name.clone())
-                    .chain(
-                        file.facts
-                            .oop
-                            .generics
-                            .iter()
-                            .filter_map(|def| def.binding.clone()),
-                    )
-            })
-            .collect();
         for file in index.files.values() {
             if resolution.scope.for_file(&file.path).resolution_incomplete
                 || !resolution.scope.package_complete(&file.path)
             {
                 index.incomplete.insert(file.path.clone());
-            }
-            for name in &generic_names {
-                for in_function in [false, true] {
-                    index.generic_sources.insert(
-                        (file.path.clone(), in_function, name.clone()),
-                        definition_files(file, name, in_function, &index.files, resolution.scope),
-                    );
-                }
             }
             let references = file
                 .facts
@@ -139,6 +110,20 @@ impl ClassIndex {
                         .filter_map(|def| def.parent_vector.as_ref()),
                 )
                 .chain(file.facts.oop.generics.iter().map(|def| &def.factory))
+                .chain(
+                    file.facts
+                        .oop
+                        .generics
+                        .iter()
+                        .filter_map(|def| def.dispatch_factory.as_ref()),
+                )
+                .chain(
+                    file.facts
+                        .oop
+                        .methods
+                        .iter()
+                        .filter_map(|def| def.dispatch_factory.as_ref()),
+                )
                 .chain(
                     file.facts
                         .oop
@@ -169,23 +154,6 @@ impl ClassIndex {
                     }
                 }
             }
-            index.visible.insert(
-                file.path.clone(),
-                resolution
-                    .scope
-                    .sees(&file.path)
-                    .iter()
-                    .map(Path::to_path_buf)
-                    .collect(),
-            );
-            for name in &generator_names {
-                for in_function in [false, true] {
-                    index.generator_sources.insert(
-                        (file.path.clone(), in_function, name.clone()),
-                        definition_files(file, name, in_function, &index.files, resolution.scope),
-                    );
-                }
-            }
             let fingerprint = file.facts.fingerprint();
             for def in &file.facts.declarations {
                 let id = ClassId {
@@ -212,6 +180,7 @@ impl ClassIndex {
                 }
             }
         }
+        index.confirm_dispatch_helpers();
         for (id, class) in &index.declarations {
             let def = &class.declaration;
             let deferred = def.system() == ClassSystem::R6 || !id.key.owner.0.is_empty();
@@ -276,13 +245,7 @@ impl ClassIndex {
     fn imported_binding_files(&self, path: &Path, name: &str) -> BTreeSet<PathBuf> {
         if self.incomplete.contains(path)
             || std::iter::once(path)
-                .chain(
-                    self.visible
-                        .get(path)
-                        .into_iter()
-                        .flatten()
-                        .map(PathBuf::as_path),
-                )
+                .chain(self.scope.sees(path).iter())
                 .filter_map(|path| self.files.get(path))
                 .any(|file| file.exports.contains(name))
         {
@@ -300,9 +263,7 @@ impl ClassIndex {
     ) -> bool {
         match reference {
             ParentRef::Generator(GeneratorRef::Free(name)) => {
-                self.generator_sources
-                    .get(&(path.to_path_buf(), deferred, name.clone()))
-                    .is_some_and(|sources| sources.len() == 1)
+                self.definition_files(path, name, deferred).len() == 1
                     || self.imported_binding_files(path, name).len() == 1
             }
             ParentRef::Generator(GeneratorRef::Qualified { .. }) => {
@@ -336,13 +297,7 @@ impl ClassIndex {
                     .collect()
             }
             ParentRef::Generator(GeneratorRef::Free(name)) => {
-                let Some(sources) =
-                    self.generator_sources
-                        .get(&(path.to_path_buf(), in_function, name.clone()))
-                else {
-                    return Vec::new();
-                };
-                let mut sources = sources.clone();
+                let mut sources = self.definition_files(path, name, in_function);
                 if sources.is_empty() && !self.incomplete.contains(path) {
                     sources.extend(self.imported_binding_files(path, name));
                 }
@@ -394,10 +349,9 @@ impl ClassIndex {
                 }
                 std::iter::once(file)
                     .chain(
-                        self.visible
-                            .get(path)
-                            .into_iter()
-                            .flatten()
+                        self.scope
+                            .sees(path)
+                            .iter()
                             .flat_map(|path| self.files.get(path)),
                     )
                     .chain(
@@ -443,6 +397,12 @@ impl ClassIndex {
                 .collect(),
             ParentRef::Generator(GeneratorRef::Unknown) | ParentRef::Unknown => Vec::new(),
         }
+    }
+
+    fn definition_files(&self, path: &Path, name: &str, in_function: bool) -> BTreeSet<PathBuf> {
+        self.files.get(path).map_or_else(BTreeSet::new, |file| {
+            definition_files(file, name, in_function, &self.files, &self.scope)
+        })
     }
 }
 

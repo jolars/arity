@@ -3,7 +3,56 @@
 use super::*;
 
 impl ClassIndex {
+    pub(super) fn confirm_dispatch_helpers(&mut self) {
+        for file in self.files.values() {
+            for def in &file.facts.oop.methods {
+                if def
+                    .dispatch_factory
+                    .as_ref()
+                    .is_some_and(|helper| self.callee_identity(&file.path, helper).is_none())
+                {
+                    let mut method = def.clone();
+                    method.dispatch = vec![DispatchArgument {
+                        argument: None,
+                        class: DispatchClass::Unknown,
+                    }];
+                    method.uncertainty.insert(OopUncertainty::DynamicSignature);
+                    self.uncertain_methods.insert(
+                        OopId {
+                            path: file.path.clone(),
+                            key: def.key.clone(),
+                        },
+                        method,
+                    );
+                }
+            }
+            for def in &file.facts.oop.generics {
+                if def
+                    .dispatch_factory
+                    .as_ref()
+                    .is_some_and(|helper| self.callee_identity(&file.path, helper).is_none())
+                {
+                    let mut generic = def.clone();
+                    generic.dispatch_arguments = vec![ClassName::Unknown];
+                    generic.uncertainty.insert(OopUncertainty::DynamicSignature);
+                    self.uncertain_generics.insert(
+                        OopId {
+                            path: file.path.clone(),
+                            key: def.key.clone(),
+                        },
+                        generic,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Project-confirmed dispatch shape. Source facts retain literal candidates
+    /// and their helper origins even when a mask makes the shape unknown.
     pub fn generic(&self, id: &OopId) -> Option<&GenericDef> {
+        if let Some(generic) = self.uncertain_generics.get(id) {
+            return Some(generic);
+        }
         self.files
             .get(&id.path)?
             .facts
@@ -13,7 +62,12 @@ impl ClassIndex {
             .find(|def| def.key == id.key)
     }
 
+    /// Project-confirmed dispatch shape; unconfirmed helpers yield an unknown
+    /// signature rather than treating the call's literal arguments as its value.
     pub fn method(&self, id: &OopId) -> Option<&MethodDef> {
+        if let Some(method) = self.uncertain_methods.get(id) {
+            return Some(method);
+        }
         self.files
             .get(&id.path)?
             .facts
@@ -122,19 +176,22 @@ impl ClassIndex {
                 return local;
             }
         }
-        let sources = self
-            .generic_sources
-            .get(&(path.to_path_buf(), in_function, name.clone()));
+        let sources = reference
+            .by_binding
+            .then(|| self.definition_files(path, name, in_function));
         let mut candidates: Vec<_> = std::iter::once(file)
             .chain(
-                self.visible
-                    .get(path)
+                self.scope
+                    .sees(path)
+                    .iter()
+                    .collect::<BTreeSet<_>>()
                     .into_iter()
-                    .flatten()
                     .filter(|candidate| {
                         !self.incomplete.contains(path)
                             && (!reference.by_binding
-                                || sources.is_some_and(|sources| sources.contains(*candidate)))
+                                || sources
+                                    .as_ref()
+                                    .is_some_and(|sources| sources.contains(*candidate)))
                     })
                     .filter_map(|path| self.files.get(path)),
             )
@@ -154,10 +211,9 @@ impl ClassIndex {
             && !self.incomplete.contains(path)
             && !std::iter::once(file)
                 .chain(
-                    self.visible
-                        .get(path)
-                        .into_iter()
-                        .flatten()
+                    self.scope
+                        .sees(path)
+                        .iter()
                         .filter_map(|path| self.files.get(path)),
                 )
                 .any(|file| file.exports.contains(name))
