@@ -401,7 +401,10 @@ Classes, R6, and S7 through shared semantic and project facts, with separate
 rules for each system's environments, inheritance, and dispatch. Keep production
 analysis static; unknown runtime behavior must remain unknown.
 
-### Current coverage
+### Audited coverage
+
+These notes describe the original audit. Completed slices are recorded in the
+implementation checklist below.
 
 Reduced examples for all five systems run in R 4.6.1, parse losslessly, and pass
 formatter verification. R6 was checked at 2.6.1 and S7 at the released 0.2.2.
@@ -485,6 +488,14 @@ coverage need not block useful workspace support.
   supported class projection and parser, formatter, and reparse invariants.
 
 #### 1. Shared declarations and identity
+
+- [x] Establish shared class declaration identities for R6, Reference Classes,
+  and S4. Keep declared names separate from generator bindings and direct
+  aliases, confirm defining-call origins and R argument matching, preserve
+  ambiguous and incomplete facts, and use those identities in type hierarchy.
+  Inheritance respects package and source visibility and emits only proven
+  edges. This first slice does not yet model members, generics, registrations,
+  dispatch, cross-file aliases, or competing definitions selected by load order.
 
 - [ ] Extend the current class projection into a shared model of classes,
   generics, methods, members, and the sites that declare or use them.

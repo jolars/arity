@@ -19,6 +19,8 @@ use std::collections::{HashMap, HashSet};
 use rowan::{TextRange, TextSize};
 use smol_str::SmolStr;
 
+pub(crate) use interpolation::decode_string as decode_string_literal;
+
 pub use binding::{Binding, BindingId, BindingKind};
 pub use cfg::{BasicBlock, BlockId, ControlFlowGraph, FileControlFlow, Terminator};
 pub use scope::{Scope, ScopeId, ScopeKind};

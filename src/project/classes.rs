@@ -1,361 +1,965 @@
-//! Per-file OOP class projection: the classes a file declares and their
-//! supertype (inheritance) edges, for S4 (`setClass`), R6 (`R6Class`), and
-//! reference classes (`setRefClass`).
+//! Range-free class declarations shared by project analysis and type hierarchy.
 //!
-//! The class-hierarchy analog of [`file_def_sites`](super::exports::file_def_sites):
-//! a **range-free** CST projection that backs the cross-file class index
-//! ([`project_classes`](super::graph::project_classes)) and, through it, LSP type
-//! hierarchy. Range-free so it backdates across a body edit exactly like
-//! [`file_exports`](super::exports::file_exports); a consumer recovers a class's
-//! actual span per request via [`locate_class_def`].
-//!
-//! Inheritance edges are keyed on the declared **string** class name (the first
-//! positional string argument). S4/reference-class parents come from `contains=`
-//! (a string or a `c(...)` of strings); R6's `inherit=` names a generator
-//! *symbol*, so v1 uses that identifier's text as the parent class name — this
-//! relies on the near-universal convention that `Bar <- R6Class("Bar", ...)`
-//! binds the generator under its own class name.
+//! A declaration owns an identity even when its display name duplicates another
+//! declaration. Generator bindings, formal class names, and inheritance references
+//! are separate facts. Project resolution confirms package origins and visibility;
+//! this module only consults the current file's syntax and lexical semantics.
 
-use std::collections::BTreeMap;
+mod resolve;
+pub use resolve::{ClassFile, ClassIndex, ClassResolution, ResolvedClass};
+
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
 
 use rowan::ast::AstNode as _;
-use rowan::{NodeOrToken, TextRange, TextSize, TokenAtOffset};
+use rowan::{TextRange, TextSize, TokenAtOffset};
+use serde::{Deserialize, Serialize};
 
-use crate::ast::{AssignmentExpr, CallExpr};
+use crate::ast::{Arg, AssignmentExpr, BinaryExpr, CallExpr, FunctionExpr};
+use crate::semantic::symbols::unbacktick;
+use crate::semantic::{BindingId, BindingKind, SemanticModel};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
 
-/// Which R OOP system a class definition belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    salsa::SalsaValue,
+)]
 pub enum ClassSystem {
-    /// `setClass("X", contains = ...)`.
     S4,
-    /// `R6Class("X", inherit = ...)`.
     R6,
-    /// `setRefClass("X", contains = ...)`.
     RefClass,
 }
 
 impl ClassSystem {
-    /// A short human label for a hover/`detail` string.
     pub fn label(self) -> &'static str {
         match self {
-            ClassSystem::S4 => "S4 class",
-            ClassSystem::R6 => "R6 class",
-            ClassSystem::RefClass => "reference class",
+            Self::S4 => "S4 class",
+            Self::R6 => "R6 class",
+            Self::RefClass => "reference class",
         }
     }
 
-    /// The system a defining call's callee name denotes, if any.
+    pub fn package(self) -> &'static str {
+        match self {
+            Self::R6 => "R6",
+            Self::S4 | Self::RefClass => "methods",
+        }
+    }
+
+    pub fn callee(self) -> &'static str {
+        match self {
+            Self::S4 => "setClass",
+            Self::R6 => "R6Class",
+            Self::RefClass => "setRefClass",
+        }
+    }
+
     fn from_callee(name: &str) -> Option<Self> {
         match name {
-            "setClass" => Some(ClassSystem::S4),
-            "R6Class" => Some(ClassSystem::R6),
-            "setRefClass" => Some(ClassSystem::RefClass),
+            "setClass" => Some(Self::S4),
+            "R6Class" => Some(Self::R6),
+            "setRefClass" => Some(Self::RefClass),
             _ => None,
         }
     }
+
+    fn formals(self) -> &'static [&'static str] {
+        match self {
+            Self::R6 => &[
+                "classname",
+                "public",
+                "private",
+                "active",
+                "inherit",
+                "lock_objects",
+                "class",
+                "portable",
+                "lock_class",
+                "cloneable",
+                "parent_env",
+            ],
+            Self::S4 => &[
+                "Class",
+                "representation",
+                "prototype",
+                "contains",
+                "validity",
+                "access",
+                "where",
+                "version",
+                "sealed",
+                "package",
+                "S3methods",
+                "slots",
+            ],
+            Self::RefClass => &[
+                "Class",
+                "fields",
+                "contains",
+                "methods",
+                "where",
+                "inheritPackage",
+                "...",
+            ],
+        }
+    }
 }
 
-/// One class definition: its system and the declared supertype names.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
+/// Only function frames containing class declarations participate in this key.
+/// Adding an unrelated closure or block therefore cannot renumber class owners.
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    salsa::SalsaValue,
+)]
+pub struct ClassOwner(pub Vec<OwnerSegment>);
+
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, salsa::SalsaValue,
+)]
+pub struct OwnerSegment {
+    pub name: Option<String>,
+    pub occurrence: u32,
+}
+
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, salsa::SalsaValue,
+)]
+pub struct ClassKey {
+    pub owner: ClassOwner,
+    pub system: ClassSystem,
+    pub occurrence: u32,
+}
+
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, salsa::SalsaValue,
+)]
+pub struct ClassId {
+    pub path: PathBuf,
+    pub key: ClassKey,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub enum ClassName {
+    Known(String),
+    Absent,
+    Unknown,
+}
+
+/// A bare reference retains attachment order but never package-derived facts.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub enum FunctionRef {
+    Qualified {
+        package: String,
+        name: String,
+    },
+    Bare {
+        name: String,
+        attached: Vec<String>,
+        attachment_uncertain: bool,
+    },
+    Unresolved(Vec<ClassSystem>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub enum GeneratorRef {
+    Local(ClassKey),
+    Free(String),
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub enum ParentRef {
+    Formal(String),
+    Generator(GeneratorRef),
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
+pub enum ClassUncertainty {
+    Conditional,
+    CustomEnvironment,
+    InvalidArguments,
+    DynamicName,
+    DynamicParent,
+    UnresolvedCallee,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ClassDef {
-    pub system: ClassSystem,
-    pub parents: Vec<String>,
+    pub key: ClassKey,
+    pub name: ClassName,
+    pub binding: Option<String>,
+    pub factory: FunctionRef,
+    pub parents: Vec<ParentRef>,
+    /// A literal `c(...)` of parents is useful only if `c` really is base's.
+    pub parent_vector: Option<FunctionRef>,
+    pub uncertainty: BTreeSet<ClassUncertainty>,
 }
 
-/// Every S4/R6/reference class defined anywhere in `root`, keyed by declared
-/// class name and tagged with its system and declared supertypes.
-///
-/// **Range-free** (names only) so it backdates like [`file_def_sites`]; recover a
-/// class's span per request via [`locate_class_def`]. When a name is defined more
-/// than once, the first definition (in tree order) wins.
-pub fn file_class_defs(root: &SyntaxNode) -> BTreeMap<String, ClassDef> {
-    let mut defs: BTreeMap<String, ClassDef> = BTreeMap::new();
-    for node in root.descendants() {
-        if let Some((name, def)) = class_def_at(&node) {
-            defs.entry(name).or_insert(def);
-        }
+impl ClassDef {
+    pub fn system(&self) -> ClassSystem {
+        self.key.system
     }
-    defs
-}
 
-/// The class defined by the call at `node`, if it is a `setClass`/`R6Class`/
-/// `setRefClass` call with a string class name.
-fn class_def_at(node: &SyntaxNode) -> Option<(String, ClassDef)> {
-    let call = CallExpr::cast(node.clone())?;
-    let system = class_def_system(&call)?;
-    let (_, name) = class_name_token(&call)?;
-    let parents = match system {
-        ClassSystem::S4 | ClassSystem::RefClass => contains_parents(&call),
-        ClassSystem::R6 => inherit_parent(&call).into_iter().collect(),
-    };
-    Some((name, ClassDef { system, parents }))
-}
-
-/// The class span for `name` in `root`, recovered from the fresh tree: the
-/// system, the class-name string span (a selection range), and the enclosing
-/// top-level statement span. `None` when no class of that name is defined here.
-pub fn locate_class_def(root: &SyntaxNode, name: &str) -> Option<ClassLocation> {
-    for node in root.descendants() {
-        let Some(call) = CallExpr::cast(node.clone()) else {
-            continue;
-        };
-        let Some(system) = class_def_system(&call) else {
-            continue;
-        };
-        let Some((token, value)) = class_name_token(&call) else {
-            continue;
-        };
-        if value != name {
-            continue;
-        }
-        let full = top_level_statement(root, node.text_range())?;
-        return Some(ClassLocation {
-            system,
-            name_range: token.text_range(),
-            full_range: full,
-        });
-    }
-    None
-}
-
-/// The located span of a class definition (see [`locate_class_def`]).
-#[derive(Debug, Clone)]
-pub struct ClassLocation {
-    pub system: ClassSystem,
-    /// The class-name string token span — the item's selection range.
-    pub name_range: TextRange,
-    /// The enclosing top-level statement span — the item's full range.
-    pub full_range: TextRange,
-}
-
-/// The class name the cursor at `offset` denotes, for `prepareTypeHierarchy`:
-/// a class-name or `contains=` string in a class-def call, the binding
-/// identifier of `X <- R6Class(...)`, an `inherit =` identifier, or any bare
-/// identifier (resolved cross-file by the caller). `None` when the cursor names
-/// nothing class-like.
-pub fn class_name_at_offset(root: &SyntaxNode, offset: TextSize) -> Option<String> {
-    let token = token_at(root, offset)?;
-    match token.kind() {
-        SyntaxKind::STRING => {
-            // A string is a class name only inside a class-def call: its own
-            // value is the defined class (the name arg) or a `contains=` parent.
-            class_def_call_around_string(&token).map(|_| token_text_unquoted(&token))
-        }
-        SyntaxKind::IDENT => {
-            // A binding `X <- <classdefcall>` resolves to the class defined there
-            // (which may differ from `X`); otherwise the identifier text is a
-            // class name resolved locally or cross-file by the caller (this also
-            // covers an `inherit = Ident` value).
-            Some(ident_defines_class(&token).unwrap_or_else(|| token.text().to_string()))
-        }
-        _ => None,
-    }
-}
-
-// --- extraction helpers ----------------------------------------------------
-
-/// The system of `call` when it is a `setClass`/`R6Class`/`setRefClass` call
-/// with a simple identifier callee.
-fn class_def_system(call: &CallExpr) -> Option<ClassSystem> {
-    let callee = call.callee_token()?;
-    (callee.kind() == SyntaxKind::IDENT)
-        .then(|| ClassSystem::from_callee(callee.text()))
-        .flatten()
-}
-
-/// The first positional string argument of `call` — the declared class name —
-/// as its token and unquoted value.
-fn class_name_token(call: &CallExpr) -> Option<(SyntaxToken, String)> {
-    let value = call_args(call)
-        .into_iter()
-        .find(|a| a.name.is_none())?
-        .value?;
-    match value {
-        NodeOrToken::Token(t) if t.kind() == SyntaxKind::STRING => {
-            let unquoted = token_text_unquoted(&t);
-            Some((t, unquoted))
-        }
-        _ => None,
-    }
-}
-
-/// The supertype names from a `contains=` argument (a string, or a `c(...)` of
-/// strings). Empty when absent.
-fn contains_parents(call: &CallExpr) -> Vec<String> {
-    call_args(call)
-        .into_iter()
-        .find(|a| a.name.as_deref() == Some("contains"))
-        .and_then(|a| a.value)
-        .map(|v| string_list(&v))
-        .unwrap_or_default()
-}
-
-/// The single supertype name from an R6 `inherit=` argument (a generator
-/// identifier). `None` when absent or not a bare identifier.
-fn inherit_parent(call: &CallExpr) -> Option<String> {
-    let value = call_args(call)
-        .into_iter()
-        .find(|a| a.name.as_deref() == Some("inherit"))?
-        .value?;
-    match value {
-        NodeOrToken::Token(t) if t.kind() == SyntaxKind::IDENT => Some(t.text().to_string()),
-        _ => None,
-    }
-}
-
-/// The string names in `element`: one for a bare string, several for a `c(...)`
-/// call of strings, none otherwise.
-fn string_list(element: &SyntaxElement) -> Vec<String> {
-    match element {
-        NodeOrToken::Token(t) if t.kind() == SyntaxKind::STRING => vec![token_text_unquoted(t)],
-        NodeOrToken::Node(n) => match CallExpr::cast(n.clone()) {
-            Some(call) if call.callee_token().is_some_and(|t| t.text() == "c") => call_args(&call)
-                .into_iter()
-                .filter_map(|a| match a.value? {
-                    NodeOrToken::Token(t) if t.kind() == SyntaxKind::STRING => {
-                        Some(token_text_unquoted(&t))
-                    }
-                    _ => None,
-                })
-                .collect(),
-            _ => Vec::new(),
-        },
-        _ => Vec::new(),
-    }
-}
-
-/// One call argument split into its optional name (for `name = value`) and its
-/// value element.
-struct CallArg {
-    name: Option<String>,
-    value: Option<SyntaxElement>,
-}
-
-/// The arguments of `call`, each split into name and value.
-fn call_args(call: &CallExpr) -> Vec<CallArg> {
-    let Some(list) = call.arg_list() else {
-        return Vec::new();
-    };
-    list.args().map(|arg| split_arg(arg.syntax())).collect()
-}
-
-fn split_arg(arg: &SyntaxNode) -> CallArg {
-    let elements: Vec<SyntaxElement> = arg.children_with_tokens().collect();
-    match elements
-        .iter()
-        .position(|e| e.kind() == SyntaxKind::ASSIGN_EQ)
-    {
-        Some(eq) => {
-            let name = elements[..eq].iter().rev().find_map(|e| match e {
-                NodeOrToken::Token(t)
-                    if matches!(t.kind(), SyntaxKind::IDENT | SyntaxKind::STRING) =>
-                {
-                    Some(token_text_unquoted(t))
-                }
-                _ => None,
-            });
-            let value = elements[eq + 1..]
-                .iter()
-                .find(|e| !is_trivia(e.kind()))
-                .cloned();
-            CallArg { name, value }
-        }
-        None => CallArg {
-            name: None,
-            value: elements.iter().find(|e| !is_trivia(e.kind())).cloned(),
-        },
-    }
-}
-
-// --- cursor helpers --------------------------------------------------------
-
-/// The class-def call a string token names a class within: its directly
-/// enclosing call when that is a class-def call, or the class-def call wrapping
-/// a `c(...)` the string sits in (a `contains=` vector). `None` otherwise.
-fn class_def_call_around_string(token: &SyntaxToken) -> Option<CallExpr> {
-    let call = enclosing_call(token.parent()?)?;
-    if class_def_system(&call).is_some() {
-        return Some(call);
-    }
-    if call.callee_token().is_some_and(|t| t.text() == "c") {
-        let outer = enclosing_call(call.syntax().parent()?)?;
-        if class_def_system(&outer).is_some() {
-            return Some(outer);
-        }
-    }
-    None
-}
-
-/// The class an identifier binding target defines, when it is the target of
-/// `X <- <class-def call>` — the call's declared string name, falling back to
-/// the identifier text. `None` when the identifier is not such a target.
-fn ident_defines_class(token: &SyntaxToken) -> Option<String> {
-    let assign = token.parent()?.ancestors().find_map(AssignmentExpr::cast)?;
-    if assign.target_name_token()?.text_range() != token.text_range() {
-        return None;
-    }
-    let NodeOrToken::Node(value) = assign.value_element()? else {
-        return None;
-    };
-    let call = CallExpr::cast(value)?;
-    class_def_system(&call)?;
-    Some(
-        class_name_token(&call)
-            .map(|(_, v)| v)
-            .unwrap_or_else(|| token.text().to_string()),
-    )
-}
-
-/// The nearest `CALL_EXPR` ancestor of `node` (inclusive).
-fn enclosing_call(node: SyntaxNode) -> Option<CallExpr> {
-    node.ancestors().find_map(CallExpr::cast)
-}
-
-/// The root-level statement span containing `range`.
-fn top_level_statement(root: &SyntaxNode, range: TextRange) -> Option<TextRange> {
-    root.children()
-        .find(|c| c.text_range().contains_range(range))
-        .map(|c| c.text_range())
-}
-
-/// The token to interpret at `offset`, preferring an `IDENT`/`STRING` when the
-/// offset falls between two tokens.
-fn token_at(root: &SyntaxNode, offset: TextSize) -> Option<SyntaxToken> {
-    match root.token_at_offset(offset) {
-        TokenAtOffset::None => None,
-        TokenAtOffset::Single(t) => Some(t),
-        TokenAtOffset::Between(left, right) => {
-            let named = |k| matches!(k, SyntaxKind::IDENT | SyntaxKind::STRING);
-            if named(right.kind()) {
-                Some(right)
-            } else if named(left.kind()) {
-                Some(left)
-            } else {
-                Some(right)
+    pub fn display_name(&self) -> &str {
+        match &self.name {
+            ClassName::Known(name) => name,
+            ClassName::Absent | ClassName::Unknown => {
+                self.binding.as_deref().unwrap_or("<anonymous class>")
             }
         }
     }
+
+    /// An uncertain execution environment cannot establish a definite binding.
+    pub fn binding_known(&self) -> bool {
+        !self.uncertainty.iter().any(|issue| {
+            matches!(
+                issue,
+                ClassUncertainty::Conditional
+                    | ClassUncertainty::CustomEnvironment
+                    | ClassUncertainty::InvalidArguments
+                    | ClassUncertainty::UnresolvedCallee
+            )
+        })
+    }
 }
 
-fn is_trivia(kind: SyntaxKind) -> bool {
-    matches!(
-        kind,
-        SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT
-    )
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub struct GeneratorBinding {
+    pub owner: ClassOwner,
+    pub name: String,
+    pub target: ClassKey,
 }
 
-/// The unquoted contents of a backtick/quoted `STRING` token, else its raw text.
-fn token_text_unquoted(token: &SyntaxToken) -> String {
-    let text = token.text();
-    let bytes = text.as_bytes();
-    if bytes.len() >= 2 {
-        let (first, last) = (bytes[0], bytes[bytes.len() - 1]);
-        if matches!(first, b'"' | b'\'' | b'`') && first == last {
-            return text[1..text.len() - 1].to_string();
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub struct FileClassFacts {
+    pub declarations: Vec<ClassDef>,
+    pub generators: Vec<GeneratorBinding>,
+}
+
+impl FileClassFacts {
+    pub fn declaration(&self, key: &ClassKey) -> Option<&ClassDef> {
+        self.declarations.iter().find(|def| &def.key == key)
+    }
+
+    /// Session-local validation for opaque LSP handles, independent of offsets.
+    pub fn fingerprint(&self) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ClassLocation {
+    pub name_range: TextRange,
+    pub full_range: TextRange,
+    call_range: TextRange,
+}
+
+#[derive(Debug, Clone)]
+pub enum ClassOccurrence {
+    Declaration(ClassKey),
+    Reference {
+        owner: ClassOwner,
+        reference: ParentRef,
+        in_function: bool,
+    },
+}
+
+struct Extracted {
+    facts: FileClassFacts,
+    locations: Vec<ClassLocation>,
+    occurrences: Vec<(TextRange, ClassOccurrence)>,
+}
+
+pub fn file_class_defs(model: &SemanticModel, root: &SyntaxNode) -> FileClassFacts {
+    extract(model, root).facts
+}
+
+pub fn locate_class_def(root: &SyntaxNode, key: &ClassKey) -> Option<ClassLocation> {
+    let model = SemanticModel::build(root);
+    let extracted = extract(&model, root);
+    extracted
+        .facts
+        .declarations
+        .iter()
+        .position(|def| &def.key == key)
+        .map(|index| extracted.locations[index].clone())
+}
+
+pub fn class_occurrence_at_offset(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+    offset: TextSize,
+) -> Option<ClassOccurrence> {
+    let token = token_at(root, offset)?;
+    let extracted = extract(model, root);
+    if let Some((_, occurrence)) = extracted
+        .occurrences
+        .iter()
+        .find(|(range, _)| *range == token.text_range())
+    {
+        return Some(occurrence.clone());
+    }
+    if token.kind() != SyntaxKind::IDENT {
+        return None;
+    }
+    let keys: HashMap<_, _> = extracted
+        .facts
+        .declarations
+        .iter()
+        .zip(&extracted.locations)
+        .filter(|(def, _)| !matches!(def.factory, FunctionRef::Unresolved(_)))
+        .map(|(def, loc)| (loc.call_range, def.key.clone()))
+        .collect();
+    // Resolve ordinary generator uses through the same lexical binding proof as
+    // inheritance, rather than treating an arbitrary identifier as a class name.
+    let target = generator_ref(
+        model,
+        root,
+        &SyntaxElement::Token(token.clone()),
+        &keys,
+        &mut BTreeSet::new(),
+    );
+    let owner = owner_at(
+        &token.parent()?,
+        &owner_map(root, &extracted.facts.declarations, &extracted.locations),
+    );
+    Some(ClassOccurrence::Reference {
+        owner,
+        reference: ParentRef::Generator(target),
+        in_function: token
+            .parent()?
+            .ancestors()
+            .any(|node| node.kind() == SyntaxKind::FUNCTION_EXPR),
+    })
+}
+
+fn extract(model: &SemanticModel, root: &SyntaxNode) -> Extracted {
+    let calls: Vec<_> = root
+        .descendants()
+        .filter_map(CallExpr::cast)
+        .flat_map(|call| {
+            let Some(factory) = call
+                .base()
+                .and_then(|base| function_ref(model, root, &base, &mut BTreeSet::new()))
+            else {
+                return Vec::new();
+            };
+            let systems = match &factory {
+                FunctionRef::Qualified { package, name } => ClassSystem::from_callee(name)
+                    .filter(|system| package == system.package())
+                    .into_iter()
+                    .collect(),
+                FunctionRef::Bare { name, .. } => {
+                    ClassSystem::from_callee(name).into_iter().collect()
+                }
+                FunctionRef::Unresolved(systems) => systems.clone(),
+            };
+            systems
+                .into_iter()
+                .map(|system| (call.clone(), system, factory.clone()))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let mut owners: HashMap<TextRange, ClassOwner> = HashMap::new();
+    let mut owner_counts = BTreeMap::new();
+    for node in root
+        .descendants()
+        .filter(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
+    {
+        if !calls
+            .iter()
+            .any(|(call, _, _)| node.text_range().contains_range(call.syntax().text_range()))
+        {
+            continue;
+        }
+        let parent = owner_at(&node.parent().unwrap_or_else(|| root.clone()), &owners);
+        let name = direct_assignment(&SyntaxElement::Node(node.clone()))
+            .and_then(|assignment| assignment.target_name())
+            .map(|name| unbacktick(&name).to_string());
+        let occurrence = owner_counts
+            .entry((parent.clone(), name.clone()))
+            .or_insert(0);
+        let mut owner = parent;
+        owner.0.push(OwnerSegment {
+            name,
+            occurrence: *occurrence,
+        });
+        *occurrence += 1;
+        owners.insert(node.text_range(), owner);
+    }
+    let mut counts = BTreeMap::new();
+    let calls: Vec<_> = calls
+        .into_iter()
+        .map(|(call, system, factory)| {
+            let owner = owner_at(call.syntax(), &owners);
+            let occurrence = counts.entry((owner.clone(), system)).or_insert(0);
+            let key = ClassKey {
+                owner,
+                system,
+                occurrence: *occurrence,
+            };
+            *occurrence += 1;
+            (call, system, factory, key)
+        })
+        .collect();
+    let keys: HashMap<_, _> = calls
+        .iter()
+        .filter(|(_, _, factory, _)| !matches!(factory, FunctionRef::Unresolved(_)))
+        .map(|(call, _, _, key)| (call.syntax().text_range(), key.clone()))
+        .collect();
+    let mut result = Extracted {
+        facts: FileClassFacts::default(),
+        locations: Vec::new(),
+        occurrences: Vec::new(),
+    };
+    for (call, system, factory, key) in calls {
+        let assignment = direct_assignment(&SyntaxElement::Node(call.syntax().clone()));
+        let binding_token = assignment
+            .as_ref()
+            .and_then(AssignmentExpr::target_name_token);
+        let mut def = ClassDef {
+            key: key.clone(),
+            name: ClassName::Unknown,
+            binding: assignment
+                .as_ref()
+                .and_then(AssignmentExpr::target_name)
+                .map(|name| unbacktick(&name).to_string()),
+            factory,
+            parents: Vec::new(),
+            parent_vector: None,
+            uncertainty: BTreeSet::new(),
+        };
+        if matches!(def.factory, FunctionRef::Unresolved(_)) {
+            def.uncertainty.insert(ClassUncertainty::UnresolvedCallee);
+        }
+        if !unconditional(call.syntax()) {
+            def.uncertainty.insert(ClassUncertainty::Conditional);
+        }
+        let args: Vec<Arg> = call
+            .arg_list()
+            .map(|list| list.args().collect())
+            .unwrap_or_default();
+        let names: Vec<_> = args.iter().map(Arg::name).collect();
+        let matched = crate::semantic::checked_match_args_to_formals(&names, system.formals());
+        let complete = call.arg_list().is_some_and(|_| {
+            call.syntax()
+                .children_with_tokens()
+                .any(|element| element.kind() == SyntaxKind::RPAREN)
+        });
+        let mut selection = binding_token
+            .as_ref()
+            .map(SyntaxToken::text_range)
+            .unwrap_or_else(|| call.callee_token().unwrap().text_range());
+        if let Ok(matched) = matched
+            && complete
+            && !args.iter().any(|arg| {
+                arg.value().is_some_and(
+                |value| matches!(value, SyntaxElement::Token(ref token) if token.text() == "..."),
+            )
+            })
+        {
+            let argument = |formal: &str| {
+                args.iter()
+                    .zip(&matched)
+                    .find(|(_, matched)| **matched == Some(formal))
+                    .map(|(arg, _)| arg)
+            };
+            let name_arg = argument(if system == ClassSystem::R6 {
+                "classname"
+            } else {
+                "Class"
+            });
+            def.name = match name_arg.and_then(Arg::value) {
+                None if system == ClassSystem::R6 => ClassName::Absent,
+                Some(SyntaxElement::Token(token))
+                    if system == ClassSystem::R6 && token.text() == "NULL" =>
+                {
+                    ClassName::Absent
+                }
+                Some(SyntaxElement::Token(token)) if token.kind() == SyntaxKind::STRING => {
+                    if let Some(name) = crate::semantic::decode_string_literal(token.text()) {
+                        selection = token.text_range();
+                        result
+                            .occurrences
+                            .push((selection, ClassOccurrence::Declaration(key.clone())));
+                        ClassName::Known(name)
+                    } else {
+                        ClassName::Unknown
+                    }
+                }
+                _ => ClassName::Unknown,
+            };
+            if def.name == ClassName::Unknown {
+                def.uncertainty.insert(ClassUncertainty::DynamicName);
+            }
+            if argument(if system == ClassSystem::R6 {
+                "parent_env"
+            } else {
+                "where"
+            })
+            .is_some_and(|arg| arg.value().is_some())
+            {
+                def.uncertainty.insert(ClassUncertainty::CustomEnvironment);
+            }
+            if let Some(parent) = argument(if system == ClassSystem::R6 {
+                "inherit"
+            } else {
+                "contains"
+            })
+            .and_then(Arg::value)
+            {
+                if system == ClassSystem::R6 {
+                    if !matches!(parent, SyntaxElement::Token(ref token) if token.text() == "NULL")
+                    {
+                        let target =
+                            generator_ref(model, root, &parent, &keys, &mut BTreeSet::new());
+                        if target == GeneratorRef::Unknown {
+                            def.uncertainty.insert(ClassUncertainty::DynamicParent);
+                        }
+                        let reference = ParentRef::Generator(target);
+                        result.occurrences.push((
+                            parent.text_range(),
+                            ClassOccurrence::Reference {
+                                owner: key.owner.clone(),
+                                reference: reference.clone(),
+                                in_function: !key.owner.0.is_empty(),
+                            },
+                        ));
+                        def.parents.push(reference);
+                    }
+                } else {
+                    match formal_parents(model, root, &parent) {
+                        Some(parents) => {
+                            def.parent_vector = parents.vector;
+                            for (name, range) in parents.names {
+                                let reference = ParentRef::Formal(name);
+                                result.occurrences.push((
+                                    range,
+                                    ClassOccurrence::Reference {
+                                        owner: key.owner.clone(),
+                                        reference: reference.clone(),
+                                        in_function: !key.owner.0.is_empty(),
+                                    },
+                                ));
+                                def.parents.push(reference);
+                            }
+                        }
+                        None => {
+                            def.parents.push(ParentRef::Unknown);
+                            def.uncertainty.insert(ClassUncertainty::DynamicParent);
+                        }
+                    }
+                }
+            }
+        } else {
+            def.uncertainty.insert(ClassUncertainty::InvalidArguments);
+        }
+        if let Some(token) = binding_token {
+            result
+                .occurrences
+                .push((token.text_range(), ClassOccurrence::Declaration(key)));
+        }
+        result.locations.push(ClassLocation {
+            name_range: selection,
+            full_range: assignment.as_ref().map_or_else(
+                || call.syntax().text_range(),
+                |assignment| assignment.syntax().text_range(),
+            ),
+            call_range: call.syntax().text_range(),
+        });
+        result.facts.declarations.push(def);
+    }
+    for (index, binding) in model.bindings().iter().enumerate() {
+        let frame = root
+            .covering_element(binding.def_range)
+            .parent()
+            .and_then(|node| {
+                node.ancestors()
+                    .find(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
+            });
+        if frame
+            .as_ref()
+            .is_some_and(|frame| !owners.contains_key(&frame.text_range()))
+        {
+            continue;
+        }
+        let id = BindingId::from_index(index);
+        let Some(value) = stable_value(model, root, id) else {
+            continue;
+        };
+        if let GeneratorRef::Local(target) =
+            generator_ref(model, root, &value, &keys, &mut BTreeSet::new())
+        {
+            if result
+                .facts
+                .declaration(&target)
+                .is_none_or(|def| !def.binding_known())
+            {
+                continue;
+            }
+            let owner = owner_at(
+                &root
+                    .covering_element(binding.def_range)
+                    .parent()
+                    .unwrap_or_else(|| root.clone()),
+                &owners,
+            );
+            result.facts.generators.push(GeneratorBinding {
+                owner,
+                name: unbacktick(&binding.name).to_string(),
+                target,
+            });
         }
     }
-    text.to_string()
+    result
+        .facts
+        .generators
+        .sort_by(|a, b| (&a.owner, &a.name, &a.target).cmp(&(&b.owner, &b.name, &b.target)));
+    result
+}
+
+fn owner_at(node: &SyntaxNode, owners: &HashMap<TextRange, ClassOwner>) -> ClassOwner {
+    node.ancestors()
+        .find_map(|ancestor| owners.get(&ancestor.text_range()).cloned())
+        .unwrap_or_default()
+}
+
+fn owner_map(
+    root: &SyntaxNode,
+    defs: &[ClassDef],
+    locations: &[ClassLocation],
+) -> HashMap<TextRange, ClassOwner> {
+    let mut owners = HashMap::new();
+    for (def, location) in defs.iter().zip(locations) {
+        if let Some(node) = root.covering_element(location.full_range).into_node() {
+            let functions: Vec<_> = node
+                .ancestors()
+                .filter(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
+                .collect();
+            for (depth, node) in functions.into_iter().rev().enumerate() {
+                owners.insert(
+                    node.text_range(),
+                    ClassOwner(def.key.owner.0[..=depth].to_vec()),
+                );
+            }
+        }
+    }
+    owners
+}
+
+fn unconditional(node: &SyntaxNode) -> bool {
+    for ancestor in node.ancestors().skip(1) {
+        match ancestor.kind() {
+            SyntaxKind::ROOT => return true,
+            SyntaxKind::FUNCTION_EXPR => {
+                return FunctionExpr::cast(ancestor)
+                    .and_then(|function| function.body())
+                    .is_some_and(|body| body.text_range().contains_range(node.text_range()));
+            }
+            SyntaxKind::BLOCK_EXPR | SyntaxKind::ASSIGNMENT_EXPR => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+fn direct_assignment(value: &SyntaxElement) -> Option<AssignmentExpr> {
+    let assignment = value.parent().and_then(AssignmentExpr::cast)?;
+    (assignment.value_element()?.text_range() == value.text_range()).then_some(assignment)
+}
+
+fn stable_value(model: &SemanticModel, root: &SyntaxNode, id: BindingId) -> Option<SyntaxElement> {
+    let binding = model.binding(id);
+    if binding.kind != BindingKind::Local
+        || model.variable_cohort(id).len() != 1
+        || model
+            .bindings()
+            .iter()
+            .any(|other| other.kind == BindingKind::Implicit && other.name == binding.name)
+    {
+        return None;
+    }
+    if opaque_binding_frame(root, binding.def_range) {
+        return None;
+    }
+    let assignment = binding_assignment(root, binding.def_range)?;
+    unconditional(assignment.syntax())
+        .then(|| assignment.value_element())
+        .flatten()
+}
+
+fn binding_assignment(root: &SyntaxNode, range: TextRange) -> Option<AssignmentExpr> {
+    root.covering_element(range)
+        .into_token()?
+        .parent()
+        .and_then(AssignmentExpr::cast)
+}
+
+fn opaque_binding_frame(root: &SyntaxNode, range: TextRange) -> bool {
+    let frame = |node: SyntaxNode| {
+        node.ancestors()
+            .find(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
+            .map(|node| node.text_range())
+    };
+    let binding_frame = root.covering_element(range).parent().and_then(frame);
+    root.descendants().filter_map(CallExpr::cast).any(|call| {
+        call.callee_name().is_some_and(|name| {
+            matches!(
+                unbacktick(&name),
+                "assign"
+                    | "delayedAssign"
+                    | "makeActiveBinding"
+                    | "eval"
+                    | "evalq"
+                    | "source"
+                    | "sys.source"
+                    | "load"
+                    | "attach"
+                    | "rm"
+                    | "remove"
+            )
+        }) && frame(call.syntax().clone()) == binding_frame
+    })
+}
+
+fn read_binding(model: &SemanticModel, token: &SyntaxToken) -> Option<BindingId> {
+    if let Some(ident) = model
+        .idents()
+        .iter()
+        .find(|ident| ident.range == token.text_range())
+    {
+        return model.resolve_local(ident);
+    }
+    if token.kind() != SyntaxKind::STRING {
+        return None;
+    }
+    let name = crate::semantic::decode_string_literal(token.text())?;
+    let mut scope = Some(model.innermost_scope_at(token.text_range().start()));
+    while let Some(id) = scope {
+        let frame = model.scope(id);
+        if let Some(binding) = frame
+            .bindings
+            .iter()
+            .find(|id| unbacktick(&model.binding(**id).name) == name)
+        {
+            return Some(*binding);
+        }
+        scope = frame.parent;
+    }
+    None
+}
+
+fn function_ref(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+    value: &SyntaxElement,
+    visiting: &mut BTreeSet<u32>,
+) -> Option<FunctionRef> {
+    if let SyntaxElement::Node(node) = value {
+        let namespace = BinaryExpr::cast(node.clone())?.namespace_access()?;
+        return Some(FunctionRef::Qualified {
+            package: unbacktick(&namespace.package).to_string(),
+            name: unbacktick(&namespace.name).to_string(),
+        });
+    }
+    let token = value.as_token()?;
+    if !matches!(token.kind(), SyntaxKind::IDENT | SyntaxKind::STRING) {
+        return None;
+    }
+    if let Some(id) = read_binding(model, token) {
+        if visiting.len() >= 64 || !visiting.insert(id.0) {
+            return None;
+        }
+        if let Some(target) = stable_value(model, root, id)
+            && model.binding(id).def_range.start() < token.text_range().start()
+        {
+            return function_ref(model, root, &target, visiting);
+        }
+        let mut systems = BTreeSet::new();
+        for candidate in model.variable_cohort(id) {
+            let Some(target) = binding_assignment(root, model.binding(candidate).def_range)
+                .and_then(|assignment| assignment.value_element())
+            else {
+                continue;
+            };
+            match function_ref(model, root, &target, visiting) {
+                Some(FunctionRef::Qualified { package, name }) => {
+                    if let Some(system) =
+                        ClassSystem::from_callee(&name).filter(|system| package == system.package())
+                    {
+                        systems.insert(system);
+                    }
+                }
+                Some(FunctionRef::Bare { name, .. }) => {
+                    if let Some(system) = ClassSystem::from_callee(&name) {
+                        systems.insert(system);
+                    }
+                }
+                Some(FunctionRef::Unresolved(candidates)) => systems.extend(candidates),
+                None => {}
+            }
+        }
+        return (!systems.is_empty())
+            .then(|| FunctionRef::Unresolved(systems.into_iter().collect()));
+    }
+    let name = if token.kind() == SyntaxKind::STRING {
+        crate::semantic::decode_string_literal(token.text())?
+    } else {
+        unbacktick(token.text()).to_string()
+    };
+    let in_function = token
+        .parent()?
+        .ancestors()
+        .any(|node| node.kind() == SyntaxKind::FUNCTION_EXPR);
+    let mut attached = Vec::new();
+    let mut attachment_uncertain = false;
+    for package in model
+        .loaded_packages()
+        .iter()
+        .filter(|package| in_function || package.range.start() < token.text_range().start())
+    {
+        let call = root
+            .covering_element(package.range)
+            .parent()
+            .and_then(|node| node.ancestors().find_map(CallExpr::cast));
+        let trusted = call.as_ref().is_some_and(|call| {
+            let Some(callee) = call.callee_token() else {
+                return false;
+            };
+            let origin_known = match call.base() {
+                Some(SyntaxElement::Node(node)) => BinaryExpr::cast(node)
+                    .and_then(|binary| binary.namespace_access())
+                    .is_some_and(|namespace| namespace.package == "base"),
+                Some(SyntaxElement::Token(_)) => read_binding(model, &callee).is_none(),
+                None => false,
+            };
+            origin_known && unconditional(call.syntax())
+        });
+        if trusted {
+            attached.push(package.name.to_string());
+        } else {
+            attachment_uncertain = true;
+        }
+    }
+    Some(FunctionRef::Bare {
+        name,
+        attached,
+        attachment_uncertain,
+    })
+}
+
+fn generator_ref(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+    value: &SyntaxElement,
+    keys: &HashMap<TextRange, ClassKey>,
+    visiting: &mut BTreeSet<u32>,
+) -> GeneratorRef {
+    if let Some(key) = keys.get(&value.text_range()) {
+        return GeneratorRef::Local(key.clone());
+    }
+    let Some(token) = value
+        .as_token()
+        .filter(|token| token.kind() == SyntaxKind::IDENT)
+    else {
+        return GeneratorRef::Unknown;
+    };
+    let Some(id) = read_binding(model, token) else {
+        return GeneratorRef::Free(unbacktick(token.text()).to_string());
+    };
+    if visiting.len() >= 64
+        || !visiting.insert(id.0)
+        || model.binding(id).def_range.start() >= token.text_range().start()
+    {
+        return GeneratorRef::Unknown;
+    }
+    let Some(target) = stable_value(model, root, id) else {
+        return GeneratorRef::Unknown;
+    };
+    if target.text_range().contains_range(token.text_range()) {
+        return GeneratorRef::Unknown;
+    }
+    generator_ref(model, root, &target, keys, visiting)
+}
+
+struct FormalParents {
+    names: Vec<(String, TextRange)>,
+    vector: Option<FunctionRef>,
+}
+
+fn formal_parents(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+    value: &SyntaxElement,
+) -> Option<FormalParents> {
+    if let SyntaxElement::Token(token) = value {
+        return (token.kind() == SyntaxKind::STRING)
+            .then(|| {
+                crate::semantic::decode_string_literal(token.text()).map(|name| FormalParents {
+                    names: vec![(name, token.text_range())],
+                    vector: None,
+                })
+            })
+            .flatten();
+    }
+    let call = value.as_node().cloned().and_then(CallExpr::cast)?;
+    let function = function_ref(model, root, &call.base()?, &mut BTreeSet::new())?;
+    match &function {
+        FunctionRef::Qualified { package, name } if package == "base" && name == "c" => {}
+        FunctionRef::Bare { name, .. } if name == "c" => {}
+        _ => return None,
+    }
+    let mut names = Vec::new();
+    for arg in call.arg_list()?.args() {
+        let token = arg.value()?.into_token()?;
+        if token.kind() != SyntaxKind::STRING {
+            return None;
+        }
+        names.push((
+            crate::semantic::decode_string_literal(token.text())?,
+            token.text_range(),
+        ));
+    }
+    Some(FormalParents {
+        names,
+        vector: Some(function),
+    })
+}
+
+fn token_at(root: &SyntaxNode, offset: TextSize) -> Option<SyntaxToken> {
+    match root.token_at_offset(offset) {
+        TokenAtOffset::None => None,
+        TokenAtOffset::Single(token) => Some(token),
+        TokenAtOffset::Between(left, right) => {
+            if matches!(right.kind(), SyntaxKind::IDENT | SyntaxKind::STRING) {
+                Some(right)
+            } else {
+                Some(left)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -363,11 +967,48 @@ mod tests {
     use super::*;
     use crate::parser::parse;
 
-    fn defs_of(src: &str) -> BTreeMap<String, ClassDef> {
-        file_class_defs(&parse(src).cst)
+    struct Projection {
+        system: ClassSystem,
+        parents: Vec<String>,
     }
 
-    fn parents_of<'a>(defs: &'a BTreeMap<String, ClassDef>, name: &str) -> &'a [String] {
+    fn facts_of(src: &str) -> FileClassFacts {
+        let root = parse(src).cst;
+        assert_eq!(root.text().to_string(), src);
+        file_class_defs(&SemanticModel::build(&root), &root)
+    }
+
+    fn defs_of(src: &str) -> BTreeMap<String, Projection> {
+        let facts = facts_of(src);
+        facts
+            .declarations
+            .iter()
+            .map(|def| {
+                (
+                    def.display_name().to_string(),
+                    Projection {
+                        system: def.system(),
+                        parents: def
+                            .parents
+                            .iter()
+                            .filter_map(|parent| match parent {
+                                ParentRef::Formal(name)
+                                | ParentRef::Generator(GeneratorRef::Free(name)) => {
+                                    Some(name.clone())
+                                }
+                                ParentRef::Generator(GeneratorRef::Local(key)) => facts
+                                    .declaration(key)
+                                    .map(|def| def.display_name().to_string()),
+                                _ => None,
+                            })
+                            .collect(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn parents_of<'a>(defs: &'a BTreeMap<String, Projection>, name: &str) -> &'a [String] {
         &defs.get(name).expect("class def").parents
     }
 
@@ -428,8 +1069,9 @@ mod tests {
     fn locate_yields_name_and_statement_spans() {
         let src = "Child <- R6Class(\"Child\", inherit = Parent)\n";
         let root = parse(src).cst;
-        let loc = locate_class_def(&root, "Child").expect("located");
-        assert_eq!(loc.system, ClassSystem::R6);
+        let facts = file_class_defs(&SemanticModel::build(&root), &root);
+        let loc = locate_class_def(&root, &facts.declarations[0].key).expect("located");
+        assert_eq!(facts.declarations[0].system(), ClassSystem::R6);
         // Selection is the class-name string literal (quotes included).
         assert_eq!(&src[loc.name_range], "\"Child\"");
         // Full range is the whole assignment statement (sans trailing newline).
@@ -442,7 +1084,24 @@ mod tests {
     fn name_at(src: &str, needle: &str) -> Option<String> {
         let root = parse(src).cst;
         let offset = TextSize::new(src.find(needle).expect("needle") as u32 + 1);
-        class_name_at_offset(&root, offset)
+        let model = SemanticModel::build(&root);
+        let facts = file_class_defs(&model, &root);
+        match class_occurrence_at_offset(&model, &root, offset)? {
+            ClassOccurrence::Declaration(key) => facts
+                .declaration(&key)
+                .map(|def| def.display_name().to_string()),
+            ClassOccurrence::Reference {
+                reference: ParentRef::Formal(name) | ParentRef::Generator(GeneratorRef::Free(name)),
+                ..
+            } => Some(name),
+            ClassOccurrence::Reference {
+                reference: ParentRef::Generator(GeneratorRef::Local(key)),
+                ..
+            } => facts
+                .declaration(&key)
+                .map(|def| def.display_name().to_string()),
+            _ => None,
+        }
     }
 
     #[test]
@@ -491,5 +1150,135 @@ mod tests {
     #[test]
     fn cursor_on_plain_string_names_nothing() {
         assert_eq!(name_at("x <- \"Parent\"\n", "\"Parent\""), None);
+    }
+
+    #[test]
+    fn class_facts_retain_dynamic_conditional_and_custom_environment_declarations() {
+        let facts = facts_of(
+            "if (flag) A <- R6::R6Class(classname = name, inherit = choose())\nmethods::setRefClass(\"Local\", where = env)\n",
+        );
+        assert_eq!(facts.declarations.len(), 2);
+        assert_eq!(facts.declarations[0].name, ClassName::Unknown);
+        assert!(
+            facts.declarations[0]
+                .uncertainty
+                .contains(&ClassUncertainty::Conditional)
+        );
+        assert!(
+            facts.declarations[0]
+                .uncertainty
+                .contains(&ClassUncertainty::DynamicParent)
+        );
+        assert!(
+            facts.declarations[1]
+                .uncertainty
+                .contains(&ClassUncertainty::CustomEnvironment)
+        );
+    }
+
+    #[test]
+    fn class_facts_reject_invalid_argument_matching() {
+        for source in [
+            "R6::R6Class(clas = \"A\")",
+            "R6::R6Class(classname = \"A\", classname = \"B\")",
+            "methods::setClass(\"A\", nonsense = 1)",
+            "R6::R6Class(\"A\", ...)",
+        ] {
+            let facts = facts_of(source);
+            assert_eq!(facts.declarations.len(), 1, "{source}");
+            assert!(
+                facts.declarations[0]
+                    .uncertainty
+                    .contains(&ClassUncertainty::InvalidArguments),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn class_facts_match_partial_positional_and_backticked_arguments() {
+        let facts = facts_of(
+            "`make` <- R6::R6Class\n`Generator<-` <- `make`(public = list(), classn = \"Display\")\nChild <- R6::R6Class(\"Child\", list(), NULL, NULL, `Generator<-`)\n",
+        );
+        assert_eq!(facts.declarations.len(), 2);
+        assert_eq!(
+            facts.declarations[0].binding.as_deref(),
+            Some("Generator<-")
+        );
+        assert_eq!(
+            facts.declarations[0].name,
+            ClassName::Known("Display".into())
+        );
+        assert_eq!(
+            facts.declarations[1].parents,
+            [ParentRef::Generator(GeneratorRef::Local(
+                facts.declarations[0].key.clone()
+            ))]
+        );
+    }
+
+    #[test]
+    fn class_owner_keys_ignore_unrelated_closures_and_prose() {
+        let before = "f <- function() { A <- R6::R6Class(\"A\"); A }\n";
+        let after = "# Prose.\ng <- function() 2\nf <- function() { h <- function() 1; A <- R6::R6Class(\"A\"); A }\n";
+        assert_eq!(facts_of(before), facts_of(after));
+        let before = "A <- R6::R6Class(\"A\")\nf <- function() 1\n";
+        let after = "A <- R6::R6Class(\"A\")\nf <- function() { alias <- A; alias }\n";
+        assert_eq!(facts_of(before), facts_of(after));
+    }
+
+    #[test]
+    fn class_facts_decode_literal_names_without_evaluating_expressions() {
+        let facts = facts_of(r#"methods::setClass("\u0041", contains = r"(Parent)")"#);
+        assert_eq!(facts.declarations[0].name, ClassName::Known("A".into()));
+        assert_eq!(
+            facts.declarations[0].parents,
+            [ParentRef::Formal("Parent".into())]
+        );
+    }
+    #[test]
+    fn class_facts_keep_uncertain_callee_aliases_without_proving_generators() {
+        for source in [
+            "if (flag) make <- R6::R6Class\nA <- make(\"A\")\n",
+            "make <- R6::R6Class\nmake <- function(...) NULL\nA <- make(\"A\")\n",
+            "make <- R6::R6Class\nsource(path)\nA <- make(\"A\")\n",
+        ] {
+            let facts = facts_of(source);
+            assert_eq!(facts.declarations.len(), 1, "{source}");
+            assert!(
+                facts.declarations[0]
+                    .uncertainty
+                    .contains(&ClassUncertainty::UnresolvedCallee),
+                "{source}"
+            );
+            assert!(facts.generators.is_empty(), "{source}");
+        }
+        let facts = facts_of("make <- R6::R6Class\nmake <- methods::setClass\nA <- make(\"A\")\n");
+        assert_eq!(facts.declarations.len(), 2);
+        assert_ne!(facts.declarations[0].key, facts.declarations[1].key);
+    }
+
+    #[test]
+    fn class_facts_reject_shadowed_quoted_callees() {
+        assert!(
+            facts_of("setClass <- function(...) NULL\n\"setClass\"(\"A\")\n")
+                .declarations
+                .is_empty()
+        );
+    }
+    #[test]
+    fn class_facts_decode_utf8_byte_escapes_as_r_strings() {
+        for source in [
+            r#"methods::setClass("\303\251")"#,
+            r#"methods::setClass("\xc3\xa9")"#,
+        ] {
+            assert_eq!(
+                facts_of(source).declarations[0].name,
+                ClassName::Known("é".into())
+            );
+        }
+        for source in ["R6::R6Class(", "R6::R6Class(\"", "R6::R6Class(classname = "] {
+            let _ = facts_of(source);
+        }
     }
 }

@@ -7,7 +7,8 @@ use std::process::Command;
 
 use arity::formatter::format;
 use arity::parser::{Edit, parse, reparse};
-use arity::project::classes::{ClassSystem, file_class_defs};
+use arity::project::classes::{ClassName, ClassSystem, GeneratorRef, ParentRef, file_class_defs};
+use arity::semantic::SemanticModel;
 use serde::{Deserialize, Serialize};
 
 fn fixture_names() -> &'static [&'static str] {
@@ -140,12 +141,38 @@ fn supported_class_projection_matches_runtime() {
         ("r6", ClassSystem::R6),
     ] {
         let pin = pin(name);
-        let classes = file_class_defs(&parse(&pin.source).cst);
-        assert_eq!(classes.len(), pin.facts.classes.len(), "{name}");
+        let root = parse(&pin.source).cst;
+        let classes = file_class_defs(&SemanticModel::build(&root), &root);
+        assert_eq!(
+            classes.declarations.len(),
+            pin.facts.classes.len(),
+            "{name}"
+        );
         for class in &pin.facts.classes {
-            let actual = &classes[&class.name];
-            assert_eq!(actual.system, system, "{name}: {}", class.name);
-            assert_eq!(actual.parents, class.parents, "{name}: {}", class.name);
+            let actual = classes
+                .declarations
+                .iter()
+                .find(|def| def.name == ClassName::Known(class.name.clone()))
+                .expect("runtime class");
+            assert_eq!(actual.system(), system, "{name}: {}", class.name);
+            assert_eq!(
+                actual.binding.as_deref(),
+                Some(class.binding.as_str()),
+                "{name}: {}",
+                class.name
+            );
+            let parents: Vec<_> = actual
+                .parents
+                .iter()
+                .map(|parent| match parent {
+                    ParentRef::Formal(name) => name.clone(),
+                    ParentRef::Generator(GeneratorRef::Local(key)) => {
+                        classes.declaration(key).unwrap().display_name().to_string()
+                    }
+                    other => panic!("unexpected parent {other:?}"),
+                })
+                .collect();
+            assert_eq!(parents, class.parents, "{name}: {}", class.name);
         }
     }
 }

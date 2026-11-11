@@ -7,9 +7,9 @@ use arity::incremental::{
 };
 use arity::parser::Edit;
 use arity::project::{
-    DefKind, PackageInfo, external_resolution, package_facts_for, package_usage, project_classes,
-    project_defs, project_graph, project_promises, project_reads, project_roxygen_topics,
-    reverse_source_edges, visible_symbols, workspace_project,
+    ClassId, ClassIndex, DefKind, PackageInfo, external_resolution, package_facts_for,
+    package_usage, project_classes, project_defs, project_graph, project_promises, project_reads,
+    project_roxygen_topics, reverse_source_edges, visible_symbols, workspace_project,
 };
 use arity::rindex::provider::IndexedProvider;
 use arity::rindex::remote::RemoteExports;
@@ -748,6 +748,15 @@ fn changed_promise_contract_rebuilds_package_summary() {
     assert_eq!(counts.get(&QueryKind::ProjectPromises), Some(&1));
 }
 
+fn class_named(index: &ClassIndex, name: &str) -> ClassId {
+    index
+        .declarations
+        .iter()
+        .find(|(_, class)| class.declaration.display_name() == name)
+        .map(|(id, _)| id.clone())
+        .expect("class")
+}
+
 #[test]
 fn project_classes_aggregates_inheritance_edges() {
     let (db, _a, _b) = package_ab(
@@ -755,23 +764,11 @@ fn project_classes_aggregates_inheritance_edges() {
         "setClass(\"Dog\", contains = \"Animal\")\n",
     );
     let classes = project_classes(&db);
-
-    // Forward edge: Dog -> Animal; inverse edge: Animal -> Dog.
-    assert!(
-        classes
-            .supertypes
-            .get("Dog")
-            .is_some_and(|p| p.contains("Animal"))
-    );
-    assert!(
-        classes
-            .subtypes
-            .get("Animal")
-            .is_some_and(|c| c.contains("Dog"))
-    );
-    // Def sites are recorded per class, tagged by system.
-    assert!(classes.def_sites.contains_key("Animal"));
-    assert!(classes.def_sites.contains_key("Dog"));
+    let animal = class_named(classes, "Animal");
+    let dog = class_named(classes, "Dog");
+    assert!(classes.supertypes[&dog].contains(&animal));
+    assert!(classes.subtypes[&animal].contains(&dog));
+    assert_ne!(animal, dog);
 }
 
 #[test]
@@ -823,11 +820,198 @@ fn adding_a_class_rebuilds_project_classes() {
         "a new class definition must rebuild project_classes"
     );
     assert!(
-        classes
-            .subtypes
-            .get("Animal")
-            .is_some_and(|c| c.contains("Dog"))
+        classes.subtypes[&class_named(classes, "Animal")].contains(&class_named(classes, "Dog"))
     );
+}
+
+#[test]
+fn class_identity_keeps_unrelated_scripts_and_packages_separate() {
+    let (db, _, _) = scripts_ab(
+        "Parent <- R6::R6Class(\"Same\")\n",
+        "Child <- R6::R6Class(\"Child\", inherit = Parent)\n",
+    );
+    assert!(project_classes(&db).supertypes.is_empty());
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(Path::new("/one/R/a.R"), "setClass(\"Same\")\n");
+    let b = db.upsert_file(
+        Path::new("/two/R/b.R"),
+        "setClass(\"Child\", contains = \"Same\")\n",
+    );
+    db.set_workspace_members(vec![a, b], vec![]);
+    db.set_package_metadata(
+        ["/one", "/two"]
+            .into_iter()
+            .map(|root| PackageInfo {
+                root: root.into(),
+                namespace: None,
+                dir_sources: BTreeSet::new(),
+                native_routines: BTreeSet::new(),
+            })
+            .collect(),
+    );
+    assert!(project_classes(&db).supertypes.is_empty());
+}
+
+#[test]
+fn class_identity_resolves_sourced_generators_and_same_file_aliases() {
+    let (db, _, _) = scripts_ab(
+        "source(\"b.R\")\nChild <- R6::R6Class(\"Child\", inherit = Generator)\n",
+        "Original <- R6::R6Class(\"Display\")\nGenerator <- Original\n",
+    );
+    let classes = project_classes(&db);
+    assert!(
+        classes.supertypes[&class_named(classes, "Child")]
+            .contains(&class_named(classes, "Display"))
+    );
+    let (db, _, _) = scripts_ab(
+        "Child <- R6::R6Class(\"Child\", inherit = Generator)\nsource(\"b.R\")\n",
+        "Generator <- R6::R6Class(\"Display\")\n",
+    );
+    assert!(project_classes(&db).supertypes.is_empty());
+}
+
+#[test]
+fn class_identity_preserves_package_duplicates_without_picking_a_parent() {
+    let (db, _, _) = package_ab(
+        "setClass(\"Same\")\nsetClass(\"Child\", contains = \"Same\")\n",
+        "setClass(\"Same\")\n",
+    );
+    let classes = project_classes(&db);
+    assert_eq!(classes.declarations.len(), 3);
+    assert!(classes.supertypes.is_empty());
+    assert_eq!(
+        classes.parent_candidates[&class_named(classes, "Child")][0].len(),
+        2
+    );
+}
+
+#[test]
+fn class_identity_respects_namespace_imports_and_project_shadowing() {
+    let (mut db, _, b) = package_ab("A <- R6Class(classname = \"A\")\n", "");
+    assert!(project_classes(&db).declarations.is_empty());
+    let metadata = |namespace: &str| {
+        vec![PackageInfo {
+            root: "/pkg".into(),
+            namespace: Some(namespace.into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]
+    };
+    db.set_package_metadata(metadata("importFrom(R6, R6Class)\n"));
+    assert_eq!(project_classes(&db).declarations.len(), 1);
+    db.set_package_metadata(metadata("importFrom(other, R6Class)\n"));
+    assert!(project_classes(&db).declarations.is_empty());
+    db.set_package_metadata(metadata("import(R6)\n"));
+    assert_eq!(project_classes(&db).declarations.len(), 1);
+    db.set_file_text(b, "R6Class <- function(...) NULL\n");
+    assert!(project_classes(&db).declarations.is_empty());
+}
+
+#[test]
+fn class_identity_parent_and_alias_edits_invalidate_the_graph() {
+    let (mut db, a, b) = package_ab(
+        "A <- R6::R6Class(\"First\")\nB <- R6::R6Class(\"Second\")\n",
+        "Child <- R6::R6Class(\"Child\", inherit = A)\n",
+    );
+    let first = project_classes(&db).clone();
+    assert!(
+        first.supertypes[&class_named(&first, "Child")].contains(&class_named(&first, "First"))
+    );
+    db.clear_query_log();
+    db.set_file_text(b, "Child <- R6::R6Class(\"Child\", inherit = B)\n");
+    let second = project_classes(&db).clone();
+    assert!(
+        second.supertypes[&class_named(&second, "Child")].contains(&class_named(&second, "Second"))
+    );
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ProjectClasses),
+        Some(&1)
+    );
+    db.clear_query_log();
+    db.set_file_text(
+        a,
+        "A <- R6::R6Class(\"First\")\nOriginal <- R6::R6Class(\"Second\")\nB <- Original\n",
+    );
+    let third = project_classes(&db);
+    assert!(third.supertypes[&class_named(third, "Child")].contains(&class_named(third, "Second")));
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ProjectClasses),
+        Some(&1)
+    );
+}
+
+#[test]
+fn class_identity_rejects_wildcard_masks_and_conditional_imports() {
+    let (mut db, _, _) = package_ab("setClass(\"Phantom\")\n", "");
+    db.set_library_index(IndexedProvider::from_indices([index_pkg(
+        "other",
+        &["setClass"],
+    )]));
+    db.set_package_metadata(vec![PackageInfo {
+        root: "/pkg".into(),
+        namespace: Some("import(other)\n".into()),
+        dir_sources: BTreeSet::new(),
+        native_routines: BTreeSet::new(),
+    }]);
+    assert!(project_classes(&db).declarations.is_empty());
+    let (mut db, _, _) = package_ab("A <- R6Class(\"A\")\n", "");
+    db.set_package_metadata(vec![PackageInfo {
+        root: "/pkg".into(),
+        namespace: Some("if (flag) importFrom(R6, R6Class)\n".into()),
+        dir_sources: BTreeSet::new(),
+        native_routines: BTreeSet::new(),
+    }]);
+    assert!(project_classes(&db).declarations.is_empty());
+}
+
+#[test]
+fn class_identity_distinguishes_depends_from_imports_and_later_library_masks() {
+    let (mut db, a, _) = package_ab("A <- R6Class(\"A\")\n", "");
+    db.refresh_descriptions([PathBuf::from("/pkg")]);
+    db.upsert_description(Path::new("/pkg"), "Package: pkg\nImports: R6\n");
+    assert!(project_classes(&db).declarations.is_empty());
+    db.upsert_description(Path::new("/pkg"), "Package: pkg\nDepends: R6\n");
+    assert_eq!(project_classes(&db).declarations.len(), 1);
+    db.set_library_index(IndexedProvider::from_indices([index_pkg(
+        "other",
+        &["R6Class"],
+    )]));
+    db.set_file_text(a, "library(other)\nA <- R6Class(\"A\")\n");
+    assert!(project_classes(&db).declarations.is_empty());
+}
+
+#[test]
+fn class_body_and_prose_edits_backdate_despite_unrelated_project_reads() {
+    let (mut db, a, _) = package_ab(
+        "A <- R6::R6Class(\"A\", public = list(read = function() 1))\n",
+        "",
+    );
+    let before = project_classes(&db).clone();
+    db.clear_query_log();
+    db.set_file_text(
+        a,
+        "# Prose.\nA <- R6::R6Class(\"A\", public = list(read = function() print(2)))\n",
+    );
+    assert_eq!(&before, project_classes(&db));
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+}
+
+#[test]
+fn class_identity_omits_cross_file_edges_when_package_sources_are_incomplete() {
+    let (mut db, _, _) = package_ab(
+        "A <- R6::R6Class(\"A\")\n",
+        "B <- R6::R6Class(\"B\", inherit = A)\n",
+    );
+    db.set_package_metadata(vec![PackageInfo {
+        root: "/pkg".into(),
+        namespace: None,
+        dir_sources: ["a.R", "b.R", "missing.R"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        native_routines: BTreeSet::new(),
+    }]);
+    assert!(project_classes(&db).supertypes.is_empty());
 }
 
 /// A documented `add(x, y)` in a.R whose `@param y` lives on a `@rdname add`

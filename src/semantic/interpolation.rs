@@ -423,7 +423,7 @@ fn matching_close(
     None
 }
 
-fn decode_string(text: &str) -> Option<String> {
+pub(crate) fn decode_string(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     if bytes.len() >= 5 && matches!(bytes[0], b'r' | b'R') && matches!(bytes[1], b'\'' | b'"') {
         let mut open = 2;
@@ -449,14 +449,14 @@ fn decode_string(text: &str) -> Option<String> {
     }
 
     let quote = *bytes.first()?;
-    if !matches!(quote, b'\'' | b'"') || bytes.last() != Some(&quote) {
+    if bytes.len() < 2 || !matches!(quote, b'\'' | b'"') || bytes.last() != Some(&quote) {
         return None;
     }
-    let mut out = String::new();
+    let mut out = Vec::new();
     let mut chars = text[1..text.len() - 1].chars();
     while let Some(ch) = chars.next() {
         if ch != '\\' {
-            out.push(ch);
+            out.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
             continue;
         }
         let escaped = chars.next()?;
@@ -487,16 +487,28 @@ fn decode_string(text: &str) -> Option<String> {
                     chars.next();
                     value = value * 8 + next;
                 }
-                char::from_u32(value)?
+                let byte = u8::try_from(value).ok()?;
+                if byte == 0 {
+                    return None;
+                }
+                out.push(byte);
+                continue;
             }
-            'x' => char::from_u32(read_digits(&mut chars, 16, 1, 2)?)?,
+            'x' => {
+                let byte = u8::try_from(read_digits(&mut chars, 16, 1, 2)?).ok()?;
+                if byte == 0 {
+                    return None;
+                }
+                out.push(byte);
+                continue;
+            }
             'u' => char::from_u32(read_digits(&mut chars, 16, 4, 4)?)?,
             'U' => char::from_u32(read_digits(&mut chars, 16, 8, 8)?)?,
             _ => return None,
         };
-        out.push(decoded);
+        out.extend_from_slice(decoded.encode_utf8(&mut [0; 4]).as_bytes());
     }
-    Some(out)
+    String::from_utf8(out).ok()
 }
 
 fn read_digits(

@@ -146,9 +146,6 @@
     ]
   },
   "s4/shadowing": {
-    "known_gaps": [
-      "The class index treats a shadowed setClass call as a real class declaration."
-    ],
     "probes": [
       {
         "method": "definition",
@@ -182,9 +179,6 @@
     ]
   },
   "s4/named_arguments": {
-    "known_gaps": [
-      "Named Class arguments are missed by the class hierarchy index."
-    ],
     "probes": [
       {
         "method": "type-hierarchy",
@@ -269,9 +263,6 @@
     ]
   },
   "reference_classes/shadowing": {
-    "known_gaps": [
-      "The class index treats a shadowed setRefClass call as a real class declaration."
-    ],
     "probes": [
       {
         "method": "definition",
@@ -383,9 +374,6 @@
     ]
   },
   "r6/shadowing": {
-    "known_gaps": [
-      "The class index treats a shadowed R6Class call as a real class declaration; private and self reads here must remain ordinary undefined reads."
-    ],
     "probes": [
       {
         "method": "definition",
@@ -451,9 +439,6 @@
     ]
   },
   "r6/generator_alias": {
-    "known_gaps": [
-      "The child records Generator as its parent, while that generator's class is indexed as Display."
-    ],
     "probes": [
       {
         "method": "type-hierarchy",
@@ -468,9 +453,6 @@
     ]
   },
   "r6/named_arguments": {
-    "known_gaps": [
-      "Named classname arguments are missed by the class hierarchy index."
-    ],
     "probes": [
       {
         "method": "type-hierarchy",
@@ -581,6 +563,73 @@
         "method": "completion",
         "needle": "obj@value",
         "offset": 4
+      }
+    ]
+  },
+  "r6/declaration_identity": {
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "classname = \"Display\"",
+        "offset": 13
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "Child <-",
+        "offset": 1
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "inherit = Alias",
+        "offset": 10
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "R6::R6Class(\"Display\")",
+        "offset": 13
+      }
+    ]
+  },
+  "s4/declaration_identity": {
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "First <-",
+        "offset": 1
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "Second <-",
+        "offset": 1
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "Class = \"Child\"",
+        "offset": 9
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "contains = \"Base\"",
+        "offset": 12
+      }
+    ]
+  },
+  "reference_classes/declaration_identity": {
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "Reference <-",
+        "offset": 1
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "Class = \"Child\"",
+        "offset": 9
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "contains = \"Formal\"",
+        "offset": 12
       }
     ]
   }

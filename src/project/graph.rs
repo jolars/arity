@@ -30,7 +30,8 @@ use crate::incremental::{
     file_promise_seeds, file_qualified_reads, file_roxygen_topics, file_use_only_reads,
     loaded_names, package_references, parse_diagnostics, source_edges, top_level_events,
 };
-use crate::project::classes::ClassSystem;
+pub use crate::project::classes::ClassIndex;
+use crate::project::classes::{ClassFile, ClassResolution, FileClassFacts};
 use crate::project::description::DescriptionFacts;
 use crate::project::exports::DefKind;
 use crate::project::native::dynlib_bound_names;
@@ -724,60 +725,174 @@ pub fn project_defs(db: &dyn IncrementalDb) -> DefIndex {
     index
 }
 
-/// A project-wide OOP class index: for each declared class, the `(member path,
-/// system)` sites it is defined at, its declared supertypes, and the inverse
-/// subtype edges. Range-free (no spans), aggregated from the per-file
-/// [`file_class_defs`] firewall, so it backdates across body edits; a consumer
-/// recovers a class's span per request via
-/// [`crate::project::locate_class_def`].
-///
-/// The class-hierarchy analog of [`DefIndex`]: it backs LSP type hierarchy
-/// (`prepareTypeHierarchy` + supertypes/subtypes).
-#[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
-pub struct ClassIndex {
-    /// Class name -> the sites (path, system) it is defined at.
-    pub def_sites: BTreeMap<String, BTreeSet<(PathBuf, ClassSystem)>>,
-    /// Class name -> its declared supertype names.
-    pub supertypes: BTreeMap<String, BTreeSet<String>>,
-    /// Parent class name -> the classes that declare it a supertype (the
-    /// inverse of [`supertypes`](Self::supertypes)).
-    pub subtypes: BTreeMap<String, BTreeSet<String>>,
-}
-
-/// Aggregate every member's [`file_class_defs`] into the project-wide
-/// [`ClassIndex`], recording both the forward supertype edges and their inverse.
-/// Built on the backdated [`workspace_project`] snapshot and the per-file
-/// firewall, so it backdates across body edits and re-runs only when some
-/// file's class definitions change.
+/// Resolve class declarations and inheritance without merging their identities.
+/// Per-file facts and the project scope backdate independently across body edits.
 #[salsa::tracked(returns(ref))]
 pub fn project_classes(db: &dyn IncrementalDb) -> ClassIndex {
     db.record_query(QueryLogEntry {
         kind: QueryKind::ProjectClasses,
         file: None,
     });
-    let mut index = ClassIndex::default();
-    for member in &workspace_project(db).members {
-        for (name, def) in file_class_defs(db, member.file) {
-            index
-                .def_sites
-                .entry(name.clone())
-                .or_default()
-                .insert((member.path.clone(), def.system));
-            for parent in &def.parents {
-                index
-                    .supertypes
-                    .entry(name.clone())
-                    .or_default()
-                    .insert(parent.clone());
-                index
-                    .subtypes
-                    .entry(parent.clone())
-                    .or_default()
-                    .insert(name.clone());
-            }
+    build_class_index(db, None)
+}
+
+pub(crate) struct LiveClassFile<'a> {
+    pub path: &'a Path,
+    pub facts: &'a FileClassFacts,
+    pub root: &'a crate::syntax::SyntaxNode,
+    pub model: &'a crate::semantic::SemanticModel,
+}
+
+/// The live buffer replaces its declarations, bindings, and source events. Other
+/// files use tracked projections; both paths share the pure project resolver.
+pub(crate) fn build_class_index(
+    db: &dyn IncrementalDb,
+    live: Option<LiveClassFile<'_>>,
+) -> ClassIndex {
+    let project = workspace_project(db);
+    let mut files: Vec<_> = project
+        .members
+        .iter()
+        .map(|member| ClassFile {
+            path: member.path.clone(),
+            package_root: member.package_root.clone(),
+            facts: live
+                .as_ref()
+                .filter(|live| live.path == member.path)
+                .map_or_else(
+                    || file_class_defs(db, member.file).clone(),
+                    |live| live.facts.clone(),
+                ),
+            exports: live
+                .as_ref()
+                .filter(|live| live.path == member.path)
+                .map_or_else(
+                    || file_exports(db, member.file).clone(),
+                    |live| Arc::new(crate::project::file_exports(live.model)),
+                ),
+        })
+        .collect();
+    if let Some(live) = &live
+        && !files.iter().any(|file| file.path == live.path)
+    {
+        files.push(ClassFile {
+            path: live.path.to_path_buf(),
+            package_root: PackageGraph::try_get(db).and_then(|graph| {
+                let roots = graph
+                    .packages(db)
+                    .iter()
+                    .map(|package| &package.root)
+                    .collect();
+                package_root_in(live.path, &roots)
+            }),
+            facts: live.facts.clone(),
+            exports: Arc::new(crate::project::file_exports(live.model)),
+        });
+    }
+    let mut namespace_texts = project.namespaces.clone();
+    let mut package_declarations = project.declarations.clone();
+    if let Some(live) = &live
+        && let Some(root) = files
+            .iter()
+            .find(|file| file.path == live.path)
+            .and_then(|file| file.package_root.as_ref())
+    {
+        // A parse-error snapshot may omit every source in this package. The live
+        // file still resolves against authoritative tracked package metadata.
+        if !namespace_texts.iter().any(|(path, _)| path == root)
+            && let Some(graph) = PackageGraph::try_get(db)
+            && let Some(text) = graph
+                .packages(db)
+                .iter()
+                .find(|package| &package.root == root)
+                .and_then(|package| package.namespace.as_ref())
+        {
+            namespace_texts.push((root.clone(), text.clone()));
+        }
+        if !package_declarations
+            .iter()
+            .any(|package| &package.root == root)
+            && let Some(facts) = package_facts_for(db, live.path)
+        {
+            package_declarations.push(PackageDeclarations {
+                root: root.clone(),
+                attached: facts.attached_packages(),
+                declared: facts.declared_packages(),
+            });
         }
     }
-    index
+    let empty_index;
+    let empty_remote;
+    let (indexed, remote) = match LibraryIndex::try_get(db) {
+        Some(index) => (index.data(db).as_ref(), index.remote(db).as_ref()),
+        None => {
+            empty_index = crate::rindex::provider::IndexedProvider::empty();
+            empty_remote = crate::rindex::remote::RemoteExports::new();
+            (&empty_index, &empty_remote)
+        }
+    };
+    // Class resolution needs scope and execution order, but not def-use counts.
+    // Depending on `project_graph` would pull arbitrary method-body reads through
+    // the class firewall even when declarations and visibility stay unchanged.
+    let empty_names: Arc<BTreeSet<String>> = Arc::default();
+    let scope_facts: Vec<_> = files
+        .iter()
+        .map(|file| {
+            let live = live.as_ref().filter(|live| live.path == file.path);
+            let member = project
+                .members
+                .iter()
+                .find(|member| member.path == file.path);
+            let (source_edges, top_level_events) = match live {
+                Some(live) => (
+                    Arc::new(crate::project::collect_source_edge_keys(
+                        live.root,
+                        live.path.parent(),
+                    )),
+                    Arc::new(crate::project::collect_top_level_events(
+                        live.root,
+                        live.path.parent(),
+                        live.model,
+                    )),
+                ),
+                None => {
+                    let member = member.expect("a stored class file is a project member");
+                    (
+                        source_edges(db, member.file).clone(),
+                        top_level_events(db, member.file).clone(),
+                    )
+                }
+            };
+            FileFacts {
+                path: file.path.clone(),
+                exports: file.exports.clone(),
+                free_reads: empty_names.clone(),
+                qualified_reads: empty_names.clone(),
+                use_only_reads: empty_names.clone(),
+                source_edges,
+                top_level_events,
+                package_root: file.package_root.clone(),
+            }
+        })
+        .collect();
+    let namespaces = namespace_texts.iter().cloned().collect();
+    let completeness = project
+        .collations
+        .iter()
+        .map(|collation| (collation.root.clone(), collation.complete))
+        .collect();
+    let native = project.native_routines.iter().cloned().collect();
+    let scope = ProjectScope::build(&scope_facts, &namespaces, &completeness, &native);
+    ClassIndex::build(
+        files,
+        &ClassResolution {
+            scope: &scope,
+            namespaces: &namespace_texts,
+            packages: &package_declarations,
+            indexed,
+            remote,
+        },
+    )
 }
 
 /// One package's Rd topics: each topic name mapped to the blocks that merge
