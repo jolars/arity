@@ -8,6 +8,9 @@ use rowan::TextRange;
 use smol_str::SmolStr;
 
 use super::*;
+
+mod namespace;
+mod oop;
 use crate::project::{PackageDeclarations, ProjectScope, ReadBinding, ReadSite};
 use crate::rindex::provider::{IndexedProvider, package_indexed, resolve_origin};
 use crate::rindex::remote::RemoteExports;
@@ -24,6 +27,7 @@ pub struct ClassFile {
 pub struct ClassResolution<'a> {
     pub scope: &'a ProjectScope,
     pub namespaces: &'a [(PathBuf, String)],
+    pub package_names: &'a BTreeMap<PathBuf, String>,
     pub packages: &'a [PackageDeclarations],
     pub indexed: &'a IndexedProvider,
     pub remote: &'a RemoteExports,
@@ -47,6 +51,9 @@ pub struct ClassIndex {
     pub subtypes: BTreeMap<ClassId, BTreeSet<ClassId>>,
     files: BTreeMap<PathBuf, ClassFile>,
     visible: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
+    namespace: namespace::NamespaceVisibility,
+    generic_sources: BTreeMap<(PathBuf, bool, String), BTreeSet<PathBuf>>,
+    incomplete: BTreeSet<PathBuf>,
     generator_sources: BTreeMap<(PathBuf, bool, String), BTreeSet<PathBuf>>,
     callees: BTreeMap<(PathBuf, FunctionRef), FunctionIdentity>,
 }
@@ -81,13 +88,45 @@ impl ClassIndex {
                 .collect(),
             ..Self::default()
         };
+        index.namespace = namespace::NamespaceVisibility::build(&index.files, resolution);
         let generator_names: BTreeSet<_> = index
             .files
             .values()
             .flat_map(|file| file.facts.generators.iter())
             .map(|binding| binding.name.clone())
             .collect();
+        let generic_names: BTreeSet<_> = index
+            .files
+            .values()
+            .flat_map(|file| {
+                file.facts
+                    .oop
+                    .generic_bindings
+                    .iter()
+                    .map(|binding| binding.name.clone())
+                    .chain(
+                        file.facts
+                            .oop
+                            .generics
+                            .iter()
+                            .filter_map(|def| def.binding.clone()),
+                    )
+            })
+            .collect();
         for file in index.files.values() {
+            if resolution.scope.for_file(&file.path).resolution_incomplete
+                || !resolution.scope.package_complete(&file.path)
+            {
+                index.incomplete.insert(file.path.clone());
+            }
+            for name in &generic_names {
+                for in_function in [false, true] {
+                    index.generic_sources.insert(
+                        (file.path.clone(), in_function, name.clone()),
+                        definition_files(file, name, in_function, &index.files, resolution.scope),
+                    );
+                }
+            }
             let references = file
                 .facts
                 .declarations
@@ -240,14 +279,38 @@ impl ClassIndex {
         index
     }
 
+    fn imported_binding_files(&self, path: &Path, name: &str) -> BTreeSet<PathBuf> {
+        if self.incomplete.contains(path)
+            || std::iter::once(path)
+                .chain(
+                    self.visible
+                        .get(path)
+                        .into_iter()
+                        .flatten()
+                        .map(PathBuf::as_path),
+                )
+                .filter_map(|path| self.files.get(path))
+                .any(|file| file.exports.contains(name))
+        {
+            return BTreeSet::new();
+        }
+        self.namespace.generic_files(path, name, None)
+    }
+
     fn reference_known(&self, path: &Path, owner: &ClassOwner, reference: &ParentRef) -> bool {
         match reference {
-            ParentRef::Generator(GeneratorRef::Free(name)) => self
-                .generator_sources
-                .get(&(path.to_path_buf(), !owner.0.is_empty(), name.clone()))
-                .is_some_and(|sources| sources.len() == 1),
-            ParentRef::Unknown
-            | ParentRef::Generator(GeneratorRef::Unknown | GeneratorRef::Qualified { .. }) => false,
+            ParentRef::Generator(GeneratorRef::Free(name)) => {
+                self.generator_sources
+                    .get(&(path.to_path_buf(), !owner.0.is_empty(), name.clone()))
+                    .is_some_and(|sources| sources.len() == 1)
+                    || self.imported_binding_files(path, name).len() == 1
+            }
+            ParentRef::Generator(GeneratorRef::Qualified { .. }) => {
+                self.resolve_reference(path, owner, reference, !owner.0.is_empty())
+                    .len()
+                    == 1
+            }
+            ParentRef::Unknown | ParentRef::Generator(GeneratorRef::Unknown) => false,
             _ => true,
         }
     }
@@ -279,6 +342,10 @@ impl ClassIndex {
                 else {
                     return Vec::new();
                 };
+                let mut sources = sources.clone();
+                if sources.is_empty() && !self.incomplete.contains(path) {
+                    sources.extend(self.imported_binding_files(path, name));
+                }
                 sources
                     .iter()
                     .flat_map(|path| {
@@ -332,6 +399,12 @@ impl ClassIndex {
                             .flatten()
                             .flat_map(|path| self.files.get(path)),
                     )
+                    .chain(
+                        self.namespace
+                            .class_files(path, name)
+                            .iter()
+                            .filter_map(|path| self.files.get(path)),
+                    )
                     .flat_map(|file| {
                         file.facts
                             .declarations
@@ -348,8 +421,23 @@ impl ClassIndex {
                     })
                     .collect()
             }
-            ParentRef::Generator(GeneratorRef::Unknown | GeneratorRef::Qualified { .. })
-            | ParentRef::Unknown => Vec::new(),
+            ParentRef::Generator(GeneratorRef::Qualified { package, name }) => self
+                .namespace
+                .generic_files(path, name, Some(package))
+                .iter()
+                .filter_map(|path| self.files.get(path))
+                .flat_map(|file| {
+                    file.facts
+                        .generators
+                        .iter()
+                        .filter(|binding| binding.owner.0.is_empty() && &binding.name == name)
+                        .map(|binding| ClassId {
+                            path: file.path.clone(),
+                            key: binding.target.clone(),
+                        })
+                })
+                .collect(),
+            ParentRef::Generator(GeneratorRef::Unknown) | ParentRef::Unknown => Vec::new(),
         }
     }
 }

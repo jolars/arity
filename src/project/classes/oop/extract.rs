@@ -711,6 +711,14 @@ impl Projection<'_> {
                 result.package = Some(namespace.package.to_string());
                 return result;
             }
+            // A lexical binding that is not a proven generic must not fall
+            // through to a same-named generic in a sourced file or package.
+            if value
+                .as_token()
+                .is_some_and(|token| read_binding(self.model, token).is_some())
+            {
+                return result;
+            }
             result.name = literal(&value).map_or(ClassName::Unknown, ClassName::Known);
         } else {
             result.name = string_name(Some(value));
