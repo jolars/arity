@@ -1,72 +1,89 @@
-//! Type hierarchy (`textDocument/prepareTypeHierarchy`, `typeHierarchy/supertypes`,
-//! `typeHierarchy/subtypes`).
+//! Type hierarchy over shared class declaration identities.
 //!
-//! The class-hierarchy analog of [`call_hierarchy`](super::call_hierarchy): items
-//! are **class definitions** — S4 (`setClass`), R6 (`R6Class`), and reference
-//! classes (`setRefClass`) — and an edge is a declared inheritance relation
-//! (`contains=` / `inherit=`), keyed on the string class name the class index
-//! ([`Analysis::class_def_sites`], [`Analysis::class_supertypes`],
-//! [`Analysis::class_subtypes`]) records.
-//!
-//! `prepare` parses the live buffer (like [`prepare_call_hierarchy_via_db`]);
-//! `supertypes`/`subtypes` work purely off the db snapshot, recovering the target
-//! from the round-tripped item's `name` (no `data` payload needed). Snapshot
-//! reads are wrapped in [`salsa::Cancelled::catch`]. A relative class with no
-//! definition site in the workspace (e.g. a base R virtual class, or an R6 base
-//! from a package) yields no item — omitted, like call hierarchy's unresolved
-//! callees.
+//! Preparation overlays the live file's range-free facts on the project model.
+//! Follow-up requests validate the opaque handle against the current declaration
+//! projection; display names and stale positions never select a different class.
 
 use super::*;
-use crate::project::{ClassLocation, class_name_at_offset, locate_class_def};
+use crate::project::{
+    ClassId, ClassIndex, ClassOccurrence, class_occurrence_at_offset, file_class_defs,
+    locate_class_def,
+};
 
-/// Build a [`TypeHierarchyItem`] for the class `name` located at `loc`, mapping
-/// its spans through `line_index`.
-fn location_to_item(
-    name: &str,
-    loc: &ClassLocation,
-    uri: &Uri,
-    line_index: &LineIndex,
-    encoding: PositionEncoding,
-) -> TypeHierarchyItem {
-    TypeHierarchyItem {
-        name: name.to_string(),
-        kind: LspSymbolKind::CLASS,
-        tags: None,
-        detail: Some(loc.system.label().to_string()),
-        uri: uri.clone(),
-        range: text_range_to_lsp_range(line_index, loc.full_range, encoding),
-        selection_range: text_range_to_lsp_range(line_index, loc.name_range, encoding),
-        data: None,
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ItemData {
+    id: ClassId,
+    fingerprint: String,
 }
 
-/// The type-hierarchy item for the class `name` defined in the workspace file at
-/// `path`, off the db snapshot. `None` when the file isn't tracked, has no URI,
-/// or defines no class of that name.
 fn class_item(
     snapshot: &Analysis,
-    path: &Path,
-    name: &str,
+    index: &ClassIndex,
+    id: &ClassId,
+    live: Option<(&Path, &SyntaxNode, &LineIndex)>,
     encoding: PositionEncoding,
 ) -> Option<TypeHierarchyItem> {
-    let file = snapshot.lookup_file(path)?;
-    let uri = uri::from_path(path)?;
-    let root = snapshot.parsed_tree(file);
-    let loc = locate_class_def(&root, name)?;
-    let line_index = snapshot.line_index(file);
-    Some(location_to_item(name, &loc, &uri, line_index, encoding))
+    let class = index.declarations.get(id)?;
+    let stored_root;
+    let stored_index;
+    let (root, line_index) = match live.filter(|(path, _, _)| *path == id.path) {
+        Some((_, root, line_index)) => (root, line_index),
+        None => {
+            let file = snapshot.lookup_file(&id.path)?;
+            stored_root = snapshot.parsed_tree(file);
+            stored_index = snapshot.line_index(file);
+            (&stored_root, stored_index)
+        }
+    };
+    let model = SemanticModel::build(root);
+    let facts = file_class_defs(&model, root);
+    if facts.fingerprint() != class.fingerprint {
+        return None;
+    }
+    let loc = locate_class_def(root, &id.key)?;
+    let uri = uri::from_path(&id.path)?;
+    let owner = id
+        .key
+        .owner
+        .0
+        .iter()
+        .map(|segment| segment.name.as_deref().unwrap_or("<anonymous>"))
+        .collect::<Vec<_>>()
+        .join("::");
+    let mut detail = class.declaration.system().label().to_string();
+    if let Some(binding) = &class.declaration.binding
+        && binding != class.declaration.display_name()
+    {
+        detail.push_str(&format!(" via {binding}"));
+    }
+    if !owner.is_empty() {
+        detail.push_str(&format!(" in {owner}"));
+    }
+    if let Some(package) = &class.package_root {
+        detail.push_str(&format!(" ({})", package.display()));
+    }
+    Some(TypeHierarchyItem {
+        name: class.declaration.display_name().to_string(),
+        kind: LspSymbolKind::CLASS,
+        tags: None,
+        detail: Some(detail),
+        uri,
+        range: text_range_to_lsp_range(line_index, loc.full_range, encoding),
+        selection_range: text_range_to_lsp_range(line_index, loc.name_range, encoding),
+        data: Some(
+            serde_json::to_value(ItemData {
+                id: id.clone(),
+                fingerprint: format!("{:016x}", class.fingerprint),
+            })
+            .ok()?,
+        ),
+    })
 }
 
-/// `textDocument/prepareTypeHierarchy`: resolve the cursor to the class it names
-/// (its definition, a `contains=`/`inherit=` reference, or a class-generator
-/// binding), as one or more items. Intra-file is parsed from the live `text`
-/// (like [`prepare_call_hierarchy_via_db`]); sibling definitions of the same
-/// class come from the workspace class index. `None` when the cursor names no
-/// known class.
 pub(crate) fn prepare_type_hierarchy_via_db(
     snapshot: &Analysis,
     path: &Path,
-    uri: &Uri,
+    _uri: &Uri,
     buffer: &TextBuffer,
     position: Position,
     encoding: PositionEncoding,
@@ -79,83 +96,100 @@ pub(crate) fn prepare_type_hierarchy_via_db(
             .min(text.len()) as u32,
     );
     let root = parse(text).cst;
-    let name = class_name_at_offset(&root, offset)?;
-
-    let mut items: Vec<TypeHierarchyItem> = Vec::new();
-    // Local: the live buffer's own definition (freshest — never a stale copy).
-    if let Some(loc) = locate_class_def(&root, &name) {
-        items.push(location_to_item(&name, &loc, uri, line_index, encoding));
-    }
-    // Cross-file: sibling workspace files that define the same class name.
-    let cross = salsa::Cancelled::catch(AssertUnwindSafe(|| {
-        snapshot
-            .class_def_sites(&name)
-            .into_iter()
-            .filter(|(def_path, _)| def_path != path)
-            .filter_map(|(def_path, _)| class_item(snapshot, &def_path, &name, encoding))
-            .collect::<Vec<_>>()
+    let model = SemanticModel::build(&root);
+    let facts = file_class_defs(&model, &root);
+    let occurrence = class_occurrence_at_offset(&model, &root, offset)?;
+    salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        let index = snapshot.class_index_in(path, &facts, &root, &model);
+        let ids = match occurrence {
+            ClassOccurrence::Declaration(key) => vec![ClassId {
+                path: path.to_path_buf(),
+                key,
+            }],
+            ClassOccurrence::Reference {
+                owner,
+                reference,
+                in_function,
+            } => index.resolve_reference(path, &owner, &reference, in_function),
+        };
+        let items: Vec<_> = ids
+            .iter()
+            .filter_map(|id| {
+                class_item(
+                    snapshot,
+                    &index,
+                    id,
+                    Some((path, &root, line_index)),
+                    encoding,
+                )
+            })
+            .collect();
+        (!items.is_empty()).then_some(items)
     }))
-    .unwrap_or_default();
-    items.extend(cross);
-    (!items.is_empty()).then_some(items)
+    .ok()
+    .flatten()
 }
 
-/// `typeHierarchy/supertypes`: the declared parent classes of the item's class,
-/// each as an item. Works off the snapshot from the item's `name`.
 pub(crate) fn supertypes_via_db(
     snapshot: &Analysis,
     item: &TypeHierarchyItem,
     encoding: PositionEncoding,
 ) -> Option<Vec<TypeHierarchyItem>> {
-    class_relatives(snapshot, item, Edge::Super, encoding)
+    class_relatives(snapshot, item, true, encoding)
 }
 
-/// `typeHierarchy/subtypes`: the classes that declare the item's class a
-/// supertype, each as an item. Works off the snapshot from the item's `name`.
 pub(crate) fn subtypes_via_db(
     snapshot: &Analysis,
     item: &TypeHierarchyItem,
     encoding: PositionEncoding,
 ) -> Option<Vec<TypeHierarchyItem>> {
-    class_relatives(snapshot, item, Edge::Sub, encoding)
+    class_relatives(snapshot, item, false, encoding)
 }
 
-#[derive(Clone, Copy)]
-enum Edge {
-    Super,
-    Sub,
-}
-
-/// The related classes of `item` along `edge`, each resolved to its first
-/// locatable workspace definition. Unresolved relatives (no in-workspace
-/// definition) are omitted.
 fn class_relatives(
     snapshot: &Analysis,
     item: &TypeHierarchyItem,
-    edge: Edge,
+    super_edge: bool,
     encoding: PositionEncoding,
 ) -> Option<Vec<TypeHierarchyItem>> {
-    let name = item.name.clone();
     salsa::Cancelled::catch(AssertUnwindSafe(|| {
-        let related = match edge {
-            Edge::Super => snapshot.class_supertypes(&name),
-            Edge::Sub => snapshot.class_subtypes(&name),
+        let Some(data) = item
+            .data
+            .clone()
+            .and_then(|value| serde_json::from_value::<ItemData>(value).ok())
+        else {
+            return Vec::new();
         };
-        related
+        if uri::to_path(&item.uri).as_deref() != Some(data.id.path.as_path()) {
+            return Vec::new();
+        }
+        let index = snapshot.class_index();
+        if !index
+            .declarations
+            .get(&data.id)
+            .is_some_and(|class| format!("{:016x}", class.fingerprint) == data.fingerprint)
+        {
+            return Vec::new();
+        }
+        let edges = if super_edge {
+            &index.supertypes
+        } else {
+            &index.subtypes
+        };
+        edges
+            .get(&data.id)
             .into_iter()
-            .filter_map(|rel| {
-                snapshot
-                    .class_def_sites(&rel)
-                    .into_iter()
-                    .find_map(|(path, _)| class_item(snapshot, &path, &rel, encoding))
-            })
-            .collect::<Vec<_>>()
+            .flatten()
+            .filter_map(|id| class_item(snapshot, &index, id, None, encoding))
+            .collect()
     }))
     .ok()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     fn prepare_at(
@@ -177,10 +211,130 @@ mod tests {
     }
 
     fn item_named(snapshot: &Analysis, path: &Path, name: &str) -> TypeHierarchyItem {
-        class_item(snapshot, path, name, PositionEncoding::Utf16).expect("class item")
+        {
+            let index = snapshot.class_index();
+            let id = index
+                .declarations
+                .iter()
+                .find(|(id, class)| id.path == path && class.declaration.display_name() == name)
+                .map(|(id, _)| id)
+                .expect("class identity");
+            class_item(snapshot, &index, id, None, PositionEncoding::Utf16).expect("class item")
+        }
     }
 
     // --- prepare ------------------------------------------------------------
+
+    #[test]
+    fn class_identity_resolves_generator_aliases() {
+        let src = "Generator <- R6::R6Class(\"Display\")\nAlias <- Generator\nChild <- R6::R6Class(\"Child\", inherit = Alias)\n";
+        let snapshot = rename_workspace(src, "");
+        let child = prepare_at(
+            &snapshot,
+            &ws_path("a.R"),
+            src,
+            src.find("\"Child\"").unwrap() + 1,
+        );
+        let parents = supertypes_via_db(&snapshot, &child[0], PositionEncoding::Utf16).unwrap();
+        assert_eq!(
+            parents
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Display"]
+        );
+        let alias = prepare_at(
+            &snapshot,
+            &ws_path("a.R"),
+            src,
+            src.find("inherit = Alias").unwrap() + 10,
+        );
+        assert_eq!(alias.len(), 1);
+        assert_eq!(alias[0].name, "Display");
+    }
+
+    #[test]
+    fn class_identity_matches_named_arguments_and_callee_aliases() {
+        let src = "make <- R6::R6Class\nPoint <- make(public = list(), classname = \"Point\")\nmethods::setClass(slots = c(x = \"numeric\"), Class = \"Formal\")\n";
+        let snapshot = rename_workspace(src, "");
+        for name in ["Point", "Formal"] {
+            let needle = format!("\"{name}\"");
+            let items = prepare_at(
+                &snapshot,
+                &ws_path("a.R"),
+                src,
+                src.find(&needle).unwrap() + 1,
+            );
+            assert_eq!(items.len(), 1, "{name}");
+            assert_eq!(items[0].name, name);
+        }
+    }
+
+    #[test]
+    fn class_identity_rejects_shadowed_and_wrong_namespace_calls() {
+        for src in [
+            "setClass <- function(...) NULL\nsetClass(\"Phantom\")\n",
+            "other::setClass(\"Phantom\")\n",
+            "R6Class <- function(...) NULL\nR6Class(\"Phantom\")\n",
+            "f <- function(setRefClass) setRefClass(\"Phantom\")\n",
+            "library <- function(...) NULL\nlibrary(R6)\nR6Class(\"Phantom\")\n",
+            "if (flag) library(R6)\nR6Class(\"Phantom\")\n",
+        ] {
+            let snapshot = rename_workspace(src, "");
+            assert!(
+                prepare_at(
+                    &snapshot,
+                    &ws_path("a.R"),
+                    src,
+                    src.find("Phantom").unwrap()
+                )
+                .is_empty(),
+                "{src}"
+            );
+        }
+    }
+
+    #[test]
+    fn class_identity_preserves_duplicate_declaration_locations() {
+        let src = "A <- R6::R6Class(\"Same\")\nB <- R6::R6Class(\"Same\")\n";
+        let snapshot = rename_workspace(src, "");
+        let first = prepare_at(&snapshot, &ws_path("a.R"), src, src.find("Same").unwrap());
+        let second = prepare_at(&snapshot, &ws_path("a.R"), src, src.rfind("Same").unwrap());
+        assert_eq!(first.len(), 1);
+        assert_eq!(second.len(), 1);
+        assert_ne!(first[0].selection_range, second[0].selection_range);
+        assert_ne!(first[0].data, second[0].data);
+    }
+
+    #[test]
+    fn class_identity_omits_ambiguous_formal_parent_edges() {
+        let src = "methods::setClass(\"Parent\")\nmethods::setClass(\"Parent\")\nmethods::setClass(\"Child\", contains = \"Parent\")\n";
+        let snapshot = rename_workspace(src, "");
+        let child = prepare_at(&snapshot, &ws_path("a.R"), src, src.find("Child").unwrap());
+        assert!(
+            supertypes_via_db(&snapshot, &child[0], PositionEncoding::Utf16)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn class_identity_supports_unnamed_r6_generators() {
+        let src = "Generator <- R6::R6Class(public = list())\nChild <- R6::R6Class(\"Child\", inherit = Generator)\n";
+        let snapshot = rename_workspace(src, "");
+        let generator = prepare_at(&snapshot, &ws_path("a.R"), src, 1);
+        assert_eq!(generator.len(), 1);
+        assert_eq!(generator[0].name, "Generator");
+        let child = prepare_at(
+            &snapshot,
+            &ws_path("a.R"),
+            src,
+            src.find("\"Child\"").unwrap() + 1,
+        );
+        let parents = supertypes_via_db(&snapshot, &child[0], PositionEncoding::Utf16).unwrap();
+        assert_eq!(parents.len(), 1);
+        assert_eq!(parents[0].name, "Generator");
+    }
 
     #[test]
     fn prepare_on_a_class_name_yields_its_item() {
@@ -230,7 +384,8 @@ mod tests {
 
     #[test]
     fn supertypes_reports_r6_inherit_parent() {
-        let src = "Animal <- R6Class(\"Animal\")\nDog <- R6Class(\"Dog\", inherit = Animal)\n";
+        let src =
+            "Animal <- R6::R6Class(\"Animal\")\nDog <- R6::R6Class(\"Dog\", inherit = Animal)\n";
         let snapshot = rename_workspace(src, "");
         let supers = supertypes_via_db(
             &snapshot,
@@ -277,7 +432,7 @@ mod tests {
     fn subtypes_resolves_a_cross_file_child() {
         // Parent in a.R, child in b.R; the class index spans the whole workspace.
         let a_src = "setClass(\"Animal\")\n";
-        let b_src = "setClass(\"Dog\", contains = \"Animal\")\n";
+        let b_src = "source(\"a.R\")\nsetClass(\"Dog\", contains = \"Animal\")\n";
         let snapshot = rename_workspace(a_src, b_src);
         let subs = subtypes_via_db(
             &snapshot,
@@ -301,5 +456,159 @@ mod tests {
         )
         .expect("subtypes");
         assert!(subs.is_empty());
+    }
+    #[test]
+    fn class_identity_scopes_nested_and_anonymous_declarations() {
+        for (source, parents) in [
+            (
+                "f <- function() { Base <- R6::R6Class(\"One\"); Child <- R6::R6Class(\"Child\", inherit = Base) }\ng <- function() { Base <- R6::R6Class(\"Two\"); Child <- R6::R6Class(\"Child\", inherit = Base) }\n",
+                ["One", "Two"],
+            ),
+            (
+                "list(function() { Base <- R6::R6Class(\"One\"); Child <- R6::R6Class(\"Child\", inherit = Base) }, function() { Base <- R6::R6Class(\"Two\"); Child <- R6::R6Class(\"Child\", inherit = Base) })\n",
+                ["One", "Two"],
+            ),
+        ] {
+            let snapshot = rename_workspace(source, "");
+            for ((offset, _), expected) in source.match_indices("\"Child\"").zip(parents) {
+                let items = prepare_at(&snapshot, &ws_path("a.R"), source, offset + 1);
+                assert_eq!(items.len(), 1);
+                let parents =
+                    supertypes_via_db(&snapshot, &items[0], PositionEncoding::Utf16).unwrap();
+                assert_eq!(
+                    parents
+                        .iter()
+                        .map(|item| item.name.as_str())
+                        .collect::<Vec<_>>(),
+                    [expected]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn class_identity_allows_formal_and_reference_class_inheritance() {
+        let source = "Formal <- methods::setClass(\"Base\")\nReference <- methods::setRefClass(\"Reference\", contains = \"Base\")\nmethods::setClass(\"Child\", contains = \"Reference\")\nOther <- R6::R6Class(\"Base\")\n";
+        let snapshot = rename_workspace(source, "");
+        for (name, parent) in [("Reference", "Base"), ("Child", "Reference")] {
+            let item = item_named(&snapshot, &ws_path("a.R"), name);
+            let parents = supertypes_via_db(&snapshot, &item, PositionEncoding::Utf16).unwrap();
+            assert_eq!(parents.len(), 1);
+            assert_eq!(parents[0].name, parent);
+            assert!(!parents[0].detail.as_ref().unwrap().contains("R6"));
+        }
+    }
+
+    #[test]
+    fn class_identity_declines_missing_malformed_and_stale_handles() {
+        let source = "A <- R6::R6Class(\"Base\")\nB <- R6::R6Class(\"Child\", inherit = A)\n";
+        let mut db = IncrementalDatabase::default();
+        let path = ws_path("a.R");
+        let file = db.upsert_file(&path, source);
+        db.set_workspace_members(vec![file], vec![ws_root()]);
+        let item =
+            prepare_at(&db.snapshot(), &path, source, source.find("Child").unwrap()).remove(0);
+        db.set_file_text(file, format!("# Prose.\n{source}"));
+        let parents = supertypes_via_db(&db.snapshot(), &item, PositionEncoding::Utf16).unwrap();
+        assert_eq!(parents.len(), 1);
+        assert_eq!(parents[0].selection_range.start.line, 1);
+        db.set_file_text(file, source.replace("Base", "Renamed"));
+        assert!(
+            supertypes_via_db(&db.snapshot(), &item, PositionEncoding::Utf16)
+                .unwrap()
+                .is_empty()
+        );
+        for data in [None, Some(serde_json::json!({"id": "invalid"}))] {
+            let mut invalid = item.clone();
+            invalid.data = data;
+            assert!(
+                supertypes_via_db(&db.snapshot(), &invalid, PositionEncoding::Utf16)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn class_identity_prepares_from_a_live_buffer_before_the_snapshot_catches_up() {
+        let snapshot = rename_workspace("x <- 1\n", "");
+        let source = "New <- R6::R6Class(classname = \"Live\")\n";
+        let items = prepare_at(
+            &snapshot,
+            &ws_path("a.R"),
+            source,
+            source.find("Live").unwrap(),
+        );
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "Live");
+        assert_eq!(
+            items[0].selection_range.start,
+            pos_at(source, source.find("\"Live\"").unwrap())
+        );
+    }
+    #[test]
+    fn class_identity_live_buffer_drops_removed_source_visibility() {
+        let stored = "source(\"b.R\")\nChild <- R6::R6Class(\"Child\", inherit = Parent)\n";
+        let snapshot = rename_workspace(stored, "Parent <- R6::R6Class(\"Parent\")\n");
+        let live = stored.replace("source(\"b.R\")\n", "");
+        let items = prepare_at(
+            &snapshot,
+            &ws_path("a.R"),
+            &live,
+            live.find("inherit = Parent").unwrap() + 10,
+        );
+        assert!(items.is_empty());
+    }
+    #[test]
+    fn class_identity_live_package_recovers_imports_from_a_parse_error_snapshot() {
+        let root = ws_path("pkg");
+        let path = root.join("R/a.R");
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(&path, "(");
+        db.set_workspace_members(vec![file], vec![root.clone()]);
+        db.set_package_metadata(vec![crate::project::PackageInfo {
+            root,
+            namespace: Some("importFrom(R6, R6Class)\n".into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        let source = "A <- R6Class(\"A\")\n";
+        let items = prepare_at(
+            &db.snapshot(),
+            &path,
+            source,
+            source.find("\"A\"").unwrap() + 1,
+        );
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn class_identity_cannot_inherit_from_binding_created_by_the_same_call() {
+        let source = "Self <- R6::R6Class(\"Self\", inherit = Self)\n";
+        let snapshot = rename_workspace(source, "");
+        let item = item_named(&snapshot, &ws_path("a.R"), "Self");
+        assert!(
+            supertypes_via_db(&snapshot, &item, PositionEncoding::Utf16)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn class_identity_function_reads_use_the_final_sourced_generator() {
+        let source = "source(\"b.R\")\nprint(Parent)\nsource(\"c.R\")\nf <- function() Parent\n";
+        let snapshot = rename_workspace3(
+            source,
+            "Parent <- R6::R6Class(\"Earlier\")\n",
+            "Parent <- R6::R6Class(\"Later\")\n",
+        );
+        let items = prepare_at(
+            &snapshot,
+            &ws_path("a.R"),
+            source,
+            source.rfind("Parent").unwrap(),
+        );
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "Later");
     }
 }

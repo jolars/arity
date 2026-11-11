@@ -10,6 +10,13 @@ Definition "Child$new": [{"range":[71,76],"text":"Child"}]
 Definition "obj$read()": null
 TypeHierarchy "setRefClass(\"Base\"": [{"children":["Child"],"detail":"reference class","name":"Base","parents":[],"selection":[29,35]}]
 
+=== reference_classes/declaration_identity ===
+diagnostics: []
+symbols: [["Formal",13,null],["make",13,null],["Reference",13,null]]
+TypeHierarchy "Reference <-": [{"children":["Child"],"detail":"reference class","name":"Reference","parents":["Formal"],"selection":[101,112]}]
+TypeHierarchy "Class = \"Child\"": [{"children":[],"detail":"S4 class","name":"Child","parents":["Reference"],"selection":[161,168]}]
+TypeHierarchy "contains = \"Formal\"": [{"children":["Reference"],"detail":"S4 class","name":"Formal","parents":[],"selection":[36,44]}]
+
 === reference_classes/use_sites ===
 known gap: Reference methods' bare fields and .self are reported as undefined.
 known gap: Reference methods have no member definition or signature help.
@@ -29,11 +36,10 @@ TypeHierarchy "\"Counter\"": [{"children":[],"detail":"reference class","name":"
 Completion "obj$": []
 
 === reference_classes/shadowing ===
-known gap: The class index treats a shadowed setRefClass call as a real class declaration.
 diagnostic: undefined-symbol severity=2 130..135 ".self"
 symbols: [["setRefClass",12,"(Class, ...)"],["Fake",13,null],["outside",12,"()"]]
 Definition "setRefClass(\"Pretend\"": [{"range":[0,11],"text":"setRefClass"}]
-TypeHierarchy "\"Pretend\"": [{"children":[],"detail":"reference class","name":"Pretend","parents":[],"selection":[63,72]}]
+TypeHierarchy "\"Pretend\"": null
 
 === reference_classes/dynamic ===
 known gap: A method added through a generator has no implicit .self binding.

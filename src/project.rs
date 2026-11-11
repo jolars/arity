@@ -21,7 +21,9 @@ pub(crate) mod source_context;
 pub mod source_env;
 
 pub use classes::{
-    ClassDef, ClassLocation, ClassSystem, class_name_at_offset, file_class_defs, locate_class_def,
+    ClassDef, ClassFile, ClassId, ClassKey, ClassLocation, ClassName, ClassOccurrence, ClassOwner,
+    ClassResolution, ClassSystem, FileClassFacts, class_occurrence_at_offset, file_class_defs,
+    locate_class_def,
 };
 pub use deps::{PackageReferences, file_package_references};
 pub use description::{

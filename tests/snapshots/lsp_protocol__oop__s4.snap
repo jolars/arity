@@ -13,6 +13,14 @@ Definition "describe(obj)": null
 References "Point(value = 1)": [{"range":[313,318],"text":"Point"},{"range":[0,5],"text":"Point"}]
 TypeHierarchy "setClass(\"Point\"": [{"children":["ColoredPoint"],"detail":"S4 class","name":"Point","parents":[],"selection":[27,34]}]
 
+=== s4/declaration_identity ===
+diagnostics: []
+symbols: [["make",13,null],["First",13,null],["Second",13,null]]
+TypeHierarchy "First <-": [{"children":[],"detail":"S4 class via First","name":"Base","parents":[],"selection":[48,54]}]
+TypeHierarchy "Second <-": [{"children":[],"detail":"S4 class via Second","name":"Base","parents":[],"selection":[92,98]}]
+TypeHierarchy "Class = \"Child\"": [{"children":[],"detail":"S4 class","name":"Child","parents":[],"selection":[126,133]}]
+TypeHierarchy "contains = \"Base\"": [{"children":[],"detail":"S4 class via First","name":"Base","parents":[],"selection":[48,54]},{"children":[],"detail":"S4 class via Second","name":"Base","parents":[],"selection":[92,98]}]
+
 === s4/use_sites ===
 known gap: S4 dispatch metadata .Methods, .defined, and .target is reported as undefined.
 known gap: The generic binding created by setGeneric has no definition or signature help.
@@ -32,11 +40,10 @@ TypeHierarchy "setClass(\"Point\"": [{"children":[],"detail":"S4 class","name":"
 Completion "obj@": []
 
 === s4/shadowing ===
-known gap: The class index treats a shadowed setClass call as a real class declaration.
 diagnostics: []
 symbols: [["setClass",12,"(Class, ...)"],["setGeneric",12,"(name, def)"],["fake",13,null],["describe",13,null]]
 Definition "setClass(\"Pretend\"": [{"range":[0,8],"text":"setClass"}]
-TypeHierarchy "\"Pretend\"": [{"children":[],"detail":"S4 class","name":"Pretend","parents":[],"selection":[94,103]}]
+TypeHierarchy "\"Pretend\"": null
 
 === s4/dynamic ===
 diagnostic: unused-binding severity=2 37..42 "Point"
@@ -46,8 +53,7 @@ TypeHierarchy "class_name, slots": null
 Completion "obj@value": [["value",5]]
 
 === s4/named_arguments ===
-known gap: Named Class arguments are missed by the class hierarchy index.
 diagnostic: unused-binding severity=2 0..5 "Point"
 symbols: [["Point",13,null],["obj",13,null]]
-TypeHierarchy "Class = \"Point\"": null
+TypeHierarchy "Class = \"Point\"": [{"children":[],"detail":"S4 class","name":"Point","parents":[],"selection":[35,42]}]
 Completion "obj@value": [["value",5]]

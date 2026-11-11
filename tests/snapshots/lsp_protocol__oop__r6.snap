@@ -11,6 +11,14 @@ Definition "obj$read()": null
 References "Child$new()": [{"range":[143,148],"text":"Child"},{"range":[64,69],"text":"Child"}]
 TypeHierarchy "\"Base\"": [{"children":["Child"],"detail":"R6 class","name":"Base","parents":[],"selection":[20,26]}]
 
+=== r6/declaration_identity ===
+diagnostics: []
+symbols: [["make",13,null],["`Generator<-`",13,null],["Alias",13,null],["Child",13,null],["Other",13,null]]
+TypeHierarchy "classname = \"Display\"": [{"children":["Child"],"detail":"R6 class via Generator<-","name":"Display","parents":[],"selection":[54,63]}]
+TypeHierarchy "Child <-": [{"children":[],"detail":"R6 class","name":"Child","parents":["Display"],"selection":[105,110]}]
+TypeHierarchy "inherit = Alias": [{"children":["Child"],"detail":"R6 class via Generator<-","name":"Display","parents":[],"selection":[54,63]}]
+TypeHierarchy "R6::R6Class(\"Display\")": [{"children":[],"detail":"R6 class via Other","name":"Display","parents":[],"selection":[164,173]}]
+
 === r6/use_sites ===
 known gap: R6 methods and active bindings have no implicit self, private, or super bindings.
 known gap: Declared members have no member definition or signature help.
@@ -33,12 +41,11 @@ TypeHierarchy "\"Counter\"": [{"children":[],"detail":"R6 class","name":"Counter
 Completion "obj$": []
 
 === r6/shadowing ===
-known gap: The class index treats a shadowed R6Class call as a real class declaration; private and self reads here must remain ordinary undefined reads.
 diagnostic: undefined-symbol severity=2 105..112 "private"
 diagnostic: undefined-symbol severity=2 140..144 "self"
 symbols: [["R6Class",12,"(classname, public)"],["fake",13,null],["outside",12,"()"]]
 Definition "R6Class(\"Pretend\"": [{"range":[0,7],"text":"R6Class"}]
-TypeHierarchy "\"Pretend\"": [{"children":[],"detail":"R6 class","name":"Pretend","parents":[],"selection":[62,71]}]
+TypeHierarchy "\"Pretend\"": null
 
 === r6/dynamic ===
 known gap: A method installed through $set has no implicit self binding.
@@ -64,15 +71,13 @@ symbols: [["A",13,null],["B",13,null],["C",13,null]]
 Completion "self$gamma": [["alpha",5],["beta",5],["gamma",5]]
 
 === r6/generator_alias ===
-known gap: The child records Generator as its parent, while that generator's class is indexed as Display.
 diagnostics: []
 symbols: [["Generator",13,null],["Child",13,null],["obj",13,null]]
-TypeHierarchy "\"Child\"": [{"children":[],"detail":"R6 class","name":"Child","parents":[],"selection":[83,90]}]
+TypeHierarchy "\"Child\"": [{"children":[],"detail":"R6 class","name":"Child","parents":["Display"],"selection":[83,90]}]
 Definition "inherit = Generator": [{"range":[0,9],"text":"Generator"}]
 
 === r6/named_arguments ===
-known gap: Named classname arguments are missed by the class hierarchy index.
 diagnostics: []
 symbols: [["Point",13,null],["obj",13,null]]
-TypeHierarchy "\"Point\"": null
+TypeHierarchy "\"Point\"": [{"children":[],"detail":"R6 class","name":"Point","parents":[],"selection":[33,40]}]
 Definition "Point$new()": [{"range":[0,5],"text":"Point"}]
