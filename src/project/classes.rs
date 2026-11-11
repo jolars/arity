@@ -12,6 +12,8 @@ mod resolve;
 pub use resolve::{ClassFile, ClassIndex, ClassResolution, ResolvedClass};
 mod oop;
 pub use oop::*;
+mod calls;
+use calls::*;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
@@ -21,7 +23,7 @@ use rowan::ast::AstNode as _;
 use rowan::{TextRange, TextSize, TokenAtOffset};
 use serde::{Deserialize, Serialize};
 
-use crate::ast::{Arg, AssignmentExpr, BinaryExpr, CallExpr, FunctionExpr};
+use crate::ast::{AssignmentExpr, BinaryExpr, CallExpr, FunctionExpr};
 use crate::semantic::symbols::unbacktick;
 use crate::semantic::{BindingId, BindingKind, SemanticModel};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
@@ -184,7 +186,7 @@ pub enum ClassName {
 }
 
 /// A bare reference retains attachment order but never package-derived facts.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
 pub enum FunctionRef {
     Qualified {
         package: String,
@@ -195,7 +197,14 @@ pub enum FunctionRef {
         attached: Vec<String>,
         attachment_uncertain: bool,
     },
-    Unresolved(Vec<ClassSystem>),
+    /// Possible origins survive an ambiguous alias without proving a call.
+    Unresolved(Vec<FunctionIdentity>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
+pub struct FunctionIdentity {
+    pub package: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
@@ -382,13 +391,10 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         .descendants()
         .filter_map(CallExpr::cast)
         .flat_map(|call| {
-            let Some(factory) = call
-                .base()
-                .and_then(|base| function_ref(model, root, &base, &mut BTreeSet::new()))
-            else {
+            let Some(factory) = call_function_ref(model, root, &call) else {
                 return Vec::new();
             };
-            let systems = match &factory {
+            let systems: Vec<_> = match &factory {
                 FunctionRef::Qualified { package, name } => ClassSystem::from_callee(name)
                     .filter(|system| package == system.package())
                     .into_iter()
@@ -396,7 +402,15 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
                 FunctionRef::Bare { name, .. } => {
                     ClassSystem::from_callee(name).into_iter().collect()
                 }
-                FunctionRef::Unresolved(systems) => systems.clone(),
+                FunctionRef::Unresolved(candidates) => candidates
+                    .iter()
+                    .filter_map(|candidate| {
+                        ClassSystem::from_callee(&candidate.name)
+                            .filter(|system| candidate.package == system.package())
+                    })
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect(),
             };
             systems
                 .into_iter()
@@ -484,41 +498,21 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         if !unconditional(call.syntax()) {
             def.uncertainty.insert(ClassUncertainty::Conditional);
         }
-        let args: Vec<Arg> = call
-            .arg_list()
-            .map(|list| list.args().collect())
-            .unwrap_or_default();
-        let names: Vec<_> = args.iter().map(Arg::name).collect();
-        let matched = crate::semantic::checked_match_args_to_formals(&names, system.formals());
-        let complete = call.arg_list().is_some_and(|_| {
-            call.syntax()
-                .children_with_tokens()
-                .any(|element| element.kind() == SyntaxKind::RPAREN)
-        });
         let mut selection = binding_token
             .as_ref()
             .map(SyntaxToken::text_range)
-            .unwrap_or_else(|| call.callee_token().unwrap().text_range());
-        if let Ok(matched) = matched
-            && complete
-            && !args.iter().any(|arg| {
-                arg.value().is_some_and(
-                |value| matches!(value, SyntaxElement::Token(ref token) if token.text() == "..."),
-            )
-            })
-        {
-            let argument = |formal: &str| {
-                args.iter()
-                    .zip(&matched)
-                    .find(|(_, matched)| **matched == Some(formal))
-                    .map(|(arg, _)| arg)
-            };
+            .unwrap_or_else(|| {
+                call.callee_token()
+                    .map_or(call.syntax().text_range(), |token| token.text_range())
+            });
+        if let Some(args) = matched_args(&call, system.formals()) {
+            let argument = |formal: &str| argument(&args, formal);
             let name_arg = argument(match system {
                 ClassSystem::R6 => "classname",
                 ClassSystem::S7 => "name",
                 _ => "Class",
             });
-            def.name = match name_arg.and_then(Arg::value) {
+            def.name = match name_arg {
                 None if system == ClassSystem::R6 => ClassName::Absent,
                 Some(SyntaxElement::Token(token))
                     if system == ClassSystem::R6 && token.text() == "NULL" =>
@@ -546,7 +540,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
             } else {
                 "where"
             })
-            .is_some_and(|arg| arg.value().is_some())
+            .is_some()
             {
                 def.uncertainty.insert(ClassUncertainty::CustomEnvironment);
             }
@@ -554,9 +548,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
                 ClassSystem::R6 => "inherit",
                 ClassSystem::S7 => "parent",
                 _ => "contains",
-            })
-            .and_then(Arg::value)
-            {
+            }) {
                 if matches!(system, ClassSystem::R6 | ClassSystem::S7) {
                     if !matches!(parent, SyntaxElement::Token(ref token) if token.text() == "NULL")
                     {
@@ -724,14 +716,16 @@ fn stable_value(model: &SemanticModel, root: &SyntaxNode, id: BindingId) -> Opti
     let binding = model.binding(id);
     if binding.kind != BindingKind::Local
         || model.variable_cohort(id).len() != 1
-        || model
-            .bindings()
-            .iter()
-            .any(|other| other.kind == BindingKind::Implicit && other.name == binding.name)
+        || model.bindings().iter().any(|other| {
+            other.kind == BindingKind::Implicit
+                && unbacktick(&other.name) == unbacktick(&binding.name)
+        })
     {
         return None;
     }
-    if opaque_binding_frame(root, binding.def_range) {
+    if crate::semantic::calls::has_dynamic_bindings(model)
+        && opaque_binding_frame(root, binding.def_range)
+    {
         return None;
     }
     let assignment = binding_assignment(root, binding.def_range)?;
@@ -786,6 +780,10 @@ fn read_binding(model: &SemanticModel, token: &SyntaxToken) -> Option<BindingId>
         return None;
     }
     let name = crate::semantic::decode_string_literal(token.text())?;
+    read_named_binding(model, token, &name)
+}
+
+fn read_named_binding(model: &SemanticModel, token: &SyntaxToken, name: &str) -> Option<BindingId> {
     let mut scope = Some(model.innermost_scope_at(token.text_range().start()));
     while let Some(id) = scope {
         let frame = model.scope(id);
@@ -808,6 +806,24 @@ fn function_ref(
     visiting: &mut BTreeSet<u32>,
 ) -> Option<FunctionRef> {
     if let SyntaxElement::Node(node) = value {
+        if let Some(paren) = crate::ast::ParenExpr::cast(node.clone()) {
+            return function_ref(model, root, &paren.inner()?, visiting);
+        }
+        if let Some(branch) = crate::ast::IfExpr::cast(node.clone()) {
+            let mut candidates = BTreeSet::new();
+            for value in branch
+                .then_elements()
+                .into_iter()
+                .flatten()
+                .chain(branch.else_elements().into_iter().flatten())
+            {
+                if let Some(reference) = function_ref(model, root, &value, &mut visiting.clone()) {
+                    candidates.extend(possible_functions(&reference));
+                }
+            }
+            return (!candidates.is_empty())
+                .then(|| FunctionRef::Unresolved(candidates.into_iter().collect()));
+        }
         let namespace = BinaryExpr::cast(node.clone())?.namespace_access()?;
         return Some(FunctionRef::Qualified {
             package: unbacktick(&namespace.package).to_string(),
@@ -818,7 +834,22 @@ fn function_ref(
     if !matches!(token.kind(), SyntaxKind::IDENT | SyntaxKind::STRING) {
         return None;
     }
-    if let Some(id) = read_binding(model, token) {
+    let name = if token.kind() == SyntaxKind::STRING {
+        crate::semantic::decode_string_literal(token.text())?
+    } else {
+        unbacktick(token.text()).to_string()
+    };
+    named_function_ref(model, root, token, &name, visiting)
+}
+
+fn named_function_ref(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+    token: &SyntaxToken,
+    name: &str,
+    visiting: &mut BTreeSet<u32>,
+) -> Option<FunctionRef> {
+    if let Some(id) = read_named_binding(model, token, name) {
         if visiting.len() >= 64 || !visiting.insert(id.0) {
             return None;
         }
@@ -827,38 +858,20 @@ fn function_ref(
         {
             return function_ref(model, root, &target, visiting);
         }
-        let mut systems = BTreeSet::new();
+        let mut candidates = BTreeSet::new();
         for candidate in model.variable_cohort(id) {
             let Some(target) = binding_assignment(root, model.binding(candidate).def_range)
                 .and_then(|assignment| assignment.value_element())
             else {
                 continue;
             };
-            match function_ref(model, root, &target, visiting) {
-                Some(FunctionRef::Qualified { package, name }) => {
-                    if let Some(system) =
-                        ClassSystem::from_callee(&name).filter(|system| package == system.package())
-                    {
-                        systems.insert(system);
-                    }
-                }
-                Some(FunctionRef::Bare { name, .. }) => {
-                    if let Some(system) = ClassSystem::from_callee(&name) {
-                        systems.insert(system);
-                    }
-                }
-                Some(FunctionRef::Unresolved(candidates)) => systems.extend(candidates),
-                None => {}
+            if let Some(reference) = function_ref(model, root, &target, &mut visiting.clone()) {
+                candidates.extend(possible_functions(&reference));
             }
         }
-        return (!systems.is_empty())
-            .then(|| FunctionRef::Unresolved(systems.into_iter().collect()));
+        return (!candidates.is_empty())
+            .then(|| FunctionRef::Unresolved(candidates.into_iter().collect()));
     }
-    let name = if token.kind() == SyntaxKind::STRING {
-        crate::semantic::decode_string_literal(token.text())?
-    } else {
-        unbacktick(token.text()).to_string()
-    };
     let in_function = token
         .parent()?
         .ancestors()
@@ -894,7 +907,7 @@ fn function_ref(
         }
     }
     Some(FunctionRef::Bare {
-        name,
+        name: name.into(),
         attached,
         attachment_uncertain,
     })

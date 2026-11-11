@@ -83,6 +83,21 @@ pub struct GenericDef {
     pub uncertainty: BTreeSet<OopUncertainty>,
 }
 
+impl GenericDef {
+    /// An uncertain call cannot establish a definite local alias target.
+    pub fn binding_known(&self) -> bool {
+        !self.uncertainty.iter().any(|issue| {
+            matches!(
+                issue,
+                OopUncertainty::Conditional
+                    | OopUncertainty::CustomEnvironment
+                    | OopUncertainty::InvalidArguments
+                    | OopUncertainty::UnresolvedCallee
+            )
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum DispatchClass {
     Formal(String),
@@ -149,6 +164,7 @@ pub enum OopUncertainty {
     DynamicMembers,
     UnresolvedCallee,
     UnresolvedImplementation,
+    UnresolvedAlias,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]

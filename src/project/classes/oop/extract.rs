@@ -110,7 +110,7 @@ fn factory(
     root: &SyntaxNode,
     call: &CallExpr,
 ) -> Option<(FunctionRef, String)> {
-    let reference = function_ref(model, root, &call.base()?, &mut BTreeSet::new())?;
+    let reference = call_function_ref(model, root, call)?;
     let name = match &reference {
         FunctionRef::Qualified { name, .. } | FunctionRef::Bare { name, .. } => name.clone(),
         FunctionRef::Unresolved(_) => return None,
@@ -124,38 +124,10 @@ fn accepts(reference: &FunctionRef, package: &str) -> bool {
             package: origin, ..
         } => origin == package,
         FunctionRef::Bare { .. } => true,
-        FunctionRef::Unresolved(_) => false,
+        FunctionRef::Unresolved(candidates) => candidates
+            .iter()
+            .any(|candidate| candidate.package == package),
     }
-}
-
-fn matched_args(call: &CallExpr, formals: &[&str]) -> Option<BTreeMap<String, Arg>> {
-    if !call
-        .syntax()
-        .children_with_tokens()
-        .any(|e| e.kind() == SyntaxKind::RPAREN)
-    {
-        return None;
-    }
-    let args: Vec<_> = call.arg_list()?.args().collect();
-    let names: Vec<_> = args.iter().map(Arg::name).collect();
-    let matched = crate::semantic::checked_match_args_to_formals(&names, formals).ok()?;
-    let mut result = BTreeMap::new();
-    for (arg, formal) in args.into_iter().zip(matched) {
-        if arg
-            .value()
-            .is_some_and(|value| matches!(value, SyntaxElement::Token(ref t) if t.text() == "..."))
-        {
-            return None;
-        }
-        if let Some(formal) = formal {
-            result.insert(formal.to_string(), arg);
-        }
-    }
-    Some(result)
-}
-
-fn argument(args: &BTreeMap<String, Arg>, name: &str) -> Option<SyntaxElement> {
-    args.get(name)?.value()
 }
 
 fn uncertainty(node: &SyntaxNode, reference: &FunctionRef) -> BTreeSet<OopUncertainty> {
@@ -176,30 +148,16 @@ pub(in crate::project::classes) fn declaration_roots(
     model: &SemanticModel,
     root: &SyntaxNode,
 ) -> Vec<SyntaxNode> {
-    root.descendants()
-        .filter_map(CallExpr::cast)
-        .filter_map(|call| {
-            let (reference, name) = factory(model, root, &call)?;
+    factories(model, root)
+        .into_iter()
+        .filter_map(|(call, reference, name)| {
             let package = match name.as_str() {
                 "setGeneric" | "setMethod" | "setReplaceMethod" => "methods",
-                "new_generic" | "method" => "S7",
+                "new_generic" | "method<-" => "S7",
                 "registerS3method" | "UseMethod" => "base",
                 _ => return None,
             };
             if !accepts(&reference, package) {
-                return None;
-            }
-            if name == "method"
-                && !call
-                    .syntax()
-                    .parent()
-                    .and_then(AssignmentExpr::cast)
-                    .is_some_and(|assignment| {
-                        assignment
-                            .value_element()
-                            .is_some_and(|value| value.text_range() != call.syntax().text_range())
-                    })
-            {
                 return None;
             }
             if name == "UseMethod" {
@@ -309,7 +267,22 @@ impl Projection<'_> {
                 let factory = constructor
                     .as_ref()
                     .and_then(|call| factory(self.model, self.root, call));
-                let mut issues = BTreeSet::new();
+                let mut issues: BTreeSet<_> = def
+                    .uncertainty
+                    .iter()
+                    .filter_map(|issue| {
+                        Some(match issue {
+                            ClassUncertainty::Conditional => OopUncertainty::Conditional,
+                            ClassUncertainty::CustomEnvironment => {
+                                OopUncertainty::CustomEnvironment
+                            }
+                            ClassUncertainty::InvalidArguments => OopUncertainty::InvalidArguments,
+                            ClassUncertainty::DynamicName => OopUncertainty::DynamicName,
+                            ClassUncertainty::UnresolvedCallee => OopUncertainty::UnresolvedCallee,
+                            ClassUncertainty::DynamicParent => return None,
+                        })
+                    })
+                    .collect();
                 let entries = match (constructor, &factory) {
                     (Some(call), Some((reference, name)))
                         if accepts(reference, "base")
@@ -417,10 +390,7 @@ impl Projection<'_> {
     }
 
     fn generics(&mut self) {
-        for call in self.root.descendants().filter_map(CallExpr::cast) {
-            let Some((reference, name)) = factory(self.model, self.root, &call) else {
-                continue;
-            };
+        for (call, reference, name) in factories(self.model, self.root) {
             let (system, node, formals) = match name.as_str() {
                 "setGeneric" if accepts(&reference, "methods") => (
                     OopSystem::S4,
@@ -542,7 +512,7 @@ impl Projection<'_> {
             } else {
                 assigned_name(&node)
             };
-            self.facts.generics.push(GenericDef {
+            let def = GenericDef {
                 key: key.clone(),
                 name: generic_name,
                 binding: binding.clone(),
@@ -550,21 +520,36 @@ impl Projection<'_> {
                 signature,
                 dispatch_arguments,
                 uncertainty: issues,
-            });
+            };
+            let binding_known = def.binding_known();
+            if binding_known
+                && system == OopSystem::S4
+                && let ClassName::Known(name) = &def.name
+            {
+                self.facts.generic_bindings.push(GenericBinding {
+                    owner: key.owner.clone(),
+                    name: name.clone(),
+                    target: key.clone(),
+                });
+            }
+            self.facts.generics.push(def);
             let generic_value = if system == OopSystem::S3 {
                 function
             } else {
                 Some(SyntaxElement::Node(node))
             };
-            if let Some(value) = generic_value {
+            if binding_known && let Some(value) = generic_value {
                 self.generic_values.insert(value.text_range(), key.clone());
             }
-            if let Some(name) = binding {
-                self.facts.generic_bindings.push(GenericBinding {
+            if binding_known && let Some(name) = binding {
+                let binding = GenericBinding {
                     owner: key.owner.clone(),
                     name,
                     target: key.clone(),
-                });
+                };
+                if !self.facts.generic_bindings.contains(&binding) {
+                    self.facts.generic_bindings.push(binding);
+                }
             }
             self.site(
                 name_value
@@ -615,7 +600,33 @@ impl Projection<'_> {
             return Some(key.clone());
         }
         let token = value.as_token()?;
-        let binding = read_binding(self.model, token)?;
+        if token.kind() != SyntaxKind::IDENT {
+            return None;
+        }
+        let Some(binding) = read_binding(self.model, token) else {
+            let owner = owner_at(&token.parent()?, self.owners);
+            for depth in (0..=owner.0.len()).rev() {
+                let candidates: BTreeSet<_> = self
+                    .facts
+                    .generic_bindings
+                    .iter()
+                    .filter(|binding| {
+                        binding.name == unbacktick(token.text())
+                            && binding.owner.0 == owner.0[..depth]
+                            && self.generic_values.iter().any(|(range, key)| {
+                                key == &binding.target && range.end() <= token.text_range().start()
+                            })
+                    })
+                    .map(|binding| binding.target.clone())
+                    .collect();
+                if !candidates.is_empty() {
+                    return (candidates.len() == 1)
+                        .then(|| candidates.into_iter().next())
+                        .flatten();
+                }
+            }
+            return None;
+        };
         if visiting.len() >= 64
             || !visiting.insert(binding.0)
             || self.model.binding(binding).def_range.start() >= token.text_range().start()
@@ -676,20 +687,20 @@ impl Projection<'_> {
         let Some(value) = value else {
             return result;
         };
+        if let Some(key) = self.generic_value(&value, &mut BTreeSet::new())
+            && let Some(def) = self
+                .facts
+                .generics
+                .iter()
+                .find(|def| def.key == key && def.key.system == system)
+        {
+            result.name = def.name.clone();
+            result.owner = def.key.owner.clone();
+            result.by_binding = false;
+            result.local = Some(key);
+            return result;
+        }
         if by_binding {
-            if let Some(key) = self.generic_value(&value, &mut BTreeSet::new())
-                && let Some(def) = self
-                    .facts
-                    .generics
-                    .iter()
-                    .find(|def| def.key == key && def.key.system == system)
-            {
-                result.name = def.name.clone();
-                result.owner = def.key.owner.clone();
-                result.by_binding = false;
-                result.local = Some(key);
-                return result;
-            }
             if let Some(namespace) = value
                 .as_node()
                 .cloned()
@@ -818,10 +829,7 @@ impl Projection<'_> {
     }
 
     fn registered_methods(&mut self) {
-        for call in self.root.descendants().filter_map(CallExpr::cast) {
-            let Some((reference, name)) = factory(self.model, self.root, &call) else {
-                continue;
-            };
+        for (call, reference, name) in factories(self.model, self.root) {
             let (system, formals) = match name.as_str() {
                 "setMethod" | "setReplaceMethod" if accepts(&reference, "methods") => (
                     OopSystem::S4,
@@ -834,31 +842,22 @@ impl Projection<'_> {
                         "sealed",
                     ][..],
                 ),
-                "method" if accepts(&reference, "S7") => {
-                    (OopSystem::S7, &["generic", "class", "...", "env"][..])
+                "method<-" if accepts(&reference, "S7") => {
+                    (OopSystem::S7, &["generic", "signature", "value"][..])
                 }
                 "registerS3method" if accepts(&reference, "base") => {
                     (OopSystem::S3, &["genname", "class", "method", "envir"][..])
                 }
                 _ => continue,
             };
-            let assignment = call.syntax().parent().and_then(AssignmentExpr::cast);
-            if system == OopSystem::S7
-                && !assignment.as_ref().is_some_and(|assignment| {
-                    assignment
-                        .value_element()
-                        .is_some_and(|value| value.text_range() != call.syntax().text_range())
-                })
-            {
-                continue;
-            }
+            let assignment = replacement_assignment(&call);
             let node = assignment
                 .as_ref()
                 .filter(|_| system == OopSystem::S7)
                 .map_or(call.syntax(), |assignment| assignment.syntax());
             let key = self.key(node, system, OopKind::Method);
             let mut issues = uncertainty(node, &reference);
-            let args = matched_args(&call, formals);
+            let args = registration_args(&call, &name, formals);
             if args.is_none() {
                 issues.insert(OopUncertainty::InvalidArguments);
             }
@@ -882,6 +881,15 @@ impl Projection<'_> {
             if generic.name == ClassName::Unknown {
                 issues.insert(OopUncertainty::DynamicName);
             }
+            if generic.by_binding
+                && generic.local.is_none()
+                && generic_value
+                    .as_ref()
+                    .and_then(SyntaxElement::as_token)
+                    .is_some_and(|token| read_binding(self.model, token).is_some())
+            {
+                issues.insert(OopUncertainty::UnresolvedAlias);
+            }
             if value(if system == OopSystem::S4 {
                 "where"
             } else if system == OopSystem::S7 {
@@ -894,7 +902,7 @@ impl Projection<'_> {
                 issues.insert(OopUncertainty::CustomEnvironment);
             }
             let dispatch = self.dispatch(
-                value(if system == OopSystem::S4 {
+                value(if matches!(system, OopSystem::S4 | OopSystem::S7) {
                     "signature"
                 } else {
                     "class"
@@ -911,15 +919,13 @@ impl Projection<'_> {
             {
                 issues.insert(OopUncertainty::DynamicSignature);
             }
-            let implementation = if system == OopSystem::S7 {
-                assignment.and_then(|assignment| assignment.value_element())
+            let implementation = value(if system == OopSystem::S4 {
+                "definition"
+            } else if system == OopSystem::S7 {
+                "value"
             } else {
-                value(if system == OopSystem::S4 {
-                    "definition"
-                } else {
-                    "method"
-                })
-            };
+                "method"
+            });
             let signature = self.implementation_signature(implementation, &mut BTreeSet::new());
             if signature.is_none() {
                 issues.insert(OopUncertainty::UnresolvedImplementation);
@@ -1008,7 +1014,17 @@ impl Projection<'_> {
             };
             for ((_, class), generic) in references {
                 let key = self.key(assignment.syntax(), OopSystem::S3, OopKind::Method);
-                let mut issues = BTreeSet::new();
+                let mut issues: BTreeSet<_> = self
+                    .facts
+                    .generics
+                    .iter()
+                    .filter(|def| {
+                        def.key.system == OopSystem::S3
+                            && def.key.owner == owner
+                            && def.name == generic.name
+                    })
+                    .flat_map(|def| def.uncertainty.iter().copied())
+                    .collect();
                 if !unconditional(assignment.syntax()) {
                     issues.insert(OopUncertainty::Conditional);
                 }
@@ -1153,16 +1169,13 @@ impl Projection<'_> {
                                 .find(|arg| arg.name().as_deref() == Some("class"))
                         })
                         .and_then(|arg| arg.value())
-                } else if name == "class" {
-                    call.syntax()
-                        .parent()
-                        .and_then(AssignmentExpr::cast)
-                        .filter(|assignment| {
-                            assignment.value_element().is_some_and(|value| {
-                                value.text_range() != call.syntax().text_range()
-                            })
-                        })
+                } else if name == "class<-" {
+                    replacement_assignment(&call)
                         .and_then(|assignment| assignment.value_element())
+                        .or_else(|| {
+                            matched_args(&call, &["x", "value"])
+                                .and_then(|args| argument(&args, "value"))
+                        })
                 } else {
                     None
                 };
