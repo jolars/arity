@@ -472,13 +472,17 @@ coverage need not block useful workspace support.
   `tests/lsp_protocol/oop.rs`. The shared CLI and LSP baselines cover live edits
   and label known gaps explicitly; the parser check also covers incomplete
   input losslessly.
-- [ ] Add a developer-only differential oracle with pinned R, R6, and S7
+- [x] Add a developer-only differential oracle with pinned R, R6, and S7
   versions. Record class and member declarations, method environments,
   constructor formals, and dispatch outcomes as small reviewed fixtures
   usable by pure Rust tests. Keep R execution out of production and ordinary CI.
   Assert parser losslessness, formatter idempotence, and full and
   incremental parse agreement for the same examples; add grammar work only
   for demonstrated syntax gaps.
+  Added five runtime fixtures in `tests/fixtures/oop_oracle/`, pinned to R
+  4.6.1, R6 2.6.1, and S7 0.2.2. `task oop-oracle` checks original and formatted
+  runtime observations; ordinary Rust tests consume the pins and verify the
+  supported class projection and parser, formatter, and reparse invariants.
 
 #### 1. Shared declarations and identity
 

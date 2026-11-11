@@ -1,0 +1,122 @@
+{
+  "facts": {
+    "classes": [
+      {
+        "binding": "Point",
+        "members": {
+          "value": "slot"
+        },
+        "name": "Point",
+        "parents": []
+      },
+      {
+        "binding": "ColoredPoint",
+        "members": {
+          "color": "slot",
+          "value": "slot"
+        },
+        "name": "ColoredPoint",
+        "parents": [
+          "Point"
+        ]
+      }
+    ],
+    "constructors": [
+      {
+        "binding": "Point",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "ColoredPoint",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      }
+    ],
+    "dispatch": [
+      {
+        "classes": [
+          "Point"
+        ],
+        "expression": "describe(base)",
+        "value": "point 1"
+      },
+      {
+        "classes": [
+          "ColoredPoint"
+        ],
+        "expression": "describe(child)",
+        "value": "red point 2"
+      },
+      {
+        "classes": [
+          "Point"
+        ],
+        "expression": "combine(base, child)",
+        "value": "3"
+      }
+    ],
+    "methods": [
+      {
+        "environment": [],
+        "formals": [
+          {
+            "default": null,
+            "name": "x"
+          }
+        ],
+        "generic": "describe",
+        "signature": [
+          "Point"
+        ]
+      },
+      {
+        "environment": [],
+        "formals": [
+          {
+            "default": null,
+            "name": "x"
+          }
+        ],
+        "generic": "describe",
+        "signature": [
+          "ColoredPoint"
+        ]
+      },
+      {
+        "environment": [],
+        "formals": [
+          {
+            "default": null,
+            "name": "x"
+          },
+          {
+            "default": null,
+            "name": "y"
+          }
+        ],
+        "generic": "combine",
+        "signature": [
+          "Point",
+          "ColoredPoint"
+        ]
+      }
+    ],
+    "system": "s4"
+  },
+  "observer": "owner <- environment()\nclass_facts <- function(name, binding) {\n  definition <- methods::getClassDef(name, where = owner)\n  list(name = definition@className[[1L]], binding = binding,\n       parents = as.list(names(Filter(function(x) x@distance == 1L, definition@contains))),\n       members = as.list(setNames(rep(\"slot\", length(definition@slots)), names(definition@slots))))\n}\nfacts <- list(\n  system = \"s4\",\n  classes = list(class_facts(\"Point\", \"Point\"), class_facts(\"ColoredPoint\", \"ColoredPoint\")),\n  constructors = list(\n    list(binding = \"Point\", formals = formal_facts(Point)),\n    list(binding = \"ColoredPoint\", formals = formal_facts(ColoredPoint))\n  ),\n  methods = list(\n    method_facts(\"describe\", \"Point\", methods::getMethod(\"describe\", \"Point\", where = owner), owner),\n    method_facts(\"describe\", \"ColoredPoint\", methods::getMethod(\"describe\", \"ColoredPoint\", where = owner), owner),\n    method_facts(\"combine\", c(\"Point\", \"ColoredPoint\"),\n                 methods::getMethod(\"combine\", c(\"Point\", \"ColoredPoint\"), where = owner), owner)\n  ),\n  dispatch = list(\n    dispatch_facts(\"describe(base)\", base, owner),\n    dispatch_facts(\"describe(child)\", child, owner),\n    dispatch_facts(\"combine(base, child)\", base, owner)\n  )\n)\n",
+  "source": "Point <- methods::setClass(\"Point\", slots = c(value = \"numeric\"))\nColoredPoint <- methods::setClass(\n  \"ColoredPoint\", contains = \"Point\", slots = c(color = \"character\")\n)\nmethods::setGeneric(\"describe\", function(x) standardGeneric(\"describe\"))\nmethods::setMethod(\"describe\", \"Point\", function(x) paste(\"point\", x@value))\nmethods::setMethod(\"describe\", \"ColoredPoint\", function(x) {\n  paste(x@color, callNextMethod())\n})\nmethods::setGeneric(\"combine\", function(x, y) standardGeneric(\"combine\"))\nmethods::setMethod(\"combine\", c(\"Point\", \"ColoredPoint\"), function(x, y) {\n  x@value + y@value\n})\nbase <- Point(value = 1)\nchild <- ColoredPoint(value = 2, color = \"red\")\n",
+  "versions": {
+    "r": "4.6.1",
+    "r6": "2.6.1",
+    "s7": "0.2.2"
+  }
+}
