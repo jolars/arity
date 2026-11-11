@@ -35,5 +35,6 @@ compute run -- cargo insta review
 ```
 
 The tests do not require R, R6, or S7. During the initial audit, the complete
-fixtures were also executed with R 4.6.1, R6 2.6.1, and S7 0.2.2. A pinned,
-developer-only differential oracle is the next roadmap slice.
+fixtures were also executed with R 4.6.1, R6 2.6.1, and S7 0.2.2. The separate
+[runtime oracle](../oop_oracle/README.md) pins observations from those versions
+and checks parser, formatter, and incremental invariants on executable examples.

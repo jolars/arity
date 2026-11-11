@@ -1,0 +1,117 @@
+{
+  "facts": {
+    "classes": [
+      {
+        "binding": "Point",
+        "members": {
+          "value": "property"
+        },
+        "name": "Point",
+        "parents": []
+      },
+      {
+        "binding": "ColoredPoint",
+        "members": {
+          "color": "property",
+          "value": "property"
+        },
+        "name": "ColoredPoint",
+        "parents": [
+          "Point"
+        ]
+      }
+    ],
+    "constructors": [
+      {
+        "binding": "Point",
+        "formals": [
+          {
+            "default": "integer(0)",
+            "name": "value"
+          }
+        ]
+      },
+      {
+        "binding": "ColoredPoint",
+        "formals": [
+          {
+            "default": "integer(0)",
+            "name": "value"
+          },
+          {
+            "default": "character(0)",
+            "name": "color"
+          }
+        ]
+      }
+    ],
+    "dispatch": [
+      {
+        "classes": [
+          "Point",
+          "S7_object"
+        ],
+        "expression": "describe(base)",
+        "value": "point 1"
+      },
+      {
+        "classes": [
+          "ColoredPoint",
+          "Point",
+          "S7_object"
+        ],
+        "expression": "describe(child)",
+        "value": "point 2"
+      },
+      {
+        "classes": [
+          "Point",
+          "S7_object"
+        ],
+        "expression": "combine(base, child)",
+        "value": "3"
+      }
+    ],
+    "methods": [
+      {
+        "environment": [],
+        "formals": [
+          {
+            "default": null,
+            "name": "x"
+          }
+        ],
+        "generic": "describe",
+        "signature": [
+          "Point"
+        ]
+      },
+      {
+        "environment": [],
+        "formals": [
+          {
+            "default": null,
+            "name": "x"
+          },
+          {
+            "default": null,
+            "name": "y"
+          }
+        ],
+        "generic": "combine",
+        "signature": [
+          "Point",
+          "ColoredPoint"
+        ]
+      }
+    ],
+    "system": "s7"
+  },
+  "observer": "owner <- environment()\nclass_facts <- function(class, binding, object) {\n  list(name = class@name, binding = binding,\n       parents = if (identical(class@parent, S7::S7_object)) list() else list(class@parent@name),\n       members = as.list(setNames(rep(\"property\", length(S7::prop_names(object))), S7::prop_names(object))))\n}\nfacts <- list(\n  system = \"s7\",\n  classes = list(class_facts(Point, \"Point\", base), class_facts(ColoredPoint, \"ColoredPoint\", child)),\n  constructors = list(\n    list(binding = \"Point\", formals = formal_facts(Point)),\n    list(binding = \"ColoredPoint\", formals = formal_facts(ColoredPoint))\n  ),\n  methods = list(\n    method_facts(\"describe\", \"Point\", S7::method(describe, Point), owner),\n    method_facts(\"combine\", c(\"Point\", \"ColoredPoint\"), S7::method(combine, list(Point, ColoredPoint)), owner)\n  ),\n  dispatch = list(\n    dispatch_facts(\"describe(base)\", base, owner),\n    dispatch_facts(\"describe(child)\", child, owner),\n    dispatch_facts(\"combine(base, child)\", base, owner)\n  )\n)\n",
+  "source": "Point <- S7::new_class(\"Point\", properties = list(value = S7::class_numeric))\nColoredPoint <- S7::new_class(\n  \"ColoredPoint\", parent = Point, properties = list(color = S7::class_character)\n)\ndescribe <- S7::new_generic(\"describe\", \"x\")\nS7::method(describe, Point) <- function(x) paste(\"point\", x@value)\ncombine <- S7::new_generic(\"combine\", c(\"x\", \"y\"))\nS7::method(combine, list(Point, ColoredPoint)) <- function(x, y) x@value + y@value\nbase <- Point(value = 1)\nchild <- ColoredPoint(value = 2, color = \"red\")\n",
+  "versions": {
+    "r": "4.6.1",
+    "r6": "2.6.1",
+    "s7": "0.2.2"
+  }
+}

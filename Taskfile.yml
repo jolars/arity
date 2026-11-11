@@ -112,6 +112,16 @@ tasks:
     cmds:
       - Rscript --vanilla scripts/rd-oracle.R --refresh crates/arity-parser/tests/fixtures/rd
 
+  oop-oracle:
+    desc: Compare OOP runtime facts and formatted sources with pins (needs pinned R, R6, and S7)
+    cmds:
+      - cargo test --test oop_oracle -- --ignored --nocapture
+
+  oop-oracle-refresh:
+    desc: Refresh OOP runtime pins with pinned R, R6, and S7 (review every expected.json diff)
+    cmds:
+      - UPDATE_OOP_ORACLE=1 cargo test --test oop_oracle live_runtime_matches_pins_and_formatted_sources -- --ignored --nocapture
+
   dcf-oracle:
     desc: Check the DCF parser and formatter against R's own `read.dcf` (needs R)
     cmds:

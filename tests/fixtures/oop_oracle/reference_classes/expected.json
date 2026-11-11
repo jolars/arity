@@ -1,0 +1,128 @@
+{
+  "facts": {
+    "classes": [
+      {
+        "binding": "Base",
+        "members": {
+          "read": "method",
+          "value": "field"
+        },
+        "name": "Base",
+        "parents": []
+      },
+      {
+        "binding": "Child",
+        "members": {
+          "label": "field",
+          "read": "method",
+          "value": "field"
+        },
+        "name": "Child",
+        "parents": [
+          "Base"
+        ]
+      }
+    ],
+    "constructors": [
+      {
+        "binding": "Base$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Child$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      }
+    ],
+    "dispatch": [
+      {
+        "classes": [
+          "Base"
+        ],
+        "expression": "base$read()",
+        "value": "1"
+      },
+      {
+        "classes": [
+          "Child"
+        ],
+        "expression": "child$read()",
+        "value": "child 4"
+      },
+      {
+        "classes": [
+          "Child"
+        ],
+        "expression": "child$read(scale = 3)",
+        "value": "child 6"
+      }
+    ],
+    "methods": [
+      {
+        "environment": [
+          [
+            ".->value",
+            ".refClassDef",
+            ".self",
+            "read",
+            "value"
+          ]
+        ],
+        "formals": [
+          {
+            "default": "1",
+            "name": "scale"
+          }
+        ],
+        "generic": "read",
+        "signature": [
+          "Base"
+        ]
+      },
+      {
+        "environment": [
+          [
+            "callSuper"
+          ],
+          [
+            ".->label",
+            ".->value",
+            ".refClassDef",
+            ".self",
+            "label",
+            "read",
+            "read#Base",
+            "value"
+          ]
+        ],
+        "formals": [
+          {
+            "default": "2",
+            "name": "scale"
+          }
+        ],
+        "generic": "read",
+        "signature": [
+          "Child"
+        ]
+      }
+    ],
+    "system": "reference_classes"
+  },
+  "observer": "owner <- environment()\nclass_facts <- function(generator, binding) {\n  definition <- methods::getClassDef(generator@className, where = owner)\n  list(name = generator@className[[1L]], binding = binding,\n       parents = as.list(setdiff(names(Filter(function(x) x@distance == 1L, definition@contains)), \"envRefClass\")),\n       members = c(as.list(setNames(rep(\"field\", length(generator$fields())), names(generator$fields()))),\n                   list(read = if (\"read\" %in% generator$methods()) \"method\" else stop(\"missing read\"))))\n}\nfacts <- list(\n  system = \"reference_classes\",\n  classes = list(class_facts(Base, \"Base\"), class_facts(Child, \"Child\")),\n  constructors = list(\n    list(binding = \"Base$new\", formals = formal_facts(Base$new)),\n    list(binding = \"Child$new\", formals = formal_facts(Child$new))\n  ),\n  methods = list(\n    method_facts(\"read\", \"Base\", base$read, owner),\n    method_facts(\"read\", \"Child\", child$read, owner)\n  ),\n  dispatch = list(\n    dispatch_facts(\"base$read()\", base, owner),\n    dispatch_facts(\"child$read()\", child, owner),\n    dispatch_facts(\"child$read(scale = 3)\", child, owner)\n  )\n)\n",
+  "source": "Base <- methods::setRefClass(\n  \"Base\", fields = list(value = \"numeric\"),\n  methods = list(read = function(scale = 1) .self$value * scale)\n)\nChild <- methods::setRefClass(\n  \"Child\", contains = \"Base\", fields = list(label = \"character\"),\n  methods = list(read = function(scale = 2) paste(label, callSuper(scale)))\n)\nbase <- Base$new(value = 1)\nchild <- Child$new(value = 2, label = \"child\")\n",
+  "versions": {
+    "r": "4.6.1",
+    "r6": "2.6.1",
+    "s7": "0.2.2"
+  }
+}

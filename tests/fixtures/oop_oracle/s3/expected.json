@@ -1,0 +1,141 @@
+{
+  "facts": {
+    "classes": [
+      {
+        "binding": "point",
+        "members": {
+          "value": "field"
+        },
+        "name": "point",
+        "parents": []
+      },
+      {
+        "binding": "colored_point",
+        "members": {
+          "color": "field",
+          "value": "field"
+        },
+        "name": "colored_point",
+        "parents": [
+          "point"
+        ]
+      }
+    ],
+    "constructors": [
+      {
+        "binding": "point",
+        "formals": [
+          {
+            "default": "1",
+            "name": "value"
+          }
+        ]
+      },
+      {
+        "binding": "colored_point",
+        "formals": [
+          {
+            "default": "2",
+            "name": "value"
+          },
+          {
+            "default": "\"red\"",
+            "name": "color"
+          }
+        ]
+      }
+    ],
+    "dispatch": [
+      {
+        "classes": [
+          "point"
+        ],
+        "expression": "describe(base)",
+        "value": "point 1"
+      },
+      {
+        "classes": [
+          "colored_point",
+          "point"
+        ],
+        "expression": "describe(child)",
+        "value": "red point 2"
+      },
+      {
+        "classes": [
+          "numeric"
+        ],
+        "expression": "describe(0)",
+        "value": "default"
+      },
+      {
+        "classes": [
+          "point"
+        ],
+        "expression": "(base + 3)$value",
+        "value": "4"
+      }
+    ],
+    "methods": [
+      {
+        "environment": [],
+        "formals": [
+          {
+            "default": null,
+            "name": "x"
+          },
+          {
+            "default": null,
+            "name": "..."
+          }
+        ],
+        "generic": "describe",
+        "signature": [
+          "point"
+        ]
+      },
+      {
+        "environment": [],
+        "formals": [
+          {
+            "default": null,
+            "name": "x"
+          },
+          {
+            "default": null,
+            "name": "..."
+          }
+        ],
+        "generic": "describe",
+        "signature": [
+          "colored_point"
+        ]
+      },
+      {
+        "environment": [],
+        "formals": [
+          {
+            "default": null,
+            "name": "e1"
+          },
+          {
+            "default": null,
+            "name": "e2"
+          }
+        ],
+        "generic": "+",
+        "signature": [
+          "point"
+        ]
+      }
+    ],
+    "system": "s3"
+  },
+  "observer": "owner <- environment()\nfacts <- list(\n  system = \"s3\",\n  classes = list(\n    list(name = class(base)[[1L]], binding = \"point\", parents = list(),\n         members = as.list(setNames(rep(\"field\", length(base)), names(base)))),\n    list(name = class(child)[[1L]], binding = \"colored_point\",\n         parents = as.list(class(child)[-1L]),\n         members = as.list(setNames(rep(\"field\", length(child)), names(child))))\n  ),\n  constructors = list(\n    list(binding = \"point\", formals = formal_facts(point)),\n    list(binding = \"colored_point\", formals = formal_facts(colored_point))\n  ),\n  methods = list(\n    method_facts(\"describe\", \"point\", getS3method(\"describe\", \"point\", envir = owner), owner),\n    method_facts(\"describe\", \"colored_point\", getS3method(\"describe\", \"colored_point\", envir = owner), owner),\n    method_facts(\"+\", \"point\", getS3method(\"+\", \"point\", envir = owner), owner)\n  ),\n  dispatch = list(\n    dispatch_facts(\"describe(base)\", base, owner),\n    dispatch_facts(\"describe(child)\", child, owner),\n    dispatch_facts(\"describe(0)\", 0, owner),\n    dispatch_facts(\"(base + 3)$value\", base, owner)\n  )\n)\n",
+  "source": "point <- function(value = 1) {\n  structure(list(value = value), class = \"point\")\n}\ncolored_point <- function(value = 2, color = \"red\") {\n  structure(list(value = value, color = color), class = c(\"colored_point\", \"point\"))\n}\ndescribe <- function(x, ...) UseMethod(\"describe\")\ndescribe.default <- function(x, ...) \"default\"\ndescribe.point <- function(x, ...) paste(\"point\", x$value)\ndescribe.colored_point <- function(x, ...) paste(x$color, NextMethod())\n`+.point` <- function(e1, e2) point(e1$value + e2)\nbase <- point()\nchild <- colored_point()\n",
+  "versions": {
+    "r": "4.6.1",
+    "r6": "2.6.1",
+    "s7": "0.2.2"
+  }
+}
