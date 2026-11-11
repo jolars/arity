@@ -60,6 +60,7 @@ impl Projection<'_> {
             value,
             &self.class_keys,
             &mut BTreeSet::new(),
+            false,
         )
     }
 }
@@ -320,15 +321,36 @@ impl Projection<'_> {
                     if name.is_none() {
                         member_issues.insert(OopUncertainty::DynamicName);
                     }
-                    let callable = signature(arg.value());
-                    let member_kind = if callable.is_some()
-                        && kind == MemberKind::Field
-                        && def.system() == ClassSystem::R6
+                    let implementation =
+                        self.implementation_value(arg.value(), &mut BTreeSet::new(), false);
+                    let callable = signature(implementation.clone());
+                    let member_kind =
+                        if kind == MemberKind::Field && def.system() == ClassSystem::R6 {
+                            if callable.is_some() {
+                                MemberKind::Method
+                            } else if implementation.and_then(crate::ast::Expr::cast).is_some_and(
+                                |value| match value {
+                                    crate::ast::Expr::Name(name) => name.is_reserved_constant(),
+                                    crate::ast::Expr::IntLiteral(_)
+                                    | crate::ast::Expr::FloatLiteral(_)
+                                    | crate::ast::Expr::StringLiteral(_)
+                                    | crate::ast::Expr::ComplexLiteral(_) => true,
+                                    _ => false,
+                                },
+                            ) {
+                                MemberKind::Field
+                            } else {
+                                member_issues.insert(OopUncertainty::UnresolvedImplementation);
+                                MemberKind::Unknown
+                            }
+                        } else {
+                            kind
+                        };
+                    if callable.is_none()
+                        && matches!(member_kind, MemberKind::Method | MemberKind::ActiveBinding)
                     {
-                        MemberKind::Method
-                    } else {
-                        kind
-                    };
+                        member_issues.insert(OopUncertainty::UnresolvedImplementation);
+                    }
                     let key = self.key(call.syntax(), def.system().into(), OopKind::Member);
                     let method = if callable.is_some()
                         && matches!(member_kind, MemberKind::Method | MemberKind::ActiveBinding)
@@ -515,16 +537,20 @@ impl Projection<'_> {
             let def = GenericDef {
                 key: key.clone(),
                 name: generic_name,
-                binding: binding.clone(),
+                binding,
                 factory: reference,
                 signature,
                 dispatch_arguments,
                 uncertainty: issues,
             };
-            let binding_known = def.binding_known();
-            if binding_known
+            let binding_possible = def.binding_possible();
+            if binding_possible
                 && system == OopSystem::S4
                 && let ClassName::Known(name) = &def.name
+                && name_value
+                    .as_ref()
+                    .and_then(SyntaxElement::as_token)
+                    .is_some_and(|token| read_named_binding(self.model, token, name).is_none())
             {
                 self.facts.generic_bindings.push(GenericBinding {
                     owner: key.owner.clone(),
@@ -538,18 +564,8 @@ impl Projection<'_> {
             } else {
                 Some(SyntaxElement::Node(node))
             };
-            if binding_known && let Some(value) = generic_value {
+            if binding_possible && let Some(value) = generic_value {
                 self.generic_values.insert(value.text_range(), key.clone());
-            }
-            if binding_known && let Some(name) = binding {
-                let binding = GenericBinding {
-                    owner: key.owner.clone(),
-                    name,
-                    target: key.clone(),
-                };
-                if !self.facts.generic_bindings.contains(&binding) {
-                    self.facts.generic_bindings.push(binding);
-                }
             }
             self.site(
                 name_value
@@ -638,6 +654,20 @@ impl Projection<'_> {
 
     fn generic_bindings(&mut self) {
         for (index, binding) in self.model.bindings().iter().enumerate() {
+            let frame = self
+                .root
+                .covering_element(binding.def_range)
+                .parent()
+                .and_then(|node| {
+                    node.ancestors()
+                        .find(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
+                });
+            if frame
+                .as_ref()
+                .is_some_and(|frame| !self.owners.contains_key(&frame.text_range()))
+            {
+                continue;
+            }
             let Some(value) = stable_value(self.model, self.root, BindingId::from_index(index))
             else {
                 continue;
@@ -731,15 +761,46 @@ impl Projection<'_> {
         value: Option<SyntaxElement>,
         visiting: &mut BTreeSet<u32>,
     ) -> Option<CallableSignature> {
+        signature(self.implementation_value(value, visiting, true))
+    }
+
+    fn implementation_value(
+        &self,
+        value: Option<SyntaxElement>,
+        visiting: &mut BTreeSet<u32>,
+        quoted_names: bool,
+    ) -> Option<SyntaxElement> {
         let value = value?;
-        if let Some(signature) = signature(Some(value.clone())) {
-            return Some(signature);
+        if let Some(paren) = value
+            .as_node()
+            .cloned()
+            .and_then(crate::ast::ParenExpr::cast)
+        {
+            return self.implementation_value(paren.inner(), visiting, quoted_names);
         }
-        let binding = read_binding(self.model, value.as_token()?)?;
-        if visiting.len() >= 64 || !visiting.insert(binding.0) {
+        let Some(token) = value.as_token().filter(|token| {
+            token.kind() == SyntaxKind::IDENT
+                || (quoted_names && token.kind() == SyntaxKind::STRING)
+        }) else {
+            return Some(value);
+        };
+        if crate::ast::Expr::cast(value.clone()).is_some_and(
+            |value| matches!(value, crate::ast::Expr::Name(name) if name.is_reserved_constant()),
+        ) {
+            return Some(value);
+        }
+        let binding = read_binding(self.model, token)?;
+        if visiting.len() >= 64
+            || !visiting.insert(binding.0)
+            || self.model.binding(binding).def_range.start() >= token.text_range().start()
+        {
             return None;
         }
-        self.implementation_signature(stable_value(self.model, self.root, binding), visiting)
+        self.implementation_value(
+            stable_value(self.model, self.root, binding),
+            visiting,
+            quoted_names,
+        )
     }
 
     fn dispatch(

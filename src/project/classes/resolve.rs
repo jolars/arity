@@ -214,17 +214,11 @@ impl ClassIndex {
         }
         for (id, class) in &index.declarations {
             let def = &class.declaration;
+            let deferred = def.system() == ClassSystem::R6 || !id.key.owner.0.is_empty();
             let candidates: Vec<_> = def
                 .parents
                 .iter()
-                .map(|parent| {
-                    index.resolve_reference(
-                        &id.path,
-                        &id.key.owner,
-                        parent,
-                        !id.key.owner.0.is_empty(),
-                    )
-                })
+                .map(|parent| index.resolve_reference(&id.path, &id.key.owner, parent, deferred))
                 .collect();
             index
                 .parent_candidates
@@ -243,7 +237,7 @@ impl ClassIndex {
                 continue;
             }
             for (reference, parents) in def.parents.iter().zip(candidates) {
-                if !index.reference_known(&id.path, &id.key.owner, reference)
+                if !index.reference_known(&id.path, &id.key.owner, reference, deferred)
                     || resolution.scope.for_file(&id.path).resolution_incomplete
                 {
                     continue;
@@ -297,16 +291,22 @@ impl ClassIndex {
         self.namespace.generic_files(path, name, None)
     }
 
-    fn reference_known(&self, path: &Path, owner: &ClassOwner, reference: &ParentRef) -> bool {
+    fn reference_known(
+        &self,
+        path: &Path,
+        owner: &ClassOwner,
+        reference: &ParentRef,
+        deferred: bool,
+    ) -> bool {
         match reference {
             ParentRef::Generator(GeneratorRef::Free(name)) => {
                 self.generator_sources
-                    .get(&(path.to_path_buf(), !owner.0.is_empty(), name.clone()))
+                    .get(&(path.to_path_buf(), deferred, name.clone()))
                     .is_some_and(|sources| sources.len() == 1)
                     || self.imported_binding_files(path, name).len() == 1
             }
             ParentRef::Generator(GeneratorRef::Qualified { .. }) => {
-                self.resolve_reference(path, owner, reference, !owner.0.is_empty())
+                self.resolve_reference(path, owner, reference, deferred)
                     .len()
                     == 1
             }
@@ -386,6 +386,7 @@ impl ClassIndex {
                             path: path.to_path_buf(),
                             key: def.key.clone(),
                         })
+                        .filter(|id| self.declarations.contains_key(id))
                         .collect();
                     if !local.is_empty() {
                         return local;
@@ -419,6 +420,9 @@ impl ClassIndex {
                                 key: def.key.clone(),
                             })
                     })
+                    .filter(|id| self.declarations.contains_key(id))
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
                     .collect()
             }
             ParentRef::Generator(GeneratorRef::Qualified { package, name }) => self
