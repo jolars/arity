@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.30.0](https://github.com/jolars/arity/compare/v0.29.0...v0.30.0) (2026-11-10)
+
+### Features
+
+- **lsp:** add symbol signatures and containers ([`12b8191`](https://github.com/jolars/arity/commit/12b81917696b49453e5e9ff06449ab9e465aa9c8))
+- **lsp:** complete DESCRIPTION field names ([`054dbc5`](https://github.com/jolars/arity/commit/054dbc5f550d01118202bb38cce8f6f1447eaac7))
+- **symbols:** prune archived CRAN packages ([`b252428`](https://github.com/jolars/arity/commit/b2524280e853ee38e7fd4a6d6ba6c3a92e2a96cb))
+- **lint:** add `description-collate-mismatch` ([`415ad24`](https://github.com/jolars/arity/commit/415ad247f090c37f75eb53dd3cff86652ff15a14))
+- **lint:** add `description-title-case` rule ([`06515f5`](https://github.com/jolars/arity/commit/06515f5b3c7c793414ad9cf7a91ff28e6fa686a7))
+- **lint:** add opt-in `Authors@R` requirement ([`aaea683`](https://github.com/jolars/arity/commit/aaea683a6eb10a02e5a3c1d89139aec4adb6f7cd))
+- **lint:** add `description-license` rule ([`8026be0`](https://github.com/jolars/arity/commit/8026be01780e42d1ab6086324c959fdce298ce5f))
+- **lint:** add description date format rule ([`341c3a9`](https://github.com/jolars/arity/commit/341c3a90bc5d37b7341bdaf7d74edbbfb371c3d3))
+- **lint:** add `description-title-format` rule ([`45a1925`](https://github.com/jolars/arity/commit/45a1925552db284b3f9deda5a75677700afb35fa))
+
+### Bug Fixes
+
+- **lint:** validate derived maintainer addresses ([`5b3d4b6`](https://github.com/jolars/arity/commit/5b3d4b6df3a116c36fe94ae5149e970c5af3bc6a))
+- **lint:** validate dependency version strings ([`e04e648`](https://github.com/jolars/arity/commit/e04e6489baf4294e0b59f1fa03b05b85c58ae835))
+- **ci:** update Cargo dependencies from workspace root ([`600b0a0`](https://github.com/jolars/arity/commit/600b0a00f5b095f0003c2d2c2481b9ef0e088028))
+- **wasm:** clone only string diagnostic getters ([`99608a2`](https://github.com/jolars/arity/commit/99608a291bece32835596c68bbad1921faec3441))
+- **roxygen:** resolve manual aliases and usage ([`67f55bc`](https://github.com/jolars/arity/commit/67f55bcb5f0b3f31be968d1884a6c19d111e661b))
+
+### Dependencies
+
+- updated crates/arity-formatter to v0.8.4
+- updated crates/arity-parser to v0.8.0
+
 ## [0.29.0](https://github.com/jolars/arity/compare/v0.28.0...v0.29.0) (2026-10-30)
 
 ### Features
