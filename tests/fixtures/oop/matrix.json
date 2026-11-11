@@ -468,7 +468,7 @@
   },
   "s7/definitions": {
     "known_gaps": [
-      "S7 classes and parents do not contribute type hierarchy items; registered methods are absent from the outline."
+      "Registered S7 methods are absent from the outline."
     ],
     "probes": [
       {
@@ -513,7 +513,7 @@
   "s7/incomplete": {
     "parse_errors": true,
     "known_gaps": [
-      "S7 class hierarchy and declared-property completion are unavailable."
+      "Declared S7 property completion is unavailable."
     ],
     "probes": [
       {

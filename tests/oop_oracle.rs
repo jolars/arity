@@ -7,7 +7,9 @@ use std::process::Command;
 
 use arity::formatter::format;
 use arity::parser::{Edit, parse, reparse};
-use arity::project::classes::{ClassName, ClassSystem, GeneratorRef, ParentRef, file_class_defs};
+use arity::project::classes::{
+    ClassName, ClassSystem, DispatchClass, GeneratorRef, ParentRef, file_class_defs,
+};
 use arity::semantic::SemanticModel;
 use serde::{Deserialize, Serialize};
 
@@ -139,6 +141,7 @@ fn supported_class_projection_matches_runtime() {
         ("s4", ClassSystem::S4),
         ("reference_classes", ClassSystem::RefClass),
         ("r6", ClassSystem::R6),
+        ("s7", ClassSystem::S7),
     ] {
         let pin = pin(name);
         let root = parse(&pin.source).cst;
@@ -173,6 +176,76 @@ fn supported_class_projection_matches_runtime() {
                 })
                 .collect();
             assert_eq!(parents, class.parents, "{name}: {}", class.name);
+        }
+    }
+}
+
+#[test]
+fn shared_member_and_method_facts_match_pinned_runtime_observations() {
+    for (name, member_count) in [("r6", 7), ("reference_classes", 4), ("s4", 2), ("s7", 2)] {
+        let pin = pin(name);
+        let root = parse(&pin.source).cst;
+        let facts = file_class_defs(&SemanticModel::build(&root), &root);
+        // The projection describes source declarations. Inherited and generated
+        // runtime members (such as R6's clone) are not extra declarations.
+        assert_eq!(facts.oop.members.len(), member_count, "{name}");
+        for member in &facts.oop.members {
+            let class = facts.declaration(&member.class).unwrap();
+            let ClassName::Known(member_name) = &member.name else {
+                panic!("literal member");
+            };
+            let runtime = pin
+                .facts
+                .classes
+                .iter()
+                .find(|runtime| class.name == ClassName::Known(runtime.name.clone()))
+                .unwrap();
+            assert!(
+                runtime.members.contains_key(member_name),
+                "{name}: {member_name}"
+            );
+        }
+        for method in &pin.facts.methods {
+            let matching: Vec<_> = facts
+                .oop
+                .methods
+                .iter()
+                .filter(|actual| {
+                    if let Some(class) = &actual.class {
+                        actual.name == ClassName::Known(method.generic.clone())
+                            && method.signature
+                                == [facts.declaration(class).unwrap().display_name()]
+                    } else {
+                        let actual_signature: Vec<_> = actual
+                            .dispatch
+                            .iter()
+                            .map(|arg| match &arg.class {
+                                DispatchClass::Formal(name) => name.as_str(),
+                                DispatchClass::Generator(GeneratorRef::Local(key)) => {
+                                    facts.declaration(key).unwrap().display_name()
+                                }
+                                _ => "<unresolved>",
+                            })
+                            .collect();
+                        actual.generic.as_ref().is_some_and(|generic| {
+                            generic.name == ClassName::Known(method.generic.clone())
+                        }) && actual_signature == method.signature
+                    }
+                })
+                .collect();
+            assert_eq!(
+                matching.len(),
+                1,
+                "{name}: {} {:?}",
+                method.generic,
+                method.signature
+            );
+            let parameters = &matching[0].signature.as_ref().unwrap().parameters;
+            assert_eq!(parameters.len(), method.formals.len(), "{name}");
+            for (actual, expected) in parameters.iter().zip(&method.formals) {
+                assert_eq!(actual.name, expected.name, "{name}");
+                assert_eq!(actual.default, expected.default, "{name}");
+            }
         }
     }
 }

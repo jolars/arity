@@ -1,12 +1,17 @@
-//! Range-free class declarations shared by project analysis and type hierarchy.
+//! Range-free OOP declarations shared by project analysis and editor consumers.
 //!
 //! A declaration owns an identity even when its display name duplicates another
 //! declaration. Generator bindings, formal class names, and inheritance references
 //! are separate facts. Project resolution confirms package origins and visibility;
 //! this module only consults the current file's syntax and lexical semantics.
+//! [`FileClassFacts::oop`] extends those identities with generics, methods,
+//! members, signatures, and symbolic dispatch targets. [`oop_sites`] recovers
+//! their declaration and use spans without putting body text in the projection.
 
 mod resolve;
 pub use resolve::{ClassFile, ClassIndex, ClassResolution, ResolvedClass};
+mod oop;
+pub use oop::*;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
@@ -38,6 +43,7 @@ pub enum ClassSystem {
     S4,
     R6,
     RefClass,
+    S7,
 }
 
 impl ClassSystem {
@@ -46,6 +52,7 @@ impl ClassSystem {
             Self::S4 => "S4 class",
             Self::R6 => "R6 class",
             Self::RefClass => "reference class",
+            Self::S7 => "S7 class",
         }
     }
 
@@ -53,6 +60,7 @@ impl ClassSystem {
         match self {
             Self::R6 => "R6",
             Self::S4 | Self::RefClass => "methods",
+            Self::S7 => "S7",
         }
     }
 
@@ -61,6 +69,7 @@ impl ClassSystem {
             Self::S4 => "setClass",
             Self::R6 => "R6Class",
             Self::RefClass => "setRefClass",
+            Self::S7 => "new_class",
         }
     }
 
@@ -69,6 +78,7 @@ impl ClassSystem {
             "setClass" => Some(Self::S4),
             "R6Class" => Some(Self::R6),
             "setRefClass" => Some(Self::RefClass),
+            "new_class" => Some(Self::S7),
             _ => None,
         }
     }
@@ -111,12 +121,21 @@ impl ClassSystem {
                 "inheritPackage",
                 "...",
             ],
+            Self::S7 => &[
+                "name",
+                "parent",
+                "package",
+                "properties",
+                "abstract",
+                "constructor",
+                "validator",
+            ],
         }
     }
 }
 
-/// Only function frames containing class declarations participate in this key.
-/// Adding an unrelated closure or block therefore cannot renumber class owners.
+/// Only function frames containing OOP declarations participate in this key.
+/// Adding an unrelated closure or block therefore cannot renumber owners.
 #[derive(
     Debug,
     Clone,
@@ -183,6 +202,7 @@ pub enum FunctionRef {
 pub enum GeneratorRef {
     Local(ClassKey),
     Free(String),
+    Qualified { package: String, name: String },
     Unknown,
 }
 
@@ -254,6 +274,7 @@ pub struct GeneratorBinding {
 pub struct FileClassFacts {
     pub declarations: Vec<ClassDef>,
     pub generators: Vec<GeneratorBinding>,
+    pub oop: OopFacts,
 }
 
 impl FileClassFacts {
@@ -290,15 +311,16 @@ struct Extracted {
     facts: FileClassFacts,
     locations: Vec<ClassLocation>,
     occurrences: Vec<(TextRange, ClassOccurrence)>,
+    oop_sites: Vec<OopSite>,
 }
 
 pub fn file_class_defs(model: &SemanticModel, root: &SyntaxNode) -> FileClassFacts {
-    extract(model, root).facts
+    extract(model, root, false).facts
 }
 
 pub fn locate_class_def(root: &SyntaxNode, key: &ClassKey) -> Option<ClassLocation> {
     let model = SemanticModel::build(root);
-    let extracted = extract(&model, root);
+    let extracted = extract(&model, root, false);
     extracted
         .facts
         .declarations
@@ -313,7 +335,7 @@ pub fn class_occurrence_at_offset(
     offset: TextSize,
 ) -> Option<ClassOccurrence> {
     let token = token_at(root, offset)?;
-    let extracted = extract(model, root);
+    let extracted = extract(model, root, false);
     if let Some((_, occurrence)) = extracted
         .occurrences
         .iter()
@@ -355,7 +377,7 @@ pub fn class_occurrence_at_offset(
     })
 }
 
-fn extract(model: &SemanticModel, root: &SyntaxNode) -> Extracted {
+fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Extracted {
     let calls: Vec<_> = root
         .descendants()
         .filter_map(CallExpr::cast)
@@ -382,6 +404,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode) -> Extracted {
                 .collect::<Vec<_>>()
         })
         .collect();
+    let oop_roots = oop::declaration_roots(model, root);
     let mut owners: HashMap<TextRange, ClassOwner> = HashMap::new();
     let mut owner_counts = BTreeMap::new();
     for node in root
@@ -391,6 +414,9 @@ fn extract(model: &SemanticModel, root: &SyntaxNode) -> Extracted {
         if !calls
             .iter()
             .any(|(call, _, _)| node.text_range().contains_range(call.syntax().text_range()))
+            && !oop_roots
+                .iter()
+                .any(|decl| node.text_range().contains_range(decl.text_range()))
         {
             continue;
         }
@@ -433,6 +459,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode) -> Extracted {
         facts: FileClassFacts::default(),
         locations: Vec::new(),
         occurrences: Vec::new(),
+        oop_sites: Vec::new(),
     };
     for (call, system, factory, key) in calls {
         let assignment = direct_assignment(&SyntaxElement::Node(call.syntax().clone()));
@@ -486,10 +513,10 @@ fn extract(model: &SemanticModel, root: &SyntaxNode) -> Extracted {
                     .find(|(_, matched)| **matched == Some(formal))
                     .map(|(arg, _)| arg)
             };
-            let name_arg = argument(if system == ClassSystem::R6 {
-                "classname"
-            } else {
-                "Class"
+            let name_arg = argument(match system {
+                ClassSystem::R6 => "classname",
+                ClassSystem::S7 => "name",
+                _ => "Class",
             });
             def.name = match name_arg.and_then(Arg::value) {
                 None if system == ClassSystem::R6 => ClassName::Absent,
@@ -523,14 +550,14 @@ fn extract(model: &SemanticModel, root: &SyntaxNode) -> Extracted {
             {
                 def.uncertainty.insert(ClassUncertainty::CustomEnvironment);
             }
-            if let Some(parent) = argument(if system == ClassSystem::R6 {
-                "inherit"
-            } else {
-                "contains"
+            if let Some(parent) = argument(match system {
+                ClassSystem::R6 => "inherit",
+                ClassSystem::S7 => "parent",
+                _ => "contains",
             })
             .and_then(Arg::value)
             {
-                if system == ClassSystem::R6 {
+                if matches!(system, ClassSystem::R6 | ClassSystem::S7) {
                     if !matches!(parent, SyntaxElement::Token(ref token) if token.text() == "NULL")
                     {
                         let target =
@@ -637,6 +664,9 @@ fn extract(model: &SemanticModel, root: &SyntaxNode) -> Extracted {
         .facts
         .generators
         .sort_by(|a, b| (&a.owner, &a.name, &a.target).cmp(&(&b.owner, &b.name, &b.target)));
+    let (facts, sites) = oop::project(model, root, &owners, &result, include_sites);
+    result.facts.oop = facts;
+    result.oop_sites = sites;
     result
 }
 
@@ -879,6 +909,17 @@ fn generator_ref(
 ) -> GeneratorRef {
     if let Some(key) = keys.get(&value.text_range()) {
         return GeneratorRef::Local(key.clone());
+    }
+    if let Some(namespace) = value
+        .as_node()
+        .cloned()
+        .and_then(BinaryExpr::cast)
+        .and_then(|binary| binary.namespace_access())
+    {
+        return GeneratorRef::Qualified {
+            package: namespace.package.to_string(),
+            name: namespace.name.to_string(),
+        };
     }
     let Some(token) = value
         .as_token()

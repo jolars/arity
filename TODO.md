@@ -497,13 +497,20 @@ coverage need not block useful workspace support.
   edges. This first slice does not yet model members, generics, registrations,
   dispatch, cross-file aliases, or competing definitions selected by load order.
 
-- [ ] Extend the current class projection into a shared model of classes,
+- [x] Extend the current class projection into a shared model of classes,
   generics, methods, members, and the sites that declare or use them.
   Distinguish a declared class name from its constructor or generator
   binding and aliases. Include package or lexical owner, OOP system, generic
   identity, and dispatch signature where relevant. Preserve ambiguous
   declarations instead of merging unrelated classes or choosing the first
   method.
+  `FileClassFacts::oop` now carries generic, method, member, and signature
+  facts with lexical identities; the existing project index supplies file and
+  package ownership. Candidate queries retain duplicate declarations, and
+  `oop_sites` recovers declaration, alias, and use spans from the current CST.
+  Literal S7 classes also feed type hierarchy. Pinned runtime observations and
+  incremental tests cover the shared projection; broader call recognition and
+  project resolution remain the next steps below.
 - [ ] Recognize defining and registration calls through resolved callee identity
   and R argument matching. Cover bare imports, `pkg::` forms, positional and
   named arguments, aliases whose target is known, and backticked operator

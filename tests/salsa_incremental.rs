@@ -997,6 +997,69 @@ fn class_body_and_prose_edits_backdate_despite_unrelated_project_reads() {
 }
 
 #[test]
+fn shared_oop_facts_reach_the_project_with_package_ownership() {
+    let (db, _, _) = package_ab(
+        "A <- R6::R6Class('A', public = list(read = function(scale = 1) scale))\n",
+        "methods::setGeneric('read', function(x) standardGeneric('read'))\n\
+         methods::setMethod('read', 'A', function(x) x)\n\
+         methods::setMethod('read', 'A', function(x) 2)\n",
+    );
+    let classes = project_classes(&db);
+    assert_eq!(classes.oop_files().count(), 2);
+    let a = classes.file(Path::new("/pkg/R/a.R")).unwrap();
+    let b = classes.file(Path::new("/pkg/R/b.R")).unwrap();
+    assert_eq!(a.package_root, Some(PathBuf::from("/pkg")));
+    assert_eq!(a.facts.oop.members.len(), 1);
+    assert_eq!(a.facts.oop.methods.len(), 1);
+    assert_eq!(b.package_root, a.package_root);
+    assert_eq!(b.facts.oop.generics.len(), 1);
+    assert_eq!(b.facts.oop.methods.len(), 2);
+    assert_ne!(b.facts.oop.methods[0].key, b.facts.oop.methods[1].key);
+}
+
+#[test]
+fn member_and_signature_edits_invalidate_the_shared_project_projection() {
+    let source = "A <- R6::R6Class('A', public = list(read = function(scale = 1) scale))\n";
+    let (mut db, a, _) = package_ab(source, "");
+    let before = project_classes(&db).clone();
+    for updated in [
+        source.replace("read =", "write ="),
+        source.replace("scale = 1", "scale = 2"),
+    ] {
+        db.clear_query_log();
+        db.set_file_text(a, updated);
+        let after = project_classes(&db);
+        assert_ne!(&before, after);
+        assert_eq!(
+            count_by_kind(&db.query_log()).get(&QueryKind::ProjectClasses),
+            Some(&1)
+        );
+    }
+}
+
+#[test]
+fn generic_method_body_edits_backdate_but_dispatch_edits_invalidate() {
+    let source = "methods::setGeneric('read', function(x) standardGeneric('read'))\n\
+                  methods::setMethod('read', 'A', function(x) x)\n";
+    let (mut db, a, _) = package_ab(source, "");
+    let before = project_classes(&db).clone();
+    db.clear_query_log();
+    db.set_file_text(
+        a,
+        source.replace("function(x) x", "function(x) { print(x); x }"),
+    );
+    assert_eq!(&before, project_classes(&db));
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+    db.clear_query_log();
+    db.set_file_text(a, source.replace("'A'", "'B'"));
+    assert_ne!(&before, project_classes(&db));
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ProjectClasses),
+        Some(&1)
+    );
+}
+
+#[test]
 fn class_identity_omits_cross_file_edges_when_package_sources_are_incomplete() {
     let (mut db, _, _) = package_ab(
         "A <- R6::R6Class(\"A\")\n",
