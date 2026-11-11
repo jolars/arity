@@ -76,10 +76,11 @@ impl ClassIndex {
                                 && def.key.system == reference.system
                                 && self.generic_confirmed(&file.path, def)
                                 && if reference.by_binding {
-                                    def.binding.as_ref() == Some(name)
-                                        || file.facts.oop.generic_bindings.iter().any(|binding| {
-                                            binding.target == def.key && &binding.name == name
-                                        })
+                                    file.facts.oop.generic_bindings.iter().any(|binding| {
+                                        binding.target == def.key
+                                            && &binding.name == name
+                                            && binding.owner.0.is_empty()
+                                    })
                                 } else {
                                     def.name == reference.name
                                 }
@@ -96,12 +97,11 @@ impl ClassIndex {
                 && def.key.owner.0 == owner
                 && self.generic_confirmed(&file.path, def)
                 && if reference.by_binding {
-                    def.binding.as_ref() == Some(name)
-                        || file.facts.oop.generic_bindings.iter().any(|binding| {
-                            binding.target == def.key
-                                && &binding.name == name
-                                && binding.owner.0 == owner
-                        })
+                    file.facts.oop.generic_bindings.iter().any(|binding| {
+                        binding.target == def.key
+                            && &binding.name == name
+                            && binding.owner.0 == owner
+                    })
                 } else {
                     def.name == reference.name
                 }

@@ -20,19 +20,19 @@ fn class_item(
     snapshot: &Analysis,
     index: &ClassIndex,
     id: &ClassId,
-    live: Option<(&Path, &SyntaxNode, &LineIndex)>,
+    live: Option<(&Path, &Uri, &SyntaxNode, &LineIndex)>,
     encoding: PositionEncoding,
 ) -> Option<TypeHierarchyItem> {
     let class = index.declarations.get(id)?;
     let stored_root;
     let stored_index;
-    let (root, line_index) = match live.filter(|(path, _, _)| *path == id.path) {
-        Some((_, root, line_index)) => (root, line_index),
+    let (root, line_index, uri) = match live.filter(|(path, _, _, _)| *path == id.path) {
+        Some((_, uri, root, line_index)) => (root, line_index, uri.clone()),
         None => {
             let file = snapshot.lookup_file(&id.path)?;
             stored_root = snapshot.parsed_tree(file);
             stored_index = snapshot.line_index(file);
-            (&stored_root, stored_index)
+            (&stored_root, stored_index, uri::from_path(&id.path)?)
         }
     };
     let model = SemanticModel::build(root);
@@ -41,7 +41,6 @@ fn class_item(
         return None;
     }
     let loc = locate_class_def(root, &id.key)?;
-    let uri = uri::from_path(&id.path)?;
     let owner = id
         .key
         .owner
@@ -83,7 +82,7 @@ fn class_item(
 pub(crate) fn prepare_type_hierarchy_via_db(
     snapshot: &Analysis,
     path: &Path,
-    _uri: &Uri,
+    uri: &Uri,
     buffer: &TextBuffer,
     position: Position,
     encoding: PositionEncoding,
@@ -109,8 +108,8 @@ pub(crate) fn prepare_type_hierarchy_via_db(
             ClassOccurrence::Reference {
                 owner,
                 reference,
-                in_function,
-            } => index.resolve_reference(path, &owner, &reference, in_function),
+                deferred,
+            } => index.resolve_reference(path, &owner, &reference, deferred),
         };
         let items: Vec<_> = ids
             .iter()
@@ -119,7 +118,7 @@ pub(crate) fn prepare_type_hierarchy_via_db(
                     snapshot,
                     &index,
                     id,
-                    Some((path, &root, line_index)),
+                    Some((path, uri, &root, line_index)),
                     encoding,
                 )
             })
@@ -224,6 +223,97 @@ mod tests {
     }
 
     // --- prepare ------------------------------------------------------------
+
+    #[test]
+    fn untitled_preparation_preserves_the_live_uri() {
+        let source = "A <- R6::R6Class('A')\n";
+        let snapshot = rename_workspace("", "");
+        let uri: Uri = "untitled:Untitled-1".parse().unwrap();
+        let items = prepare_type_hierarchy_via_db(
+            &snapshot,
+            Path::new(DocumentKind::R.placeholder_file_name()),
+            &uri,
+            &buf(source),
+            pos_at(source, source.find("'A'").unwrap() + 1),
+            PositionEncoding::Utf16,
+        )
+        .unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].uri, uri);
+    }
+
+    #[test]
+    fn qualified_parent_prepares_from_its_member_token() {
+        let source = "Child <- R6::R6Class('Child', inherit = one::Parent)\n";
+        let mut db = IncrementalDatabase::default();
+        let root = ws_path("one");
+        let parent = root.join("R/a.R");
+        let child = ws_path("child.R");
+        let a = db.upsert_file(&parent, "Parent <- R6::R6Class('Display')\n");
+        let b = db.upsert_file(&child, source);
+        db.set_workspace_members(vec![a, b], vec![ws_root()]);
+        db.refresh_descriptions([root.clone()]);
+        db.upsert_description(&root, "Package: one\n");
+        db.set_package_metadata(vec![crate::project::PackageInfo {
+            root,
+            namespace: Some("export(Parent)\n".into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        let snapshot = db.snapshot();
+        assert_eq!(snapshot.class_index().supertypes.len(), 1);
+        let items = prepare_at(&snapshot, &child, source, source.find("Parent").unwrap());
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "Display");
+        assert_eq!(items[0].uri, uri::from_path(&parent).unwrap());
+        assert!(prepare_at(&snapshot, &child, source, source.find("one::").unwrap()).is_empty());
+    }
+
+    #[test]
+    fn r6_parent_lookup_is_deferred_but_alias_assignments_are_eager() {
+        for (source, expected) in [
+            (
+                "Child <- R6::R6Class('Child', inherit = Parent)\nParent <- R6::R6Class('Parent')\n",
+                1,
+            ),
+            (
+                "Child <- R6::R6Class('Child', inherit = Alias)\nAlias <- Parent\nParent <- R6::R6Class('Parent')\n",
+                0,
+            ),
+            (
+                "Child <- S7::new_class('Child', parent = Parent)\nParent <- S7::new_class('Parent')\n",
+                0,
+            ),
+        ] {
+            let snapshot = rename_workspace(source, "");
+            let child = item_named(&snapshot, &ws_path("a.R"), "Child");
+            let parents = supertypes_via_db(&snapshot, &child, PositionEncoding::Utf16).unwrap();
+            assert_eq!(parents.len(), expected, "{source}");
+        }
+    }
+
+    #[test]
+    fn r6_inheritance_uses_the_final_sourced_generator() {
+        let source =
+            "source('b.R')\nChild <- R6::R6Class('Child', inherit = Parent)\nsource('c.R')\n";
+        let snapshot = rename_workspace3(
+            source,
+            "Parent <- R6::R6Class('Earlier')\n",
+            "Parent <- R6::R6Class('Later')\n",
+        );
+        let child = item_named(&snapshot, &ws_path("a.R"), "Child");
+        let parents = supertypes_via_db(&snapshot, &child, PositionEncoding::Utf16).unwrap();
+        assert_eq!(parents.len(), 1);
+        assert_eq!(parents[0].name, "Later");
+        let prepared = prepare_at(
+            &snapshot,
+            &ws_path("a.R"),
+            source,
+            source.find("inherit = Parent").unwrap() + 10,
+        );
+        assert_eq!(prepared.len(), 1);
+        assert_eq!(prepared[0].name, "Later");
+    }
 
     #[test]
     fn class_identity_resolves_generator_aliases() {

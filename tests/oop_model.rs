@@ -53,6 +53,64 @@ Formal <- methods::setClass("Display", slots = c(value = "numeric"))
 }
 
 #[test]
+fn r6_members_resolve_stable_callable_aliases() {
+    let facts = facts(
+        "helper <- function(x, scale = 2) x * scale\nalias <- helper\n\
+         A <- R6::R6Class('A', public = base::list(read = alias),\n\
+             private = base::list(write = helper), active = base::list(value = helper))\n",
+    );
+    assert_eq!(facts.oop.methods.len(), 3);
+    for member in &facts.oop.members {
+        assert!(matches!(
+            member.kind,
+            MemberKind::Method | MemberKind::ActiveBinding
+        ));
+        assert!(member.uncertainty.is_empty());
+        let key = member.method.as_ref().unwrap();
+        let method = facts
+            .oop
+            .methods
+            .iter()
+            .find(|method| &method.key == key)
+            .unwrap();
+        let parameters = &method.signature.as_ref().unwrap().parameters;
+        assert_eq!(parameters[0].name, "x");
+        assert_eq!(parameters[1].name, "scale");
+        assert_eq!(parameters[1].default.as_deref(), Some("2"));
+    }
+}
+
+#[test]
+fn r6_unknown_member_values_remain_uncertain() {
+    for source in [
+        "A <- R6::R6Class('A', public = base::list(read = helper))",
+        "helper <- function(x) x\nhelper <- 1\nA <- R6::R6Class('A', public = base::list(read = helper))",
+        "if (flag) helper <- function(x) x\nA <- R6::R6Class('A', public = base::list(read = helper))",
+        "A <- R6::R6Class('A', public = base::list(read = make_helper()))",
+        "A <- R6::R6Class('A', public = base::list(read = helper))\nhelper <- function(x) x",
+    ] {
+        let facts = facts(source);
+        assert!(facts.oop.methods.is_empty(), "{source}");
+        assert_eq!(facts.oop.members[0].kind, MemberKind::Unknown, "{source}");
+        assert!(
+            facts.oop.members[0]
+                .uncertainty
+                .contains(&OopUncertainty::UnresolvedImplementation),
+            "{source}"
+        );
+    }
+    let facts =
+        facts("value <- 1\nA <- R6::R6Class('A', public = base::list(x = value, y = NULL))");
+    assert!(
+        facts
+            .oop
+            .members
+            .iter()
+            .all(|member| member.kind == MemberKind::Field && member.uncertainty.is_empty())
+    );
+}
+
+#[test]
 fn generics_and_duplicate_methods_keep_identity_and_dispatch() {
     let facts = facts(
         r#"

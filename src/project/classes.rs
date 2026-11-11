@@ -312,7 +312,8 @@ pub enum ClassOccurrence {
     Reference {
         owner: ClassOwner,
         reference: ParentRef,
-        in_function: bool,
+        /// Closures and R6 inheritance look up names in the completed environment.
+        deferred: bool,
     },
 }
 
@@ -344,15 +345,28 @@ pub fn class_occurrence_at_offset(
     offset: TextSize,
 ) -> Option<ClassOccurrence> {
     let token = token_at(root, offset)?;
+    let value = if let Some(binary) = token.parent().and_then(BinaryExpr::cast)
+        && let Some(namespace) = binary.namespace_access()
+    {
+        if namespace.name_token != token {
+            return None;
+        }
+        SyntaxElement::Node(binary.syntax().clone())
+    } else {
+        SyntaxElement::Token(token.clone())
+    };
     let extracted = extract(model, root, false);
     if let Some((_, occurrence)) = extracted
         .occurrences
         .iter()
-        .find(|(range, _)| *range == token.text_range())
+        .find(|(range, _)| *range == value.text_range())
     {
         return Some(occurrence.clone());
     }
-    if token.kind() != SyntaxKind::IDENT {
+    if value
+        .as_token()
+        .is_some_and(|token| token.kind() != SyntaxKind::IDENT)
+    {
         return None;
     }
     let keys: HashMap<_, _> = extracted
@@ -365,13 +379,7 @@ pub fn class_occurrence_at_offset(
         .collect();
     // Resolve ordinary generator uses through the same lexical binding proof as
     // inheritance, rather than treating an arbitrary identifier as a class name.
-    let target = generator_ref(
-        model,
-        root,
-        &SyntaxElement::Token(token.clone()),
-        &keys,
-        &mut BTreeSet::new(),
-    );
+    let target = generator_ref(model, root, &value, &keys, &mut BTreeSet::new(), false);
     let owner = owner_at(
         &token.parent()?,
         &owner_map(root, &extracted.facts.declarations, &extracted.locations),
@@ -379,7 +387,7 @@ pub fn class_occurrence_at_offset(
     Some(ClassOccurrence::Reference {
         owner,
         reference: ParentRef::Generator(target),
-        in_function: token
+        deferred: token
             .parent()?
             .ancestors()
             .any(|node| node.kind() == SyntaxKind::FUNCTION_EXPR),
@@ -552,8 +560,14 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
                 if matches!(system, ClassSystem::R6 | ClassSystem::S7) {
                     if !matches!(parent, SyntaxElement::Token(ref token) if token.text() == "NULL")
                     {
-                        let target =
-                            generator_ref(model, root, &parent, &keys, &mut BTreeSet::new());
+                        let target = generator_ref(
+                            model,
+                            root,
+                            &parent,
+                            &keys,
+                            &mut BTreeSet::new(),
+                            system == ClassSystem::R6,
+                        );
                         if target == GeneratorRef::Unknown {
                             def.uncertainty.insert(ClassUncertainty::DynamicParent);
                         }
@@ -563,7 +577,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
                             ClassOccurrence::Reference {
                                 owner: key.owner.clone(),
                                 reference: reference.clone(),
-                                in_function: !key.owner.0.is_empty(),
+                                deferred: system == ClassSystem::R6 || !key.owner.0.is_empty(),
                             },
                         ));
                         def.parents.push(reference);
@@ -579,7 +593,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
                                     ClassOccurrence::Reference {
                                         owner: key.owner.clone(),
                                         reference: reference.clone(),
-                                        in_function: !key.owner.0.is_empty(),
+                                        deferred: !key.owner.0.is_empty(),
                                     },
                                 ));
                                 def.parents.push(reference);
@@ -629,7 +643,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
             continue;
         };
         if let GeneratorRef::Local(target) =
-            generator_ref(model, root, &value, &keys, &mut BTreeSet::new())
+            generator_ref(model, root, &value, &keys, &mut BTreeSet::new(), false)
         {
             if result
                 .facts
@@ -919,6 +933,7 @@ fn generator_ref(
     value: &SyntaxElement,
     keys: &HashMap<TextRange, ClassKey>,
     visiting: &mut BTreeSet<u32>,
+    deferred: bool,
 ) -> GeneratorRef {
     if let Some(key) = keys.get(&value.text_range()) {
         return GeneratorRef::Local(key.clone());
@@ -945,7 +960,7 @@ fn generator_ref(
     };
     if visiting.len() >= 64
         || !visiting.insert(id.0)
-        || model.binding(id).def_range.start() >= token.text_range().start()
+        || (!deferred && model.binding(id).def_range.start() >= token.text_range().start())
     {
         return GeneratorRef::Unknown;
     }
@@ -955,7 +970,9 @@ fn generator_ref(
     if target.text_range().contains_range(token.text_range()) {
         return GeneratorRef::Unknown;
     }
-    generator_ref(model, root, &target, keys, visiting)
+    // R6 captures the inheritance expression, but an alias assignment still
+    // evaluates its right-hand side when that assignment executes.
+    generator_ref(model, root, &target, keys, visiting, false)
 }
 
 struct FormalParents {

@@ -86,15 +86,21 @@ pub struct GenericDef {
 impl GenericDef {
     /// An uncertain call cannot establish a definite local alias target.
     pub fn binding_known(&self) -> bool {
-        !self.uncertainty.iter().any(|issue| {
-            matches!(
-                issue,
-                OopUncertainty::Conditional
-                    | OopUncertainty::CustomEnvironment
-                    | OopUncertainty::InvalidArguments
-                    | OopUncertainty::UnresolvedCallee
-            )
-        })
+        self.binding_possible() && !self.uncertainty.contains(&OopUncertainty::UnresolvedCallee)
+    }
+
+    /// Bare factories retain conditional binding facts until the project can
+    /// confirm their origins. Ambiguous callee aliases cannot establish them.
+    pub(super) fn binding_possible(&self) -> bool {
+        !matches!(self.factory, FunctionRef::Unresolved(_))
+            && !self.uncertainty.iter().any(|issue| {
+                matches!(
+                    issue,
+                    OopUncertainty::Conditional
+                        | OopUncertainty::CustomEnvironment
+                        | OopUncertainty::InvalidArguments
+                )
+            })
     }
 }
 
@@ -140,6 +146,7 @@ pub enum MemberKind {
     ActiveBinding,
     Slot,
     Property,
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]

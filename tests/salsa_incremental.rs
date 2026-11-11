@@ -867,6 +867,15 @@ fn class_identity_resolves_sourced_generators_and_same_file_aliases() {
         "Child <- R6::R6Class(\"Child\", inherit = Generator)\nsource(\"b.R\")\n",
         "Generator <- R6::R6Class(\"Display\")\n",
     );
+    let classes = project_classes(&db);
+    assert!(
+        classes.supertypes[&class_named(classes, "Child")]
+            .contains(&class_named(classes, "Display"))
+    );
+    let (db, _, _) = scripts_ab(
+        "Child <- S7::new_class('Child', parent = Generator)\nsource('b.R')\n",
+        "Generator <- S7::new_class('Display')\n",
+    );
     assert!(project_classes(&db).supertypes.is_empty());
 }
 
@@ -882,6 +891,61 @@ fn class_identity_preserves_package_duplicates_without_picking_a_parent() {
     assert_eq!(
         classes.parent_candidates[&class_named(classes, "Child")][0].len(),
         2
+    );
+}
+
+#[test]
+fn formal_lookup_excludes_disproven_factories() {
+    for source in [
+        "setClass('Parent')\nmethods::setClass('Parent')\nmethods::setClass('Child', contains = 'Parent')\n",
+        "f <- function() { setClass('Parent'); methods::setClass('Parent'); methods::setClass('Child', contains = 'Parent') }\n",
+    ] {
+        let (db, _, _) = package_ab(source, "setClass <- function(...) NULL\n");
+        let index = project_classes(&db);
+        assert_eq!(index.unresolved.len(), 1);
+        let parent = class_named(index, "Parent");
+        let child = class_named(index, "Child");
+        assert_eq!(index.parent_candidates[&child], vec![vec![parent.clone()]]);
+        assert_eq!(
+            index.supertypes.get(&child),
+            Some(&BTreeSet::from([parent]))
+        );
+    }
+}
+
+#[test]
+fn formal_lookup_deduplicates_source_and_namespace_routes() {
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(Path::new("/one/R/a.R"), "methods::setClass('Parent')\n");
+    let b = db.upsert_file(
+        Path::new("/two/R/b.R"),
+        "source('/one/R/a.R')\nmethods::setClass('Child', contains = 'Parent')\n",
+    );
+    db.set_workspace_members(vec![a, b], vec!["/one".into(), "/two".into()]);
+    db.refresh_descriptions([PathBuf::from("/one"), PathBuf::from("/two")]);
+    db.upsert_description(Path::new("/one"), "Package: one\n");
+    db.upsert_description(Path::new("/two"), "Package: two\nImports: one\n");
+    db.set_package_metadata(
+        [
+            ("/one", "exportClasses(Parent)\n"),
+            ("/two", "importClassesFrom(one, Parent)\n"),
+        ]
+        .into_iter()
+        .map(|(root, namespace)| PackageInfo {
+            root: root.into(),
+            namespace: Some(namespace.into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        })
+        .collect(),
+    );
+    let index = project_classes(&db);
+    let parent = class_named(index, "Parent");
+    let child = class_named(index, "Child");
+    assert_eq!(index.parent_candidates[&child], vec![vec![parent.clone()]]);
+    assert_eq!(
+        index.supertypes.get(&child),
+        Some(&BTreeSet::from([parent]))
     );
 }
 
@@ -1102,6 +1166,169 @@ fn shared_oop_facts_reach_the_project_with_package_ownership() {
     assert_eq!(b.facts.oop.generics.len(), 1);
     assert_eq!(b.facts.oop.methods.len(), 2);
     assert_ne!(b.facts.oop.methods[0].key, b.facts.oop.methods[1].key);
+}
+
+#[test]
+fn bare_generic_factories_retain_bindings_for_project_confirmation() {
+    for (declaration, namespace) in [
+        ("library(S7)\ng <- new_generic('g', 'x')\n", ""),
+        (
+            "g <- new_generic('g', 'x')\n",
+            "importFrom(S7, new_generic)\n",
+        ),
+    ] {
+        let source = format!(
+            "{declaration}alias <- g\nC <- S7::new_class('C')\nS7::method(g, C) <- function(x) x\nS7::method(alias, C) <- function(x) x\n"
+        );
+        let (mut db, _, _) = package_ab(&source, "");
+        db.set_package_metadata(vec![PackageInfo {
+            root: "/pkg".into(),
+            namespace: Some(namespace.into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        db.set_library_index(IndexedProvider::from_indices([index_pkg(
+            "S7",
+            &["new_generic"],
+        )]));
+        let index = project_classes(&db);
+        let file = index.file(Path::new("/pkg/R/a.R")).unwrap();
+        let generic = arity::project::classes::OopId {
+            path: file.path.clone(),
+            key: file.facts.oop.generics[0].key.clone(),
+        };
+        for method in &file.facts.oop.methods {
+            assert_eq!(
+                index.generic_candidates(&file.path, method.generic.as_ref().unwrap(), false),
+                vec![generic.clone()],
+                "{source}"
+            );
+        }
+        assert_eq!(index.methods_for_generic(&generic).len(), 2);
+        db.set_package_metadata(vec![PackageInfo {
+            root: "/pkg".into(),
+            namespace: Some("importFrom(other, new_generic)\n".into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        assert!(
+            project_classes(&db)
+                .methods_for_generic(&generic)
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn generic_object_lookup_requires_stable_qualified_bindings() {
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(Path::new("/one/R/a.R"), "");
+    let b = db.upsert_file(
+        Path::new("/two/R/b.R"),
+        "S7::method(one::g, C) <- function(x) x\nS7::method(one::alias, C) <- function(x) x\n",
+    );
+    db.set_workspace_members(vec![a, b], vec!["/one".into(), "/two".into()]);
+    db.refresh_descriptions([PathBuf::from("/one"), PathBuf::from("/two")]);
+    db.upsert_description(Path::new("/one"), "Package: one\n");
+    db.upsert_description(Path::new("/two"), "Package: two\nImports: one\n");
+    db.set_package_metadata(
+        [("/one", "export(g, alias)\n"), ("/two", "")]
+            .into_iter()
+            .map(|(root, namespace)| PackageInfo {
+                root: root.into(),
+                namespace: Some(namespace.into()),
+                dir_sources: BTreeSet::new(),
+                native_routines: BTreeSet::new(),
+            })
+            .collect(),
+    );
+    for (source, expected) in [
+        ("g <- S7::new_generic('g', 'x')\nalias <- g\n", 1),
+        (
+            "g <- S7::new_generic('g', 'x')\nalias <- g\ng <- function(x) x\n",
+            0,
+        ),
+    ] {
+        db.set_file_text(a, source);
+        let index = project_classes(&db);
+        let file = index.file(Path::new("/two/R/b.R")).unwrap();
+        for method in &file.facts.oop.methods {
+            assert_eq!(
+                index
+                    .generic_candidates(&file.path, method.generic.as_ref().unwrap(), false)
+                    .len(),
+                expected,
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn function_local_generic_aliases_do_not_escape_or_invalidate_the_index() {
+    let source = "g <- S7::new_generic('g', 'x')\nf <- function() 1\nS7::method(alias, C) <- function(x) x\n";
+    let (mut db, a, _) = package_ab(source, "");
+    let before = project_classes(&db).clone();
+    db.clear_query_log();
+    db.set_file_text(
+        a,
+        source.replace("function() 1", "function() { alias <- g }"),
+    );
+    let index = project_classes(&db);
+    let file = index.file(Path::new("/pkg/R/a.R")).unwrap();
+    assert!(
+        index
+            .generic_candidates(
+                &file.path,
+                file.facts.oop.methods[0].generic.as_ref().unwrap(),
+                false
+            )
+            .is_empty()
+    );
+    assert_eq!(&before, index);
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+}
+
+#[test]
+fn generic_object_lookup_requires_stable_visible_bindings() {
+    for (declaration, expected) in [
+        ("g <- S7::new_generic('g', 'x')\n", 1),
+        ("g <- S7::new_generic('g', 'x')\ng <- function(x) x\n", 0),
+        ("if (flag) g <- S7::new_generic('g', 'x')\n", 0),
+        (
+            "g <- S7::new_generic('g', 'x')\nalias <- g\ng <- function(x) x\n",
+            0,
+        ),
+    ] {
+        let (db, _, _) = package_ab(declaration, "S7::method(g, C) <- function(x) x\n");
+        let index = project_classes(&db);
+        let file = index.file(Path::new("/pkg/R/b.R")).unwrap();
+        let candidates = index.generic_candidates(
+            &file.path,
+            file.facts.oop.methods[0].generic.as_ref().unwrap(),
+            false,
+        );
+        assert_eq!(candidates.len(), expected, "{declaration}");
+    }
+}
+
+#[test]
+fn callable_alias_body_edits_backdate_but_signature_edits_invalidate() {
+    let source =
+        "helper <- function(x = 1) x\nA <- R6::R6Class('A', public = base::list(read = helper))\n";
+    let (mut db, a, _) = package_ab(source, "");
+    let before = project_classes(&db).clone();
+    db.clear_query_log();
+    db.set_file_text(a, source.replace(") x", ") { print(x); x }"));
+    assert_eq!(&before, project_classes(&db));
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+    db.clear_query_log();
+    db.set_file_text(a, source.replace("x = 1", "x = 2"));
+    assert_ne!(&before, project_classes(&db));
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ProjectClasses),
+        Some(&1)
+    );
 }
 
 #[test]
