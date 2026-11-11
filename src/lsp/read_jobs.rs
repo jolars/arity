@@ -15,14 +15,30 @@ pub(crate) fn with_document_semantics<T>(
             return None;
         }
         let root = snapshot.parsed_tree(file);
-        Some(compute(&root, snapshot.semantic_model(file)))
+        Some(compute(&root, snapshot.runtime_semantic_model(file)))
     }));
     if let Ok(Some(result)) = cached {
         return result;
     }
     let root = parse(buffer.text()).cst;
     let model = SemanticModel::build(&root);
-    compute(&root, &model)
+    let resolved = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        if !crate::project::classes::has_r6_candidates(&model) {
+            return None;
+        }
+        let facts = crate::project::file_class_defs(&model, &root);
+        if facts.oop.method_implementations.is_empty() {
+            return None;
+        }
+        let index = snapshot.class_index_in(path, &facts, &root, &model);
+        crate::project::classes::apply_method_environments(
+            &model,
+            &root,
+            &index.r6_method_environments(path),
+        )
+    }))
+    .unwrap_or_else(|_| Some(crate::project::classes::standalone_semantic_model(&root)));
+    compute(&root, resolved.as_ref().unwrap_or(&model))
 }
 
 /// A read-only request the lint thread services by cloning its salsa db and
@@ -440,6 +456,54 @@ pub(crate) fn finalize_rename(mut changes: HashMap<Uri, Vec<TextEdit>>) -> Optio
 #[cfg(test)]
 mod document_semantics_tests {
     use super::*;
+
+    #[test]
+    fn r6_cold_warm_and_live_overlays_share_project_environment_resolution() {
+        use crate::project::PackageInfo;
+        let path = Path::new("/pkg/R/child.R");
+        let source = "Child <- R6Class(inherit = Parent, public = list(read = function() list(self, private, super)))\n";
+        let mut db = IncrementalDatabase::default();
+        let parent = db.upsert_file(
+            Path::new("/pkg/R/parent.R"),
+            "Parent <- R6::R6Class(private = list(value = 1))\n",
+        );
+        let child = db.upsert_file(path, source);
+        db.set_workspace_members(vec![parent, child], vec![PathBuf::from("/pkg")]);
+        db.set_package_metadata(vec![PackageInfo {
+            root: PathBuf::from("/pkg"),
+            namespace: Some("importFrom(R6, R6Class)\n".into()),
+            dir_sources: Default::default(),
+            native_routines: Default::default(),
+        }]);
+        let buffer = buf(source);
+        let cold = with_document_semantics(&db.snapshot(), path, &buffer, |_, model| model.clone());
+        let warm = with_document_semantics(&db.snapshot(), path, &buffer, |_, model| model.clone());
+        assert_eq!(cold, warm);
+        for name in ["self", "private", "super"] {
+            assert!(
+                !cold.is_free_read(
+                    cold.idents()
+                        .iter()
+                        .find(|ident| ident.name == name)
+                        .unwrap()
+                )
+            );
+        }
+        let live = buf(&format!(
+            "# Shifted.\n{}",
+            source.replace(
+                "list(self, private, super)",
+                "{ nested <- function() list(self, private, super); nested() }"
+            )
+        ));
+        let overlay = with_document_semantics(&db.snapshot(), path, &live, |root, model| {
+            assert_eq!(root.text().to_string(), live.text());
+            model.clone()
+        });
+        db.set_file_text(child, live.text_arc());
+        let fresh = with_document_semantics(&db.snapshot(), path, &live, |_, model| model.clone());
+        assert_eq!(overlay, fresh);
+    }
 
     #[test]
     fn matching_buffers_reuse_the_semantic_model() {

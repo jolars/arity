@@ -450,7 +450,7 @@ fn handle_for(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
             if let NodeOrToken::Token(tok) = el
                 && tok.kind() == SyntaxKind::IDENT
             {
-                push_binding(
+                let id = push_binding(
                     ctx.model,
                     scope,
                     SmolStr::new(tok.text()),
@@ -458,6 +458,7 @@ fn handle_for(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
                     tok.text_range(),
                     ctx.loop_range,
                 );
+                ctx.model.bindings[id.0 as usize].conditional = true;
                 break;
             }
         }
@@ -555,7 +556,23 @@ fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) 
         {
             ctx.data_tables.insert(name.clone());
         }
-        push_binding(ctx.model, target_scope, name, kind, range, ctx.loop_range);
+        let id = push_binding(ctx.model, target_scope, name, kind, range, ctx.loop_range);
+        ctx.model.bindings[id.0 as usize].available_from = node.text_range().end();
+        ctx.model.bindings[id.0 as usize].conditional = node
+            .ancestors()
+            .skip(1)
+            .take_while(|ancestor| {
+                !matches!(
+                    ancestor.kind(),
+                    SyntaxKind::FUNCTION_EXPR | SyntaxKind::ROOT
+                )
+            })
+            .any(|ancestor| {
+                !matches!(
+                    ancestor.kind(),
+                    SyntaxKind::BLOCK_EXPR | SyntaxKind::PAREN_EXPR | SyntaxKind::ASSIGNMENT_EXPR
+                )
+            });
     } else if let Some(NodeOrToken::Node(target_node)) = target {
         // `foo(x) <- value` dispatches to `` `foo<-` ``; recording `foo` as an
         // ordinary callee both misses the replacement binding and invents an
@@ -1588,7 +1605,9 @@ fn push_binding(
         kind,
         scope,
         def_range,
+        available_from: def_range.end(),
         loop_range,
+        conditional: false,
         read: false,
     });
     model.scopes[scope.0 as usize].bindings.push(id);
@@ -1613,6 +1632,15 @@ fn resolve_reads(model: &mut SemanticModel) {
     }
 }
 
+pub(super) fn refresh_resolution(model: &mut SemanticModel) {
+    for binding in &mut model.bindings {
+        binding.read = false;
+    }
+    model.free_use_only_reads.clear();
+    resolve_reads(model);
+    resolve_use_only_reads(model);
+}
+
 /// Mark bindings reached only through runtime syntax. These reads intentionally
 /// do not enter either def-use index; their sole purpose is to keep
 /// `unused-binding` from reporting a binding that runtime evaluation consumes.
@@ -1624,7 +1652,11 @@ fn resolve_use_only_reads(model: &mut SemanticModel) {
             continue;
         }
         let reached = reads_reached_parts(model, &read.name, read.range, read.scope, read.deferred);
-        if reached.is_empty() {
+        if reached.is_empty()
+            && model
+                .contextual_resolution(&read.name, read.range, read.scope, read.deferred)
+                .is_none_or(|resolution| resolution.external)
+        {
             model.free_use_only_reads.push(read.name.clone());
         }
         for id in reached {
@@ -1655,6 +1687,9 @@ fn resolve_use_only_reads(model: &mut SemanticModel) {
 /// reassignment looking unread, even when it is the one the closure actually
 /// sees.
 fn reads_reached(model: &SemanticModel, ident: &IdentRef) -> Vec<BindingId> {
+    if let Some(resolution) = model.contextual_resolutions.get(&ident.range) {
+        return resolution.lexical.clone();
+    }
     reads_reached_parts(model, &ident.name, ident.range, ident.scope, ident.deferred)
 }
 
@@ -1665,6 +1700,9 @@ fn reads_reached_parts(
     scope: ScopeId,
     deferred: bool,
 ) -> Vec<BindingId> {
+    if let Some(resolution) = model.contextual_resolution(name, range, scope, deferred) {
+        return resolution.lexical;
+    }
     let mut current = Some(scope);
     // Whether the scope under inspection still belongs to the read's own frame.
     // It does until we step *past* the first `function`/file scope (a closure

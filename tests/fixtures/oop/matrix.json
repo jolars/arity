@@ -324,7 +324,6 @@
   },
   "r6/use_sites": {
     "known_gaps": [
-      "R6 methods and active bindings have no implicit self, private, or super bindings.",
       "Declared members have no member definition or signature help."
     ],
     "probes": [
@@ -405,9 +404,6 @@
     ]
   },
   "r6/issue_183": {
-    "known_gaps": [
-      "Issue #183: initialize's private binding is reported as undefined."
-    ],
     "probes": [
       {
         "method": "type-hierarchy",
@@ -630,6 +626,59 @@
         "method": "type-hierarchy",
         "needle": "contains = \"Formal\"",
         "offset": 12
+      }
+    ]
+  },
+  "r6/method_environments": {
+    "probes": [
+      {
+        "method": "definition",
+        "needle": "list(self, private, super, value)",
+        "offset": 5
+      },
+      {
+        "method": "references",
+        "needle": "list(self, private, super, value)",
+        "offset": 5
+      },
+      {
+        "method": "prepare-rename",
+        "needle": "list(self, private, super, value)",
+        "offset": 5
+      },
+      {
+        "method": "rename",
+        "needle": "list(self, private, super, value)",
+        "offset": 5
+      },
+      {
+        "method": "highlights",
+        "needle": "list(self, private, super, value)",
+        "offset": 5
+      },
+      {
+        "method": "definition",
+        "needle": "function(self) self",
+        "offset": 15
+      },
+      {
+        "method": "references",
+        "needle": "function(self) self",
+        "offset": 15
+      }
+    ]
+  },
+  "r6/field_functions": {
+    "probes": [
+      {
+        "method": "references",
+        "needle": "list(self, private, super, unknown)",
+        "offset": 5
+      },
+      {
+        "method": "definition",
+        "needle": "fn = function() self",
+        "offset": 16
       }
     ]
   }

@@ -732,7 +732,7 @@ impl RuleContext<'_> {
         self.model
             .idents()
             .iter()
-            .any(|i| i.range == range && self.model.resolve_local(i).is_some())
+            .any(|i| i.range == range && !self.model.is_free_read(i))
     }
 
     /// Whether a bare value read (an `IDENT` token used as a value, e.g. a

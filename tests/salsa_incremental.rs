@@ -585,6 +585,173 @@ fn package_ab(a_src: &str, b_src: &str) -> (IncrementalDatabase, SourceFile, Sou
     (db, a, b)
 }
 
+#[test]
+fn r6_runtime_reads_do_not_keep_sibling_lexical_names_alive() {
+    use arity::incremental::file_free_reads;
+    let (db, a, b) = package_ab(
+        "self <- 1\nprivate <- 2\nsuper <- 3\nParent <- R6::R6Class(private = list(value = 1))\n",
+        "Child <- R6::R6Class(inherit = Parent, public = list(read = function() list(self, private, super)))\n",
+    );
+    let reads = file_free_reads(&db, b);
+    for name in ["self", "private", "super"] {
+        assert!(!reads.contains(name), "{reads:?}");
+        assert!(
+            !project_graph(&db)
+                .for_file(Path::new("/pkg/R/a.R"))
+                .read_elsewhere(name)
+        );
+        assert!(db.snapshot().read_ranges_in(b, name).is_empty());
+    }
+    assert!(reads.contains("Parent"));
+    assert!(
+        db.semantic_model(a)
+            .bindings()
+            .iter()
+            .any(|binding| binding.name == "private")
+    );
+}
+
+#[test]
+fn r6_environment_summaries_backdate_while_live_read_spans_follow_edits() {
+    use arity::incremental::method_environments;
+    let source = "A <- R6::R6Class(public = list(read = function() self))\n";
+    let (mut db, file) = script_one(source);
+    let before = method_environments(&db, file).clone();
+    let model = db.runtime_semantic_model(file);
+    let read = model
+        .idents()
+        .iter()
+        .find(|ident| ident.name == "self")
+        .unwrap();
+    assert!(!model.is_free_read(read));
+    db.clear_query_log();
+    let edited = format!(
+        "# Prose.\n{}",
+        source.replace("function() self", "function() { print(1); self }")
+    );
+    db.set_file_text(file, edited.clone());
+    assert_eq!(method_environments(&db, file), &before);
+    let model = db.runtime_semantic_model(file);
+    let read = model
+        .idents()
+        .iter()
+        .find(|ident| ident.name == "self")
+        .unwrap();
+    assert_eq!(
+        usize::from(read.range.start()),
+        edited.find("self").unwrap()
+    );
+    assert!(!model.is_free_read(read));
+    let counts = count_by_kind(&db.query_log());
+    assert!(!counts.contains_key(&QueryKind::MethodEnvironments));
+    assert!(!counts.contains_key(&QueryKind::ProjectClasses));
+}
+
+#[test]
+fn r6_environments_invalidate_for_parent_members_inheritance_and_imports() {
+    use arity::incremental::method_environments;
+    use arity::semantic::enclosure::Availability;
+    let (mut db, a, b) = package_ab(
+        "Parent <- R6::R6Class()\n",
+        "Child <- R6::R6Class(inherit = Parent, public = list(read = function() private))\n",
+    );
+    assert_eq!(
+        method_environments(&db, b)[0].bindings[1],
+        Availability::Absent
+    );
+    let model = db.runtime_semantic_model(b);
+    assert!(
+        model.is_free_read(
+            model
+                .idents()
+                .iter()
+                .find(|ident| ident.name == "private")
+                .unwrap()
+        )
+    );
+    db.set_file_text(a, "Parent <- R6::R6Class(private = list(value = 1))\n");
+    assert_eq!(
+        method_environments(&db, b)[0].bindings[1],
+        Availability::Present
+    );
+    let model = db.runtime_semantic_model(b);
+    assert!(
+        !model.is_free_read(
+            model
+                .idents()
+                .iter()
+                .find(|ident| ident.name == "private")
+                .unwrap()
+        )
+    );
+    db.set_file_text(
+        b,
+        "Child <- R6::R6Class(public = list(read = function() super))\n",
+    );
+    assert_eq!(
+        method_environments(&db, b)[0].bindings[2],
+        Availability::Absent
+    );
+    db.set_file_text(
+        b,
+        "Child <- R6::R6Class(inherit = Parent, public = list(read = function() super))\n",
+    );
+    assert_eq!(
+        method_environments(&db, b)[0].bindings[2],
+        Availability::Present
+    );
+
+    db.set_file_text(
+        b,
+        "Child <- R6Class(public = list(read = function() self))\n",
+    );
+    let metadata = |namespace: &str| {
+        vec![PackageInfo {
+            root: PathBuf::from("/pkg"),
+            namespace: Some(namespace.into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]
+    };
+    db.set_package_metadata(metadata("importFrom(R6, R6Class)\n"));
+    assert_eq!(method_environments(&db, b).len(), 1);
+    db.set_package_metadata(metadata("importFrom(other, R6Class)\n"));
+    assert!(method_environments(&db, b).is_empty());
+    let model = db.runtime_semantic_model(b);
+    assert!(
+        model.is_free_read(
+            model
+                .idents()
+                .iter()
+                .find(|ident| ident.name == "self")
+                .unwrap()
+        )
+    );
+}
+
+#[test]
+fn r6_implementation_aliases_preserve_possible_external_reads_and_refuse_rename() {
+    let (db, _, b) = package_ab(
+        "self <- 1\n",
+        "helper <- function() self\nA <- R6::R6Class(public = list(read = helper))\nhelper()\n",
+    );
+    assert!(
+        project_graph(&db)
+            .for_file(Path::new("/pkg/R/a.R"))
+            .read_elsewhere("self")
+    );
+    assert_eq!(db.snapshot().read_ranges_in(b, "self").len(), 1);
+    assert!(
+        db.snapshot()
+            .reader_rename_ranges(
+                Path::new("/pkg/R/b.R"),
+                "self",
+                &[PathBuf::from("/pkg/R/a.R")]
+            )
+            .is_none()
+    );
+}
+
 /// A single loose script at `/proj/a.R`, seeded as the whole workspace. Seeding
 /// happens once, here: re-seeding an unchanged membership before each query is
 /// a no-op (see `reseeding_identical_membership_skips_write`).

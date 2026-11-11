@@ -18,7 +18,7 @@ use crate::file_discovery::{
 use crate::incremental::{
     Analysis, IncrementalDatabase, IncrementalDb, ParseDiagnosticData, SourceFile, control_flow,
     file_exports, file_free_reads, file_qualified_reads, file_roxygen_topics, package_references,
-    parsed_tree_root, semantic_model, source_edges, top_level_events,
+    parsed_tree_root, runtime_semantic_model, source_edges, top_level_events,
 };
 use crate::project::collate::PackageSourceInventory;
 use crate::project::description::DescriptionFacts;
@@ -449,7 +449,7 @@ fn lint_parsed_file(
     context: &FileContext<'_>,
 ) -> Vec<Diagnostic> {
     let root_node = parsed_tree_root(db, file);
-    let model = semantic_model(db, file);
+    let model = runtime_semantic_model(db, file);
     let cfg = control_flow(db, file);
     let mut diagnostics = run_rules(rules, path, &root_node, model, cfg, provider, context);
     for d in &mut diagnostics {

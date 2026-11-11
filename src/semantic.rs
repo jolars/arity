@@ -9,6 +9,7 @@ pub mod binding;
 pub mod builder;
 pub(crate) mod calls;
 pub mod cfg;
+pub mod enclosure;
 mod interpolation;
 pub mod scope;
 pub(crate) mod spelling;
@@ -75,7 +76,7 @@ pub(crate) struct UseOnlyRead {
 }
 
 /// Per-file semantic information derived from the CST.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SemanticModel {
     scopes: Vec<Scope>,
     bindings: Vec<Binding>,
@@ -129,6 +130,8 @@ pub struct SemanticModel {
     /// unresolved bare name might be one of those opaquely-introduced bindings.
     attaches_opaque_env: bool,
     signature_effects: calls::SignatureEffects,
+    method_enclosures: enclosure::MethodEnclosures,
+    contextual_resolutions: HashMap<TextRange, enclosure::IdentifierResolution>,
 }
 
 impl SemanticModel {
@@ -263,6 +266,9 @@ impl SemanticModel {
     /// outward from `ident.scope` looking for a matching binding. Returns
     /// `None` if no binding is found within any enclosing scope.
     pub fn resolve_local(&self, ident: &IdentRef) -> Option<BindingId> {
+        if let Some(resolution) = self.contextual_resolutions.get(&ident.range) {
+            return self.source_resolution_target(resolution);
+        }
         let mut current = Some(ident.scope);
         while let Some(scope_id) = current {
             if let Some(first) = self.scope_bindings_named(scope_id, &ident.name).first() {

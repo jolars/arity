@@ -265,6 +265,8 @@ pub enum QueryKind {
     ParsedDocument,
     LineIndex,
     SemanticModel,
+    MethodEnvironments,
+    RuntimeSemanticModel,
     ControlFlow,
     FileExports,
     FileFreeReads,
@@ -501,6 +503,68 @@ pub fn semantic_model(db: &dyn IncrementalDb, file: SourceFile) -> SemanticModel
     SemanticModel::build(&parsed_tree_root(db, file))
 }
 
+/// Environment availability is range-free and independent of method bodies.
+#[salsa::tracked(returns(ref))]
+pub fn method_environments(
+    db: &dyn IncrementalDb,
+    file: SourceFile,
+) -> Vec<crate::project::classes::R6MethodEnvironment> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::MethodEnvironments,
+        file: Some(file),
+    });
+    let facts = file_class_defs(db, file);
+    if facts.oop.method_implementations.is_empty() {
+        return Vec::new();
+    }
+    let path = file
+        .path(db)
+        .as_deref()
+        .unwrap_or_else(|| Path::new("buffer.R"));
+    let index = project_classes(db);
+    if index.file(path).is_some() {
+        return index.r6_method_environments(path);
+    }
+    let root = parsed_tree_root(db, file);
+    crate::project::graph::build_class_index(
+        db,
+        Some(crate::project::graph::LiveClassFile {
+            path,
+            facts,
+            root: &root,
+            model: semantic_model(db, file),
+        }),
+    )
+    .r6_method_environments(path)
+}
+
+#[salsa::tracked(returns(ref))]
+fn method_semantic_model(db: &dyn IncrementalDb, file: SourceFile) -> Option<SemanticModel> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::RuntimeSemanticModel,
+        file: Some(file),
+    });
+    let environments = method_environments(db, file);
+    if environments.is_empty() {
+        return None;
+    }
+    crate::project::classes::apply_method_environments(
+        semantic_model(db, file),
+        &parsed_tree_root(db, file),
+        environments,
+    )
+}
+
+/// Runtime reads use method enclosures; declaration queries stay lexical to
+/// preserve the dependency direction through `file_class_defs` and classes.
+pub fn runtime_semantic_model(db: &dyn IncrementalDb, file: SourceFile) -> &SemanticModel {
+    let lexical = semantic_model(db, file);
+    if !crate::project::classes::has_r6_candidates(lexical) {
+        return lexical;
+    }
+    method_semantic_model(db, file).as_ref().unwrap_or(lexical)
+}
+
 /// The per-file control-flow graph (one region per function body plus the file
 /// top-level), built on the cached parse tree. Returned by reference; salsa
 /// backdates downstream consumers when an edit leaves the graph unchanged
@@ -537,7 +601,9 @@ pub fn file_free_reads(db: &dyn IncrementalDb, file: SourceFile) -> Arc<BTreeSet
         kind: QueryKind::FileFreeReads,
         file: Some(file),
     });
-    Arc::new(crate::project::file_free_reads(semantic_model(db, file)))
+    Arc::new(crate::project::file_free_reads(runtime_semantic_model(
+        db, file,
+    )))
 }
 
 /// The names the file reads via `pkg::name` / `pkg:::name`
@@ -566,7 +632,7 @@ pub(crate) fn file_use_only_reads(
         file: Some(file),
     });
     Arc::new(crate::project::exports::file_use_only_reads(
-        semantic_model(db, file),
+        runtime_semantic_model(db, file),
     ))
 }
 
@@ -1302,6 +1368,10 @@ impl IncrementalDatabase {
         semantic_model(self, file)
     }
 
+    pub fn runtime_semantic_model(&self, file: SourceFile) -> &SemanticModel {
+        runtime_semantic_model(self, file)
+    }
+
     /// The cached per-file control-flow graph.
     pub fn control_flow(&self, file: SourceFile) -> &FileControlFlow {
         control_flow(self, file)
@@ -1453,6 +1523,10 @@ impl Analysis {
         self.0.semantic_model(file)
     }
 
+    pub fn runtime_semantic_model(&self, file: SourceFile) -> &SemanticModel {
+        self.0.runtime_semantic_model(file)
+    }
+
     /// The cached per-file control-flow graph.
     pub fn control_flow(&self, file: SourceFile) -> &FileControlFlow {
         self.0.control_flow(file)
@@ -1590,11 +1664,11 @@ impl Analysis {
     /// is exactly one this recovers spans for. The read-site mirror of
     /// [`def_range_in`](Self::def_range_in).
     pub fn read_ranges_in(&self, file: SourceFile, name: &str) -> Vec<TextRange> {
-        let model = self.0.semantic_model(file);
+        let model = self.0.runtime_semantic_model(file);
         model
             .idents()
             .iter()
-            .filter(|ident| ident.name.as_str() == name && model.resolve_local(ident).is_none())
+            .filter(|ident| ident.name.as_str() == name && model.may_read_externally(ident))
             .map(|ident| ident.range)
             .collect()
     }
@@ -1763,6 +1837,13 @@ impl Analysis {
     ) -> Option<Vec<TextRange>> {
         let file = self.lookup_file(reader)?;
         let all_reads = self.read_ranges_in(file, name);
+        let model = self.runtime_semantic_model(file);
+        if all_reads
+            .iter()
+            .any(|range| model.blocks_source_navigation(*range))
+        {
+            return None;
+        }
         if self.0.workspace().is_none() {
             return Some(all_reads);
         }

@@ -76,6 +76,7 @@ formatter idempotence for every input. Insertions and deletions at character
 boundaries exercise both successful incremental reparses and full-parse
 fallback, comparing entire green trees and diagnostics with a fresh parse. The
 richer member, environment, constructor, and dispatch facts are available for
-the next semantic-model stages; this baseline does not claim those stages are
-implemented. No syntax gap was demonstrated by these cases, so this slice
-changes no grammar.
+the next semantic-model stages. The R6 environment cases also compare injected
+bindings with semantic availability, including inherited method copies, private
+methods, active bindings, defaults, nested closures, ordinary field functions,
+and non-portable classes. No syntax gap was demonstrated by these cases.

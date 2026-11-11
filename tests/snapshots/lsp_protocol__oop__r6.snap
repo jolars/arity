@@ -20,12 +20,8 @@ TypeHierarchy "inherit = Alias": [{"children":["Child"],"detail":"R6 class via G
 TypeHierarchy "R6::R6Class(\"Display\")": [{"children":[],"detail":"R6 class via Other","name":"Display","parents":[],"selection":[164,173]}]
 
 === r6/use_sites ===
-known gap: R6 methods and active bindings have no implicit self, private, or super bindings.
 known gap: Declared members have no member definition or signature help.
-diagnostic: undefined-symbol severity=2 166..170 "self"
-diagnostic: undefined-symbol severity=2 178..185 "private"
-diagnostic: undefined-symbol severity=2 190..195 "super"
-diagnostic: undefined-symbol severity=2 272..276 "self"
+diagnostics: []
 symbols: [["Base",13,null],["Child",13,null],["obj",13,null]]
 TypeHierarchy "\"Child\"": [{"children":[],"detail":"R6 class","name":"Child","parents":["Base"],"selection":[88,95]}]
 Definition "obj$read()": null
@@ -55,18 +51,42 @@ TypeHierarchy "class_name, public": null
 Definition "obj$read()": null
 
 === r6/issue_183 ===
-known gap: Issue #183: initialize's private binding is reported as undefined.
-diagnostic: undefined-symbol severity=2 122..129 "private"
+diagnostics: []
 symbols: [["NewR6",13,null],["obj",13,null]]
 TypeHierarchy "\"NewR6\"": [{"children":[],"detail":"R6 class","name":"NewR6","parents":[],"selection":[24,31]}]
 Definition "NewR6$new()": [{"range":[0,5],"text":"NewR6"}]
 Completion "private$id": [["id",5]]
 
+=== r6/method_environments ===
+diagnostic: unused-binding severity=2 0..4 "self"
+diagnostic: unused-binding severity=2 10..17 "private"
+diagnostic: unused-binding severity=2 23..28 "super"
+diagnostic: undefined-symbol severity=2 659..668 "unrelated"
+symbols: [["self",13,null],["private",13,null],["super",13,null],["Base",13,null],["Child",13,null],["Child::nested",12,"()"],["Plain",13,null],["ordinary",12,"()"]]
+Definition "list(self, private, super, value)": null
+References "list(self, private, super, value)": [{"range":[232,236],"text":"self"},{"range":[352,356],"text":"self"},{"range":[394,398],"text":"self"},{"range":[461,465],"text":"self"}]
+PrepareRename "list(self, private, super, value)": null
+Rename "list(self, private, super, value)": null
+Highlights "list(self, private, super, value)": [{"kind":2,"range":[232,236]},{"kind":2,"range":[352,356]},{"kind":2,"range":[394,398]},{"kind":2,"range":[461,465]}]
+Definition "function(self) self": [{"range":[305,309],"text":"self"}]
+References "function(self) self": [{"range":[311,315],"text":"self"},{"range":[305,309],"text":"self"}]
+
+=== r6/field_functions ===
+diagnostic: undefined-symbol severity=2 91..95 "self"
+diagnostic: undefined-symbol severity=2 114..121 "private"
+diagnostic: undefined-symbol severity=2 156..163 "private"
+diagnostic: undefined-symbol severity=2 165..170 "super"
+diagnostic: undefined-symbol severity=2 172..179 "unknown"
+diagnostic: undefined-symbol severity=2 276..280 "self"
+diagnostic: undefined-symbol severity=2 282..289 "private"
+diagnostic: undefined-symbol severity=2 291..296 "super"
+symbols: [["Container",13,null],["ordinary",12,"()"]]
+References "list(self, private, super, unknown)": [{"range":[150,154],"text":"self"},{"range":[217,221],"text":"self"}]
+Definition "fn = function() self": null
+
 === r6/receiver_ownership ===
 known gap: self completion mixes alpha, beta, and gamma across three unrelated classes.
-diagnostic: undefined-symbol severity=2 54..58 "self"
-diagnostic: undefined-symbol severity=2 121..125 "self"
-diagnostic: undefined-symbol severity=2 201..205 "self"
+diagnostics: []
 symbols: [["A",13,null],["B",13,null],["C",13,null]]
 Completion "self$gamma": [["alpha",5],["beta",5],["gamma",5]]
 

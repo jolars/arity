@@ -192,6 +192,30 @@ pub struct OopFacts {
     pub methods: Vec<MethodDef>,
     pub members: Vec<MemberDef>,
     pub member_groups: Vec<MemberGroup>,
+    pub method_implementations: Vec<MethodImplementationDef>,
+}
+
+/// The source closure may also survive as an ordinary function. Its stable
+/// binding identity keeps implementation changes visible across equal signatures.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub enum MethodImplementationSource {
+    Inline,
+    Binding { owner: ClassOwner, name: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub struct MethodImplementationDef {
+    pub method: OopKey,
+    pub source: MethodImplementationSource,
+}
+
+/// Current CST locations, kept out of the range-free declaration projection.
+#[derive(Debug, Clone)]
+pub struct MethodImplementationSite {
+    pub method: OopKey,
+    pub function_range: TextRange,
+    pub owner_range: TextRange,
+    pub keep_original: bool,
 }
 
 /// Retain a group's constructor origin and incomplete shape even when no member

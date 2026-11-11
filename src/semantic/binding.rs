@@ -1,4 +1,4 @@
-use rowan::TextRange;
+use rowan::{TextRange, TextSize};
 use smol_str::SmolStr;
 
 use crate::semantic::ScopeId;
@@ -32,11 +32,15 @@ pub struct Binding {
     pub scope: ScopeId,
     /// Range of the *defining* identifier (or `for`-var, or param name).
     pub def_range: TextRange,
+    /// A local assignment only shadows its enclosure after evaluating the RHS.
+    pub available_from: TextSize,
     /// Range of the innermost `for`/`while`/`repeat` whose body contains this
     /// binding, if any. Because a loop body re-executes, a read anywhere in that
     /// range (even textually *before* the assignment) refers to the value carried
     /// from a previous iteration, so resolution treats such a read as a use.
     pub loop_range: Option<TextRange>,
+    /// A conditional expression may leave the enclosing binding visible.
+    pub conditional: bool,
     /// Whether any read of this binding has been observed during resolution.
     pub read: bool,
 }

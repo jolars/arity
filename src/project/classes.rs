@@ -8,7 +8,10 @@
 //! members, signatures, and symbolic dispatch targets. [`oop_sites`] recovers
 //! their declaration and use spans without putting body text in the projection.
 
+mod environments;
 mod resolve;
+pub(crate) use environments::has_r6_candidates;
+pub use environments::{R6MethodEnvironment, apply_method_environments, standalone_semantic_model};
 pub use resolve::{ClassFile, ClassIndex, ClassResolution, ResolvedClass};
 mod oop;
 pub use oop::*;
@@ -322,6 +325,7 @@ struct Extracted {
     locations: Vec<ClassLocation>,
     occurrences: Vec<(TextRange, ClassOccurrence)>,
     oop_sites: Vec<OopSite>,
+    method_implementations: Vec<MethodImplementationSite>,
 }
 
 pub fn file_class_defs(model: &SemanticModel, root: &SyntaxNode) -> FileClassFacts {
@@ -483,6 +487,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         locations: Vec::new(),
         occurrences: Vec::new(),
         oop_sites: Vec::new(),
+        method_implementations: Vec::new(),
     };
     for (call, system, factory, key) in calls {
         let assignment = direct_assignment(&SyntaxElement::Node(call.syntax().clone()));
@@ -671,7 +676,9 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         .facts
         .generators
         .sort_by(|a, b| (&a.owner, &a.name, &a.target).cmp(&(&b.owner, &b.name, &b.target)));
-    let (facts, sites) = oop::project(model, root, &owners, &result, include_sites);
+    let (facts, sites, implementations) =
+        oop::project(model, root, &owners, &result, include_sites);
+    result.method_implementations = implementations;
     result.facts.oop = facts;
     result.oop_sites = sites;
     result

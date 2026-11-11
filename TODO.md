@@ -535,13 +535,19 @@ coverage need not block useful workspace support.
 
 #### 2. Method environments and generated bindings
 
-- [ ] Model R6 `self`, `private`, and `super` in their actual method
+- [x] Model R6 `self`, `private`, and `super` in their actual method
   environment, covering public and private methods, active bindings,
   defaults, and nested closures. Distinguish methods from ordinary
   function-valued fields and functions merely constructed inside a method.
   Respect local shadowing, known parent and member availability, and
   uncertain inheritance. Make #183 a regression of this semantic model; do
   not exempt these names globally or mask every read inside an R6 call.
+  Lint and navigation now share explicit R6 method enclosures. Project queries
+  cache binding availability without ranges, and the current CST supplies
+  method implementation locations. Regressions cover #183, inherited copies,
+  aliases, defaults, nested closures, shadowing, and rename safety across
+  cached and live editor reads. Generator `$set()` and bare member lookup for
+  `portable = FALSE` remain for later stages.
 - [ ] Model Reference Class bare field and method lookup, `.self`,
   `.refClassDef`, and inherited helpers such as `callSuper()` and
   `initFields()`. Distinguish normal methods from external methods with an
