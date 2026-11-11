@@ -5,6 +5,7 @@
 //! projection; display names and stale positions never select a different class.
 
 use super::*;
+use crate::incremental::normalize_path;
 use crate::project::{
     ClassId, ClassIndex, ClassOccurrence, class_occurrence_at_offset, file_class_defs,
     locate_class_def,
@@ -87,6 +88,8 @@ pub(crate) fn prepare_type_hierarchy_via_db(
     position: Position,
     encoding: PositionEncoding,
 ) -> Option<Vec<TypeHierarchyItem>> {
+    let normalized_path = normalize_path(path);
+    let path = normalized_path.as_path();
     let text = buffer.text();
     let line_index = buffer.line_index();
     let offset = TextSize::new(
@@ -162,7 +165,11 @@ fn class_relatives(
         else {
             return Vec::new();
         };
-        if uri::to_path(&item.uri).as_deref() != Some(data.id.path.as_path()) {
+        if uri::to_path(&item.uri)
+            .map(|path| normalize_path(&path))
+            .as_deref()
+            != Some(data.id.path.as_path())
+        {
             return Vec::new();
         }
         let index = snapshot.class_index();
@@ -226,6 +233,79 @@ mod tests {
     }
 
     // --- prepare ------------------------------------------------------------
+
+    #[test]
+    fn hierarchy_round_trips_lexically_equivalent_paths() {
+        let source = "Base <- R6::R6Class('Base')\nChild <- R6::R6Class('Child', inherit = Base)\n";
+        let snapshot = rename_workspace(source, "");
+        let normalized = ws_path("a.R");
+        let path = ws_root().join("sub").join("..").join("a.R");
+        let child = prepare_at(
+            &snapshot,
+            &path,
+            source,
+            source.find("'Child'").unwrap() + 1,
+        );
+        assert_eq!(child.len(), 1);
+        assert_eq!(child[0].uri, uri::from_path(&path).unwrap());
+        assert_eq!(
+            child[0].data,
+            item_named(&snapshot, &normalized, "Child").data
+        );
+        let parents = supertypes_via_db(&snapshot, &child[0], PositionEncoding::Utf16).unwrap();
+        assert_eq!(parents.len(), 1);
+        assert_eq!(parents[0].name, "Base");
+        let base = prepare_at(&snapshot, &path, source, source.find("'Base'").unwrap() + 1);
+        let children = subtypes_via_db(&snapshot, &base[0], PositionEncoding::Utf16).unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].name, "Child");
+    }
+
+    #[test]
+    fn unnormalized_paths_overlay_the_tracked_file() {
+        let source = "Base <- R6::R6Class('Live')\nChild <- R6::R6Class('Child', inherit = Base)\n";
+        let snapshot = rename_workspace(&source.replace("Live", "Stored"), "");
+        let path = ws_root().join("sub").join("..").join("a.R");
+        let items = prepare_at(&snapshot, &path, source, source.rfind("Base").unwrap());
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "Live");
+        assert_eq!(items[0].uri, uri::from_path(&path).unwrap());
+        assert_eq!(
+            items[0].data,
+            prepare_at(
+                &snapshot,
+                &ws_path("a.R"),
+                source,
+                source.rfind("Base").unwrap()
+            )[0]
+            .data
+        );
+    }
+
+    #[test]
+    fn closure_mutations_do_not_prove_class_factories() {
+        for mutation in [
+            "body(make) <- quote(NULL)",
+            "formals(make) <- alist(x = )",
+            "environment(make) <- baseenv()",
+            "base::body(make) <- quote(NULL)",
+            "`body<-`(make, value = quote(NULL))",
+        ] {
+            let source = format!("make <- R6::R6Class\n{mutation}\nA <- make('Phantom')\n");
+            let snapshot = rename_workspace(&source, "");
+            assert!(snapshot.class_index().declarations.is_empty(), "{source}");
+            assert!(
+                prepare_at(
+                    &snapshot,
+                    &ws_path("a.R"),
+                    &source,
+                    source.find("Phantom").unwrap()
+                )
+                .is_empty(),
+                "{source}"
+            );
+        }
+    }
 
     #[test]
     fn closure_reads_prepare_generators_declared_later() {
