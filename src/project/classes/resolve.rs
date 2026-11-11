@@ -51,6 +51,17 @@ pub struct ClassIndex {
 }
 
 impl ClassIndex {
+    /// All OOP source facts share the class projection and its package owner.
+    /// These include unconfirmed declarations; consumers must inspect their
+    /// provenance and uncertainty before treating them as resolved definitions.
+    pub fn file(&self, path: &Path) -> Option<&ClassFile> {
+        self.files.get(path)
+    }
+
+    pub fn oop_files(&self) -> impl Iterator<Item = &ClassFile> {
+        self.files.values()
+    }
+
     pub fn build(files: Vec<ClassFile>, resolution: &ClassResolution<'_>) -> Self {
         let mut index = Self {
             files: files
@@ -150,8 +161,15 @@ impl ClassIndex {
                     && (parent.path == id.path || resolution.scope.package_complete(&id.path))
                     && index.declarations.get(parent).is_some_and(|class| {
                         class.declaration.binding_known()
-                            && (def.system() != ClassSystem::R6
-                                || class.declaration.system() == ClassSystem::R6)
+                            && match def.system() {
+                                ClassSystem::R6 | ClassSystem::S7 => {
+                                    class.declaration.system() == def.system()
+                                }
+                                _ => matches!(
+                                    class.declaration.system(),
+                                    ClassSystem::S4 | ClassSystem::RefClass
+                                ),
+                            }
                     })
                 {
                     index
@@ -176,7 +194,8 @@ impl ClassIndex {
                 .generator_sources
                 .get(&(path.to_path_buf(), !owner.0.is_empty(), name.clone()))
                 .is_some_and(|sources| sources.len() == 1),
-            ParentRef::Unknown | ParentRef::Generator(GeneratorRef::Unknown) => false,
+            ParentRef::Unknown
+            | ParentRef::Generator(GeneratorRef::Unknown | GeneratorRef::Qualified { .. }) => false,
             _ => true,
         }
     }
@@ -240,7 +259,7 @@ impl ClassIndex {
                         .declarations
                         .iter()
                         .filter(|def| {
-                            def.system() != ClassSystem::R6
+                            matches!(def.system(), ClassSystem::S4 | ClassSystem::RefClass)
                                 && def.name == ClassName::Known(name.clone())
                                 && def.key.owner.0 == owner.0[..depth]
                         })
@@ -266,7 +285,7 @@ impl ClassIndex {
                             .declarations
                             .iter()
                             .filter(|def| {
-                                def.system() != ClassSystem::R6
+                                matches!(def.system(), ClassSystem::S4 | ClassSystem::RefClass)
                                     && def.key.owner.0.is_empty()
                                     && def.name == ClassName::Known(name.clone())
                             })
@@ -277,7 +296,8 @@ impl ClassIndex {
                     })
                     .collect()
             }
-            ParentRef::Generator(GeneratorRef::Unknown) | ParentRef::Unknown => Vec::new(),
+            ParentRef::Generator(GeneratorRef::Unknown | GeneratorRef::Qualified { .. })
+            | ParentRef::Unknown => Vec::new(),
         }
     }
 }

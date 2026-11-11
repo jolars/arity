@@ -3,10 +3,10 @@ source: tests/lsp_protocol/oop.rs
 expression: report
 ---
 === s7/definitions ===
-known gap: S7 classes and parents do not contribute type hierarchy items; registered methods are absent from the outline.
+known gap: Registered S7 methods are absent from the outline.
 diagnostics: []
 symbols: [["Point",13,null],["ColoredPoint",13,null],["describe",13,null],["obj",13,null]]
-TypeHierarchy "\"ColoredPoint\"": null
+TypeHierarchy "\"ColoredPoint\"": [{"children":[],"detail":"S7 class","name":"ColoredPoint","parents":["Point"],"selection":[111,125]}]
 Definition "describe(obj)": [{"range":[192,200],"text":"describe"}]
 
 === s7/use_sites ===
@@ -19,10 +19,10 @@ Completion "obj@value": [["value",5]]
 References "audit_get(obj)": [{"range":[132,141],"text":"audit_get"},{"range":[213,222],"text":"audit_get"},{"range":[74,83],"text":"audit_get"}]
 
 === s7/incomplete ===
-known gap: S7 class hierarchy and declared-property completion are unavailable.
+known gap: Declared S7 property completion is unavailable.
 diagnostic: syntax-error severity=1 105..106 "@"
 symbols: [["Point",13,null],["obj",13,null]]
-TypeHierarchy "\"Point\"": null
+TypeHierarchy "\"Point\"": [{"children":[],"detail":"S7 class","name":"Point","parents":[],"selection":[23,30]}]
 Completion "obj@": []
 
 === s7/shadowing ===
