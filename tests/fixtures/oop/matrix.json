@@ -1,0 +1,587 @@
+{
+  "s3/definitions": {
+    "probes": [
+      {
+        "method": "definition",
+        "needle": "speak(point)",
+        "offset": 0
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "\"point\"",
+        "offset": 1
+      }
+    ]
+  },
+  "s3/use_sites": {
+    "known_gaps": [
+      "S3 dispatch supplies .GenericCallEnv and .GenericDefEnv, but both are reported as undefined."
+    ],
+    "probes": [
+      {
+        "method": "definition",
+        "needle": "describe(obj)",
+        "offset": 0
+      },
+      {
+        "method": "completion",
+        "needle": "obj$value",
+        "offset": 4
+      },
+      {
+        "method": "references",
+        "needle": "describe(obj)",
+        "offset": 0
+      }
+    ]
+  },
+  "s3/incomplete": {
+    "parse_errors": true,
+    "probes": [
+      {
+        "method": "definition",
+        "needle": "new_point(1)",
+        "offset": 0
+      },
+      {
+        "method": "completion",
+        "needle": "obj$",
+        "offset": 4
+      }
+    ]
+  },
+  "s3/shadowing": {
+    "known_gaps": [
+      ".Generic is silently exempt even in an ordinary function outside method dispatch."
+    ],
+    "probes": [
+      {
+        "method": "definition",
+        "needle": "UseMethod(\"generic\"",
+        "offset": 0
+      },
+      {
+        "method": "definition",
+        "needle": "generic(1)",
+        "offset": 0
+      }
+    ]
+  },
+  "s3/dynamic": {
+    "probes": [
+      {
+        "method": "definition",
+        "needle": "speak(obj)",
+        "offset": 0
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "class_name)",
+        "offset": 1
+      }
+    ]
+  },
+  "s4/definitions": {
+    "known_gaps": [
+      "setGeneric creates describe without an assignment, but its use is reported as undefined.",
+      "Registered method definitions and class members are absent from the outline."
+    ],
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "\"ColoredPoint\"",
+        "offset": 1
+      },
+      {
+        "method": "definition",
+        "needle": "describe(obj)",
+        "offset": 0
+      },
+      {
+        "method": "references",
+        "needle": "Point(value = 1)",
+        "offset": 0
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "setClass(\"Point\"",
+        "offset": 10
+      }
+    ]
+  },
+  "s4/use_sites": {
+    "known_gaps": [
+      "S4 dispatch metadata .Methods, .defined, and .target is reported as undefined.",
+      "The generic binding created by setGeneric has no definition or signature help."
+    ],
+    "probes": [
+      {
+        "method": "definition",
+        "needle": "audit_speak(1)",
+        "offset": 0
+      },
+      {
+        "method": "signature-help",
+        "needle": "audit_speak(1)",
+        "offset": 12
+      }
+    ]
+  },
+  "s4/incomplete": {
+    "parse_errors": true,
+    "known_gaps": [
+      "Declared slots do not supply completion for a constructed S4 instance."
+    ],
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "setClass(\"Point\"",
+        "offset": 10
+      },
+      {
+        "method": "completion",
+        "needle": "obj@",
+        "offset": 4
+      }
+    ]
+  },
+  "s4/shadowing": {
+    "known_gaps": [
+      "The class index treats a shadowed setClass call as a real class declaration."
+    ],
+    "probes": [
+      {
+        "method": "definition",
+        "needle": "setClass(\"Pretend\"",
+        "offset": 0
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "\"Pretend\"",
+        "offset": 1
+      }
+    ]
+  },
+  "s4/dynamic": {
+    "probes": [
+      {
+        "method": "definition",
+        "needle": "Point <-",
+        "offset": 0
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "class_name, slots",
+        "offset": 1
+      },
+      {
+        "method": "completion",
+        "needle": "obj@value",
+        "offset": 4
+      }
+    ]
+  },
+  "s4/named_arguments": {
+    "known_gaps": [
+      "Named Class arguments are missed by the class hierarchy index."
+    ],
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "Class = \"Point\"",
+        "offset": 9
+      },
+      {
+        "method": "completion",
+        "needle": "obj@value",
+        "offset": 4
+      }
+    ]
+  },
+  "reference_classes/definitions": {
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "\"Child\"",
+        "offset": 1
+      },
+      {
+        "method": "definition",
+        "needle": "Child$new",
+        "offset": 0
+      },
+      {
+        "method": "definition",
+        "needle": "obj$read()",
+        "offset": 4
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "setRefClass(\"Base\"",
+        "offset": 13
+      }
+    ]
+  },
+  "reference_classes/use_sites": {
+    "known_gaps": [
+      "Reference methods' bare fields and .self are reported as undefined.",
+      "Reference methods have no member definition or signature help."
+    ],
+    "probes": [
+      {
+        "method": "definition",
+        "needle": "obj$read()",
+        "offset": 4
+      },
+      {
+        "method": "signature-help",
+        "needle": "obj$get()",
+        "offset": 8
+      },
+      {
+        "method": "completion",
+        "needle": ".self$read()",
+        "offset": 6
+      },
+      {
+        "method": "references",
+        "needle": "Counter$new",
+        "offset": 0
+      }
+    ]
+  },
+  "reference_classes/incomplete": {
+    "parse_errors": true,
+    "known_gaps": [
+      "Declared Reference Class fields do not supply instance completion."
+    ],
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "\"Counter\"",
+        "offset": 1
+      },
+      {
+        "method": "completion",
+        "needle": "obj$",
+        "offset": 4
+      }
+    ]
+  },
+  "reference_classes/shadowing": {
+    "known_gaps": [
+      "The class index treats a shadowed setRefClass call as a real class declaration."
+    ],
+    "probes": [
+      {
+        "method": "definition",
+        "needle": "setRefClass(\"Pretend\"",
+        "offset": 0
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "\"Pretend\"",
+        "offset": 1
+      }
+    ]
+  },
+  "reference_classes/dynamic": {
+    "known_gaps": [
+      "A method added through a generator has no implicit .self binding."
+    ],
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "class_name, fields",
+        "offset": 1
+      },
+      {
+        "method": "definition",
+        "needle": "obj$read()",
+        "offset": 4
+      }
+    ]
+  },
+  "r6/definitions": {
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "\"Child\"",
+        "offset": 1
+      },
+      {
+        "method": "definition",
+        "needle": "Child$new()",
+        "offset": 0
+      },
+      {
+        "method": "definition",
+        "needle": "obj$read()",
+        "offset": 4
+      },
+      {
+        "method": "references",
+        "needle": "Child$new()",
+        "offset": 0
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "\"Base\"",
+        "offset": 1
+      }
+    ]
+  },
+  "r6/use_sites": {
+    "known_gaps": [
+      "R6 methods and active bindings have no implicit self, private, or super bindings.",
+      "Declared members have no member definition or signature help."
+    ],
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "\"Child\"",
+        "offset": 1
+      },
+      {
+        "method": "definition",
+        "needle": "obj$read()",
+        "offset": 4
+      },
+      {
+        "method": "signature-help",
+        "needle": "obj$read()",
+        "offset": 9
+      },
+      {
+        "method": "completion",
+        "needle": "obj$double",
+        "offset": 4
+      },
+      {
+        "method": "references",
+        "needle": "obj$read()",
+        "offset": 4
+      }
+    ]
+  },
+  "r6/incomplete": {
+    "parse_errors": true,
+    "known_gaps": [
+      "Declared R6 fields do not supply instance completion."
+    ],
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "\"Counter\"",
+        "offset": 1
+      },
+      {
+        "method": "completion",
+        "needle": "obj$",
+        "offset": 4
+      }
+    ]
+  },
+  "r6/shadowing": {
+    "known_gaps": [
+      "The class index treats a shadowed R6Class call as a real class declaration; private and self reads here must remain ordinary undefined reads."
+    ],
+    "probes": [
+      {
+        "method": "definition",
+        "needle": "R6Class(\"Pretend\"",
+        "offset": 0
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "\"Pretend\"",
+        "offset": 1
+      }
+    ]
+  },
+  "r6/dynamic": {
+    "known_gaps": [
+      "A method installed through $set has no implicit self binding."
+    ],
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "class_name, public",
+        "offset": 1
+      },
+      {
+        "method": "definition",
+        "needle": "obj$read()",
+        "offset": 4
+      }
+    ]
+  },
+  "r6/issue_183": {
+    "known_gaps": [
+      "Issue #183: initialize's private binding is reported as undefined."
+    ],
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "\"NewR6\"",
+        "offset": 1
+      },
+      {
+        "method": "definition",
+        "needle": "NewR6$new()",
+        "offset": 0
+      },
+      {
+        "method": "completion",
+        "needle": "private$id",
+        "offset": 8
+      }
+    ]
+  },
+  "r6/receiver_ownership": {
+    "known_gaps": [
+      "self completion mixes alpha, beta, and gamma across three unrelated classes."
+    ],
+    "probes": [
+      {
+        "method": "completion",
+        "needle": "self$gamma",
+        "offset": 5
+      }
+    ]
+  },
+  "r6/generator_alias": {
+    "known_gaps": [
+      "The child records Generator as its parent, while that generator's class is indexed as Display."
+    ],
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "\"Child\"",
+        "offset": 1
+      },
+      {
+        "method": "definition",
+        "needle": "inherit = Generator",
+        "offset": 10
+      }
+    ]
+  },
+  "r6/named_arguments": {
+    "known_gaps": [
+      "Named classname arguments are missed by the class hierarchy index."
+    ],
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "\"Point\"",
+        "offset": 1
+      },
+      {
+        "method": "definition",
+        "needle": "Point$new()",
+        "offset": 0
+      }
+    ]
+  },
+  "s7/definitions": {
+    "known_gaps": [
+      "S7 classes and parents do not contribute type hierarchy items; registered methods are absent from the outline."
+    ],
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "\"ColoredPoint\"",
+        "offset": 1
+      },
+      {
+        "method": "definition",
+        "needle": "describe(obj)",
+        "offset": 0
+      }
+    ]
+  },
+  "s7/use_sites": {
+    "known_gaps": [
+      "S7 properties and constructors have no dedicated member or signature information."
+    ],
+    "probes": [
+      {
+        "method": "definition",
+        "needle": "audit_get(obj)",
+        "offset": 0
+      },
+      {
+        "method": "signature-help",
+        "needle": "Foo(value = 1)",
+        "offset": 4
+      },
+      {
+        "method": "completion",
+        "needle": "obj@value",
+        "offset": 4
+      },
+      {
+        "method": "references",
+        "needle": "audit_get(obj)",
+        "offset": 0
+      }
+    ]
+  },
+  "s7/incomplete": {
+    "parse_errors": true,
+    "known_gaps": [
+      "S7 class hierarchy and declared-property completion are unavailable."
+    ],
+    "probes": [
+      {
+        "method": "type-hierarchy",
+        "needle": "\"Point\"",
+        "offset": 1
+      },
+      {
+        "method": "completion",
+        "needle": "obj@",
+        "offset": 4
+      }
+    ]
+  },
+  "s7/shadowing": {
+    "probes": [
+      {
+        "method": "definition",
+        "needle": "new_class(\"Pretend\"",
+        "offset": 0
+      },
+      {
+        "method": "definition",
+        "needle": "method(describe",
+        "offset": 0
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "\"Pretend\"",
+        "offset": 1
+      }
+    ]
+  },
+  "s7/dynamic": {
+    "probes": [
+      {
+        "method": "definition",
+        "needle": "describe(obj)",
+        "offset": 0
+      },
+      {
+        "method": "type-hierarchy",
+        "needle": "class_name, properties",
+        "offset": 1
+      },
+      {
+        "method": "completion",
+        "needle": "obj@value",
+        "offset": 4
+      }
+    ]
+  }
+}

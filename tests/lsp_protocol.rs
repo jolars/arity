@@ -22,6 +22,9 @@ use serde_json::{Value, json};
 #[path = "lsp_protocol/config_env.rs"]
 mod config_env;
 
+#[path = "lsp_protocol/oop.rs"]
+mod oop;
+
 /// Generous so slow CI never trips it; short enough that a genuinely wedged
 /// server fails the test instead of hanging the suite.
 const TIMEOUT: Duration = Duration::from_secs(10);

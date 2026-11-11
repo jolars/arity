@@ -1,0 +1,43 @@
+---
+source: tests/lsp_protocol/oop.rs
+expression: report
+---
+=== reference_classes/definitions ===
+diagnostic: unused-binding severity=2 0..4 "Base"
+symbols: [["Base",13,null],["Child",13,null],["obj",13,null]]
+TypeHierarchy "\"Child\"": [{"children":[],"detail":"reference class","name":"Child","parents":["Base"],"selection":[104,111]}]
+Definition "Child$new": [{"range":[71,76],"text":"Child"}]
+Definition "obj$read()": null
+TypeHierarchy "setRefClass(\"Base\"": [{"children":["Child"],"detail":"reference class","name":"Base","parents":[],"selection":[29,35]}]
+
+=== reference_classes/use_sites ===
+known gap: Reference methods' bare fields and .self are reported as undefined.
+known gap: Reference methods have no member definition or signature help.
+diagnostic: undefined-symbol severity=2 120..125 "value"
+diagnostic: undefined-symbol severity=2 144..149 ".self"
+symbols: [["Counter",13,null],["obj",13,null]]
+Definition "obj$read()": null
+SignatureHelp "obj$get()": null
+Completion ".self$read()": [["read",5]]
+References "Counter$new": [{"range":[167,174],"text":"Counter"},{"range":[0,7],"text":"Counter"}]
+
+=== reference_classes/incomplete ===
+known gap: Declared Reference Class fields do not supply instance completion.
+diagnostic: syntax-error severity=1 114..115 "$"
+symbols: [["Counter",13,null],["obj",13,null]]
+TypeHierarchy "\"Counter\"": [{"children":[],"detail":"reference class","name":"Counter","parents":[],"selection":[35,44]}]
+Completion "obj$": []
+
+=== reference_classes/shadowing ===
+known gap: The class index treats a shadowed setRefClass call as a real class declaration.
+diagnostic: undefined-symbol severity=2 130..135 ".self"
+symbols: [["setRefClass",12,"(Class, ...)"],["Fake",13,null],["outside",12,"()"]]
+Definition "setRefClass(\"Pretend\"": [{"range":[0,11],"text":"setRefClass"}]
+TypeHierarchy "\"Pretend\"": [{"children":[],"detail":"reference class","name":"Pretend","parents":[],"selection":[63,72]}]
+
+=== reference_classes/dynamic ===
+known gap: A method added through a generator has no implicit .self binding.
+diagnostic: undefined-symbol severity=2 203..208 ".self"
+symbols: [["class_name",13,null],["field_name",13,null],["Counter",13,null],["obj",13,null]]
+TypeHierarchy "class_name, fields": null
+Definition "obj$read()": null
