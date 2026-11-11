@@ -463,11 +463,15 @@ coverage need not block useful workspace support.
 
 #### 0. Preserve the coverage baseline
 
-- [ ] Add a hand-registered OOP fixture matrix covering definitions, use sites,
+- [x] Add a hand-registered OOP fixture matrix covering definitions, use sites,
   incomplete editor input, shadowing, and unsupported dynamic forms for all
   five systems. Turn the reduced audit examples into permanent regressions
   before changing behavior. Cover CLI lint and the corresponding LSP paths,
   not just declaration extraction.
+  Added 30 fixtures in `tests/fixtures/oop/`, registered by
+  `tests/lsp_protocol/oop.rs`. The shared CLI and LSP baselines cover live edits
+  and label known gaps explicitly; the parser check also covers incomplete
+  input losslessly.
 - [ ] Add a developer-only differential oracle with pinned R, R6, and S7
   versions. Record class and member declarations, method environments,
   constructor formals, and dispatch outcomes as small reviewed fixtures

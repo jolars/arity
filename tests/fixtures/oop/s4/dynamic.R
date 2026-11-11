@@ -1,0 +1,7 @@
+class_name <- paste0("Dyn", "Point")
+Point <- methods::setClass(class_name, slots = c(value = "numeric"))
+generic_name <- paste0("des", "cribe")
+methods::setGeneric(generic_name, function(x) standardGeneric(generic_name))
+methods::setMethod(generic_name, class_name, function(x) x@value)
+obj <- methods::new(class_name, value = 1)
+print(obj@value)

@@ -1,0 +1,40 @@
+---
+source: tests/lsp_protocol/oop.rs
+expression: report
+---
+=== s7/definitions ===
+known gap: S7 classes and parents do not contribute type hierarchy items; registered methods are absent from the outline.
+diagnostics: []
+symbols: [["Point",13,null],["ColoredPoint",13,null],["describe",13,null],["obj",13,null]]
+TypeHierarchy "\"ColoredPoint\"": null
+Definition "describe(obj)": [{"range":[192,200],"text":"describe"}]
+
+=== s7/use_sites ===
+known gap: S7 properties and constructors have no dedicated member or signature information.
+diagnostics: []
+symbols: [["Foo",13,null],["audit_get",13,null],["obj",13,null]]
+Definition "audit_get(obj)": [{"range":[74,83],"text":"audit_get"}]
+SignatureHelp "Foo(value = 1)": null
+Completion "obj@value": [["value",5]]
+References "audit_get(obj)": [{"range":[132,141],"text":"audit_get"},{"range":[213,222],"text":"audit_get"},{"range":[74,83],"text":"audit_get"}]
+
+=== s7/incomplete ===
+known gap: S7 class hierarchy and declared-property completion are unavailable.
+diagnostic: syntax-error severity=1 105..106 "@"
+symbols: [["Point",13,null],["obj",13,null]]
+TypeHierarchy "\"Point\"": null
+Completion "obj@": []
+
+=== s7/shadowing ===
+diagnostics: []
+symbols: [["new_class",12,"(name, properties)"],["Fake",13,null],["new_generic",12,"(name, dispatch_args)"],["describe",13,null],["`method<-`",12,"(generic, signature, value)"]]
+Definition "new_class(\"Pretend\"": [{"range":[0,9],"text":"new_class"}]
+Definition "method(describe": [{"range":[205,215],"text":"`method<-`"}]
+TypeHierarchy "\"Pretend\"": null
+
+=== s7/dynamic ===
+diagnostics: []
+symbols: [["class_name",13,null],["Point",13,null],["create_generic",13,null],["describe",13,null],["signature",13,null],["obj",13,null]]
+Definition "describe(obj)": [{"range":[152,160],"text":"describe"}]
+TypeHierarchy "class_name, properties": null
+Completion "obj@value": [["value",5]]

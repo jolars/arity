@@ -1,0 +1,78 @@
+---
+source: tests/lsp_protocol/oop.rs
+expression: report
+---
+=== r6/definitions ===
+diagnostics: []
+symbols: [["Base",13,null],["Child",13,null],["obj",13,null]]
+TypeHierarchy "\"Child\"": [{"children":[],"detail":"R6 class","name":"Child","parents":["Base"],"selection":[85,92]}]
+Definition "Child$new()": [{"range":[64,69],"text":"Child"}]
+Definition "obj$read()": null
+References "Child$new()": [{"range":[143,148],"text":"Child"},{"range":[64,69],"text":"Child"}]
+TypeHierarchy "\"Base\"": [{"children":["Child"],"detail":"R6 class","name":"Base","parents":[],"selection":[20,26]}]
+
+=== r6/use_sites ===
+known gap: R6 methods and active bindings have no implicit self, private, or super bindings.
+known gap: Declared members have no member definition or signature help.
+diagnostic: undefined-symbol severity=2 166..170 "self"
+diagnostic: undefined-symbol severity=2 178..185 "private"
+diagnostic: undefined-symbol severity=2 190..195 "super"
+diagnostic: undefined-symbol severity=2 272..276 "self"
+symbols: [["Base",13,null],["Child",13,null],["obj",13,null]]
+TypeHierarchy "\"Child\"": [{"children":[],"detail":"R6 class","name":"Child","parents":["Base"],"selection":[88,95]}]
+Definition "obj$read()": null
+SignatureHelp "obj$read()": null
+Completion "obj$double": [["double",5],["read",5]]
+References "obj$read()": null
+
+=== r6/incomplete ===
+known gap: Declared R6 fields do not supply instance completion.
+diagnostic: syntax-error severity=1 84..85 "$"
+symbols: [["Counter",13,null],["obj",13,null]]
+TypeHierarchy "\"Counter\"": [{"children":[],"detail":"R6 class","name":"Counter","parents":[],"selection":[23,32]}]
+Completion "obj$": []
+
+=== r6/shadowing ===
+known gap: The class index treats a shadowed R6Class call as a real class declaration; private and self reads here must remain ordinary undefined reads.
+diagnostic: undefined-symbol severity=2 105..112 "private"
+diagnostic: undefined-symbol severity=2 140..144 "self"
+symbols: [["R6Class",12,"(classname, public)"],["fake",13,null],["outside",12,"()"]]
+Definition "R6Class(\"Pretend\"": [{"range":[0,7],"text":"R6Class"}]
+TypeHierarchy "\"Pretend\"": [{"children":[],"detail":"R6 class","name":"Pretend","parents":[],"selection":[62,71]}]
+
+=== r6/dynamic ===
+known gap: A method installed through $set has no implicit self binding.
+diagnostic: undefined-symbol severity=2 199..203 "self"
+symbols: [["class_name",13,null],["factory",13,null],["Counter",13,null],["member_name",13,null],["obj",13,null]]
+TypeHierarchy "class_name, public": null
+Definition "obj$read()": null
+
+=== r6/issue_183 ===
+known gap: Issue #183: initialize's private binding is reported as undefined.
+diagnostic: undefined-symbol severity=2 122..129 "private"
+symbols: [["NewR6",13,null],["obj",13,null]]
+TypeHierarchy "\"NewR6\"": [{"children":[],"detail":"R6 class","name":"NewR6","parents":[],"selection":[24,31]}]
+Definition "NewR6$new()": [{"range":[0,5],"text":"NewR6"}]
+Completion "private$id": [["id",5]]
+
+=== r6/receiver_ownership ===
+known gap: self completion mixes alpha, beta, and gamma across three unrelated classes.
+diagnostic: undefined-symbol severity=2 54..58 "self"
+diagnostic: undefined-symbol severity=2 121..125 "self"
+diagnostic: undefined-symbol severity=2 201..205 "self"
+symbols: [["A",13,null],["B",13,null],["C",13,null]]
+Completion "self$gamma": [["alpha",5],["beta",5],["gamma",5]]
+
+=== r6/generator_alias ===
+known gap: The child records Generator as its parent, while that generator's class is indexed as Display.
+diagnostics: []
+symbols: [["Generator",13,null],["Child",13,null],["obj",13,null]]
+TypeHierarchy "\"Child\"": [{"children":[],"detail":"R6 class","name":"Child","parents":[],"selection":[83,90]}]
+Definition "inherit = Generator": [{"range":[0,9],"text":"Generator"}]
+
+=== r6/named_arguments ===
+known gap: Named classname arguments are missed by the class hierarchy index.
+diagnostics: []
+symbols: [["Point",13,null],["obj",13,null]]
+TypeHierarchy "\"Point\"": null
+Definition "Point$new()": [{"range":[0,5],"text":"Point"}]

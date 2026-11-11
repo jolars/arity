@@ -1,0 +1,37 @@
+---
+source: tests/lsp_protocol/oop.rs
+expression: report
+---
+=== s3/definitions ===
+diagnostics: []
+symbols: [["speak",12,"(x, ...)"],["speak.point",12,"(x, ...)"],["speak.default",12,"(x, ...)"],["point",13,null]]
+Definition "speak(point)": [{"range":[0,5],"text":"speak"}]
+TypeHierarchy "\"point\"": null
+
+=== s3/use_sites ===
+known gap: S3 dispatch supplies .GenericCallEnv and .GenericDefEnv, but both are reported as undefined.
+diagnostic: undefined-symbol severity=2 112..127 ".GenericCallEnv"
+diagnostic: undefined-symbol severity=2 129..143 ".GenericDefEnv"
+symbols: [["describe",12,"(x)"],["describe.point",12,"(x)"],["obj",13,null]]
+Definition "describe(obj)": [{"range":[0,8],"text":"describe"}]
+Completion "obj$value": [["value",5]]
+References "describe(obj)": [{"range":[208,216],"text":"describe"},{"range":[0,8],"text":"describe"}]
+
+=== s3/incomplete ===
+diagnostic: syntax-error severity=1 106..107 "$"
+symbols: [["new_point",12,"(value)"],["obj",13,null]]
+Definition "new_point(1)": [{"range":[0,9],"text":"new_point"}]
+Completion "obj$": []
+
+=== s3/shadowing ===
+known gap: .Generic is silently exempt even in an ordinary function outside method dispatch.
+diagnostics: []
+symbols: [["UseMethod",12,"(generic, object)"],["generic",12,"(x)"],["outside",12,"()"]]
+Definition "UseMethod(\"generic\"": [{"range":[0,9],"text":"UseMethod"}]
+Definition "generic(1)": [{"range":[46,53],"text":"generic"}]
+
+=== s3/dynamic ===
+diagnostics: []
+symbols: [["generic_name",13,null],["class_name",13,null],["speak",12,"(x)"],["implementation",12,"(x)"],["obj",13,null]]
+Definition "speak(obj)": [{"range":[70,75],"text":"speak"}]
+TypeHierarchy "class_name)": null
