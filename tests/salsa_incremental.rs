@@ -1147,6 +1147,302 @@ fn generic_method_body_edits_backdate_but_dispatch_edits_invalidate() {
 }
 
 #[test]
+fn shared_oop_resolution_joins_visible_generics_methods_and_members() {
+    let (db, _, _) = package_ab(
+        "Parent <- R6::R6Class('Parent', public = list(read = function(x = 1) x))\n\
+         methods::setGeneric('g', function(x) standardGeneric('g'))\n",
+        "Child <- R6::R6Class('Child', inherit = Parent)\n\
+         methods::setMethod('g', 'Parent', function(x) x)\n",
+    );
+    let index = project_classes(&db);
+    let method = &index
+        .file(Path::new("/pkg/R/b.R"))
+        .unwrap()
+        .facts
+        .oop
+        .methods[0];
+    let generic = index.generic_candidates(
+        Path::new("/pkg/R/b.R"),
+        method.generic.as_ref().unwrap(),
+        false,
+    );
+    assert_eq!(generic.len(), 1);
+    assert_eq!(generic[0].path, Path::new("/pkg/R/a.R"));
+    let methods = index.methods_for_generic(&generic[0]);
+    assert_eq!(methods.len(), 1);
+    assert_eq!(methods[0].path, Path::new("/pkg/R/b.R"));
+    let members = index.member_candidates(&class_named(index, "Child"), "read");
+    assert_eq!(members.len(), 1);
+    let member = index.member(&members[0]).unwrap();
+    let signature = index
+        .method(&arity::project::classes::OopId {
+            path: members[0].path.clone(),
+            key: member.method.clone().unwrap(),
+        })
+        .unwrap()
+        .signature
+        .as_ref()
+        .unwrap();
+    assert_eq!(signature.parameters[0].name, "x");
+    assert_eq!(signature.parameters[0].default.as_deref(), Some("1"));
+}
+
+#[test]
+fn shared_oop_resolution_keeps_source_closures_directional() {
+    for (source, expected) in [("source('b.R')\n", 1), ("", 0)] {
+        let (db, _, _) = scripts_ab(
+            &format!("{source}methods::setMethod('g', 'C', function(x) x)\n"),
+            "methods::setGeneric('g', function(x) standardGeneric('g'))\n",
+        );
+        let index = project_classes(&db);
+        let file = index.file(Path::new("/s/a.R")).unwrap();
+        let candidates = index.generic_candidates(
+            &file.path,
+            file.facts.oop.methods[0].generic.as_ref().unwrap(),
+            false,
+        );
+        assert_eq!(candidates.len(), expected);
+        if let Some(generic) = candidates.first() {
+            assert_eq!(index.methods_for_generic(generic).len(), 1);
+        }
+    }
+}
+
+#[test]
+fn oop_namespace_imports_join_only_exported_workspace_declarations() {
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(
+        Path::new("/one/R/a.R"),
+        "methods::setClass('Parent')\nmethods::setGeneric('g', function(x) standardGeneric('g'))\n",
+    );
+    let b = db.upsert_file(Path::new("/two/R/b.R"),
+        "methods::setClass('Child', contains = 'Parent')\nmethods::setMethod('g', 'Parent', function(x) x)\n");
+    db.set_workspace_members(vec![a, b], vec!["/one".into(), "/two".into()]);
+    db.refresh_descriptions([PathBuf::from("/one"), PathBuf::from("/two")]);
+    db.upsert_description(Path::new("/one"), "Package: one\n");
+    db.upsert_description(Path::new("/two"), "Package: two\nImports: one\n");
+    let metadata = |exports: &str, imports: &str| {
+        [("/one", exports), ("/two", imports)]
+            .into_iter()
+            .map(|(root, namespace)| PackageInfo {
+                root: root.into(),
+                namespace: Some(namespace.into()),
+                dir_sources: BTreeSet::new(),
+                native_routines: BTreeSet::new(),
+            })
+            .collect()
+    };
+    for (exports, imports, expected) in [
+        ("exportClasses(Parent)\nexportMethods(g)\n", "", 0),
+        (
+            "",
+            "importClassesFrom(one, Parent)\nimportMethodsFrom(one, g)\n",
+            0,
+        ),
+        (
+            "exportClasses(Parent)\nexportMethods(g)\n",
+            "importClassesFrom(one, Parent)\nimportMethodsFrom(one, g)\n",
+            1,
+        ),
+        (
+            "exportClasses(Parent)\nexportMethods(g)\n",
+            "import(one)\nif (flag) import(other)\n",
+            0,
+        ),
+        (
+            "exportClasses(Parent)\nexportMethods(g)\n",
+            "if (flag) import(one)\n",
+            0,
+        ),
+    ] {
+        db.clear_query_log();
+        db.set_package_metadata(metadata(exports, imports));
+        let index = project_classes(&db);
+        let file = index.file(Path::new("/two/R/b.R")).unwrap();
+        let candidates = index.generic_candidates(
+            &file.path,
+            file.facts.oop.methods[0].generic.as_ref().unwrap(),
+            false,
+        );
+        assert_eq!(candidates.len(), expected);
+        assert_eq!(index.supertypes.len(), expected);
+        if let Some(generic) = candidates.first() {
+            assert_eq!(index.methods_for_generic(generic).len(), 1);
+        }
+        assert_eq!(
+            count_by_kind(&db.query_log()).get(&QueryKind::ProjectClasses),
+            Some(&1)
+        );
+    }
+}
+
+#[test]
+fn oop_qualified_and_imported_bindings_resolve_in_named_packages() {
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(
+        Path::new("/one/R/a.R"),
+        "Parent <- R6::R6Class('Parent', public = list(read = function() 1))\n\
+         g <- S7::new_generic('display', 'x')\nalias <- g\n",
+    );
+    let b = db.upsert_file(
+        Path::new("/two/R/b.R"),
+        "Child <- R6::R6Class('Child', inherit = one::Parent)\n\
+         S7::method(one::alias, signature = Child) <- function(x) x\n",
+    );
+    db.set_workspace_members(vec![a, b], vec!["/one".into(), "/two".into()]);
+    db.refresh_descriptions([PathBuf::from("/one"), PathBuf::from("/two")]);
+    db.upsert_description(Path::new("/one"), "Package: one\n");
+    db.upsert_description(Path::new("/two"), "Package: two\nImports: one\n");
+    db.set_package_metadata(
+        [
+            ("/one", "export(Parent, alias)\n"),
+            ("/two", "importFrom(one, Parent, alias)\n"),
+        ]
+        .into_iter()
+        .map(|(root, namespace)| PackageInfo {
+            root: root.into(),
+            namespace: Some(namespace.into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        })
+        .collect(),
+    );
+    for source in [
+        "Child <- R6::R6Class('Child', inherit = one::Parent)\nS7::method(one::alias, signature = Child) <- function(x) x\n",
+        "Child <- R6::R6Class('Child', inherit = Parent)\nS7::method(alias, signature = Child) <- function(x) x\n",
+    ] {
+        db.set_file_text(b, source);
+        let index = project_classes(&db);
+        assert_eq!(index.supertypes[&class_named(index, "Child")].len(), 1);
+        assert_eq!(
+            index
+                .member_candidates(&class_named(index, "Child"), "read")
+                .len(),
+            1
+        );
+        let file = index.file(Path::new("/two/R/b.R")).unwrap();
+        let generics = index.generic_candidates(
+            &file.path,
+            file.facts.oop.methods[0].generic.as_ref().unwrap(),
+            false,
+        );
+        assert_eq!(generics.len(), 1);
+        assert_eq!(
+            index.generic(&generics[0]).unwrap().name,
+            arity::project::classes::ClassName::Known("display".into())
+        );
+        assert_eq!(index.methods_for_generic(&generics[0]).len(), 1);
+    }
+}
+
+#[test]
+fn shared_oop_sites_follow_current_spans_without_rebuilding_the_index() {
+    use arity::project::classes::{OopSiteRole, OopTarget, oop_sites};
+    let source = "A <- R6::R6Class('A', public = list(read = function(x = 1) x))\n";
+    let (mut db, a, _) = package_ab(source, "");
+    let before = project_classes(&db).clone();
+    let root = db.parsed_tree(a);
+    let sites = oop_sites(db.semantic_model(a), &root);
+    let member = sites.iter().find(|site| site.role == OopSiteRole::Declaration
+        && matches!(&site.target, OopTarget::Declaration(key) if key.kind == arity::project::classes::OopKind::Member)).unwrap();
+    let old_range = member.range;
+    let target = member.target.clone();
+    db.clear_query_log();
+    db.set_file_text(a, format!("# Prose shifts every site.\n{source}"));
+    assert_eq!(&before, project_classes(&db));
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+    let root = db.parsed_tree(a);
+    let sites = oop_sites(db.semantic_model(a), &root);
+    let member = sites
+        .iter()
+        .find(|site| site.role == OopSiteRole::Declaration && site.target == target)
+        .unwrap();
+    assert_eq!(
+        member.range.start() - old_range.start(),
+        rowan::TextSize::of("# Prose shifts every site.\n")
+    );
+    assert_eq!(&db.file_text(a)[member.range], "read");
+}
+
+#[test]
+fn oop_binding_resolution_respects_source_order_and_masks() {
+    for (source, expected) in [
+        (
+            "source('b.R')\nS7::method(g, signature = C) <- function(x) x\n",
+            1,
+        ),
+        (
+            "S7::method(g, signature = C) <- function(x) x\nsource('b.R')\n",
+            0,
+        ),
+        (
+            "source('b.R')\ng <- function(x) x\nS7::method(g, signature = C) <- function(x) x\n",
+            0,
+        ),
+        (
+            "source(path)\nS7::method(g, signature = C) <- function(x) x\n",
+            0,
+        ),
+    ] {
+        let (db, _, _) = scripts_ab(source, "g <- S7::new_generic('g', 'x')\n");
+        let index = project_classes(&db);
+        let file = index.file(Path::new("/s/a.R")).unwrap();
+        assert_eq!(
+            index
+                .generic_candidates(
+                    &file.path,
+                    file.facts.oop.methods[0].generic.as_ref().unwrap(),
+                    false
+                )
+                .len(),
+            expected,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn oop_collate_changes_invalidate_resolution_but_description_prose_backdates() {
+    let (mut db, _, _) = package_ab(
+        "methods::setGeneric('g', function(x) standardGeneric('g'))\n",
+        "methods::setMethod('g', 'C', function(x) x)\n",
+    );
+    db.refresh_descriptions([PathBuf::from("/pkg")]);
+    db.upsert_description(
+        Path::new("/pkg"),
+        "Package: pkg\nDescription: First prose.\nCollate: a.R b.R\n",
+    );
+    let before = project_classes(&db).clone();
+    db.clear_query_log();
+    db.upsert_description(
+        Path::new("/pkg"),
+        "Package: pkg\nDescription: Different prose.\nCollate: a.R b.R\n",
+    );
+    assert_eq!(&before, project_classes(&db));
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+    db.clear_query_log();
+    db.upsert_description(
+        Path::new("/pkg"),
+        "Package: pkg\nCollate: a.R b.R missing.R\n",
+    );
+    let index = project_classes(&db);
+    let file = index.file(Path::new("/pkg/R/b.R")).unwrap();
+    assert!(
+        index
+            .generic_candidates(
+                &file.path,
+                file.facts.oop.methods[0].generic.as_ref().unwrap(),
+                false
+            )
+            .is_empty()
+    );
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ProjectClasses),
+        Some(&1)
+    );
+}
+
+#[test]
 fn class_identity_omits_cross_file_edges_when_package_sources_are_incomplete() {
     let (mut db, _, _) = package_ab(
         "A <- R6::R6Class(\"A\")\n",

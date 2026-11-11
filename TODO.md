@@ -523,7 +523,7 @@ coverage need not block useful workspace support.
   `setReplaceMethod()` arguments match its wrapper before forwarding.
   Ambiguous aliases retain possible origins, and uncertain declarations do
   not establish definite generic aliases or members.
-- [ ] Keep per-file semantics independent of the project. Project queries
+- [x] Keep per-file semantics independent of the project. Project queries
   combine range-free class, member, and signature facts using package
   visibility, NAMESPACE, source closures, and Collate; recover spans from
   the current CST. Reuse `file_class_defs`, `project_classes`, and existing

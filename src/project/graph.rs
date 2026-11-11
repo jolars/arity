@@ -883,12 +883,17 @@ pub(crate) fn build_class_index(
         .collect();
     let native = project.native_routines.iter().cloned().collect();
     let scope = ProjectScope::build(&scope_facts, &namespaces, &completeness, &native);
+    let package_names = description_facts_by_root(db)
+        .into_iter()
+        .filter_map(|(root, facts)| facts.package.clone().map(|name| (root, name)))
+        .collect();
     ClassIndex::build(
         files,
         &ClassResolution {
             scope: &scope,
             namespaces: &namespace_texts,
             packages: &package_declarations,
+            package_names: &package_names,
             indexed,
             remote,
         },
