@@ -580,13 +580,18 @@ coverage need not block useful workspace support.
 
 #### 3. R6 and Reference Class members
 
-- [ ] Extract R6 public and private fields and methods, active bindings,
+- [x] Extract R6 public and private fields and methods, active bindings,
   initializer signatures, and generator versus instance APIs. Resolve
   `inherit` through generator identity, including aliases and
   namespace-qualified parents, instead of equating the binding and display
   names. Account for omitted `classname`, `class = FALSE`, `cloneable`,
   overrides, private inheritance, `super$method()`, and method functions
-  supplied by a resolvable binding.
+  supplied by a resolvable binding. The shared R6 API now resolves effective
+  public, private, superclass, and generator members through class
+  identities. Completion and signature help use those surfaces and inherited
+  initializers, including live buffers and exported workspace parents.
+  Pinned R6 observations and regressions cover aliases, overrides, active
+  bindings, class and clone flags, shadowing, and incremental invalidation.
 
 - [ ] Extract Reference Class `fields`, `methods`, `contains`, field types,
   accessor functions, initialization, and inherited members. Support

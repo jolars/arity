@@ -1,7 +1,7 @@
 //! Code completion: scope-aware bare names (locals + attached-package exports +
 //! base R) and `pkg::`/`pkg:::` member completion, backed by the harvested
-//! index. Items carry only a label + identity; docs/signature are attached
-//! lazily on `completionItem/resolve`.
+//! index. R6 member completion uses the shared class index and static method
+//! signatures. Package docs/signatures are attached on `completionItem/resolve`.
 //!
 //! Mirrors the hover read path: [`completion_via_db`] resolves off the snapshot's
 //! cached parse when the tracked buffer matches, else re-parses; [`compute_completions`]
@@ -30,6 +30,8 @@ pub(crate) enum CompletionData {
     /// A `$`/`@` field harvested statically from usage or construction; nothing
     /// to attach (arity does not evaluate, so a field carries no signature/docs).
     Field,
+    /// A class-owned member, with already-resolved static callable formals.
+    ClassMember { signature: Option<String> },
 }
 
 /// What the cursor is positioned to complete.
@@ -41,10 +43,10 @@ enum CompletionContext {
         prefix: String,
     },
     /// After `receiver$` / `receiver@`, optionally with a partial field name.
-    /// `receiver` is the whitespace-normalized source text of the left operand;
+    /// `receiver` is the syntax of the left operand;
     /// `at` is `true` for `@` (S4 slot) versus `$` (list/`$` access).
     Field {
-        receiver: String,
+        receiver: SyntaxElement,
         at: bool,
         prefix: String,
     },
@@ -105,13 +107,19 @@ pub(crate) fn completion_via_db(
             return None;
         }
         let root = snapshot.parsed_tree(file);
-        Some(completions_from_node(&root, offset, &index, &remote))
+        Some(completions_in(
+            &root,
+            offset,
+            &index,
+            &remote,
+            Some((snapshot, path)),
+        ))
     }));
     match cached {
         Ok(Some(resp)) => resp,
         Ok(None) | Err(_) => {
             let root = parse(text).cst;
-            completions_from_node(&root, offset, &index, &remote)
+            completions_in(&root, offset, &index, &remote, Some((snapshot, path)))
         }
     }
 }
@@ -154,7 +162,7 @@ pub fn resolve_completion(mut item: CompletionItem, indexed: &IndexedProvider) -
             }
             return item;
         }
-        CompletionData::Local | CompletionData::Field => None,
+        CompletionData::Local | CompletionData::Field | CompletionData::ClassMember { .. } => None,
     };
     if let Some((package, entry)) = resolved {
         item.documentation = Some(Documentation::MarkupContent(MarkupContent {
@@ -173,6 +181,39 @@ pub(crate) fn completions_from_node(
     indexed: &IndexedProvider,
     remote: &RemoteExports,
 ) -> Option<CompletionResponse> {
+    completions_in(root, offset, indexed, remote, None)
+}
+
+fn completions_in(
+    root: &SyntaxNode,
+    offset: TextSize,
+    indexed: &IndexedProvider,
+    remote: &RemoteExports,
+    context: Option<(&Analysis, &Path)>,
+) -> Option<CompletionResponse> {
+    // Ask the parser about a hypothetical field identifier when the user has
+    // just typed `$`. This restores surrounding calls and method enclosures
+    // that error recovery can only retain as unfinished syntax. The buffer and
+    // its cached CST remain untouched.
+    if let Some(repaired) = complete_field_syntax(root, offset) {
+        let mut response = completions_from_context(&repaired, offset, indexed, remote, context)?;
+        let items = match &mut response {
+            CompletionResponse::List(list) => &mut list.items,
+            CompletionResponse::Array(items) => items,
+        };
+        items.retain(|item| item.label != COMPLETION_PLACEHOLDER);
+        return Some(response);
+    }
+    completions_from_context(root, offset, indexed, remote, context)
+}
+
+fn completions_from_context(
+    root: &SyntaxNode,
+    offset: TextSize,
+    indexed: &IndexedProvider,
+    remote: &RemoteExports,
+    context: Option<(&Analysis, &Path)>,
+) -> Option<CompletionResponse> {
     match classify_context(root, offset) {
         CompletionContext::None => None,
         CompletionContext::Member {
@@ -189,12 +230,60 @@ pub(crate) fn completions_from_node(
             receiver,
             at,
             prefix,
-        } => Some(build_response(
-            field_candidates(root, &receiver, at),
-            &prefix,
-            true,
-            indexed,
-        )),
+        } => {
+            let known = (!at)
+                .then(|| {
+                    oop::with_class_index(root, context, |index, model, path| {
+                        let receiver = index.r6_receiver(path, root, model, &receiver)?;
+                        let api = index.r6_api(&receiver.class)?;
+                        let members = api.members(receiver.access);
+                        let candidates = members
+                            .entries
+                            .iter()
+                            .map(|(name, candidates)| {
+                                let member = (candidates.len() == 1).then(|| &candidates[0]);
+                                let kind = match member.map(|member| member.kind) {
+                                    Some(crate::project::classes::MemberKind::Method) => {
+                                        CompletionItemKind::METHOD
+                                    }
+                                    Some(crate::project::classes::MemberKind::ActiveBinding) => {
+                                        CompletionItemKind::PROPERTY
+                                    }
+                                    _ => CompletionItemKind::FIELD,
+                                };
+                                let signature = if !members.complete {
+                                    None
+                                } else if receiver.access
+                                    == crate::project::classes::R6Access::Generator
+                                    && name == "new"
+                                {
+                                    api.initializer.as_ref()
+                                } else {
+                                    member
+                                        .filter(|member| {
+                                            member.kind
+                                                == crate::project::classes::MemberKind::Method
+                                        })
+                                        .and_then(|member| member.signature.as_ref())
+                                }
+                                .map(|signature| signature::callable_label("", signature));
+                                Candidate {
+                                    label: name.clone(),
+                                    kind,
+                                    sort_group: 0,
+                                    data: CompletionData::ClassMember { signature },
+                                    origin: Some(SmolStr::new_static("R6")),
+                                }
+                            })
+                            .collect();
+                        Some((candidates, members.complete))
+                    })
+                })
+                .flatten();
+            let (candidates, complete) =
+                known.unwrap_or_else(|| (field_candidates(root, &receiver, at), true));
+            Some(build_response(candidates, &prefix, complete, indexed))
+        }
         CompletionContext::Bare { prefix, offset } => Some(build_response(
             bare_candidates(root, offset, indexed, remote),
             &prefix,
@@ -202,6 +291,27 @@ pub(crate) fn completions_from_node(
             indexed,
         )),
     }
+}
+
+const COMPLETION_PLACEHOLDER: &str = "arity_completion_placeholder";
+
+fn complete_field_syntax(root: &SyntaxNode, offset: TextSize) -> Option<SyntaxNode> {
+    let token = match root.token_at_offset(offset) {
+        TokenAtOffset::Between(left, _) | TokenAtOffset::Single(left) => left,
+        TokenAtOffset::None => return None,
+    };
+    let op = skip_trivia_left(token)?;
+    field_op(Some(op.kind()))?;
+    if op
+        .parent_ancestors()
+        .filter_map(BinaryExpr::cast)
+        .any(|binary| binary.op().is_some_and(|token| token == op) && binary.rhs().is_some())
+    {
+        return None;
+    }
+    let mut text = root.text().to_string();
+    text.insert_str(usize::from(offset), COMPLETION_PLACEHOLDER);
+    Some(parse(&text).cst)
 }
 
 /// Classify what the cursor at `offset` is positioned to complete.
@@ -284,7 +394,7 @@ fn recover_namespace_at(root: &SyntaxNode, offset: TextSize) -> Option<(SmolStr,
 /// RHS field name, or a just-typed operator with nothing after it. Mirrors
 /// [`member_context`]. Returns the normalized receiver text, whether the
 /// operator is `@` (S4 slot) versus `$`, and the typed prefix.
-fn field_context(root: &SyntaxNode, offset: TextSize) -> Option<(String, bool, String)> {
+fn field_context(root: &SyntaxNode, offset: TextSize) -> Option<(SyntaxElement, bool, String)> {
     // Partial name: the cursor is on the RHS field of a `receiver$field` access.
     if let Some(token) = pick_name_token(root, offset) {
         for ancestor in token.parent_ancestors() {
@@ -297,11 +407,7 @@ fn field_context(root: &SyntaxNode, offset: TextSize) -> Option<(String, bool, S
             if matches!(binary.rhs(), Some(SyntaxElement::Token(rhs)) if rhs == token)
                 && let Some(lhs) = binary.lhs()
             {
-                return Some((
-                    normalize_receiver(&lhs),
-                    at,
-                    prefix_in_token(&token, offset),
-                ));
+                return Some((lhs, at, prefix_in_token(&token, offset)));
             }
         }
     }
@@ -318,11 +424,10 @@ fn field_op(kind: Option<SyntaxKind>) -> Option<bool> {
     }
 }
 
-/// Recover the receiver + operator kind when the cursor follows a `$`/`@` that
-/// has no right-hand side yet (so no clean `BINARY_EXPR` formed — it lands in an
-/// `ERROR` node). The receiver is the immediately preceding name token, so a
-/// chained `a$b$` recovers as `b`, not `a$b` (a documented v1 limitation).
-fn recover_field_at(root: &SyntaxNode, offset: TextSize) -> Option<(String, bool)> {
+/// Recover the receiver and operator when syntax is still incomplete after the
+/// hypothetical field parse. Prefer a structured operand; an error node can
+/// only supply the immediately preceding name token.
+fn recover_field_at(root: &SyntaxNode, offset: TextSize) -> Option<(SyntaxElement, bool)> {
     let left = match root.token_at_offset(offset) {
         TokenAtOffset::Single(t) => Some(t),
         TokenAtOffset::Between(l, _) => Some(l),
@@ -330,11 +435,16 @@ fn recover_field_at(root: &SyntaxNode, offset: TextSize) -> Option<(String, bool
     }?;
     let op = skip_trivia_left(left)?;
     let at = field_op(Some(op.kind()))?;
+    for binary in op.parent_ancestors().filter_map(BinaryExpr::cast) {
+        if binary.op().is_some_and(|token| token == op) {
+            return Some((binary.lhs()?, at));
+        }
+    }
     let recv = prev_non_trivia(&op)?;
     if !matches!(recv.kind(), SyntaxKind::IDENT | SyntaxKind::STRING) {
         return None;
     }
-    Some((token_text_unquoted(&recv).to_string(), at))
+    Some((SyntaxElement::Token(recv), at))
 }
 
 /// Whitespace-normalized source text of a receiver operand, used as the key that
@@ -425,8 +535,24 @@ fn member_candidates(
 /// evaluate). Harvests field names used with the same operator on the same
 /// receiver anywhere in the file, and — for `$` only — infers the named fields
 /// of a local `list()`/`data.frame()`-family construction bound to `receiver`.
-fn field_candidates(root: &SyntaxNode, receiver: &str, at: bool) -> Vec<Candidate> {
+fn field_candidates(root: &SyntaxNode, receiver: &SyntaxElement, at: bool) -> Vec<Candidate> {
     let mut out: Vec<Candidate> = Vec::new();
+    let receiver_text = normalize_receiver(receiver);
+    let model = SemanticModel::build(root);
+    let binding_at = |value: &SyntaxElement| {
+        model
+            .idents()
+            .iter()
+            .find(|ident| ident.range == value.text_range())
+            .and_then(|ident| model.resolve_local(ident))
+    };
+    let binding = binding_at(receiver);
+    let function_at = |value: &SyntaxElement| {
+        value
+            .parent()
+            .and_then(|node| node.ancestors().find_map(FunctionExpr::cast))
+            .map(|function| function.syntax().text_range())
+    };
 
     // 1. Harvest field names used on the same receiver elsewhere in the file.
     for node in root.descendants() {
@@ -437,7 +563,12 @@ fn field_candidates(root: &SyntaxNode, receiver: &str, at: bool) -> Vec<Candidat
             continue;
         }
         let Some(lhs) = binary.lhs() else { continue };
-        if normalize_receiver(&lhs) != receiver {
+        if normalize_receiver(&lhs) != receiver_text || binding_at(&lhs) != binding {
+            continue;
+        }
+        if matches!(receiver_text.as_str(), "self" | "private" | "super")
+            && function_at(&lhs) != function_at(receiver)
+        {
             continue;
         }
         if let Some(SyntaxElement::Token(name)) = binary.rhs()
@@ -450,7 +581,11 @@ fn field_candidates(root: &SyntaxNode, receiver: &str, at: bool) -> Vec<Candidat
     // 2. Infer fields from a local record construction bound to the receiver.
     //    S4 slot inference (`new()`/`setClass`) is a follow-up, so `@` harvests only.
     if !at {
-        out.extend(constructed_fields(root, receiver));
+        out.extend(constructed_fields(
+            root,
+            &receiver_text,
+            binding.map(|binding| model.binding(binding).def_range),
+        ));
     }
 
     out
@@ -458,7 +593,11 @@ fn field_candidates(root: &SyntaxNode, receiver: &str, at: bool) -> Vec<Candidat
 
 /// The named arguments of a `list()`/`data.frame()`/`tibble()`/`data.table()`
 /// call assigned to `receiver` (`receiver <- data.frame(x = …, y = …)`).
-fn constructed_fields(root: &SyntaxNode, receiver: &str) -> Vec<Candidate> {
+fn constructed_fields(
+    root: &SyntaxNode,
+    receiver: &str,
+    binding: Option<TextRange>,
+) -> Vec<Candidate> {
     const CONSTRUCTORS: [&str; 4] = ["list", "data.frame", "tibble", "data.table"];
     let mut out = Vec::new();
     for node in root.descendants() {
@@ -466,6 +605,13 @@ fn constructed_fields(root: &SyntaxNode, receiver: &str) -> Vec<Candidate> {
             continue;
         };
         if assign.target_name().as_deref() != Some(receiver) {
+            continue;
+        }
+        if binding.is_some_and(|binding| {
+            assign
+                .target_name_token()
+                .is_none_or(|token| token.text_range() != binding)
+        }) {
             continue;
         }
         let Some(SyntaxElement::Node(value)) = assign.value_element() else {
@@ -618,11 +764,17 @@ fn build_response(
 /// resolves to an indexed function entry, shown inline after the label. `None`
 /// for a local, a `$`/`@` field, or a symbol with no harvested formals.
 fn signature_detail(data: &CompletionData, indexed: &IndexedProvider) -> Option<String> {
+    if let CompletionData::ClassMember { signature } = data {
+        return signature.clone();
+    }
     let entry = match data {
         CompletionData::Member { package, name } => indexed.lookup(package, name)?,
         CompletionData::Bare { name } => indexed.lookup(base_package_of(name)?, name)?,
         // A package label is not a call, so there is no parameter list.
-        CompletionData::Package { .. } | CompletionData::Local | CompletionData::Field => {
+        CompletionData::Package { .. }
+        | CompletionData::Local
+        | CompletionData::Field
+        | CompletionData::ClassMember { .. } => {
             return None;
         }
     };

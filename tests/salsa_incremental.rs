@@ -1677,6 +1677,77 @@ fn callable_alias_body_edits_backdate_but_signature_edits_invalidate() {
 }
 
 #[test]
+fn r6_api_tracks_flags_members_and_parent_signatures_without_body_ranges() {
+    let source = "Parent <- R6::R6Class('Display', public = list(initialize = function(x = 1) x, read = function(scale = 2) scale))\n";
+    let child = "Child <- R6::R6Class(inherit = Parent)\n";
+    let (mut db, a, b) = package_ab(source, child);
+    let before = project_classes(&db).clone();
+    let child_id = class_named(&before, "Child");
+    assert_eq!(
+        before
+            .r6_api(&child_id)
+            .unwrap()
+            .initializer
+            .unwrap()
+            .parameters[0]
+            .default
+            .as_deref(),
+        Some("1")
+    );
+    db.clear_query_log();
+    db.set_file_text(a, source.replace(") scale", ") { print(scale); scale }"));
+    assert_eq!(&before, project_classes(&db));
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+    db.set_file_text(a, source.replace("x = 1", "x = 9"));
+    assert_eq!(
+        project_classes(&db)
+            .r6_api(&child_id)
+            .unwrap()
+            .initializer
+            .unwrap()
+            .parameters[0]
+            .default
+            .as_deref(),
+        Some("9")
+    );
+    db.set_file_text(
+        b,
+        "Child <- R6::R6Class(inherit = Parent, cloneable = FALSE, class = FALSE)\n",
+    );
+    let api = project_classes(&db).r6_api(&child_id).unwrap();
+    assert!(!api.public.entries.contains_key("clone"));
+    assert_eq!(api.class_attribute, Some(vec![]));
+}
+
+#[test]
+fn r6_inherits_through_aliases_in_another_file() {
+    let (mut db, a, b) = package_ab(
+        "Parent <- R6::R6Class('Display', public = list(read = function(x = 1) x))\n",
+        "Alias <- Parent\n",
+    );
+    let c = db.upsert_file(
+        Path::new("/pkg/R/c.R"),
+        "Child <- R6::R6Class(inherit = Alias)\n",
+    );
+    db.set_workspace_members(vec![a, b, c], vec!["/pkg".into()]);
+    db.set_package_metadata(vec![PackageInfo {
+        root: "/pkg".into(),
+        namespace: None,
+        dir_sources: BTreeSet::new(),
+        native_routines: BTreeSet::new(),
+    }]);
+    let index = project_classes(&db);
+    let child = class_named(index, "Child");
+    let api = index.r6_api(&child).unwrap();
+    assert!(api.public.complete);
+    assert!(api.public.entries.contains_key("read"));
+    db.set_file_text(b, "Alias <- Parent\nAlias <- unknown\n");
+    let api = project_classes(&db).r6_api(&child).unwrap();
+    assert!(!api.public.complete);
+    assert!(!api.public.entries.contains_key("read"));
+}
+
+#[test]
 fn member_and_signature_edits_invalidate_the_shared_project_projection() {
     let source = "A <- R6::R6Class('A', public = list(read = function(scale = 1) scale))\n";
     let (mut db, a, _) = package_ab(source, "");

@@ -25,6 +25,8 @@ mod oop;
 pub use oop::*;
 mod calls;
 use calls::*;
+mod r6;
+pub use r6::{R6Access, R6Api, R6Member, R6Members, R6Options, R6Receiver};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
@@ -254,6 +256,7 @@ pub struct ClassDef {
     pub parent_vector: Option<FunctionRef>,
     /// R6 defaults to portable lookup; a computed flag leaves member lookup uncertain.
     pub portable: Option<bool>,
+    pub r6: Option<R6Options>,
     pub uncertainty: BTreeSet<ClassUncertainty>,
 }
 
@@ -292,10 +295,20 @@ pub struct GeneratorBinding {
     pub target: ClassKey,
 }
 
+/// An eagerly evaluated alias whose target needs project visibility. It does
+/// not become a generator until project lookup proves the target's identity.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub struct GeneratorAlias {
+    pub owner: ClassOwner,
+    pub name: String,
+    pub target: GeneratorRef,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct FileClassFacts {
     pub declarations: Vec<ClassDef>,
     pub generators: Vec<GeneratorBinding>,
+    pub generator_aliases: Vec<GeneratorAlias>,
     pub oop: OopFacts,
 }
 
@@ -515,6 +528,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
             parents: Vec::new(),
             parent_vector: None,
             portable: None,
+            r6: None,
             uncertainty: BTreeSet::new(),
         };
         if matches!(def.factory, FunctionRef::Unresolved(_)) {
@@ -533,12 +547,17 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         if let Some(args) = matched_args(&call, system.formals()) {
             let argument = |formal: &str| argument(&args, formal);
             if system == ClassSystem::R6 {
-                def.portable = match argument("portable") {
+                let flag = |name| match argument(name) {
                     None => Some(true),
                     Some(SyntaxElement::Token(token)) if token.text() == "TRUE" => Some(true),
                     Some(SyntaxElement::Token(token)) if token.text() == "FALSE" => Some(false),
                     _ => None,
                 };
+                def.portable = flag("portable");
+                def.r6 = Some(R6Options {
+                    class_attribute: flag("class"),
+                    cloneable: flag("cloneable"),
+                });
             }
             let name_arg = argument(match system {
                 ClassSystem::R6 => "classname",
@@ -667,9 +686,15 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         let Some(value) = stable_value(model, root, id) else {
             continue;
         };
-        if let GeneratorRef::Local(target) =
-            generator_ref(model, root, &value, &keys, &mut BTreeSet::new(), false)
-        {
+        let target = generator_ref(model, root, &value, &keys, &mut BTreeSet::new(), false);
+        let owner = owner_at(
+            &root
+                .covering_element(binding.def_range)
+                .parent()
+                .unwrap_or_else(|| root.clone()),
+            &owners,
+        );
+        if let GeneratorRef::Local(target) = target {
             if result
                 .facts
                 .declaration(&target)
@@ -677,14 +702,16 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
             {
                 continue;
             }
-            let owner = owner_at(
-                &root
-                    .covering_element(binding.def_range)
-                    .parent()
-                    .unwrap_or_else(|| root.clone()),
-                &owners,
-            );
             result.facts.generators.push(GeneratorBinding {
+                owner,
+                name: unbacktick(&binding.name).to_string(),
+                target,
+            });
+        } else if matches!(
+            target,
+            GeneratorRef::Free(_) | GeneratorRef::Qualified { .. }
+        ) {
+            result.facts.generator_aliases.push(GeneratorAlias {
                 owner,
                 name: unbacktick(&binding.name).to_string(),
                 target,

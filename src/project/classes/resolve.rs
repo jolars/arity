@@ -160,6 +160,13 @@ impl ClassIndex {
                         .member_groups
                         .iter()
                         .filter_map(|group| group.factory.as_ref()),
+                )
+                .chain(
+                    file.facts
+                        .oop
+                        .members
+                        .iter()
+                        .filter_map(|member| member.value_factory.as_ref()),
                 );
             for reference in references {
                 for identity in possible_functions(reference) {
@@ -314,6 +321,17 @@ impl ClassIndex {
         reference: &ParentRef,
         in_function: bool,
     ) -> Vec<ClassId> {
+        self.resolve_reference_inner(path, owner, reference, in_function, &mut BTreeSet::new())
+    }
+
+    fn resolve_reference_inner(
+        &self,
+        path: &Path,
+        owner: &ClassOwner,
+        reference: &ParentRef,
+        in_function: bool,
+        aliases: &mut BTreeSet<(PathBuf, String)>,
+    ) -> Vec<ClassId> {
         match reference {
             ParentRef::Generator(GeneratorRef::Local(key)) => {
                 let id = ClassId {
@@ -334,20 +352,7 @@ impl ClassIndex {
                 }
                 sources
                     .iter()
-                    .flat_map(|path| {
-                        self.files.get(path).into_iter().flat_map(move |file| {
-                            file.facts
-                                .generators
-                                .iter()
-                                .filter(move |binding| {
-                                    binding.owner.0.is_empty() && &binding.name == name
-                                })
-                                .map(move |binding| ClassId {
-                                    path: path.clone(),
-                                    key: binding.target.clone(),
-                                })
-                        })
-                    })
+                    .flat_map(|path| self.generator_targets(path, name, aliases))
                     .collect::<BTreeSet<_>>()
                     .into_iter()
                     .collect()
@@ -414,20 +419,54 @@ impl ClassIndex {
                 .namespace
                 .generic_files(path, name, Some(package))
                 .iter()
-                .filter_map(|path| self.files.get(path))
-                .flat_map(|file| {
-                    file.facts
-                        .generators
-                        .iter()
-                        .filter(|binding| binding.owner.0.is_empty() && &binding.name == name)
-                        .map(|binding| ClassId {
-                            path: file.path.clone(),
-                            key: binding.target.clone(),
-                        })
-                })
+                .flat_map(|path| self.generator_targets(path, name, aliases))
                 .collect(),
             ParentRef::Generator(GeneratorRef::Unknown) | ParentRef::Unknown => Vec::new(),
         }
+    }
+
+    fn generator_targets(
+        &self,
+        path: &Path,
+        name: &str,
+        aliases: &mut BTreeSet<(PathBuf, String)>,
+    ) -> Vec<ClassId> {
+        let key = (path.to_path_buf(), name.to_string());
+        if aliases.len() >= 64 || !aliases.insert(key.clone()) {
+            return Vec::new();
+        }
+        let Some(file) = self.files.get(path) else {
+            aliases.remove(&key);
+            return Vec::new();
+        };
+        let mut targets: Vec<_> = file
+            .facts
+            .generators
+            .iter()
+            .filter(|binding| binding.owner.0.is_empty() && binding.name == name)
+            .map(|binding| ClassId {
+                path: path.into(),
+                key: binding.target.clone(),
+            })
+            .collect();
+        for alias in file
+            .facts
+            .generator_aliases
+            .iter()
+            .filter(|alias| alias.owner.0.is_empty() && alias.name == name)
+        {
+            targets.extend(self.resolve_reference_inner(
+                path,
+                &alias.owner,
+                &ParentRef::Generator(alias.target.clone()),
+                false,
+                aliases,
+            ));
+        }
+        aliases.remove(&key);
+        targets.sort();
+        targets.dedup();
+        targets
     }
 
     pub(super) fn definition_files(

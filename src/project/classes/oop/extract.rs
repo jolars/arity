@@ -460,6 +460,20 @@ impl Projection<'_> {
                                     | crate::ast::Expr::ComplexLiteral(_) => true,
                                     _ => false,
                                 })
+                                || implementation.as_ref().is_some_and(|value| {
+                                    value
+                                        .as_node()
+                                        .cloned()
+                                        .and_then(CallExpr::cast)
+                                        .and_then(|call| {
+                                            call_function_ref(self.model, self.root, &call)
+                                        })
+                                        .is_some_and(|reference| {
+                                            matches!(reference,
+                                            FunctionRef::Qualified { package, name }
+                                                if package == "base" && name == "list")
+                                        })
+                                })
                             {
                                 MemberKind::Field
                             } else {
@@ -562,6 +576,12 @@ impl Projection<'_> {
                         kind: member_kind,
                         method,
                         declared_type,
+                        value_factory: implementation
+                            .as_ref()
+                            .and_then(SyntaxElement::as_node)
+                            .cloned()
+                            .and_then(CallExpr::cast)
+                            .and_then(|call| call_function_ref(self.model, self.root, &call)),
                         uncertainty: member_issues,
                     });
                     let range = arg

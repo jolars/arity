@@ -178,6 +178,7 @@ mod hover;
 mod inlay_hints;
 mod lint_thread;
 mod navigation;
+mod oop;
 mod progress;
 mod read_jobs;
 mod roxygen_action;

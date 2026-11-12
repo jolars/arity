@@ -20,21 +20,20 @@ TypeHierarchy "inherit = Alias": [{"children":["Child"],"detail":"R6 class via G
 TypeHierarchy "R6::R6Class(\"Display\")": [{"children":[],"detail":"R6 class via Other","name":"Display","parents":[],"selection":[164,173]}]
 
 === r6/use_sites ===
-known gap: Declared members have no member definition or signature help.
+known gap: Declared members have no member definition.
 diagnostics: []
 symbols: [["Base",13,null],["Child",13,null],["obj",13,null]]
 TypeHierarchy "\"Child\"": [{"children":[],"detail":"R6 class","name":"Child","parents":["Base"],"selection":[88,95]}]
 Definition "obj$read()": null
-SignatureHelp "obj$read()": null
-Completion "obj$double": [["double",5],["read",5]]
+SignatureHelp "obj$read()": {"active_parameter":null,"signatures":["read()"]}
+Completion "obj$double": [["clone",2],["double",10],["read",2],["value",5]]
 References "obj$read()": null
 
 === r6/incomplete ===
-known gap: Declared R6 fields do not supply instance completion.
 diagnostic: syntax-error severity=1 84..85 "$"
 symbols: [["Counter",13,null],["obj",13,null]]
 TypeHierarchy "\"Counter\"": [{"children":[],"detail":"R6 class","name":"Counter","parents":[],"selection":[23,32]}]
-Completion "obj$": []
+Completion "obj$": [["clone",2],["value",5]]
 
 === r6/shadowing ===
 diagnostic: undefined-symbol severity=2 105..112 "private"
@@ -85,10 +84,9 @@ References "list(self, private, super, unknown)": [{"range":[150,154],"text":"se
 Definition "fn = function() self": null
 
 === r6/receiver_ownership ===
-known gap: self completion mixes alpha, beta, and gamma across three unrelated classes.
 diagnostics: []
 symbols: [["A",13,null],["B",13,null],["C",13,null]]
-Completion "self$gamma": [["alpha",5],["beta",5],["gamma",5]]
+Completion "self$gamma": [["clone",2],["gamma",5],["read",2]]
 
 === r6/generator_alias ===
 diagnostics: []
@@ -101,3 +99,14 @@ diagnostics: []
 symbols: [["Point",13,null],["obj",13,null]]
 TypeHierarchy "\"Point\"": [{"children":[],"detail":"R6 class","name":"Point","parents":[],"selection":[33,40]}]
 Definition "Point$new()": [{"range":[0,5],"text":"Point"}]
+
+=== r6/member_apis ===
+diagnostics: []
+symbols: [["reader",12,"(scale = 2)"],["Original",13,null],["Alias",13,null],["Child",13,null],["base",13,null],["obj",13,null]]
+Completion "Alias$new": [["active",5],["class",5],["classname",5],["clone_method",2],["cloneable",5],["debug",2],["debug_names",5],["get_inherit",2],["has_private",2],["inherit",5],["is_locked",2],["lock",2],["lock_class",5],["lock_objects",5],["new",2],["parent_env",5],["portable",5],["private_fields",5],["private_methods",5],["public_fields",5],["public_methods",5],["self",5],["set",2],["undebug",2],["unlock",2]]
+SignatureHelp "Alias$new(value = 3)": {"active_parameter":0,"signatures":["new(value = 3)"]}
+Completion "obj$read": [["doubled",10],["initialize",2],["parent_private",2],["read",2],["value",5]]
+SignatureHelp "obj$read(scale = 4)": {"active_parameter":0,"signatures":["read(scale = 6)"]}
+Completion "private$secret": [["hidden",2],["secret",5]]
+SignatureHelp "super$read(scale)": {"active_parameter":0,"signatures":["read(scale = 2)"]}
+SignatureHelp "super$hidden()": {"active_parameter":null,"signatures":["hidden()"]}

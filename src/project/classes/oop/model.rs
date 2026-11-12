@@ -162,6 +162,8 @@ pub struct MemberDef {
     pub kind: MemberKind,
     pub method: Option<OopKey>,
     pub declared_type: Option<DispatchClass>,
+    /// A constructor's origin can establish a nonfunction value at project time.
+    pub value_factory: Option<FunctionRef>,
     pub uncertainty: BTreeSet<OopUncertainty>,
 }
 

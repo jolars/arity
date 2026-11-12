@@ -22,6 +22,7 @@ fn fixture_names() -> &'static [&'static str] {
         "reference_environments",
         "r6",
         "r6_environments",
+        "r6_members",
         "s7",
     ]
 }
@@ -186,6 +187,114 @@ fn supported_class_projection_matches_runtime() {
                 .collect();
             assert_eq!(parents, class.parents, "{name}: {}", class.name);
         }
+    }
+}
+
+#[test]
+fn r6_effective_apis_match_pinned_runtime_members_and_initializers() {
+    use arity::incremental::IncrementalDatabase;
+    use arity::project::classes::MemberKind;
+    let pin = pin("r6_members");
+    let root = parse(&pin.source).cst;
+    let model = SemanticModel::build(&root);
+    let facts = file_class_defs(&model, &root);
+    let path = Path::new("/r6-oracle.R");
+    let index = IncrementalDatabase::default()
+        .snapshot()
+        .class_index_in(path, &facts, &root, &model);
+    for runtime in &pin.facts.classes {
+        let (id, _) = index
+            .declarations
+            .iter()
+            .find(|(_, class)| {
+                class.declaration.binding.as_deref() == Some(runtime.binding.as_str())
+            })
+            .unwrap();
+        let api = index.r6_api(id).unwrap();
+        let mut members = BTreeMap::new();
+        for (prefix, surface) in [
+            ("generator/", &api.generator),
+            ("public/", &api.public),
+            ("private/", &api.private),
+            ("super/", &api.super_members),
+        ] {
+            assert!(surface.complete, "{}: {prefix}", runtime.binding);
+            for (name, candidates) in &surface.entries {
+                assert_eq!(candidates.len(), 1, "{}: {name}", runtime.binding);
+                let kind = match candidates[0].kind {
+                    MemberKind::Field => "field",
+                    MemberKind::Method => "method",
+                    MemberKind::ActiveBinding => "active-binding",
+                    other => panic!("{other:?}"),
+                };
+                members.insert(format!("{prefix}{name}"), kind.to_string());
+            }
+        }
+        assert_eq!(members, runtime.members, "{}", runtime.binding);
+        let initializer = pin
+            .facts
+            .constructors
+            .iter()
+            .find(|constructor| constructor.binding == format!("{}$initialize", runtime.binding))
+            .unwrap();
+        let actual: Vec<_> = api
+            .initializer
+            .unwrap()
+            .parameters
+            .into_iter()
+            .map(|formal| (formal.name, formal.default))
+            .collect();
+        let expected: Vec<_> = initializer
+            .formals
+            .iter()
+            .map(|formal| (formal.name.clone(), formal.default.clone()))
+            .collect();
+        assert_eq!(actual, expected, "{}", runtime.binding);
+        for constructor in pin.facts.constructors.iter().filter(|constructor| {
+            constructor
+                .binding
+                .starts_with(&format!("{}$", runtime.binding))
+                && !constructor.binding.ends_with("$initialize")
+        }) {
+            let name = constructor.binding.split_once('$').unwrap().1;
+            let actual: Vec<_> = api.generator.entries[name][0]
+                .signature
+                .as_ref()
+                .unwrap()
+                .parameters
+                .iter()
+                .map(|formal| (formal.name.clone(), formal.default.clone()))
+                .collect();
+            let expected: Vec<_> = constructor
+                .formals
+                .iter()
+                .map(|formal| (formal.name.clone(), formal.default.clone()))
+                .collect();
+            assert_eq!(actual, expected, "{}", constructor.binding);
+        }
+    }
+    for (binding, expression) in [
+        ("Original", "base$read()"),
+        ("Child", "child$read()"),
+        ("Grandchild", "grandchild$read()"),
+        ("NoClone", "is.function(no_clone$clone)"),
+    ] {
+        let (id, _) = index
+            .declarations
+            .iter()
+            .find(|(_, class)| class.declaration.binding.as_deref() == Some(binding))
+            .unwrap();
+        let mut classes = index.r6_api(id).unwrap().class_attribute.unwrap();
+        if classes.is_empty() {
+            classes.push("environment".into());
+        }
+        let runtime = pin
+            .facts
+            .dispatch
+            .iter()
+            .find(|dispatch| dispatch.expression == expression)
+            .unwrap();
+        assert_eq!(classes, runtime.classes, "{binding}");
     }
 }
 
