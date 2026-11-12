@@ -10,11 +10,10 @@ pub(super) fn expected_package(name: &str) -> Option<&'static str> {
     Some(match name {
         "R6Class" => "R6",
         "setClass" | "setRefClass" | "setGeneric" | "setMethod" | "setReplaceMethod"
-        | "signature" | "new" => "methods",
+        | "signature" | "new" | "getRefClass" => "methods",
         "new_class" | "new_generic" | "method<-" => "S7",
-        "UseMethod" | "registerS3method" | "c" | "list" | "structure" | "class" | "class<-" => {
-            "base"
-        }
+        "UseMethod" | "registerS3method" | "c" | "list" | "character" | "structure" | "class"
+        | "class<-" => "base",
         _ => return None,
     })
 }

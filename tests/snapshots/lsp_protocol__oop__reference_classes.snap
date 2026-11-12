@@ -12,6 +12,19 @@ PrepareRename "value <<-": null
 Definition "list(.self$value, value)": [{"range":[0,5],"text":"value"}]
 References "value <- 100": [{"range":[339,344],"text":"value"},{"range":[0,5],"text":"value"}]
 
+=== reference_classes/member_apis ===
+diagnostic: unused-binding severity=2 281..286 "Child"
+symbols: [["Base",13,null],["Alias",13,null],["Child",13,null],["obj",13,null],["direct",13,null]]
+Completion "getRefClass(\"Child\")$new": [[".objectPackage",5],[".objectParent",5],[".refClassDef",5],[".self",5],["accessors",2],["callSuper",2],["className",5],["copy",2],["def",5],["export",2],["field",2],["fields",2],["getClass",2],["getRefClass",2],["help",2],["import",2],["initFields",2],["lock",2],["methods",2],["new",2],["show",2],["trace",2],["untrace",2],["usingMethods",2]]
+SignatureHelp "getRefClass(\"Child\")$new(value = 5)": {"active_parameter":0,"signatures":["new(value = 3, ...)"]}
+SignatureHelp "Alias(value = 6)": {"active_parameter":0,"signatures":["Alias(value = 3, ...)"]}
+Completion "obj$read": [[".objectPackage",5],[".objectParent",5],[".refClassDef",5],[".self",5],["callSuper",2],["copy",2],["doubled",10],["export",2],["external",2],["field",2],["getClass",2],["getRefClass",2],["import",2],["initFields",2],["initialize",2],["label",5],["read",2],["show",2],["trace",2],["untrace",2],["usingMethods",2],["value",5]]
+SignatureHelp "obj$read(scale = 8)": {"active_parameter":0,"signatures":["read(scale = 4)"]}
+SignatureHelp "callSuper(scale)": {"active_parameter":0,"signatures":["callSuper(scale = 2)"]}
+SignatureHelp "obj$external()": {"active_parameter":0,"signatures":["external(increment = 1)"]}
+SignatureHelp "direct$copy()": {"active_parameter":0,"signatures":["copy(shallow = FALSE)"]}
+Completion ".self$value + increment": [[".objectPackage",5],[".objectParent",5],[".refClassDef",5],[".self",5],["callSuper",2],["copy",2],["doubled",10],["export",2],["external",2],["field",2],["getClass",2],["getRefClass",2],["import",2],["initFields",2],["initialize",2],["label",5],["read",2],["show",2],["trace",2],["untrace",2],["usingMethods",2],["value",5]]
+
 === reference_classes/definitions ===
 diagnostic: unused-binding severity=2 0..4 "Base"
 symbols: [["Base",13,null],["Child",13,null],["obj",13,null]]
@@ -28,20 +41,19 @@ TypeHierarchy "Class = \"Child\"": [{"children":[],"detail":"S4 class","name":"C
 TypeHierarchy "contains = \"Formal\"": [{"children":["Reference"],"detail":"S4 class","name":"Formal","parents":[],"selection":[36,44]}]
 
 === reference_classes/use_sites ===
-known gap: Reference methods have no member definition or signature help.
+known gap: Reference methods have no member definition navigation.
 diagnostics: []
 symbols: [["Counter",13,null],["obj",13,null]]
 Definition "obj$read()": null
-SignatureHelp "obj$get()": null
-Completion ".self$read()": [["read",5]]
+SignatureHelp "obj$get()": {"active_parameter":null,"signatures":["get()"]}
+Completion ".self$read()": [[".objectPackage",5],[".objectParent",5],[".refClassDef",5],[".self",5],["callSuper",2],["copy",2],["export",2],["field",2],["get",2],["getClass",2],["getRefClass",2],["import",2],["initFields",2],["read",2],["show",2],["trace",2],["untrace",2],["usingMethods",2],["value",5]]
 References "Counter$new": [{"range":[167,174],"text":"Counter"},{"range":[0,7],"text":"Counter"}]
 
 === reference_classes/incomplete ===
-known gap: Declared Reference Class fields do not supply instance completion.
 diagnostic: syntax-error severity=1 114..115 "$"
 symbols: [["Counter",13,null],["obj",13,null]]
 TypeHierarchy "\"Counter\"": [{"children":[],"detail":"reference class","name":"Counter","parents":[],"selection":[35,44]}]
-Completion "obj$": []
+Completion "obj$": [[".objectPackage",5],[".objectParent",5],[".refClassDef",5],[".self",5],["callSuper",2],["copy",2],["export",2],["field",2],["getClass",2],["getRefClass",2],["import",2],["initFields",2],["show",2],["trace",2],["untrace",2],["usingMethods",2],["value",5]]
 
 === reference_classes/shadowing ===
 diagnostic: undefined-symbol severity=2 130..135 ".self"

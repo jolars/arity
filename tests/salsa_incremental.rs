@@ -1720,6 +1720,84 @@ fn r6_api_tracks_flags_members_and_parent_signatures_without_body_ranges() {
 }
 
 #[test]
+fn reference_apis_backdate_bodies_and_refresh_fields_initializers_and_parents() {
+    use arity::project::classes::DispatchClass;
+    let source = "Parent <- methods::setRefClass('Display', fields = list(value = 'numeric', active = function(new_value) value), methods = list(initialize = function(x = 1) initFields(value = x), read = function(scale = 2) value * scale))\n";
+    let child = "Child <- methods::setRefClass('Child', contains = 'Display', methods = list(read = function(scale = 3) callSuper(scale)))\nobj <- getRefClass('Child')()\n";
+    let (mut db, a, b) = package_ab(source, child);
+    let before = project_classes(&db).clone();
+    let child_id = class_named(&before, "Child");
+    let api = before.reference_api(&child_id).unwrap();
+    assert!(api.instance.complete);
+    assert_eq!(
+        api.initializer.unwrap().parameters[0].default.as_deref(),
+        Some("1")
+    );
+    assert_eq!(
+        before
+            .reference_super_method(&child_id, "read")
+            .unwrap()
+            .signature
+            .unwrap()
+            .parameters[0]
+            .default
+            .as_deref(),
+        Some("2")
+    );
+    db.clear_query_log();
+    db.set_file_text(
+        a,
+        format!(
+            "# Prose.\n{}",
+            source
+                .replace(") value * scale", ") { print(scale); value * scale }")
+                .replace(") value)", ") { value + 1 })")
+        ),
+    );
+    assert_eq!(&before, project_classes(&db));
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+    db.set_file_text(
+        a,
+        source
+            .replace("x = 1", "x = 9")
+            .replace("'numeric'", "'character'")
+            .replace("scale = 2", "scale = 8"),
+    );
+    let index = project_classes(&db);
+    let api = index.reference_api(&child_id).unwrap();
+    assert_eq!(
+        api.initializer.unwrap().parameters[0].default.as_deref(),
+        Some("9")
+    );
+    assert_eq!(
+        api.instance.entries["value"][0].declared_type,
+        Some(DispatchClass::Formal("character".into()))
+    );
+    assert_eq!(
+        index
+            .reference_super_method(&child_id, "read")
+            .unwrap()
+            .signature
+            .unwrap()
+            .parameters[0]
+            .default
+            .as_deref(),
+        Some("8")
+    );
+    db.set_file_text(
+        b,
+        child.replace("contains = 'Display'", "contains = 'Unknown'"),
+    );
+    assert!(
+        !project_classes(&db)
+            .reference_api(&child_id)
+            .unwrap()
+            .instance
+            .complete
+    );
+}
+
+#[test]
 fn r6_inherits_through_aliases_in_another_file() {
     let (mut db, a, b) = package_ab(
         "Parent <- R6::R6Class('Display', public = list(read = function(x = 1) x))\n",

@@ -167,7 +167,8 @@ impl ClassIndex {
                         .members
                         .iter()
                         .filter_map(|member| member.value_factory.as_ref()),
-                );
+                )
+                .chain(file.facts.oop.class_lookups.iter());
             for reference in references {
                 for identity in possible_functions(reference) {
                     match function_availability(

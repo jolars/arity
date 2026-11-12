@@ -593,12 +593,18 @@ coverage need not block useful workspace support.
   Pinned R6 observations and regressions cover aliases, overrides, active
   bindings, class and clone flags, shadowing, and incremental invalidation.
 
-- [ ] Extract Reference Class `fields`, `methods`, `contains`, field types,
+- [x] Extract Reference Class `fields`, `methods`, `contains`, field types,
   accessor functions, initialization, and inherited members. Support
   generator calls, `$new()`, `getRefClass()`, built-in object methods, and
   `callSuper()` relative to the owning method. Keep Reference Class fields
   distinct from S4 slots even though the class participates in S4
-  inheritance.
+  inheritance. The shared Reference Class API now resolves typed fields,
+  accessors, methods, and generator surfaces separately from inherited S4
+  slots. Completion and signature help cover direct and recovered
+  generators, inherited initialization, built-in methods, and `callSuper()`
+  relative to its declaring method. Pinned R observations and CLI,
+  live-buffer, and incremental regressions cover ordered inheritance,
+  external methods, shadowing, and custom initialization helpers.
 
 - [ ] Track statically known `Generator$set(...)` and `Generator$methods(...)`
   additions or replacements, and methods installed from another file.

@@ -34,6 +34,126 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
+    fn reference_reads_share_imported_class_identity_and_live_buffer_overlays() {
+        let mut db = IncrementalDatabase::default();
+        let parent_path = Path::new("/ref-parent/R/parent.R");
+        let child_path = Path::new("/ref-child/R/child.R");
+        let parent = db.upsert_file(parent_path, "Original <- methods::setRefClass('Display', fields = list(value = 'numeric'), methods = list(initialize = function(value = 3) initFields(value = value), read = function(scale = 2) value * scale))\nAlias <- Original\n");
+        let source =
+            "Child <- methods::setRefClass('Child', contains = 'Display')\nobj <- Child()\nobj$r";
+        let child = db.upsert_file(child_path, source);
+        db.set_workspace_members(
+            vec![parent, child],
+            vec!["/ref-parent".into(), "/ref-child".into()],
+        );
+        db.refresh_descriptions(["/ref-parent".into(), "/ref-child".into()]);
+        db.upsert_description(Path::new("/ref-parent"), "Package: parent\n");
+        db.upsert_description(Path::new("/ref-child"), "Package: child\nImports: parent\n");
+        let metadata = |exported| {
+            [
+                (
+                    "/ref-parent",
+                    if exported {
+                        "exportClasses(Display)\nexport(Alias)\n"
+                    } else {
+                        ""
+                    },
+                ),
+                (
+                    "/ref-child",
+                    "importClassesFrom(parent, Display)\nimportFrom(parent, Alias)\n",
+                ),
+            ]
+            .into_iter()
+            .map(|(root, namespace)| PackageInfo {
+                root: root.into(),
+                namespace: Some(namespace.into()),
+                dir_sources: BTreeSet::new(),
+                native_routines: BTreeSet::new(),
+            })
+            .collect()
+        };
+        db.set_package_metadata(metadata(true));
+        for (text, expected) in [
+            (source.to_string(), "read"),
+            (source.replace("obj$r", "obj$v"), "value"),
+        ] {
+            let buffer = TextBuffer::new(text.clone());
+            let position = buffer
+                .line_index()
+                .byte_to_position(text.len(), PositionEncoding::Utf16);
+            let CompletionResponse::List(items) = completion::completion_via_db(
+                &db.snapshot(),
+                child_path,
+                &buffer,
+                position,
+                PositionEncoding::Utf16,
+            )
+            .unwrap() else {
+                panic!("completion list")
+            };
+            assert!(
+                items.items.iter().any(|item| item.label == expected),
+                "{items:?}"
+            );
+        }
+        for (text, expected) in [
+            (
+                "Child <- methods::setRefClass('Child', contains = 'Display')\nChild$new()",
+                "new(value = 3)",
+            ),
+            (
+                "Child <- methods::setRefClass('Child', contains = 'Display', methods = list(initialize = function(label = 'live') initFields()))\nChild$new()",
+                "new(label = 'live')",
+            ),
+            (
+                "getRefClass('Display')()",
+                "getRefClass('Display')(value = 3)",
+            ),
+            ("parent::Alias()", "parent::Alias(value = 3)"),
+            (
+                "Child <- methods::setRefClass('Child', contains = 'Display', methods = list(read = function(scale = 6) callSuper()))",
+                "callSuper(scale = 2)",
+            ),
+        ] {
+            let buffer = TextBuffer::new(text.to_string());
+            let offset = if text.contains("callSuper()") {
+                text.find("callSuper()").unwrap() + "callSuper(".len()
+            } else {
+                text.len() - 1
+            };
+            let position = buffer
+                .line_index()
+                .byte_to_position(offset, PositionEncoding::Utf16);
+            let help = signature::signature_help_via_db(
+                &db.snapshot(),
+                child_path,
+                &buffer,
+                position,
+                PositionEncoding::Utf16,
+            )
+            .unwrap_or_else(|| panic!("{text}"));
+            assert_eq!(help.signatures[0].label, expected);
+        }
+        db.set_package_metadata(metadata(false));
+        let text = "Child <- methods::setRefClass('Child', contains = 'Display')\nChild$new()";
+        let buffer = TextBuffer::new(text.to_string());
+        let position = buffer
+            .line_index()
+            .byte_to_position(text.len() - 1, PositionEncoding::Utf16);
+        assert!(
+            signature::signature_help_via_db(
+                &db.snapshot(),
+                child_path,
+                &buffer,
+                position,
+                PositionEncoding::Utf16
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
     fn r6_reads_resolve_qualified_parent_aliases_and_overlay_live_buffers() {
         let mut db = IncrementalDatabase::default();
         let parent_path = Path::new("/r6-parent/R/parent.R");

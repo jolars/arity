@@ -10,6 +10,13 @@ struct Dispatch {
     factory: Option<FunctionRef>,
 }
 
+struct MemberEntry {
+    name: Option<String>,
+    value: Option<SyntaxElement>,
+    range: TextRange,
+    untyped: bool,
+}
+
 struct Projection<'a> {
     model: &'a SemanticModel,
     root: &'a SyntaxNode,
@@ -313,6 +320,13 @@ pub(in crate::project::classes) fn project(
     projection.generic_bindings();
     projection.registered_methods();
     projection.s3_methods();
+    projection.facts.class_lookups = factories(model, root)
+        .into_iter()
+        .filter(|(_, _, name)| name == "getRefClass")
+        .map(|(_, reference, _)| reference)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     if include_sites {
         projection.use_sites();
     }
@@ -385,6 +399,7 @@ impl Projection<'_> {
                 if matches!(&value, SyntaxElement::Token(token) if token.text() == "NULL") {
                     continue;
                 }
+                let reference_field = def.system() == ClassSystem::RefClass && group == "fields";
                 let constructor = value.as_node().cloned().and_then(CallExpr::cast);
                 let factory = constructor
                     .as_ref()
@@ -406,10 +421,15 @@ impl Projection<'_> {
                     })
                     .collect();
                 let entries = match (constructor, &factory) {
-                    (Some(call), Some((reference, name)))
+                    (Some(call), Some((reference, constructor_name)))
                         if accepts(reference, "base")
-                            && (name == "list"
-                                || (name == "c"
+                            && (constructor_name == "list"
+                                || (reference_field
+                                    && constructor_name == "character"
+                                    && call
+                                        .arg_list()
+                                        .is_some_and(|args| args.args().next().is_none()))
+                                || (constructor_name == "c"
                                     && matches!(kind, MemberKind::Field | MemberKind::Slot))) =>
                     {
                         if !matches!(reference, FunctionRef::Qualified { .. }) {
@@ -420,13 +440,55 @@ impl Projection<'_> {
                             .children_with_tokens()
                             .any(|e| e.kind() == SyntaxKind::RPAREN)
                         {
-                            call.arg_list().map(|list| list.args().collect::<Vec<_>>())
+                            call.arg_list().map(|list| {
+                                list.args()
+                                    .map(|arg| {
+                                        let mut name =
+                                            arg.name().map(|name| unbacktick(&name).to_string());
+                                        let untyped = reference_field
+                                            && name.is_none()
+                                            && constructor_name == "c";
+                                        if untyped
+                                            && let ClassName::Known(field) =
+                                                string_name(arg.value())
+                                        {
+                                            name = Some(field);
+                                        }
+                                        MemberEntry {
+                                            name,
+                                            value: arg.value(),
+                                            range: arg.name_token().map_or_else(
+                                                || arg.syntax().text_range(),
+                                                |token| token.text_range(),
+                                            ),
+                                            untyped,
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
                         } else {
                             None
                         }
                     }
+                    _ if reference_field => match string_name(Some(value.clone())) {
+                        ClassName::Known(name) => Some(vec![MemberEntry {
+                            name: Some(name),
+                            value: Some(value.clone()),
+                            range: value.text_range(),
+                            untyped: true,
+                        }]),
+                        _ => None,
+                    },
                     _ => None,
                 };
+                if entries.as_ref().is_some_and(|entries| {
+                    reference_field
+                        && entries.iter().any(|entry| entry.untyped)
+                        && entries.iter().any(|entry| !entry.untyped)
+                }) {
+                    issues.insert(OopUncertainty::InvalidArguments);
+                    issues.insert(OopUncertainty::DynamicMembers);
+                }
                 if entries.is_none() {
                     issues.insert(OopUncertainty::DynamicMembers);
                 }
@@ -437,52 +499,59 @@ impl Projection<'_> {
                     uncertainty: issues.clone(),
                 });
                 for arg in entries.into_iter().flatten() {
-                    let name = arg.name().map(|name| unbacktick(&name).to_string());
+                    let name = arg.name;
                     let mut member_issues = issues.clone();
                     if name.is_none() {
                         member_issues.insert(OopUncertainty::DynamicName);
                     }
                     let implementation =
-                        self.implementation_value(arg.value(), &mut BTreeSet::new(), false);
+                        self.implementation_value(arg.value.clone(), &mut BTreeSet::new(), false);
                     let callable = signature(implementation.clone());
-                    let member_kind =
-                        if kind == MemberKind::Field && def.system() == ClassSystem::R6 {
-                            if callable.is_some() {
-                                MemberKind::Method
-                            } else if implementation
-                                .clone()
-                                .and_then(crate::ast::Expr::cast)
-                                .is_some_and(|value| match value {
-                                    crate::ast::Expr::Name(name) => name.is_reserved_constant(),
-                                    crate::ast::Expr::IntLiteral(_)
-                                    | crate::ast::Expr::FloatLiteral(_)
-                                    | crate::ast::Expr::StringLiteral(_)
-                                    | crate::ast::Expr::ComplexLiteral(_) => true,
-                                    _ => false,
-                                })
-                                || implementation.as_ref().is_some_and(|value| {
-                                    value
-                                        .as_node()
-                                        .cloned()
-                                        .and_then(CallExpr::cast)
-                                        .and_then(|call| {
-                                            call_function_ref(self.model, self.root, &call)
-                                        })
-                                        .is_some_and(|reference| {
-                                            matches!(reference,
+                    let member_kind = if reference_field && callable.is_some() {
+                        MemberKind::ActiveBinding
+                    } else if reference_field
+                        && !arg.untyped
+                        && string_name(implementation.clone()) == ClassName::Unknown
+                    {
+                        member_issues.insert(OopUncertainty::UnresolvedImplementation);
+                        MemberKind::Unknown
+                    } else if kind == MemberKind::Field && def.system() == ClassSystem::R6 {
+                        if callable.is_some() {
+                            MemberKind::Method
+                        } else if implementation
+                            .clone()
+                            .and_then(crate::ast::Expr::cast)
+                            .is_some_and(|value| match value {
+                                crate::ast::Expr::Name(name) => name.is_reserved_constant(),
+                                crate::ast::Expr::IntLiteral(_)
+                                | crate::ast::Expr::FloatLiteral(_)
+                                | crate::ast::Expr::StringLiteral(_)
+                                | crate::ast::Expr::ComplexLiteral(_) => true,
+                                _ => false,
+                            })
+                            || implementation.as_ref().is_some_and(|value| {
+                                value
+                                    .as_node()
+                                    .cloned()
+                                    .and_then(CallExpr::cast)
+                                    .and_then(|call| {
+                                        call_function_ref(self.model, self.root, &call)
+                                    })
+                                    .is_some_and(|reference| {
+                                        matches!(reference,
                                             FunctionRef::Qualified { package, name }
                                                 if package == "base" && name == "list")
-                                        })
-                                })
-                            {
-                                MemberKind::Field
-                            } else {
-                                member_issues.insert(OopUncertainty::UnresolvedImplementation);
-                                MemberKind::Unknown
-                            }
+                                    })
+                            })
+                        {
+                            MemberKind::Field
                         } else {
-                            kind
-                        };
+                            member_issues.insert(OopUncertainty::UnresolvedImplementation);
+                            MemberKind::Unknown
+                        }
+                    } else {
+                        kind
+                    };
                     if callable.is_none()
                         && matches!(member_kind, MemberKind::Method | MemberKind::ActiveBinding)
                     {
@@ -544,7 +613,7 @@ impl Projection<'_> {
                                 keep_original,
                             });
                         }
-                        if let Some(body) = arg.value() {
+                        if let Some(body) = arg.value.clone() {
                             self.method_bodies
                                 .push((body.text_range(), def.key.clone()));
                         }
@@ -553,18 +622,21 @@ impl Projection<'_> {
                         None
                     };
                     let declared_type = match member_kind {
-                        MemberKind::Slot => match string_name(arg.value()) {
+                        MemberKind::Slot => match string_name(arg.value.clone()) {
                             ClassName::Known(name) => Some(DispatchClass::Formal(name)),
                             _ => Some(DispatchClass::Unknown),
                         },
                         MemberKind::Field if def.system() == ClassSystem::RefClass => {
-                            match string_name(arg.value()) {
+                            match string_name(implementation.clone()) {
+                                _ if arg.untyped => Some(DispatchClass::Any),
+                                ClassName::Known(name) if name == "ANY" => Some(DispatchClass::Any),
                                 ClassName::Known(name) => Some(DispatchClass::Formal(name)),
                                 _ => Some(DispatchClass::Unknown),
                             }
                         }
                         MemberKind::Property => arg
-                            .value()
+                            .value
+                            .clone()
                             .map(|value| DispatchClass::Generator(self.generator(&value))),
                         _ => None,
                     };
@@ -584,10 +656,11 @@ impl Projection<'_> {
                             .and_then(|call| call_function_ref(self.model, self.root, &call)),
                         uncertainty: member_issues,
                     });
-                    let range = arg
-                        .name_token()
-                        .map_or_else(|| arg.syntax().text_range(), |token| token.text_range());
-                    self.site(range, OopSiteRole::Declaration, OopTarget::Declaration(key));
+                    self.site(
+                        arg.range,
+                        OopSiteRole::Declaration,
+                        OopTarget::Declaration(key),
+                    );
                 }
             }
         }

@@ -92,7 +92,11 @@ impl ClassIndex {
                     .filter(|member| member.class == class.key)
                     .filter(|member| {
                         let group = if class.system() == ClassSystem::RefClass {
-                            "methods"
+                            if member.kind == MemberKind::ActiveBinding {
+                                "fields"
+                            } else {
+                                "methods"
+                            }
                         } else {
                             match (member.visibility, member.kind) {
                                 (_, MemberKind::ActiveBinding) => "active",
@@ -110,6 +114,10 @@ impl ClassIndex {
                     .filter(|key| {
                         // External reference methods retain their ordinary closure.
                         class.system() != ClassSystem::RefClass
+                            || file.facts.oop.members.iter().any(|member| {
+                                member.method.as_ref() == Some(key)
+                                    && member.kind == MemberKind::ActiveBinding
+                            })
                             || !file
                                 .facts
                                 .oop
@@ -281,15 +289,17 @@ impl ClassIndex {
             .filter(|group| group.class == id.key)
         {
             let valid = !group.uncertainty.contains(&OopUncertainty::DynamicMembers)
-                && group
-                    .factory
-                    .as_ref()
-                    .and_then(|factory| self.callee_identity(&id.path, factory))
-                    .is_some_and(|identity| {
-                        identity.package == "base"
-                            && (identity.name == "list"
-                                || (group.name == "fields" && identity.name == "c"))
-                    });
+                && (group.name == "fields" && group.factory.is_none()
+                    || group
+                        .factory
+                        .as_ref()
+                        .and_then(|factory| self.callee_identity(&id.path, factory))
+                        .is_some_and(|identity| {
+                            identity.package == "base"
+                                && (identity.name == "list"
+                                    || (group.name == "fields" && identity.name == "character")
+                                    || (group.name == "fields" && identity.name == "c"))
+                        }));
             if !valid {
                 *unknown = true;
                 continue;
@@ -302,7 +312,10 @@ impl ClassIndex {
                 .filter(|member| member.class == id.key)
             {
                 let member_group = if class.declaration.system() == ClassSystem::RefClass {
-                    if member.kind == MemberKind::Field {
+                    if matches!(
+                        member.kind,
+                        MemberKind::Field | MemberKind::ActiveBinding | MemberKind::Unknown
+                    ) {
                         "fields"
                     } else {
                         "methods"
@@ -324,7 +337,10 @@ impl ClassIndex {
             }
         }
         let parents = self.supertypes.get(id);
-        if parents.map_or(0, BTreeSet::len) < class.declaration.parents.len() {
+        let builtin_parents = (0..class.declaration.parents.len())
+            .filter(|ordinal| self.reference_base_parent(id, *ordinal))
+            .count();
+        if parents.map_or(0, BTreeSet::len) + builtin_parents < class.declaration.parents.len() {
             *unknown = true;
         }
         for parent in parents.into_iter().flatten() {

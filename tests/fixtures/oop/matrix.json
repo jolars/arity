@@ -240,7 +240,7 @@
   },
   "reference_classes/use_sites": {
     "known_gaps": [
-      "Reference methods have no member definition or signature help."
+      "Reference methods have no member definition navigation."
     ],
     "probes": [
       {
@@ -267,9 +267,6 @@
   },
   "reference_classes/incomplete": {
     "parse_errors": true,
-    "known_gaps": [
-      "Declared Reference Class fields do not supply instance completion."
-    ],
     "probes": [
       {
         "method": "type-hierarchy",
@@ -830,6 +827,55 @@
         "method": "highlights",
         "needle": ".defined\n  nested <-",
         "offset": 1
+      }
+    ]
+  },
+  "reference_classes/member_apis": {
+    "probes": [
+      {
+        "method": "completion",
+        "needle": "getRefClass(\"Child\")$new",
+        "offset": 21
+      },
+      {
+        "method": "signature-help",
+        "needle": "getRefClass(\"Child\")$new(value = 5)",
+        "offset": 31
+      },
+      {
+        "method": "signature-help",
+        "needle": "Alias(value = 6)",
+        "offset": 14
+      },
+      {
+        "method": "completion",
+        "needle": "obj$read",
+        "offset": 4
+      },
+      {
+        "method": "signature-help",
+        "needle": "obj$read(scale = 8)",
+        "offset": 16
+      },
+      {
+        "method": "signature-help",
+        "needle": "callSuper(scale)",
+        "offset": 10
+      },
+      {
+        "method": "signature-help",
+        "needle": "obj$external()",
+        "offset": 13
+      },
+      {
+        "method": "signature-help",
+        "needle": "direct$copy()",
+        "offset": 12
+      },
+      {
+        "method": "completion",
+        "needle": ".self$value + increment",
+        "offset": 6
       }
     ]
   }

@@ -27,6 +27,10 @@ mod calls;
 use calls::*;
 mod r6;
 pub use r6::{R6Access, R6Api, R6Member, R6Members, R6Options, R6Receiver};
+mod receiver;
+pub use receiver::{ClassAccess, ClassReceiver};
+mod reference;
+pub use reference::{ReferenceApi, ReferenceMember, ReferenceMembers};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};

@@ -20,6 +20,7 @@ fn fixture_names() -> &'static [&'static str] {
         "dispatch_environments",
         "reference_classes",
         "reference_environments",
+        "reference_members",
         "r6",
         "r6_environments",
         "r6_members",
@@ -295,6 +296,165 @@ fn r6_effective_apis_match_pinned_runtime_members_and_initializers() {
             .find(|dispatch| dispatch.expression == expression)
             .unwrap();
         assert_eq!(classes, runtime.classes, "{binding}");
+    }
+}
+
+#[test]
+fn reference_apis_match_pinned_fields_methods_slots_and_initializers() {
+    use arity::incremental::IncrementalDatabase;
+    use arity::project::classes::{ClassId, MemberKind};
+    let pin = pin("reference_members");
+    let root = parse(&pin.source).cst;
+    let model = SemanticModel::build(&root);
+    let facts = file_class_defs(&model, &root);
+    let path = Path::new("/reference-oracle.R");
+    let index = IncrementalDatabase::default()
+        .snapshot()
+        .class_index_in(path, &facts, &root, &model);
+    for runtime in &pin.facts.classes {
+        let (id, _) = index
+            .declarations
+            .iter()
+            .find(|(_, class)| {
+                class.declaration.binding.as_deref() == Some(runtime.binding.as_str())
+            })
+            .unwrap();
+        let api = index.reference_api(id).unwrap();
+        let mut members = BTreeMap::new();
+        for (prefix, surface) in [
+            ("generator/", &api.generator),
+            ("instance/", &api.instance),
+            ("slot/", &api.slots),
+        ] {
+            assert!(surface.complete, "{}: {prefix}", runtime.binding);
+            for (name, candidates) in &surface.entries {
+                let [member] = candidates.as_slice() else {
+                    panic!("{}: {name}", runtime.binding)
+                };
+                let kind = match member.kind {
+                    MemberKind::Field => match &member.declared_type {
+                        Some(DispatchClass::Any) => "field:ANY".into(),
+                        Some(DispatchClass::Formal(name)) => format!("field:{name}"),
+                        _ => "field".into(),
+                    },
+                    MemberKind::Method => "method".into(),
+                    MemberKind::ActiveBinding => "active-binding".into(),
+                    MemberKind::Slot => "slot".into(),
+                    other => panic!("{other:?}"),
+                };
+                members.insert(format!("{prefix}{name}"), kind);
+            }
+        }
+        assert_eq!(members, runtime.members, "{}", runtime.binding);
+        let initializer = pin
+            .facts
+            .constructors
+            .iter()
+            .find(|constructor| constructor.binding == format!("{}$initialize", runtime.binding))
+            .unwrap();
+        let actual: Vec<_> = api
+            .initializer
+            .unwrap()
+            .parameters
+            .into_iter()
+            .map(|parameter| (parameter.name, parameter.default))
+            .collect();
+        let expected: Vec<_> = initializer
+            .formals
+            .iter()
+            .map(|formal| (formal.name.clone(), formal.default.clone()))
+            .collect();
+        assert_eq!(actual, expected, "{} initializer", runtime.binding);
+        if runtime.binding == "Base" {
+            for constructor in pin.facts.constructors.iter().filter(|constructor| {
+                constructor.binding.starts_with("generator/")
+                    || constructor.binding.starts_with("instance/")
+            }) {
+                let (surface, name) = constructor.binding.split_once('/').unwrap();
+                let member = if surface == "generator" {
+                    &api.generator.entries[name][0]
+                } else {
+                    &api.instance.entries[name][0]
+                };
+                let actual: Vec<_> = member
+                    .signature
+                    .as_ref()
+                    .into_iter()
+                    .flat_map(|signature| &signature.parameters)
+                    .map(|parameter| (parameter.name.clone(), parameter.default.clone()))
+                    .collect();
+                // The installed external wrapper has (...). R retains its
+                // actual forwarding target separately, including the receiver.
+                let formals = if constructor.binding == "instance/external" {
+                    let actual = &pin
+                        .facts
+                        .constructors
+                        .iter()
+                        .find(|constructor| constructor.binding == "external-source/Base$external")
+                        .unwrap()
+                        .formals;
+                    assert_eq!(actual[0].name, ".self");
+                    &actual[1..]
+                } else {
+                    &constructor.formals[..]
+                };
+                let expected: Vec<_> = formals
+                    .iter()
+                    .map(|formal| (formal.name.clone(), formal.default.clone()))
+                    .collect();
+                assert_eq!(actual, expected, "{}", constructor.binding);
+            }
+        }
+    }
+    for runtime in pin
+        .facts
+        .methods
+        .iter()
+        .filter(|method| method.generic.starts_with("callSuper/"))
+    {
+        let target = runtime.generic.split_once('/').unwrap().1;
+        let receiver = facts
+            .declarations
+            .iter()
+            .find(|class| class.binding.as_deref() == Some(runtime.signature[0].as_str()))
+            .unwrap();
+        let api = index
+            .reference_api(&ClassId {
+                path: path.into(),
+                key: receiver.key.clone(),
+            })
+            .unwrap();
+        // An inherited method copy retains its source declaration's owner.
+        let declaration = index
+            .member(
+                api.instance.entries[target][0]
+                    .declaration
+                    .as_ref()
+                    .unwrap(),
+            )
+            .unwrap();
+        let member = index
+            .reference_super_method(
+                &ClassId {
+                    path: path.into(),
+                    key: declaration.class.clone(),
+                },
+                target,
+            )
+            .unwrap();
+        let actual: Vec<_> = member
+            .signature
+            .unwrap()
+            .parameters
+            .into_iter()
+            .map(|parameter| (parameter.name, parameter.default))
+            .collect();
+        let expected: Vec<_> = runtime
+            .formals
+            .iter()
+            .map(|formal| (formal.name.clone(), formal.default.clone()))
+            .collect();
+        assert_eq!(actual, expected, "{:?}", runtime.signature);
     }
 }
 
