@@ -11,11 +11,13 @@ use super::*;
 
 mod namespace;
 mod oop;
+pub(super) mod s3_registry;
 use crate::project::{PackageDeclarations, ProjectScope, ReadBinding, ReadSite};
 use crate::rindex::provider::{IndexedProvider, package_indexed, resolve_origin};
 use crate::rindex::remote::RemoteExports;
 use crate::semantic::enclosure::Availability;
 use crate::semantic::{LoadedPackage, PackageOrigin};
+use s3_registry::S3Registry;
 
 #[derive(Debug, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub struct ClassFile {
@@ -47,6 +49,8 @@ pub struct ResolvedClass {
 #[derive(Debug, Clone, Default, PartialEq, Eq, salsa::SalsaValue)]
 pub struct ClassIndex {
     pub declarations: BTreeMap<ClassId, ResolvedClass>,
+    pub s3: S3Registry,
+    pub(super) s3_origins: s3_registry::S3LookupOrigins,
     pub unresolved: BTreeSet<ClassId>,
     pub parent_candidates: BTreeMap<ClassId, Vec<Vec<ClassId>>>,
     pub supertypes: BTreeMap<ClassId, BTreeSet<ClassId>>,
@@ -65,6 +69,9 @@ pub struct ClassIndex {
 }
 
 impl ClassIndex {
+    pub(super) fn sees_file(&self, path: &Path, target: &Path) -> bool {
+        self.scope.sees(path).iter().any(|path| path == target)
+    }
     pub(super) fn class_file_complete(&self, path: &Path) -> bool {
         !self.incomplete.contains(path)
     }
@@ -135,6 +142,7 @@ impl ClassIndex {
                 .collect(),
             scope: Arc::new(resolution.scope.clone()),
             load_orders: resolution.load_orders.clone(),
+            s3_origins: s3_registry::S3LookupOrigins::build(resolution),
             ..Self::default()
         };
         index.namespace = namespace::NamespaceVisibility::build(&index.files, resolution);
@@ -192,6 +200,7 @@ impl ClassIndex {
                         .filter_map(|member| member.value_factory.as_ref()),
                 )
                 .chain(file.facts.oop.class_lookups.iter())
+                .chain(file.facts.s3.helpers.iter())
                 .chain(
                     file.facts
                         .oop
@@ -315,6 +324,7 @@ impl ClassIndex {
                 }
             }
         }
+        index.s3 = index.build_s3_registry(resolution);
         index
     }
 

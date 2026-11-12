@@ -40,6 +40,7 @@ pub(crate) fn has_method_candidates(model: &SemanticModel) -> bool {
                     | "setMethod"
                     | "setReplaceMethod"
                     | "registerS3method"
+                    | ".S3method"
                     | ".Generic"
                     | ".Method"
                     | ".Class"
@@ -54,7 +55,7 @@ pub(crate) fn has_method_candidates(model: &SemanticModel) -> bool {
         || model
             .qualified_reads()
             .iter()
-            .any(|name| unbacktick(name) == "registerS3method")
+            .any(|name| matches!(unbacktick(name), "registerS3method" | ".S3method"))
         || model.bindings().iter().any(|binding| {
             let name = unbacktick(&binding.name);
             name.char_indices()

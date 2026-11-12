@@ -1,0 +1,8 @@
+namespace	g	conventional.class	g.conventional.class	-
+namespace	g	explicit	handler	-
+namespace	g	delayed.class	g.delayed.class	other
+namespace	g	delayed.explicit	handler	other
+script	g	alias	handler	-
+script	g	hook	handler	-
+script	g	implicit	g.implicit	-
+script	g	script.class	handler	-

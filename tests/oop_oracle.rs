@@ -59,6 +59,16 @@ struct Facts {
     constructors: Vec<Constructor>,
     methods: Vec<Method>,
     dispatch: Vec<Dispatch>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    s3_evidence: Vec<S3Evidence>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct S3Evidence {
+    expression: String,
+    explicit_class: Option<Vec<String>>,
+    runtime_class: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -107,6 +117,51 @@ fn pin(name: &str) -> Pin {
         &fs::read_to_string(root().join(name).join("expected.json")).expect("read OOP pin"),
     )
     .expect("decode OOP runtime facts")
+}
+
+#[test]
+fn s3_explicit_class_evidence_matches_pinned_runtime_attributes() {
+    use arity::ast::CallExpr;
+    use arity::project::classes::S3ClassEvidence;
+    use rowan::ast::AstNode as _;
+    let pin = pin("s3");
+    assert!(!pin.facts.s3_evidence.is_empty());
+    for observation in &pin.facts.s3_evidence {
+        let source = format!("{}\nprobe({})\n", pin.source, observation.expression);
+        let root = parse(&source).cst;
+        let model = SemanticModel::build(&root);
+        let facts = file_class_defs(&model, &root);
+        let path = Path::new("/s3-oracle.R");
+        let index = arity::incremental::IncrementalDatabase::default()
+            .snapshot()
+            .class_index_in(path, &facts, &root, &model);
+        let value = root
+            .descendants()
+            .filter_map(CallExpr::cast)
+            .find(|call| call.callee_name().as_deref() == Some("probe"))
+            .unwrap()
+            .arg_list()
+            .unwrap()
+            .args()
+            .next()
+            .unwrap()
+            .value()
+            .unwrap();
+        let expected = match &observation.explicit_class {
+            Some(names) => S3ClassEvidence::Explicit(names.clone()),
+            None => S3ClassEvidence::NoExplicitClass,
+        };
+        assert_eq!(
+            index.s3_class_evidence(path, &root, &model, &value),
+            expected,
+            "{}",
+            observation.expression
+        );
+        // The same runtime class can arise with or without an explicit attribute.
+        assert!(!observation.runtime_class.is_empty());
+        assert!(index.declarations.is_empty());
+        assert!(index.supertypes.is_empty());
+    }
 }
 
 #[test]

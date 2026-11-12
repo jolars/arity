@@ -660,14 +660,21 @@ coverage need not block useful workspace support.
 
 #### 4. S3 classes, registration, and dispatch
 
-- [ ] Recover conservative class evidence from literal
+- [x] Recover conservative class evidence from literal
   `structure(..., class = ...)`, `class(x) <- ...`, `oldClass`, and
   recognizable constructor returns. Preserve class-vector order and
   distinguish explicit evidence from an unknown runtime class. S3 has no
   required class declaration: dotted method names alone must not manufacture
   a formal class hierarchy.
+  The shared S3 query recovers ordered explicit attributes, class removal,
+  and straight-line constructor returns without evaluating R. Range-free
+  constructor summaries use project visibility and confirmed helper origins.
+  Conditional writes, dynamic values, and uncertain reference aliases remain
+  unknown. Pinned R observations and incremental regressions cover attribute
+  semantics, copies, source visibility, and class-vector edits, while S3
+  evidence stays separate from formal class declarations and hierarchy edges.
 
-- [ ] Index explicit `UseMethod()` generics, known internal/group generics,
+- [x] Index explicit `UseMethod()` generics, known internal/group generics,
   `generic.class` methods, and NAMESPACE two-/three-argument and delayed
   `S3method()` registrations. Include statically recoverable `.S3method()`
   and `registerS3method()` calls. Keep the generic, class, implementation
@@ -675,7 +682,16 @@ coverage need not block useful workspace support.
   conservative unused-method protection for possible methods whose generic
   cannot be resolved; absence from the registry is not proof of dead code.
 
-- [ ] Resolve method candidates using class-vector order, `.default`, and
+  The shared S3 registry retains explicit and known generic identities, all
+  possible dotted-name splits, implementation bindings, lexical and package
+  registration owners, delayed registrations, and ordinary exports separately.
+  Script registrations preserve supplied aliases independently of their closure
+  origins. R-generated internal/group generic names and pinned base-R
+  observations cover registration forms without evaluating R in production.
+  Incremental tests cover namespace and script edits, while unused checks retain
+  unresolved possible methods and implementations named through strings.
+
+- [x] Resolve method candidates using class-vector order, `.default`, and
   registration visibility. Cover `NextMethod()`, internal generics, group
   generics, and operator/replacement methods as separate tested cases rather
   than one dotted-name split. Model `UseMethod()`'s nonreturning control
@@ -684,6 +700,14 @@ coverage need not block useful workspace support.
   signature safety gates. Unknown classes or runtime registration yield
   candidates or unknown results, never a confidently selected
   implementation.
+
+  The shared query ranks candidates using caller and registration visibility,
+  including internal aliases, group generics, operators, and replacements.
+  `NextMethod()` preserves the original class cursor and verifies the method
+  frame. Forwarding distinguishes original promises, current formals, and
+  generic-local variables across R 4.4; `UseMethod()` terminates control flow.
+  Pinned R observations and incremental regressions cover these paths while
+  preserving signature safety and formal-read handling.
 
   Semantic references: [S3
   dispatch](https://stat.ethz.ch/R-manual/R-devel/library/base/html/UseMethod.html),

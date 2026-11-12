@@ -84,6 +84,13 @@ fields, inherited methods and helpers, `.self`, `.refClassDef`, nested closures,
 nonlocal field updates, and the ordinary lexical lookup of external methods. No
 syntax gap was demonstrated by these cases.
 
+The S3 case also pins explicit class attributes separately from runtime classes.
+Rust queries compare literal `structure()` calls, `class<-` and `oldClass<-`,
+constructor returns, copied values, class removal, duplicate attributes, and
+ordered class vectors with those observations. Numeric and matrix examples keep
+implicit runtime classes distinct from explicit attributes. These observations
+do not declare formal S3 classes or create type hierarchy edges.
+
 The dispatch environment case records the metadata visible to S3 ordinary,
 internal, group, and registered methods, S4 ordinary, primitive, and group
 methods, and replacement methods. It also checks parameter shadowing, lazy

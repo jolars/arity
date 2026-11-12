@@ -1,0 +1,5 @@
+S3method(g, conventional.class)
+S3method(g, explicit, handler)
+S3method(other::g, delayed.class)
+S3method(other::g, delayed.explicit, handler)
+export(handler)

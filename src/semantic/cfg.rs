@@ -2,7 +2,7 @@
 //!
 //! A [`ControlFlowGraph`] is built for each **flow region** — every function
 //! body plus the file top-level. Regions are the boundaries the flow-affecting
-//! keywords respect: `return()`/`stop()` leave the enclosing *function*,
+//! keywords respect: `return()`/`stop()`/`UseMethod()` leave the enclosing *function*,
 //! `break`/`next` the enclosing *loop*. A [`FileControlFlow`] bundles the
 //! top-level region with one CFG per `FUNCTION_EXPR` (keyed by [`NodePtr`]), and
 //! is what [`crate::incremental::control_flow`] memoizes per file.
@@ -11,7 +11,7 @@
 //! ([`IfExpr`], [`ForExpr`], [`WhileExpr`], [`RepeatExpr`],
 //! [`BlockExpr`](crate::ast::BlockExpr), [`CallExpr`]) — deterministic and
 //! local, no fixpoint. It is **purely
-//! syntactic**: a terminator is recognized by callee name (`return`/`stop`) or
+//! syntactic**: a terminator is recognized by callee name (`return`/`stop`/`UseMethod`) or
 //! bare reserved word (`break`/`next`, which R lexes as identifiers), and no
 //! [`SymbolProvider`](crate::semantic::SymbolProvider) is consulted. A consumer
 //! that cares whether `return` is the *base* `return` (and not a local
@@ -29,7 +29,8 @@ use rowan::ast::AstNode as _;
 
 use crate::ast::kinds::is_trivia;
 use crate::ast::{
-    BinaryExpr, CallExpr, ForExpr, FunctionExpr, HasArgList as _, IfExpr, RepeatExpr, WhileExpr,
+    AssignmentExpr, BinaryExpr, CallExpr, ForExpr, FunctionExpr, HasArgList as _, IfExpr,
+    ParenExpr, RepeatExpr, WhileExpr,
 };
 use crate::syntax::{NodePtr, SyntaxElement, SyntaxKind, SyntaxNode};
 
@@ -73,7 +74,7 @@ pub enum Terminator {
     },
     /// Falls off the end of the region — a normal return to the caller.
     Return,
-    /// Diverges out of the region via `return()`/`stop()`; no in-region successor.
+    /// Exits via `return()`, `stop()`, or `UseMethod()` with no in-region successor.
     Diverge,
     /// The block is unreachable (it has no predecessor): the tail after an
     /// unconditional divergence.
@@ -255,7 +256,7 @@ impl FileControlFlow {
 }
 
 /// Whether executing `element` never falls through to the next statement in its
-/// block: it unconditionally `return()`/`stop()`s, recursively through `{}`
+/// block: it unconditionally calls `return()`, `stop()`, or `UseMethod()`, recursively through `{}`
 /// blocks (any statement diverging is enough) and through `if`/`else` where
 /// **both** arms diverge. Purely syntactic — the callee is matched by name, so a
 /// caller that must exclude a locally-redefined `return`/`stop` applies its own
@@ -271,11 +272,17 @@ pub fn always_diverges(element: &SyntaxElement) -> bool {
     match node.kind() {
         SyntaxKind::CALL_EXPR => matches!(
             CallExpr::cast(node.clone())
-                .and_then(|call| call.callee_name())
-                .as_deref(),
-            Some("return" | "stop")
+                .as_ref()
+                .and_then(terminating_call_name),
+            Some("return" | "stop" | "UseMethod")
         ),
         SyntaxKind::BLOCK_EXPR => region_statements(node).iter().any(always_diverges),
+        SyntaxKind::PAREN_EXPR => ParenExpr::cast(node.clone())
+            .and_then(|paren| paren.inner())
+            .is_some_and(|inner| always_diverges(&inner)),
+        SyntaxKind::ASSIGNMENT_EXPR => AssignmentExpr::cast(node.clone())
+            .and_then(|assignment| assignment.value_element())
+            .is_some_and(|value| always_diverges(&value)),
         SyntaxKind::IF_EXPR => {
             let if_expr = IfExpr::cast(node.clone()).expect("IF_EXPR casts");
             let (Some(then_body), Some(else_body)) = (
@@ -429,10 +436,10 @@ impl Builder {
                 self.push_stmt(cur, node.text_range());
                 self.collect_expression(node, cur);
                 match CallExpr::cast(node.clone())
-                    .and_then(|call| call.callee_name())
-                    .as_deref()
+                    .as_ref()
+                    .and_then(terminating_call_name)
                 {
-                    Some("return" | "stop") => {
+                    Some("return" | "stop" | "UseMethod") => {
                         self.set_term(cur, Terminator::Diverge);
                         None
                     }
@@ -442,7 +449,12 @@ impl Builder {
             _ => {
                 self.push_stmt(cur, node.text_range());
                 self.collect_expression(node, cur);
-                Some(cur)
+                if always_diverges(stmt) {
+                    self.set_term(cur, Terminator::Diverge);
+                    None
+                } else {
+                    Some(cur)
+                }
             }
         }
     }
@@ -667,6 +679,15 @@ impl Builder {
         } else {
             Some(after)
         }
+    }
+}
+
+fn terminating_call_name(call: &CallExpr) -> Option<&'static str> {
+    match super::symbols::unbacktick(&call.callee_name()?) {
+        "return" => Some("return"),
+        "stop" => Some("stop"),
+        "UseMethod" => Some("UseMethod"),
+        _ => None,
     }
 }
 

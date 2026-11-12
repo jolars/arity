@@ -85,6 +85,77 @@ fn both_branches_return_makes_tail_unreachable() {
 }
 
 #[test]
+fn use_method_never_returns_but_next_method_does() {
+    use arity::ast::{BlockExpr, CallExpr};
+    use arity::semantic::cfg::Terminator;
+
+    for callee in [
+        "UseMethod",
+        "base::UseMethod",
+        "`UseMethod`",
+        "\"UseMethod\"",
+    ] {
+        let source = format!("g <- function(x) {{ {callee}('g'); after() }}");
+        let parsed = parse(&source);
+        assert!(parsed.diagnostics.is_empty());
+        assert_eq!(parsed.cst.text().to_string(), source);
+        let cfg = FileControlFlow::build(&parsed.cst);
+        let tail = parsed
+            .cst
+            .descendants()
+            .filter_map(CallExpr::cast)
+            .find(|call| call.callee_name().as_deref() == Some("after"))
+            .unwrap();
+        assert!(cfg.is_unreachable(tail.syntax().text_range()), "{source}");
+        assert!(cfg.functions().iter().any(|(_, region)| {
+            region
+                .blocks()
+                .iter()
+                .any(|block| block.terminator == Terminator::Diverge)
+        }));
+        let block = parsed.cst.descendants().find_map(BlockExpr::cast).unwrap();
+        assert!(always_diverges(&block.syntax().clone().into()));
+    }
+    let source = "g.C <- function(x) { NextMethod(); after() }";
+    let parsed = parse(source);
+    let cfg = FileControlFlow::build(&parsed.cst);
+    let tail = parsed
+        .cst
+        .descendants()
+        .filter_map(CallExpr::cast)
+        .find(|call| call.callee_name().as_deref() == Some("after"))
+        .unwrap();
+    assert!(!cfg.is_unreachable(tail.syntax().text_range()));
+}
+
+#[test]
+fn forced_use_method_expressions_exit_but_lazy_arguments_stay_opaque() {
+    use arity::ast::CallExpr;
+    for (expression, dead) in [
+        ("(UseMethod('g'))", true),
+        ("value <- UseMethod('g')", true),
+        ("identity(UseMethod('g'))", false),
+    ] {
+        let source = format!("g <- function(x) {{ {expression}; after() }}");
+        let parsed = parse(&source);
+        assert!(parsed.diagnostics.is_empty());
+        assert_eq!(parsed.cst.text().to_string(), source);
+        let cfg = FileControlFlow::build(&parsed.cst);
+        let tail = parsed
+            .cst
+            .descendants()
+            .filter_map(CallExpr::cast)
+            .find(|call| call.callee_name().as_deref() == Some("after"))
+            .unwrap();
+        assert_eq!(
+            cfg.is_unreachable(tail.syntax().text_range()),
+            dead,
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn regions_are_toplevel_plus_each_function() {
     // Top-level, `outer`, and the nested `inner`.
     assert_eq!(

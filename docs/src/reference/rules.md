@@ -360,9 +360,9 @@ if (a && b) {
 
 ### `unreachable-code`
 
-Flag statements that follow an unconditional `return()` or `stop()` in a block—once either runs, nothing after it in the same block can be reached, so the trailing code is dead. A direct-statement `if`/`else` that exits in both branches likewise leaves its tail unreachable (a control-flow-graph verdict).
+Flag statements that follow an unconditional `return()`, `stop()`, or `UseMethod()` in a block—once one runs, nothing after it in that block can be reached, so the trailing code is dead. A direct-statement `if`/`else` that exits in both branches likewise leaves its tail unreachable (a control-flow-graph verdict).
 
-The rule fires only when the terminator is a direct statement of the block (a lone `return()`/`stop()` guarded by an `if` leaves the tail reachable) and only when the callee resolves to base R; a local redefinition is left alone. `return` is additionally required to sit inside a function. The deletion fix is unsafe, and withheld when it would drop a comment.
+The rule fires only when the terminator is a direct statement of the block (a lone terminating call guarded by an `if` leaves the tail reachable) and only when the callee resolves to base R; a local redefinition is left alone. `return` and `UseMethod` must sit inside a function. `NextMethod()` returns normally. The deletion fix is unsafe, and withheld when it would drop a comment.
 
 This rule is **enabled by default**.
 

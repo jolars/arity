@@ -1,4 +1,4 @@
-//! `unreachable-code`: statements after an unconditional `return()`/`stop()`.
+//! `unreachable-code`: statements after `return()`, `stop()`, or `UseMethod()`.
 //!
 //! Once a block runs `return(...)` (hand control back to the caller) or
 //! `stop(...)` (raise an error), nothing after it in the same block can execute.
@@ -33,7 +33,7 @@
 use rowan::TextRange;
 use rowan::ast::AstNode as _;
 
-use crate::ast::CallExpr;
+use crate::ast::{BinaryExpr, CallExpr};
 use crate::linter::diagnostic::{Diagnostic, Fix, ViolationData};
 use crate::linter::rules::{Example, Rule, RuleContext, matchers};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
@@ -57,15 +57,15 @@ impl Rule for UnreachableCode {
     }
 
     fn description(&self) -> &'static str {
-        "Flag statements that follow an unconditional `return()` or `stop()` in a \
-         block—once either runs, nothing after it in the same block can be \
+        "Flag statements that follow an unconditional `return()`, `stop()`, or \
+         `UseMethod()` in a block—once one runs, nothing after it in that block can be \
          reached, so the trailing code is dead. A direct-statement `if`/`else` \
          that exits in both branches likewise leaves its tail unreachable (a \
          control-flow-graph verdict).\n\nThe rule fires only when the terminator \
-         is a direct statement of the block (a lone `return()`/`stop()` guarded \
+         is a direct statement of the block (a lone terminating call guarded \
          by an `if` leaves the tail reachable) and only when the callee resolves \
-         to base R; a local redefinition is left alone. `return` is additionally \
-         required to sit inside a function. The deletion fix is unsafe, and \
+         to base R; a local redefinition is left alone. `return` and `UseMethod` \
+         must sit inside a function. `NextMethod()` returns normally. The deletion fix is unsafe, and \
          withheld when it would drop a comment."
     }
 
@@ -177,7 +177,9 @@ fn both_branches_diverge(
     let Some(node) = stmt.as_node() else {
         return false;
     };
-    if node.kind() != SyntaxKind::IF_EXPR {
+    // An earlier shadowed terminator can make the whole `if` unreachable in
+    // the syntactic CFG. Its own branches must establish divergence too.
+    if node.kind() != SyntaxKind::IF_EXPR || !crate::semantic::cfg::always_diverges(stmt) {
         return false;
     }
     // The CFG's reachability verdict: is the statement right after the `if`
@@ -188,11 +190,14 @@ fn both_branches_diverge(
     // Namespace-confirm every terminating call, and gate `return` on a function.
     let mut saw_return = false;
     for call in node.descendants().filter_map(CallExpr::cast) {
-        if let Some(name @ ("return" | "stop")) = call.callee_name().as_deref() {
-            if !ctx.resolves_to_base(&call) {
+        let name = call.callee_name();
+        if let Some(name @ ("return" | "stop" | "UseMethod")) =
+            name.as_deref().map(crate::semantic::symbols::unbacktick)
+        {
+            if !confirmed_terminator(&call, ctx) {
                 return false;
             }
-            saw_return |= name == "return";
+            saw_return |= matches!(name, "return" | "UseMethod");
         }
     }
     !saw_return || in_function(block)
@@ -208,18 +213,38 @@ fn terminator_name(
     block: &SyntaxNode,
 ) -> Option<&'static str> {
     let node = stmt.as_node()?;
-    for name in ["return", "stop"] {
-        if let Some(call) = matchers::call_named(node, name) {
-            if !ctx.resolves_to_base(&call) {
+    let call = CallExpr::cast(node.clone())?;
+    let callee = call.callee_name()?;
+    for name in ["return", "stop", "UseMethod"] {
+        if crate::semantic::symbols::unbacktick(&callee) == name {
+            if !confirmed_terminator(&call, ctx) {
                 return None;
             }
-            if name == "return" && !in_function(block) {
+            if matches!(name, "return" | "UseMethod") && !in_function(block) {
                 return None;
             }
             return Some(name);
         }
     }
     None
+}
+
+fn confirmed_terminator(call: &CallExpr, ctx: &RuleContext<'_>) -> bool {
+    if call
+        .callee_token()
+        .is_some_and(|token| token.kind() == SyntaxKind::STRING)
+    {
+        return false;
+    }
+    if let Some(namespace) = call
+        .base()
+        .and_then(SyntaxElement::into_node)
+        .and_then(BinaryExpr::cast)
+        .and_then(|binary| binary.namespace_access())
+    {
+        return namespace.package == "base";
+    }
+    ctx.resolves_to_base(call)
 }
 
 /// Whether `block` is nested (at any depth) inside a function body.

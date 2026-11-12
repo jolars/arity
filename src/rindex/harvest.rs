@@ -420,12 +420,10 @@ pub struct NamespaceInfo {
     /// [`imported_names`](Self::imported_names), so it never leaves resolution
     /// incomplete.
     pub imported_from_packages: BTreeSet<String>,
-    /// The subset of [`exports`](Self::exports) registered via `S3method()`
-    /// rather than `export()`. Still exports (they are in the namespace, so name
-    /// resolution must see them), but reached by *dispatch*, never by a direct
-    /// call — so "nothing calls this name" says nothing about a method being
-    /// dead. Tracked apart so `unused-function` can exclude them.
+    /// Implementation bindings reached by S3 dispatch, independently of exports.
     pub s3_methods: BTreeSet<String>,
+    /// Registrations retain dispatch identity, delayed package lookup, and duplicates.
+    pub s3_registrations: Vec<S3Registration>,
     /// Names `useDynLib()` binds *by enumeration*: every positional argument
     /// after the DLL name, plus the alias of each `alias = routine` form. These
     /// are native symbol objects, not R bindings, so nothing in the package's R
@@ -436,6 +434,68 @@ pub struct NamespaceInfo {
     /// this only carries the affixes R wraps each harvested name in — see
     /// [`crate::project::native`].
     pub dynlib_registration: Option<DynLibFixes>,
+}
+
+/// A NAMESPACE S3 registration, distinct from ordinary namespace exports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct S3Registration {
+    pub generic: String,
+    pub class: String,
+    pub method: String,
+    /// `S3method(pkg::generic, class)` registers when `pkg` loads.
+    pub package: Option<String>,
+    pub conditional: bool,
+}
+
+fn s3_registration(directive: &NamespaceDirective) -> Option<S3Registration> {
+    use crate::ast::{AstNode, BinaryExpr, token_name};
+    use crate::syntax::{SyntaxElement, SyntaxKind};
+    let args: Vec<_> = directive.arguments().collect();
+    if !matches!(args.len(), 2 | 3) || directive.r_paren().is_none() {
+        return None;
+    }
+    let atom = |value: SyntaxElement| {
+        let token = value.into_token()?;
+        match token.kind() {
+            SyntaxKind::IDENT => Some(token_name(&token).to_string()),
+            SyntaxKind::STRING => crate::semantic::decode_string_literal(token.text()),
+            _ => None,
+        }
+    };
+    let value = args[0].value()?;
+    let (generic, package) = if let Some(namespace) = value
+        .as_node()
+        .cloned()
+        .and_then(BinaryExpr::cast)
+        .and_then(|binary| binary.namespace_access())
+        .filter(|namespace| !namespace.internal)
+    {
+        (
+            namespace.name.to_string(),
+            Some(namespace.package.to_string()),
+        )
+    } else {
+        (atom(value)?, None)
+    };
+    let class = atom(args[1].value()?)?;
+    let method = if args.len() == 3 {
+        atom(args[2].value()?)?
+    } else {
+        format!("{generic}.{class}")
+    };
+    if generic.is_empty() || class.is_empty() || method.is_empty() {
+        return None;
+    }
+    Some(S3Registration {
+        generic,
+        class,
+        method,
+        package,
+        conditional: directive
+            .syntax()
+            .ancestors()
+            .any(|node| node.kind() == SyntaxKind::IF_EXPR),
+    })
 }
 
 /// The `.fixes` of a `useDynLib(..., .registration = TRUE)`: the prefix and
@@ -470,18 +530,9 @@ pub fn parse_namespace(namespace: &str, object_names: &[&str]) -> NamespaceInfo 
                 info.exports.extend(directive_values(&directive));
             }
             DirectiveKind::S3Method => {
-                // `S3method(generic, class)` registers the method `generic.class`;
-                // the three-arg form `S3method(generic, class, method)` binds the
-                // explicitly named `method` instead.
-                let args: Vec<String> = directive_values(&directive).collect();
-                let method = match args.as_slice() {
-                    [_, _, method] => Some(method.clone()),
-                    [generic, class] => Some(format!("{generic}.{class}")),
-                    _ => None,
-                };
-                if let Some(method) = method {
-                    info.exports.insert(method.clone());
-                    info.s3_methods.insert(method);
+                if let Some(registration) = s3_registration(&directive) {
+                    info.s3_methods.insert(registration.method.clone());
+                    info.s3_registrations.push(registration);
                 }
             }
             DirectiveKind::ExportPattern | DirectiveKind::ExportClassPattern => {
@@ -932,9 +983,8 @@ mod tests {
         assert!(exports.contains(&"foo".to_string()));
         assert!(exports.contains(&"bar".to_string()));
         assert!(exports.contains(&"show".to_string()));
-        // `S3method(generic, class)` registers the method `generic.class`, not
-        // the generic or class names on their own.
-        assert!(exports.contains(&"print.baz".to_string()));
+        // Registration does not export the implementation, generic, or class.
+        assert!(!exports.contains(&"print.baz".to_string()));
         assert!(!exports.contains(&"print".to_string()));
         assert!(!exports.contains(&"baz".to_string()));
     }
@@ -945,18 +995,20 @@ mod tests {
             S3method(coef, SLOPE)
             S3method(predict, "GaussianSLOPE")
         "#;
-        let exports = resolve_exports(ns, &[]);
-        assert!(exports.contains(&"coef.SLOPE".to_string()));
-        assert!(exports.contains(&"predict.GaussianSLOPE".to_string()));
+        let info = parse_namespace(ns, &[]);
+        assert!(info.exports.is_empty());
+        assert!(info.s3_methods.contains("coef.SLOPE"));
+        assert!(info.s3_methods.contains("predict.GaussianSLOPE"));
     }
 
     #[test]
     fn s3method_three_arg_form_uses_explicit_method() {
         // `S3method(generic, class, method)` binds `method`, not `generic.class`.
         let ns = "S3method(print, foo, print_foo_impl)\n";
-        let exports = resolve_exports(ns, &[]);
-        assert!(exports.contains(&"print_foo_impl".to_string()));
-        assert!(!exports.contains(&"print.foo".to_string()));
+        let info = parse_namespace(ns, &[]);
+        assert!(info.exports.is_empty());
+        assert!(info.s3_methods.contains("print_foo_impl"));
+        assert!(!info.s3_methods.contains("print.foo"));
     }
 
     #[test]

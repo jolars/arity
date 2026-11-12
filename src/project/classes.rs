@@ -20,6 +20,7 @@ pub use environments::{
     ClassMethodEnvironment, R6MethodEnvironment, apply_method_environments,
     standalone_semantic_model,
 };
+pub use resolve::s3_registry::*;
 pub use resolve::{ClassFile, ClassIndex, ClassResolution, ResolvedClass};
 mod oop;
 pub use oop::*;
@@ -34,6 +35,10 @@ pub use member_access::{AccessorArgument, MemberAccess, MemberEffect};
 pub use receiver::{ClassAccess, ClassReceiver};
 mod reference;
 pub use reference::{ReferenceApi, ReferenceMember, ReferenceMembers};
+mod s3;
+pub use s3::{S3ClassEvidence, S3Constructor, S3Facts};
+mod s3_dispatch;
+pub use s3_dispatch::*;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
@@ -317,6 +322,8 @@ pub struct FileClassFacts {
     pub generators: Vec<GeneratorBinding>,
     pub generator_aliases: Vec<GeneratorAlias>,
     pub oop: OopFacts,
+    /// S3 return evidence and helper origins, distinct from class declarations.
+    pub s3: S3Facts,
 }
 
 impl FileClassFacts {
@@ -351,6 +358,7 @@ pub enum ClassOccurrence {
 }
 
 struct Extracted {
+    owners: HashMap<TextRange, ClassOwner>,
     facts: FileClassFacts,
     locations: Vec<ClassLocation>,
     occurrences: Vec<(TextRange, ClassOccurrence)>,
@@ -513,6 +521,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         .map(|(call, _, _, key)| (call.syntax().text_range(), key.clone()))
         .collect();
     let mut result = Extracted {
+        owners: owners.clone(),
         facts: FileClassFacts::default(),
         locations: Vec::new(),
         occurrences: Vec::new(),
@@ -739,6 +748,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         oop::project(model, root, &owners, &result, include_sites);
     result.method_implementations = implementations;
     result.facts.oop = facts;
+    result.facts.s3 = s3::project(model, root);
     result.oop_sites = sites;
     result
 }

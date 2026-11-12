@@ -772,6 +772,108 @@ fn scripts_ab(a_src: &str, b_src: &str) -> (IncrementalDatabase, SourceFile, Sou
     (db, a, b)
 }
 
+fn s3_probe(
+    db: &IncrementalDatabase,
+    file: SourceFile,
+    path: &str,
+) -> arity::project::classes::S3ClassEvidence {
+    use arity::ast::CallExpr;
+    use rowan::ast::AstNode as _;
+    let root = db.parsed_tree(file);
+    let model = db.semantic_model(file);
+    let value = root
+        .descendants()
+        .filter_map(CallExpr::cast)
+        .find(|call| call.callee_name().as_deref() == Some("probe"))
+        .unwrap()
+        .arg_list()
+        .unwrap()
+        .args()
+        .next()
+        .unwrap()
+        .value()
+        .unwrap();
+    project_classes(db).s3_class_evidence(Path::new(path), &root, model, &value)
+}
+
+#[test]
+fn s3_constructor_evidence_follows_project_visibility_and_helper_origins() {
+    use arity::project::classes::S3ClassEvidence::{Explicit, Unknown};
+    let constructor =
+        "new_value <- function(x) structure(list(x = x), class = c('child', 'parent'))\n";
+    let (db, a, _) = scripts_ab("source('b.R')\nprobe(new_value(1))\n", constructor);
+    assert_eq!(
+        s3_probe(&db, a, "/s/a.R"),
+        Explicit(vec!["child".into(), "parent".into()])
+    );
+    let (db, a, _) = scripts_ab("probe(new_value(1))\n", constructor);
+    assert_eq!(s3_probe(&db, a, "/s/a.R"), Unknown);
+    let (db, a, _) = package_ab("f <- function() probe(new_value(1))\n", constructor);
+    assert_eq!(
+        s3_probe(&db, a, "/pkg/R/a.R"),
+        Explicit(vec!["child".into(), "parent".into()])
+    );
+    let (db, a, _) = package_ab(
+        "f <- function() probe(new_value(1))\nstructure <- function(...) NULL\n",
+        constructor,
+    );
+    assert_eq!(s3_probe(&db, a, "/pkg/R/a.R"), Unknown);
+    assert!(project_classes(&db).declarations.is_empty());
+    assert!(project_classes(&db).supertypes.is_empty());
+}
+
+#[test]
+fn s3_constructor_summaries_reject_embedded_control_flow() {
+    use arity::project::classes::S3ClassEvidence::Unknown;
+    for constructor in [
+        "new_value <- function(flag) { flag && return(structure(list(), class = 'early')); structure(list(), class = 'late') }",
+        "ret <- return; new_value <- function() { list(ret(structure(list(), class = 'early'))); structure(list(), class = 'late') }",
+        "dispatch <- UseMethod; new_value <- function(x) { dispatch('generic'); structure(list(), class = 'late') }; generic.early <- function(x) structure(list(), class = 'early')",
+    ] {
+        let (db, a, _) = scripts_ab("source('b.R')\nprobe(new_value(TRUE))\n", constructor);
+        assert_eq!(s3_probe(&db, a, "/s/a.R"), Unknown, "{constructor}");
+    }
+}
+
+#[test]
+fn s3_constructor_evidence_backdates_payloads_but_refreshes_class_order() {
+    use arity::project::classes::S3ClassEvidence::Explicit;
+    let (mut db, a, b) = package_ab(
+        "f <- function() probe(new_value())\n",
+        "new_value <- function() structure(list(value = 1), class = c('child', 'parent'))\n",
+    );
+    assert_eq!(
+        s3_probe(&db, a, "/pkg/R/a.R"),
+        Explicit(vec!["child".into(), "parent".into()])
+    );
+    let before = arity::incremental::file_class_defs(&db, b).clone();
+    db.clear_query_log();
+    db.set_file_text(b, "# moved\nnew_value <- function() structure(list(value = 20), class = c('child', 'parent'))\n");
+    assert_eq!(arity::incremental::file_class_defs(&db, b), &before);
+    assert_eq!(
+        s3_probe(&db, a, "/pkg/R/a.R"),
+        Explicit(vec!["child".into(), "parent".into()])
+    );
+    assert!(
+        !db.query_log()
+            .iter()
+            .any(|entry| entry.kind == QueryKind::ProjectClasses)
+    );
+    db.set_file_text(
+        b,
+        "new_value <- function() structure(list(value = 20), class = c('parent', 'child'))\n",
+    );
+    assert_eq!(
+        s3_probe(&db, a, "/pkg/R/a.R"),
+        Explicit(vec!["parent".into(), "child".into()])
+    );
+    assert!(
+        db.query_log()
+            .iter()
+            .any(|entry| entry.kind == QueryKind::ProjectClasses)
+    );
+}
+
 #[test]
 fn body_edit_does_not_rebuild_reverse_source_edges() {
     // The firewall: `a.R` sources `b.R`; editing `b.R`'s function body re-runs
@@ -4246,4 +4348,318 @@ fn generated_replacement_names_resolve_from_sibling_files() {
             .unresolved
             .contains("`value<-`")
     );
+}
+
+#[test]
+fn s3_registry_tracks_namespace_identity_and_backdates_method_bodies() {
+    use arity::project::classes::{ClassName, S3MethodSource};
+    let (mut db, _, b) = package_ab(
+        "g <- function(x) UseMethod('g')\n",
+        "handler <- function(x) x\ng.dotted.class <- function(x) x\n",
+    );
+    let metadata = |text: &str| {
+        vec![PackageInfo {
+            root: PathBuf::from("/pkg"),
+            namespace: Some(text.into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]
+    };
+    db.set_package_metadata(metadata(
+        "S3method(g, C, handler)\nS3method(other::g, D, handler)\n",
+    ));
+    let before = project_classes(&db).s3.clone();
+    let registrations: Vec<_> = before
+        .methods
+        .iter()
+        .filter(|method| matches!(method.source, S3MethodSource::Namespace { .. }))
+        .collect();
+    assert_eq!(registrations.len(), 2);
+    assert_eq!(registrations[0].generics.len(), 1);
+    assert!(!registrations[0].exported);
+    assert!(registrations[1].delayed);
+    assert_eq!(registrations[1].generic.package.as_deref(), Some("other"));
+    assert!(registrations[1].generics.is_empty());
+    assert!(
+        before
+            .methods
+            .iter()
+            .any(|method| method.generic.name == ClassName::Known("g".into())
+                && method.class == ClassName::Known("dotted.class".into())
+                && method.generics.len() == 1)
+    );
+    let visibility = visible_symbols(&db, b).scope();
+    assert!(!visibility.exported_by_namespace("handler"));
+    assert!(visibility.is_s3_method("handler"));
+    assert!(!visibility.used_elsewhere("handler"));
+    db.clear_query_log();
+    db.set_file_text(
+        b,
+        "# Prose.\nhandler <- function(x) { print(x); x }\ng.dotted.class <- function(x) x\n",
+    );
+    assert_eq!(project_classes(&db).s3, before);
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+    db.set_package_metadata(metadata("S3method(g, Changed, handler)\nexport(handler)\n"));
+    let after = &project_classes(&db).s3;
+    assert_ne!(after, &before);
+    let registration = after
+        .methods
+        .iter()
+        .find(|method| matches!(method.source, S3MethodSource::Namespace { .. }))
+        .unwrap();
+    assert_eq!(registration.class, ClassName::Known("Changed".into()));
+    assert!(registration.exported);
+}
+
+#[test]
+fn s3_registry_tracks_script_registration_edits() {
+    let (mut db, _, b) = package_ab(
+        "g <- function(x) UseMethod('g')\nhandler <- function(x) x\n",
+        ".onLoad <- function(lib, pkg) base::registerS3method('g', 'C', 'handler')\n",
+    );
+    let before = project_classes(&db).s3.clone();
+    let registration = before
+        .methods
+        .iter()
+        .find(|method| method.registered)
+        .unwrap();
+    assert_eq!(registration.generics.len(), 1);
+    assert!(!registration.owner.lexical.0.is_empty());
+    db.set_file_text(
+        b,
+        ".onLoad <- function(lib, pkg) base::registerS3method('g', 'D', 'handler')\n",
+    );
+    assert_ne!(project_classes(&db).s3, before);
+}
+
+#[test]
+fn s3_registry_tracks_generic_lookup_context_changes() {
+    let (mut db, _, b) = package_ab(
+        "handler <- function(x) x\n",
+        "install <- function() base::registerS3method('print', 'C', handler)\n",
+    );
+    db.set_library_index(IndexedProvider::empty());
+    let before = project_classes(&db).s3.clone();
+    assert_eq!(
+        before
+            .methods
+            .iter()
+            .find(|method| method.registered)
+            .unwrap()
+            .generics
+            .len(),
+        1
+    );
+    for source in [
+        "install <- function() { print <- function(x) x; base::registerS3method('print', 'C', handler) }\n",
+        "library(maskpkg)\ninstall <- function() base::registerS3method('print', 'C', handler)\n",
+    ] {
+        db.set_file_text(b, source);
+        let after = &project_classes(&db).s3;
+        assert_ne!(after, &before);
+        assert!(
+            after
+                .methods
+                .iter()
+                .find(|method| method.registered)
+                .unwrap()
+                .generics
+                .is_empty()
+        );
+    }
+    db.set_library_index(IndexedProvider::from_indices([index_pkg(
+        "maskpkg",
+        &["print"],
+    )]));
+    assert!(
+        project_classes(&db)
+            .s3
+            .methods
+            .iter()
+            .find(|method| method.registered)
+            .unwrap()
+            .generics
+            .is_empty()
+    );
+    db.set_library_index(IndexedProvider::from_indices([index_pkg("maskpkg", &[])]));
+    assert_eq!(
+        project_classes(&db)
+            .s3
+            .methods
+            .iter()
+            .find(|method| method.registered)
+            .unwrap()
+            .generics
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn s3_registry_tracks_implementation_binding_ownership_and_backdates_bodies() {
+    let (mut db, _, b) = package_ab(
+        "g <- function(x) UseMethod('g')\nhandler <- function(x) x\n",
+        ".onLoad <- function(lib, pkg) { handler <- function(x) x + 1; base::registerS3method('g', 'C', handler) }\n",
+    );
+    db.set_package_metadata(vec![PackageInfo {
+        root: "/pkg".into(),
+        namespace: Some("export(handler)\n".into()),
+        dir_sources: BTreeSet::new(),
+        native_routines: BTreeSet::new(),
+    }]);
+    let before = project_classes(&db).s3.clone();
+    assert!(
+        !before
+            .methods
+            .iter()
+            .find(|method| method.registered)
+            .unwrap()
+            .exported
+    );
+    db.clear_query_log();
+    db.set_file_text(b, ".onLoad <- function(lib, pkg) { handler <- function(x) { print(x); x + 2 }; base::registerS3method('g', 'C', handler) }\n");
+    assert_eq!(project_classes(&db).s3, before);
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+    db.set_file_text(
+        b,
+        ".onLoad <- function(lib, pkg) base::registerS3method('g', 'C', handler)\n",
+    );
+    let after = &project_classes(&db).s3;
+    assert_ne!(after, &before);
+    assert!(
+        after
+            .methods
+            .iter()
+            .find(|method| method.registered)
+            .unwrap()
+            .exported
+    );
+}
+
+#[test]
+fn s3_dispatch_refreshes_class_order_and_registrations_but_backdates_method_bodies() {
+    use arity::ast::CallExpr;
+    use arity::project::classes::{MethodImplementationSource, S3Dispatch, file_class_defs};
+    use rowan::ast::AstNode as _;
+    let (mut db, a, b) = package_ab(
+        "g <- function(x) UseMethod('g')\nfirst <- function(x) x\nsecond <- function(x) x\n",
+        "f <- function() probe(g(structure(list(), class = c('C', 'D'))))\n",
+    );
+    let metadata = |class: &str| {
+        vec![PackageInfo {
+            root: "/pkg".into(),
+            namespace: Some(format!(
+                "S3method(g, {class}, first)\nS3method(g, D, second)\n"
+            )),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]
+    };
+    db.set_package_metadata(metadata("C"));
+    let probe = |db: &IncrementalDatabase| {
+        let root = db.parsed_tree(b);
+        let model = db.semantic_model(b);
+        let value = root
+            .descendants()
+            .filter_map(CallExpr::cast)
+            .find(|call| call.callee_name().as_deref() == Some("g"))
+            .unwrap()
+            .syntax()
+            .clone()
+            .into();
+        let path = Path::new("/pkg/R/b.R");
+        let tracked = project_classes(db)
+            .s3_dispatch_at(path, &root, model, &value)
+            .unwrap();
+        let live = db
+            .snapshot()
+            .class_index_in(path, &file_class_defs(model, &root), &root, model)
+            .s3_dispatch_at(path, &root, model, &value)
+            .unwrap();
+        assert_eq!(tracked, live);
+        tracked
+    };
+    let selected = |result: S3Dispatch| match result.selected.unwrap().implementation.unwrap() {
+        MethodImplementationSource::Binding { name, .. } => name,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(selected(probe(&db)), "first");
+    db.clear_query_log();
+    db.set_file_text(a, "# Shift every declaration.\ng <- function(x) UseMethod('g')\nfirst <- function(x) { print(x); x }\nsecond <- function(x) x\n");
+    let _ = project_classes(&db);
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+    assert_eq!(selected(probe(&db)), "first");
+    db.set_file_text(
+        b,
+        "f <- function() probe(g(structure(list(), class = c('D', 'C'))))\n",
+    );
+    assert_eq!(selected(probe(&db)), "second");
+    db.set_file_text(
+        b,
+        "f <- function() probe(g(structure(list(), class = c('C', 'D'))))\n",
+    );
+    db.set_package_metadata(metadata("Changed"));
+    assert_eq!(selected(probe(&db)), "second");
+    db.set_file_text(a, "g <- function(x) { object <- structure(list(), class = 'Changed'); UseMethod('g', object) }\nfirst <- function(x) x\nsecond <- function(x) x\n");
+    assert_eq!(selected(probe(&db)), "first");
+}
+
+#[test]
+fn s3_implicit_dispatch_refreshes_reference_effects_across_files() {
+    use arity::ast::CallExpr;
+    use arity::project::classes::{MethodImplementationSource, S3DispatchUncertainty};
+    use rowan::ast::AstNode as _;
+
+    let methods = "g.A <- function(x) x; g.B <- function(x) x";
+    let (mut db, a, b) = package_ab(
+        &format!("g <- function(x) UseMethod('g'); {methods}"),
+        "f <- function() probe(g(structure(new.env(), class = 'A')))",
+    );
+    let probe = |db: &IncrementalDatabase| {
+        let root = db.parsed_tree(b);
+        let model = db.semantic_model(b);
+        let value = root
+            .descendants()
+            .filter_map(CallExpr::cast)
+            .find(|call| call.callee_name().as_deref() == Some("g"))
+            .unwrap()
+            .syntax()
+            .clone()
+            .into();
+        project_classes(db)
+            .s3_dispatch_at(Path::new("/pkg/R/b.R"), &root, model, &value)
+            .unwrap()
+    };
+    let first = probe(&db);
+    assert!(matches!(first.selected.unwrap().implementation,
+        Some(MethodImplementationSource::Binding { name, .. }) if name == "g.A"));
+
+    db.clear_query_log();
+    db.set_file_text(
+        a,
+        format!("g <- function(x) {{ class(x) <- 'B'; UseMethod('g') }}; {methods}"),
+    );
+    let mutated = probe(&db);
+    assert!(mutated.selected.is_none(), "{mutated:#?}");
+    assert!(
+        mutated
+            .uncertainty
+            .contains(&S3DispatchUncertainty::UnknownClass)
+    );
+    assert!(count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+
+    db.clear_query_log();
+    db.set_file_text(a, format!("# Shift the generic.\ng <- function(x) {{ class(x) <- 'B'; UseMethod('g') }}; {methods}"));
+    assert_eq!(probe(&db), mutated);
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+
+    db.set_file_text(
+        a,
+        format!(
+            "g <- function(x) {{ x <- structure(list(), class = 'B'); UseMethod('g') }}; {methods}"
+        ),
+    );
+    let rebound = probe(&db);
+    assert!(matches!(rebound.selected.unwrap().implementation,
+        Some(MethodImplementationSource::Binding { name, .. }) if name == "g.A"));
 }

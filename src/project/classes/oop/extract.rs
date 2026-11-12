@@ -46,6 +46,63 @@ struct Projection<'a> {
 }
 
 impl Projection<'_> {
+    fn implementation_binding(
+        &self,
+        name: String,
+        binding: Option<BindingId>,
+    ) -> MethodImplementationSource {
+        let Some(binding) = binding else {
+            return MethodImplementationSource::Reference { name };
+        };
+        let node = self
+            .root
+            .covering_element(self.model.binding(binding).def_range)
+            .parent()
+            .unwrap_or_else(|| self.root.clone());
+        MethodImplementationSource::Binding {
+            owner: owner_at(&node, self.owners),
+            name,
+        }
+    }
+
+    fn supplied_implementation(
+        &self,
+        mut value: SyntaxElement,
+    ) -> Option<MethodImplementationSource> {
+        while let Some(paren) = value
+            .as_node()
+            .cloned()
+            .and_then(crate::ast::ParenExpr::cast)
+        {
+            value = paren.inner()?;
+        }
+        if let Some(name) = literal(&value) {
+            return Some(
+                self.implementation_binding(
+                    name,
+                    value
+                        .as_token()
+                        .and_then(|token| read_binding(self.model, token)),
+                ),
+            );
+        }
+        if let Some(namespace) = value
+            .as_node()
+            .cloned()
+            .and_then(BinaryExpr::cast)
+            .and_then(|binary| binary.namespace_access())
+        {
+            return Some(MethodImplementationSource::Qualified {
+                package: namespace.package.to_string(),
+                name: namespace.name.to_string(),
+            });
+        }
+        value
+            .into_node()
+            .and_then(FunctionExpr::cast)
+            .map(|_| MethodImplementationSource::Inline)
+    }
+
     fn implementation(&mut self, key: &OopKey, value: Option<SyntaxElement>, keep_original: bool) {
         let Some(function) = self
             .implementation_value(
@@ -288,7 +345,7 @@ pub(in crate::project::classes) fn declaration_roots(
             let package = match name.as_str() {
                 "setGeneric" | "setMethod" | "setReplaceMethod" => "methods",
                 "new_generic" | "method<-" => "S7",
-                "registerS3method" | "UseMethod" => "base",
+                "registerS3method" | ".S3method" | "UseMethod" => "base",
                 _ => return None,
             };
             if !accepts(&reference, package) {
@@ -889,6 +946,13 @@ impl Projection<'_> {
                 signature,
                 dispatch_arguments,
                 dispatch_factory,
+                s3_dispatch: (system == OopSystem::S3).then(|| {
+                    super::super::s3_dispatch::generic_dispatch(
+                        self.model,
+                        &call,
+                        function.as_ref(),
+                    )
+                }),
                 uncertainty: issues,
             };
             let binding_possible = def.binding_possible();
@@ -1062,18 +1126,41 @@ impl Projection<'_> {
             package: None,
             by_binding,
             local: None,
+            lookup: None,
         };
         let Some(value) = value else {
             return result;
         };
-        if let Some(key) = self.generic_value(&value, &mut BTreeSet::new())
+        if system == OopSystem::S3 {
+            result.lookup = Some(
+                function_ref(self.model, self.root, &value, &mut BTreeSet::new())
+                    .unwrap_or_else(|| FunctionRef::Unresolved(Vec::new())),
+            );
+        }
+        let local = self
+            .generic_value(&value, &mut BTreeSet::new())
+            .or_else(|| {
+                if system != OopSystem::S3 {
+                    return None;
+                }
+                let binding = read_binding(self.model, value.as_token()?)?;
+                self.generic_value(
+                    &stable_value(self.model, self.root, binding)?,
+                    &mut BTreeSet::new(),
+                )
+            });
+        if let Some(key) = local
             && let Some(def) = self
                 .facts
                 .generics
                 .iter()
                 .find(|def| def.key == key && def.key.system == system)
         {
-            result.name = def.name.clone();
+            result.name = if system == OopSystem::S3 && value.kind() == SyntaxKind::STRING {
+                string_name(Some(value))
+            } else {
+                def.name.clone()
+            };
             result.owner = def.key.owner.clone();
             result.by_binding = false;
             result.local = Some(key);
@@ -1279,6 +1366,9 @@ impl Projection<'_> {
                 "method<-" if accepts(&reference, "S7") => {
                     (OopSystem::S7, &["generic", "signature", "value"][..])
                 }
+                ".S3method" if accepts(&reference, "base") => {
+                    (OopSystem::S3, &["generic", "class", "method"][..])
+                }
                 "registerS3method" if accepts(&reference, "base") => {
                     (OopSystem::S3, &["genname", "class", "method", "envir"][..])
                 }
@@ -1299,6 +1389,7 @@ impl Projection<'_> {
             let generic_value = value(match system {
                 OopSystem::S4 => "f",
                 OopSystem::S7 => "generic",
+                _ if name == ".S3method" => "generic",
                 _ => "genname",
             });
             let mut generic = self.generic_reference(
@@ -1338,7 +1429,7 @@ impl Projection<'_> {
             {
                 issues.insert(OopUncertainty::CustomEnvironment);
             }
-            let dispatch = self.dispatch(
+            let mut dispatch = self.dispatch(
                 value(if matches!(system, OopSystem::S4 | OopSystem::S7) {
                     "signature"
                 } else {
@@ -1346,6 +1437,15 @@ impl Projection<'_> {
                 }),
                 system,
             );
+            if system == OopSystem::S3 && dispatch.arguments.len() != 1 {
+                dispatch.arguments = vec![(
+                    DispatchArgument {
+                        argument: None,
+                        class: DispatchClass::Unknown,
+                    },
+                    call.syntax().text_range(),
+                )];
+            }
             if dispatch.arguments.is_empty()
                 || dispatch.arguments.iter().any(|(arg, _)| {
                     matches!(
@@ -1363,13 +1463,67 @@ impl Projection<'_> {
             } else {
                 "method"
             });
+            if system == OopSystem::S3 {
+                let supplied = implementation
+                    .clone()
+                    .and_then(|value| self.supplied_implementation(value))
+                    .or_else(|| {
+                        if name != ".S3method" || implementation.is_some() {
+                            return None;
+                        }
+                        let ClassName::Known(generic) = &generic.name else {
+                            return None;
+                        };
+                        let (
+                            DispatchArgument {
+                                class: DispatchClass::S3(class),
+                                ..
+                            },
+                            _,
+                        ) = dispatch.arguments.first()?
+                        else {
+                            return None;
+                        };
+                        let name = format!("{generic}.{class}");
+                        let binding = call
+                            .callee_token()
+                            .and_then(|token| read_named_binding(self.model, &token, &name));
+                        Some(self.implementation_binding(name, binding))
+                    });
+                if let Some(source) = supplied {
+                    self.facts.s3_implementations.push(MethodImplementationDef {
+                        method: key.clone(),
+                        source,
+                    });
+                }
+            }
             let signature =
                 self.implementation_signature(implementation.clone(), &mut BTreeSet::new());
             if signature.is_none() {
                 issues.insert(OopUncertainty::UnresolvedImplementation);
             }
             if matches!(system, OopSystem::S3 | OopSystem::S4) {
-                self.implementation(&key, implementation, true);
+                self.implementation(&key, implementation.clone(), true);
+                if name == ".S3method"
+                    && implementation.is_none()
+                    && let ClassName::Known(generic) = &generic.name
+                    && let Some((
+                        DispatchArgument {
+                            class: DispatchClass::S3(class),
+                            ..
+                        },
+                        _,
+                    )) = dispatch.arguments.first()
+                {
+                    self.facts
+                        .method_implementations
+                        .push(MethodImplementationDef {
+                            method: key.clone(),
+                            source: MethodImplementationSource::Reference {
+                                name: format!("{generic}.{class}"),
+                            },
+                        });
+                }
             }
             self.facts.methods.push(MethodDef {
                 key: key.clone(),
@@ -1451,6 +1605,7 @@ impl Projection<'_> {
                             package: None,
                             by_binding: false,
                             local: None,
+                            lookup: None,
                         },
                     );
                 }
@@ -1476,6 +1631,7 @@ impl Projection<'_> {
                             package: None,
                             by_binding: false,
                             local: None,
+                            lookup: None,
                         },
                     );
                 }
@@ -1486,26 +1642,6 @@ impl Projection<'_> {
                     &mut BTreeSet::new(),
                     false,
                 );
-                if self.facts.methods.iter().any(|method| {
-                    method.system == OopSystem::S3
-                        && method.registration.is_some()
-                        && method
-                            .generic
-                            .as_ref()
-                            .is_some_and(|reference| reference.name == generic.name)
-                        && method
-                            .dispatch
-                            .iter()
-                            .any(|argument| argument.class == DispatchClass::S3(class.clone()))
-                        && self.method_implementations.iter().any(|site| {
-                            site.method == method.key
-                                && implementation
-                                    .as_ref()
-                                    .is_some_and(|value| site.function_range == value.text_range())
-                        })
-                }) {
-                    continue;
-                }
                 let key = self.key(assignment.syntax(), OopSystem::S3, OopKind::Method);
                 let mut issues: BTreeSet<_> = self
                     .facts

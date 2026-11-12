@@ -1557,16 +1557,15 @@ fn unused_function_skips_dotted_name_without_a_project() {
 }
 
 #[test]
-fn unused_function_flags_dotted_plain_export_in_a_project() {
-    // With a NAMESPACE the answer is exact: `my.util` is a plain `export()`,
-    // not an `S3method()`, so the dotted-name withholding does not apply.
+fn unused_function_withholds_unresolved_possible_method_in_a_project() {
+    // An export does not prove that downstream dispatch cannot reach this name.
     let result = lint_package_files(
         "export(my.util)\n",
         &[("a.R", "my.util <- function() 1\n")],
         &unused_function_only(),
     );
     assert!(
-        rules_for(&result, "a.R").contains(&"unused-function"),
+        !rules_for(&result, "a.R").contains(&"unused-function"),
         "a.R: {:?}",
         rules_for(&result, "a.R")
     );
@@ -7123,6 +7122,39 @@ fn unreachable_code_flags_after_return_and_stop() {
 }
 
 #[test]
+fn unreachable_code_confirms_use_method_and_keeps_next_method_returning() {
+    for source in [
+        "g <- function(x) { UseMethod('g'); tail() }",
+        "g <- function(x) { base::UseMethod('g'); tail() }",
+        "g <- function(x) { `UseMethod`('g'); tail() }",
+        "g <- function(x) { if (x) UseMethod('g') else stop('bad'); tail() }",
+    ] {
+        let diagnostics = diagnostics_selecting(source, &["unreachable-code"]);
+        assert_eq!(diagnostics.len(), 1, "{source}: {diagnostics:?}");
+        let fixed = apply_fixes(source, &[diagnostics[0].fix.clone().unwrap()], true).output;
+        assert!(
+            arity::parser::parse(&fixed).diagnostics.is_empty(),
+            "{fixed}"
+        );
+        assert_eq!(arity::parser::reconstruct(&fixed), fixed);
+    }
+    for source in [
+        "UseMethod <- function(...) NULL; g <- function(x) { UseMethod('g'); tail() }",
+        "UseMethod <- function(...) NULL; g <- function(x) { `UseMethod`('g'); tail() }",
+        "UseMethod <- function(...) NULL; g <- function(x) { \"UseMethod\"('g'); tail() }",
+        "g <- function(x) { NextMethod(); tail() }",
+        "g <- function(x) { if (x) UseMethod('g'); tail() }",
+        "g <- function(x) { UseMethod <- function(...) NULL; if (x) UseMethod('g') else stop('bad'); tail() }",
+        "{ UseMethod('g'); tail() }",
+    ] {
+        assert!(
+            diagnostics_selecting(source, &["unreachable-code"]).is_empty(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn unreachable_code_covers_all_trailing_statements() {
     // Every statement after the terminator is unreachable; one finding spans them
     // all and the fix removes the lot.
@@ -7187,6 +7219,21 @@ fn unreachable_code_both_branches_negatives() {
             !rules.contains(&"unreachable-code"),
             "{src:?} should not flag, got: {rules:?}"
         );
+    }
+}
+
+#[test]
+fn unreachable_code_rejects_inherited_unreachability() {
+    for terminator in ["UseMethod", "return", "stop"] {
+        for branches in ["if (x) 1 else 2", "if (x) stop('bad') else 2"] {
+            let source = format!(
+                "{terminator} <- function(...) NULL; g <- function(x) {{ {terminator}('g'); {branches}; 3 }}"
+            );
+            assert!(
+                diagnostics_selecting(&source, &["unreachable-code"]).is_empty(),
+                "{source}"
+            );
+        }
     }
 }
 
@@ -10023,5 +10070,21 @@ fn random_seed_initializer_respects_namespace_and_dependency_masks() {
             .filter(|d| d.rule == "undefined-symbol" && d.message.body.contains(".Random.seed"))
             .count();
         assert_eq!(seeds, count, "{namespace} {dependency}");
+    }
+}
+
+#[test]
+fn s3_registration_strings_keep_nonconventional_implementations_live() {
+    for call in [
+        ".S3method('g', 'C', 'handler')",
+        "base::registerS3method('g', 'C', 'handler')",
+    ] {
+        let source = format!("g <- function(x) UseMethod('g')\nhandler <- function(x) x\n{call}\n");
+        let config = arity::config::LintConfig {
+            select: Some(vec!["unused-binding".into()]),
+            ..Default::default()
+        };
+        let diagnostics = check_document(Path::new("test.R"), &source, &config).unwrap();
+        assert!(diagnostics.is_empty(), "{call}: {diagnostics:?}");
     }
 }

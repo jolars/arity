@@ -37,6 +37,15 @@ pub(super) fn use_only_reads(call: &CallExpr) -> Vec<Candidate> {
             .collect();
     }
 
+    if matches!(name.as_str(), ".S3method" | "registerS3method")
+        && package.as_deref().is_none_or(|package| package == "base")
+    {
+        return s3_registration_reads(call, &name)
+            .into_iter()
+            .map(|(read, range)| candidate(call, read, range))
+            .collect();
+    }
+
     let Some(kind) = template_kind(&name, package.as_deref()) else {
         return Vec::new();
     };
@@ -123,6 +132,30 @@ fn literal_get(call: &CallExpr) -> Option<(SmolStr, TextRange)> {
         SmolStr::new(decode_string(token.text())?),
         token.text_range(),
     ))
+}
+
+fn s3_registration_reads(call: &CallExpr, name: &str) -> Vec<(SmolStr, TextRange)> {
+    let args: Vec<_> = call.args().collect();
+    let names: Vec<_> = args.iter().map(Arg::name).collect();
+    let formals = if name == ".S3method" {
+        &["generic", "class", "method"][..]
+    } else {
+        &["genname", "class", "method", "envir"][..]
+    };
+    let Ok(matched) = crate::semantic::checked_match_args_to_formals(&names, formals) else {
+        return Vec::new();
+    };
+    args.iter()
+        .zip(matched)
+        .filter(|(_, formal)| matches!(formal, Some("generic" | "genname" | "method")))
+        .filter_map(|(arg, _)| {
+            let token = string_token(arg)?;
+            Some((
+                SmolStr::new(decode_string(token.text())?),
+                token.text_range(),
+            ))
+        })
+        .collect()
 }
 
 fn template_kind(name: &str, package: Option<&str>) -> Option<TemplateKind> {
