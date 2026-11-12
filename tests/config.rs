@@ -1,11 +1,22 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{ChildStdin, Command, Stdio};
 
 use tempfile::tempdir;
 
 const LONG_FN_INPUT: &str = "x <- function(aaaaa, bbbbb, ccccc, ddddd) { 1 }\n";
+
+fn write_stdin(mut stdin: ChildStdin, input: &str) {
+    if let Err(error) = stdin.write_all(input.as_bytes()) {
+        // Argument validation can close stdin early; still collect its output.
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "failed to write stdin: {error}"
+        );
+    }
+}
 
 fn run_cli<const N: usize>(args: [&str; N], stdin_input: &str) -> std::process::Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_arity"));
@@ -15,11 +26,8 @@ fn run_cli<const N: usize>(args: [&str; N], stdin_input: &str) -> std::process::
         .stderr(Stdio::piped());
 
     let mut child = cmd.spawn().expect("failed to spawn arity cli");
-    let mut stdin = child.stdin.take().expect("failed to open stdin");
-    stdin
-        .write_all(stdin_input.as_bytes())
-        .expect("failed to write stdin");
-    drop(stdin);
+    let stdin = child.stdin.take().expect("failed to open stdin");
+    write_stdin(stdin, stdin_input);
     child.wait_with_output().expect("failed to wait for cli")
 }
 
@@ -36,11 +44,8 @@ fn run_cli_in<const N: usize>(
         .stderr(Stdio::piped());
 
     let mut child = cmd.spawn().expect("failed to spawn arity cli");
-    let mut stdin = child.stdin.take().expect("failed to open stdin");
-    stdin
-        .write_all(stdin_input.as_bytes())
-        .expect("failed to write stdin");
-    drop(stdin);
+    let stdin = child.stdin.take().expect("failed to open stdin");
+    write_stdin(stdin, stdin_input);
     child.wait_with_output().expect("failed to wait for cli")
 }
 
@@ -453,6 +458,21 @@ fn cli_invalid_override_value_errors() {
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("line-width"), "stderr: {stderr}");
+}
+
+#[test]
+fn cli_invalid_override_value_errors_with_large_stdin() {
+    // Exceed the pipe capacity so rejection closes stdin during the write.
+    let input = LONG_FN_INPUT.repeat(64 * 1024);
+    let dir = tempdir().unwrap();
+    for output in [
+        run_cli(["format", "--line-width", "0"], &input),
+        run_cli_in(dir.path(), ["format", "--line-width", "0"], &input),
+    ] {
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("line-width"), "stderr: {stderr}");
+    }
 }
 
 // A fixture that trips two distinct default-enabled rules: `unused-binding`
