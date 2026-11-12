@@ -772,6 +772,108 @@ fn scripts_ab(a_src: &str, b_src: &str) -> (IncrementalDatabase, SourceFile, Sou
     (db, a, b)
 }
 
+fn s3_probe(
+    db: &IncrementalDatabase,
+    file: SourceFile,
+    path: &str,
+) -> arity::project::classes::S3ClassEvidence {
+    use arity::ast::CallExpr;
+    use rowan::ast::AstNode as _;
+    let root = db.parsed_tree(file);
+    let model = db.semantic_model(file);
+    let value = root
+        .descendants()
+        .filter_map(CallExpr::cast)
+        .find(|call| call.callee_name().as_deref() == Some("probe"))
+        .unwrap()
+        .arg_list()
+        .unwrap()
+        .args()
+        .next()
+        .unwrap()
+        .value()
+        .unwrap();
+    project_classes(db).s3_class_evidence(Path::new(path), &root, model, &value)
+}
+
+#[test]
+fn s3_constructor_evidence_follows_project_visibility_and_helper_origins() {
+    use arity::project::classes::S3ClassEvidence::{Explicit, Unknown};
+    let constructor =
+        "new_value <- function(x) structure(list(x = x), class = c('child', 'parent'))\n";
+    let (db, a, _) = scripts_ab("source('b.R')\nprobe(new_value(1))\n", constructor);
+    assert_eq!(
+        s3_probe(&db, a, "/s/a.R"),
+        Explicit(vec!["child".into(), "parent".into()])
+    );
+    let (db, a, _) = scripts_ab("probe(new_value(1))\n", constructor);
+    assert_eq!(s3_probe(&db, a, "/s/a.R"), Unknown);
+    let (db, a, _) = package_ab("f <- function() probe(new_value(1))\n", constructor);
+    assert_eq!(
+        s3_probe(&db, a, "/pkg/R/a.R"),
+        Explicit(vec!["child".into(), "parent".into()])
+    );
+    let (db, a, _) = package_ab(
+        "f <- function() probe(new_value(1))\nstructure <- function(...) NULL\n",
+        constructor,
+    );
+    assert_eq!(s3_probe(&db, a, "/pkg/R/a.R"), Unknown);
+    assert!(project_classes(&db).declarations.is_empty());
+    assert!(project_classes(&db).supertypes.is_empty());
+}
+
+#[test]
+fn s3_constructor_summaries_reject_embedded_control_flow() {
+    use arity::project::classes::S3ClassEvidence::Unknown;
+    for constructor in [
+        "new_value <- function(flag) { flag && return(structure(list(), class = 'early')); structure(list(), class = 'late') }",
+        "ret <- return; new_value <- function() { list(ret(structure(list(), class = 'early'))); structure(list(), class = 'late') }",
+        "dispatch <- UseMethod; new_value <- function(x) { dispatch('generic'); structure(list(), class = 'late') }; generic.early <- function(x) structure(list(), class = 'early')",
+    ] {
+        let (db, a, _) = scripts_ab("source('b.R')\nprobe(new_value(TRUE))\n", constructor);
+        assert_eq!(s3_probe(&db, a, "/s/a.R"), Unknown, "{constructor}");
+    }
+}
+
+#[test]
+fn s3_constructor_evidence_backdates_payloads_but_refreshes_class_order() {
+    use arity::project::classes::S3ClassEvidence::Explicit;
+    let (mut db, a, b) = package_ab(
+        "f <- function() probe(new_value())\n",
+        "new_value <- function() structure(list(value = 1), class = c('child', 'parent'))\n",
+    );
+    assert_eq!(
+        s3_probe(&db, a, "/pkg/R/a.R"),
+        Explicit(vec!["child".into(), "parent".into()])
+    );
+    let before = arity::incremental::file_class_defs(&db, b).clone();
+    db.clear_query_log();
+    db.set_file_text(b, "# moved\nnew_value <- function() structure(list(value = 20), class = c('child', 'parent'))\n");
+    assert_eq!(arity::incremental::file_class_defs(&db, b), &before);
+    assert_eq!(
+        s3_probe(&db, a, "/pkg/R/a.R"),
+        Explicit(vec!["child".into(), "parent".into()])
+    );
+    assert!(
+        !db.query_log()
+            .iter()
+            .any(|entry| entry.kind == QueryKind::ProjectClasses)
+    );
+    db.set_file_text(
+        b,
+        "new_value <- function() structure(list(value = 20), class = c('parent', 'child'))\n",
+    );
+    assert_eq!(
+        s3_probe(&db, a, "/pkg/R/a.R"),
+        Explicit(vec!["parent".into(), "child".into()])
+    );
+    assert!(
+        db.query_log()
+            .iter()
+            .any(|entry| entry.kind == QueryKind::ProjectClasses)
+    );
+}
+
 #[test]
 fn body_edit_does_not_rebuild_reverse_source_edges() {
     // The firewall: `a.R` sources `b.R`; editing `b.R`'s function body re-runs

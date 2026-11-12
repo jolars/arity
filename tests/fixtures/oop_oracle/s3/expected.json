@@ -129,10 +129,156 @@
         ]
       }
     ],
+    "s3_evidence": [
+      {
+        "explicit_class": [
+          "point"
+        ],
+        "expression": "base",
+        "runtime_class": [
+          "point"
+        ]
+      },
+      {
+        "explicit_class": [
+          "colored_point",
+          "point"
+        ],
+        "expression": "child",
+        "runtime_class": [
+          "colored_point",
+          "point"
+        ]
+      },
+      {
+        "explicit_class": [
+          "assigned",
+          "point",
+          "assigned"
+        ],
+        "expression": "assigned_point(5)",
+        "runtime_class": [
+          "assigned",
+          "point",
+          "assigned"
+        ]
+      },
+      {
+        "explicit_class": [
+          "legacy",
+          "point"
+        ],
+        "expression": "legacy_point(6)",
+        "runtime_class": [
+          "legacy",
+          "point"
+        ]
+      },
+      {
+        "explicit_class": [
+          "changed"
+        ],
+        "expression": "assigned",
+        "runtime_class": [
+          "changed"
+        ]
+      },
+      {
+        "explicit_class": [
+          "legacy",
+          "point"
+        ],
+        "expression": "legacy",
+        "runtime_class": [
+          "legacy",
+          "point"
+        ]
+      },
+      {
+        "explicit_class": [
+          "assigned",
+          "point",
+          "assigned"
+        ],
+        "expression": "copied",
+        "runtime_class": [
+          "assigned",
+          "point",
+          "assigned"
+        ]
+      },
+      {
+        "explicit_class": null,
+        "expression": "removed",
+        "runtime_class": [
+          "list"
+        ]
+      },
+      {
+        "explicit_class": null,
+        "expression": "empty_class",
+        "runtime_class": [
+          "list"
+        ]
+      },
+      {
+        "explicit_class": [
+          "numeric"
+        ],
+        "expression": "explicit_numeric",
+        "runtime_class": [
+          "numeric"
+        ]
+      },
+      {
+        "explicit_class": null,
+        "expression": "implicit_numeric",
+        "runtime_class": [
+          "numeric"
+        ]
+      },
+      {
+        "explicit_class": [
+          "numeric"
+        ],
+        "expression": "legacy_numeric",
+        "runtime_class": [
+          "numeric"
+        ]
+      },
+      {
+        "explicit_class": null,
+        "expression": "matrix_class",
+        "runtime_class": [
+          "matrix",
+          "array"
+        ]
+      },
+      {
+        "explicit_class": [
+          "last"
+        ],
+        "expression": "last_class",
+        "runtime_class": [
+          "last"
+        ]
+      },
+      {
+        "explicit_class": [
+          "colored_point",
+          "point"
+        ],
+        "expression": "copied_class",
+        "runtime_class": [
+          "colored_point",
+          "point"
+        ]
+      }
+    ],
     "system": "s3"
   },
-  "observer": "owner <- environment()\nfacts <- list(\n  system = \"s3\",\n  classes = list(\n    list(name = class(base)[[1L]], binding = \"point\", parents = list(),\n         members = as.list(setNames(rep(\"field\", length(base)), names(base)))),\n    list(name = class(child)[[1L]], binding = \"colored_point\",\n         parents = as.list(class(child)[-1L]),\n         members = as.list(setNames(rep(\"field\", length(child)), names(child))))\n  ),\n  constructors = list(\n    list(binding = \"point\", formals = formal_facts(point)),\n    list(binding = \"colored_point\", formals = formal_facts(colored_point))\n  ),\n  methods = list(\n    method_facts(\"describe\", \"point\", getS3method(\"describe\", \"point\", envir = owner), owner),\n    method_facts(\"describe\", \"colored_point\", getS3method(\"describe\", \"colored_point\", envir = owner), owner),\n    method_facts(\"+\", \"point\", getS3method(\"+\", \"point\", envir = owner), owner)\n  ),\n  dispatch = list(\n    dispatch_facts(\"describe(base)\", base, owner),\n    dispatch_facts(\"describe(child)\", child, owner),\n    dispatch_facts(\"describe(0)\", 0, owner),\n    dispatch_facts(\"(base + 3)$value\", base, owner)\n  )\n)\n",
-  "source": "point <- function(value = 1) {\n  structure(list(value = value), class = \"point\")\n}\ncolored_point <- function(value = 2, color = \"red\") {\n  structure(list(value = value, color = color), class = c(\"colored_point\", \"point\"))\n}\ndescribe <- function(x, ...) UseMethod(\"describe\")\ndescribe.default <- function(x, ...) \"default\"\ndescribe.point <- function(x, ...) paste(\"point\", x$value)\ndescribe.colored_point <- function(x, ...) paste(x$color, NextMethod())\n`+.point` <- function(e1, e2) point(e1$value + e2)\nbase <- point()\nchild <- colored_point()\n",
+  "observer": "owner <- environment()\nfacts <- list(\n  system = \"s3\",\n  classes = list(\n    list(name = class(base)[[1L]], binding = \"point\", parents = list(),\n         members = as.list(setNames(rep(\"field\", length(base)), names(base)))),\n    list(name = class(child)[[1L]], binding = \"colored_point\",\n         parents = as.list(class(child)[-1L]),\n         members = as.list(setNames(rep(\"field\", length(child)), names(child))))\n  ),\n  constructors = list(\n    list(binding = \"point\", formals = formal_facts(point)),\n    list(binding = \"colored_point\", formals = formal_facts(colored_point))\n  ),\n  methods = list(\n    method_facts(\"describe\", \"point\", getS3method(\"describe\", \"point\", envir = owner), owner),\n    method_facts(\"describe\", \"colored_point\", getS3method(\"describe\", \"colored_point\", envir = owner), owner),\n    method_facts(\"+\", \"point\", getS3method(\"+\", \"point\", envir = owner), owner)\n  ),\n  dispatch = list(\n    dispatch_facts(\"describe(base)\", base, owner),\n    dispatch_facts(\"describe(child)\", child, owner),\n    dispatch_facts(\"describe(0)\", 0, owner),\n    dispatch_facts(\"(base + 3)$value\", base, owner)\n  )\n)\n\nfacts$s3_evidence <- lapply(\n  c(\"base\", \"child\", \"assigned_point(5)\", \"legacy_point(6)\", \"assigned\",\n    \"legacy\", \"copied\", \"removed\", \"empty_class\", \"explicit_numeric\",\n    \"implicit_numeric\", \"legacy_numeric\", \"matrix_class\", \"last_class\",\n    \"copied_class\"),\n  function(expression) {\n    object <- eval(parse(text = expression), owner)\n    explicit <- oldClass(object)\n    list(expression = expression,\n         explicit_class = if (is.null(explicit)) NULL else as.list(explicit),\n         runtime_class = as.list(class(object)))\n  }\n)\n",
+  "source": "point <- function(value = 1) {\n  structure(list(value = value), class = \"point\")\n}\ncolored_point <- function(value = 2, color = \"red\") {\n  structure(list(value = value, color = color), class = c(\"colored_point\", \"point\"))\n}\ndescribe <- function(x, ...) UseMethod(\"describe\")\ndescribe.default <- function(x, ...) \"default\"\ndescribe.point <- function(x, ...) paste(\"point\", x$value)\ndescribe.colored_point <- function(x, ...) paste(x$color, NextMethod())\n`+.point` <- function(e1, e2) point(e1$value + e2)\nbase <- point()\nchild <- colored_point()\n\nassigned_point <- function(value) {\n  object <- list(value = value)\n  class(object) <- c(\"assigned\", \"point\", \"assigned\")\n  return(object)\n}\nlegacy_point <- function(value) {\n  object <- list(value = value)\n  oldClass(object) <- c(\"legacy\", \"point\")\n  object\n}\nassigned <- assigned_point(3)\nlegacy <- legacy_point(4)\ncopied <- assigned\nclass(assigned) <- \"changed\"\nremoved <- structure(list(), class = \"removed\")\noldClass(removed) <- NULL\nempty_class <- structure(list(), class = character())\nexplicit_numeric <- structure(1, class = \"numeric\")\nimplicit_numeric <- 1\nclass(implicit_numeric) <- \"numeric\"\nlegacy_numeric <- `oldClass<-`(1, \"numeric\")\nmatrix_class <- structure(1:4, dim = c(2L, 2L))\nclass(matrix_class) <- c(\"matrix\", \"array\")\nlast_class <- structure(list(), class = \"first\", class = \"last\")\ncopied_class <- structure(list(), class = oldClass(child))\n",
   "versions": {
     "r": "4.6.1",
     "r6": "2.6.1",

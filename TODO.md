@@ -628,12 +628,19 @@ coverage need not block useful workspace support.
 
 #### 4. S3 classes, registration, and dispatch
 
-- [ ] Recover conservative class evidence from literal
+- [x] Recover conservative class evidence from literal
   `structure(..., class = ...)`, `class(x) <- ...`, `oldClass`, and
   recognizable constructor returns. Preserve class-vector order and
   distinguish explicit evidence from an unknown runtime class. S3 has no
   required class declaration: dotted method names alone must not manufacture
   a formal class hierarchy.
+  The shared S3 query recovers ordered explicit attributes, class removal,
+  and straight-line constructor returns without evaluating R. Range-free
+  constructor summaries use project visibility and confirmed helper origins.
+  Conditional writes, dynamic values, and uncertain reference aliases remain
+  unknown. Pinned R observations and incremental regressions cover attribute
+  semantics, copies, source visibility, and class-vector edits, while S3
+  evidence stays separate from formal class declarations and hierarchy edges.
 
 - [ ] Index explicit `UseMethod()` generics, known internal/group generics,
   `generic.class` methods, and NAMESPACE two-/three-argument and delayed

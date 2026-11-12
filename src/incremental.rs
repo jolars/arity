@@ -710,10 +710,10 @@ pub fn file_def_sites(db: &dyn IncrementalDb, file: SourceFile) -> BTreeMap<Stri
 }
 
 /// The file's OOP classes, generics, methods, members, and supertype edges
-/// ([`crate::project::file_class_defs`]), as a tracked query. Range-free like
-/// [`file_def_sites`] — it turns on declaration shapes and signatures, not bodies —
-/// so it backdates across a body edit; a consumer recovers a class's span from
-/// the fresh parse tree per request via
+/// ([`crate::project::file_class_defs`]), as a tracked query. The range-free
+/// projection contains declaration shapes, signatures, and recognizable S3
+/// return classes, so unrelated body edits backdate. Consumers recover current
+/// spans from the fresh parse tree per request via
 /// [`crate::project::locate_class_def`] or `classes::oop_sites`.
 #[salsa::tracked(returns(ref))]
 pub fn file_class_defs(db: &dyn IncrementalDb, file: SourceFile) -> FileClassFacts {

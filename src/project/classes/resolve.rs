@@ -192,6 +192,7 @@ impl ClassIndex {
                         .filter_map(|member| member.value_factory.as_ref()),
                 )
                 .chain(file.facts.oop.class_lookups.iter())
+                .chain(file.facts.s3.helpers.iter())
                 .chain(
                     file.facts
                         .oop

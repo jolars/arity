@@ -24,3 +24,17 @@ facts <- list(
     dispatch_facts("(base + 3)$value", base, owner)
   )
 )
+
+facts$s3_evidence <- lapply(
+  c("base", "child", "assigned_point(5)", "legacy_point(6)", "assigned",
+    "legacy", "copied", "removed", "empty_class", "explicit_numeric",
+    "implicit_numeric", "legacy_numeric", "matrix_class", "last_class",
+    "copied_class"),
+  function(expression) {
+    object <- eval(parse(text = expression), owner)
+    explicit <- oldClass(object)
+    list(expression = expression,
+         explicit_class = if (is.null(explicit)) NULL else as.list(explicit),
+         runtime_class = as.list(class(object)))
+  }
+)

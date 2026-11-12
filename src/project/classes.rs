@@ -34,6 +34,8 @@ pub use member_access::{AccessorArgument, MemberAccess, MemberEffect};
 pub use receiver::{ClassAccess, ClassReceiver};
 mod reference;
 pub use reference::{ReferenceApi, ReferenceMember, ReferenceMembers};
+mod s3;
+pub use s3::{S3ClassEvidence, S3Constructor, S3Facts};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
@@ -317,6 +319,8 @@ pub struct FileClassFacts {
     pub generators: Vec<GeneratorBinding>,
     pub generator_aliases: Vec<GeneratorAlias>,
     pub oop: OopFacts,
+    /// S3 return evidence and helper origins, distinct from class declarations.
+    pub s3: S3Facts,
 }
 
 impl FileClassFacts {
@@ -739,6 +743,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         oop::project(model, root, &owners, &result, include_sites);
     result.method_implementations = implementations;
     result.facts.oop = facts;
+    result.facts.s3 = s3::project(model, root);
     result.oop_sites = sites;
     result
 }
