@@ -14,9 +14,6 @@
     ]
   },
   "s3/use_sites": {
-    "known_gaps": [
-      "S3 dispatch supplies .GenericCallEnv and .GenericDefEnv, but both are reported as undefined."
-    ],
     "probes": [
       {
         "method": "definition",
@@ -32,6 +29,21 @@
         "method": "references",
         "needle": "describe(obj)",
         "offset": 0
+      },
+      {
+        "method": "definition",
+        "needle": ".Generic,",
+        "offset": 1
+      },
+      {
+        "method": "references",
+        "needle": ".Generic,",
+        "offset": 1
+      },
+      {
+        "method": "prepare-rename",
+        "needle": ".Generic,",
+        "offset": 1
       }
     ]
   },
@@ -51,9 +63,6 @@
     ]
   },
   "s3/shadowing": {
-    "known_gaps": [
-      ".Generic is silently exempt even in an ordinary function outside method dispatch."
-    ],
     "probes": [
       {
         "method": "definition",
@@ -83,7 +92,6 @@
   },
   "s4/definitions": {
     "known_gaps": [
-      "setGeneric creates describe without an assignment, but its use is reported as undefined.",
       "Registered method definitions and class members are absent from the outline."
     ],
     "probes": [
@@ -111,8 +119,7 @@
   },
   "s4/use_sites": {
     "known_gaps": [
-      "S4 dispatch metadata .Methods, .defined, and .target is reported as undefined.",
-      "The generic binding created by setGeneric has no definition or signature help."
+      "Generic signatures from unassigned registrations are unavailable to signature help."
     ],
     "probes": [
       {
@@ -124,6 +131,21 @@
         "method": "signature-help",
         "needle": "audit_speak(1)",
         "offset": 12
+      },
+      {
+        "method": "definition",
+        "needle": ".defined,",
+        "offset": 1
+      },
+      {
+        "method": "references",
+        "needle": ".defined,",
+        "offset": 1
+      },
+      {
+        "method": "prepare-rename",
+        "needle": ".defined,",
+        "offset": 1
       }
     ]
   },
@@ -712,6 +734,69 @@
         "method": "references",
         "needle": "value <- 100",
         "offset": 0
+      }
+    ]
+  },
+  "s3/method_environments": {
+    "probes": [
+      {
+        "method": "definition",
+        "needle": ".Generic\n  nested <-",
+        "offset": 1
+      },
+      {
+        "method": "references",
+        "needle": ".Generic\n  nested <-",
+        "offset": 1
+      },
+      {
+        "method": "prepare-rename",
+        "needle": ".Generic\n  nested <-",
+        "offset": 1
+      },
+      {
+        "method": "rename",
+        "needle": ".Generic\n  nested <-",
+        "offset": 1
+      },
+      {
+        "method": "highlights",
+        "needle": ".Generic\n  nested <-",
+        "offset": 1
+      },
+      {
+        "method": "definition",
+        "needle": ".Generic) .Generic",
+        "offset": 12
+      }
+    ]
+  },
+  "s4/method_environments": {
+    "probes": [
+      {
+        "method": "definition",
+        "needle": ".defined\n  nested <-",
+        "offset": 1
+      },
+      {
+        "method": "references",
+        "needle": ".defined\n  nested <-",
+        "offset": 1
+      },
+      {
+        "method": "prepare-rename",
+        "needle": ".defined\n  nested <-",
+        "offset": 1
+      },
+      {
+        "method": "rename",
+        "needle": ".defined\n  nested <-",
+        "offset": 1
+      },
+      {
+        "method": "highlights",
+        "needle": ".defined\n  nested <-",
+        "offset": 1
       }
     ]
   }

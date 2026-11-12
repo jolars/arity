@@ -27,10 +27,35 @@ pub(crate) fn has_method_candidates(model: &SemanticModel) -> bool {
         .referenced_packages()
         .iter()
         .any(|package| matches!(package.as_str(), "R6" | "methods"))
+        || model.idents().iter().any(|ident| {
+            matches!(
+                unbacktick(&ident.name),
+                "R6Class"
+                    | "setRefClass"
+                    | "setGeneric"
+                    | "setMethod"
+                    | "setReplaceMethod"
+                    | "registerS3method"
+                    | ".Generic"
+                    | ".Method"
+                    | ".Class"
+                    | ".Group"
+                    | ".GenericCallEnv"
+                    | ".GenericDefEnv"
+                    | ".Methods"
+                    | ".defined"
+                    | ".target"
+            )
+        })
         || model
-            .idents()
+            .qualified_reads()
             .iter()
-            .any(|ident| matches!(unbacktick(&ident.name), "R6Class" | "setRefClass"))
+            .any(|name| unbacktick(name) == "registerS3method")
+        || model.bindings().iter().any(|binding| {
+            let name = unbacktick(&binding.name);
+            name.char_indices()
+                .any(|(i, ch)| ch == '.' && i > 0 && i + 1 < name.len())
+        })
 }
 
 impl ClassIndex {
@@ -391,6 +416,7 @@ pub fn apply_method_environments(
         let Some(site) = sites.first() else { continue };
         let enclosure = lowered.len() as u32;
         lowered.push(MethodEnclosure {
+            call_frame: false,
             parent: scope_at(site.owner_range),
             parent_is_unknown: environment.custom_parent,
             bindings: ["self", "private", "super"]
@@ -424,9 +450,6 @@ pub fn standalone_semantic_model(root: &SyntaxNode) -> SemanticModel {
         return model;
     }
     let facts = file_class_defs(&model, root);
-    if facts.oop.method_implementations.is_empty() {
-        return model;
-    }
     let path = Path::new("buffer.R");
     let index = crate::incremental::IncrementalDatabase::default()
         .snapshot()
@@ -469,5 +492,6 @@ pub fn standalone_semantic_model(root: &SyntaxNode) -> SemanticModel {
                 .contains(&ClassUncertainty::CustomEnvironment),
         });
     }
-    apply_method_environments(&model, root, &environments).unwrap_or(model)
+    let model = apply_method_environments(&model, root, &environments).unwrap_or(model);
+    apply_dispatch_contexts(&model, root, &index.dispatch_contexts(path)).unwrap_or(model)
 }

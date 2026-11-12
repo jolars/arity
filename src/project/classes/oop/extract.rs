@@ -26,6 +26,62 @@ struct Projection<'a> {
 }
 
 impl Projection<'_> {
+    fn implementation(&mut self, key: &OopKey, value: Option<SyntaxElement>, keep_original: bool) {
+        let Some(function) = self
+            .implementation_value(
+                value.clone(),
+                &mut BTreeSet::new(),
+                key.system == OopSystem::S3,
+            )
+            .and_then(SyntaxElement::into_node)
+            .and_then(FunctionExpr::cast)
+        else {
+            if let Some(token) = value.as_ref().and_then(SyntaxElement::as_token)
+                && (token.kind() == SyntaxKind::IDENT
+                    || (key.system == OopSystem::S3 && token.kind() == SyntaxKind::STRING))
+                && read_binding(self.model, token).is_none_or(|binding| {
+                    self.model.scope(self.model.binding(binding).scope).kind
+                        == crate::semantic::ScopeKind::File
+                })
+                && let Some(name) = literal(&SyntaxElement::Token(token.clone()))
+            {
+                self.facts
+                    .method_implementations
+                    .push(MethodImplementationDef {
+                        method: key.clone(),
+                        source: MethodImplementationSource::Reference { name },
+                    });
+            }
+            return;
+        };
+        let source = direct_assignment(&SyntaxElement::Node(function.syntax().clone()))
+            .and_then(|assignment| {
+                Some(MethodImplementationSource::Binding {
+                    owner: owner_at(assignment.syntax(), self.owners),
+                    name: unbacktick(&assignment.target_name()?).to_string(),
+                })
+            })
+            .unwrap_or(MethodImplementationSource::Inline);
+        let keep_original = keep_original && !matches!(source, MethodImplementationSource::Inline);
+        self.facts
+            .method_implementations
+            .push(MethodImplementationDef {
+                method: key.clone(),
+                source,
+            });
+        self.method_implementations.push(MethodImplementationSite {
+            method: key.clone(),
+            function_range: function.syntax().text_range(),
+            owner_range: function
+                .syntax()
+                .ancestors()
+                .skip(1)
+                .find_map(FunctionExpr::cast)
+                .map_or(self.root.text_range(), |owner| owner.syntax().text_range()),
+            keep_original,
+        });
+    }
+
     fn key(&mut self, node: &SyntaxNode, system: OopSystem, kind: OopKind) -> OopKey {
         let owner = owner_at(node, self.owners);
         let count = self
@@ -207,6 +263,20 @@ pub(in crate::project::classes) fn declaration_roots(
             }
             Some(call.syntax().clone())
         })
+        .chain(
+            root.descendants()
+                .filter_map(AssignmentExpr::cast)
+                .filter(|assignment| {
+                    assignment.target_name().is_some_and(|name| {
+                        let name = unbacktick(&name);
+                        name.char_indices()
+                            .any(|(i, ch)| ch == '.' && i > 0 && i + 1 < name.len())
+                    }) && assignment
+                        .value_element()
+                        .is_some_and(|value| signature(Some(value)).is_some())
+                })
+                .map(|assignment| assignment.syntax().clone()),
+        )
         .collect()
 }
 
@@ -655,6 +725,9 @@ impl Projection<'_> {
                 });
             }
             self.facts.generics.push(def);
+            if system == OopSystem::S4 {
+                self.implementation(&key, function.clone(), true);
+            }
             let generic_value = if system == OopSystem::S3 {
                 function
             } else {
@@ -1108,9 +1181,13 @@ impl Projection<'_> {
             } else {
                 "method"
             });
-            let signature = self.implementation_signature(implementation, &mut BTreeSet::new());
+            let signature =
+                self.implementation_signature(implementation.clone(), &mut BTreeSet::new());
             if signature.is_none() {
                 issues.insert(OopUncertainty::UnresolvedImplementation);
+            }
+            if matches!(system, OopSystem::S3 | OopSystem::S4) {
+                self.implementation(&key, implementation, true);
             }
             self.facts.methods.push(MethodDef {
                 key: key.clone(),
@@ -1167,16 +1244,6 @@ impl Projection<'_> {
 
     fn s3_methods(&mut self) {
         for assignment in self.root.descendants().filter_map(AssignmentExpr::cast) {
-            // A conventional method does not itself establish an owner key, so
-            // an untracked closure must not inherit its enclosing frame's key.
-            if assignment
-                .syntax()
-                .ancestors()
-                .find(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
-                .is_some_and(|frame| !self.owners.contains_key(&frame.text_range()))
-            {
-                continue;
-            }
             let Some(binding) = assignment.target_name() else {
                 continue;
             };
@@ -1206,10 +1273,57 @@ impl Projection<'_> {
                     );
                 }
             }
-            let Some(signature) = signature(assignment.value_element()) else {
+            let Some(signature) =
+                self.implementation_signature(assignment.value_element(), &mut BTreeSet::new())
+            else {
                 continue;
             };
+            if references.is_empty() {
+                // An external generic or NAMESPACE registration may establish
+                // dispatch. A name alone proves neither dispatch nor its absence.
+                if let Some((name, class)) = binding.rsplit_once('.')
+                    && !name.is_empty()
+                    && !class.is_empty()
+                {
+                    references.insert(
+                        (name.to_string(), class.to_string()),
+                        GenericRef {
+                            system: OopSystem::S3,
+                            owner: owner.clone(),
+                            name: ClassName::Known(name.to_string()),
+                            package: None,
+                            by_binding: false,
+                            local: None,
+                        },
+                    );
+                }
+            }
             for ((_, class), generic) in references {
+                let implementation = self.implementation_value(
+                    assignment.value_element(),
+                    &mut BTreeSet::new(),
+                    false,
+                );
+                if self.facts.methods.iter().any(|method| {
+                    method.system == OopSystem::S3
+                        && method.registration.is_some()
+                        && method
+                            .generic
+                            .as_ref()
+                            .is_some_and(|reference| reference.name == generic.name)
+                        && method
+                            .dispatch
+                            .iter()
+                            .any(|argument| argument.class == DispatchClass::S3(class.clone()))
+                        && self.method_implementations.iter().any(|site| {
+                            site.method == method.key
+                                && implementation
+                                    .as_ref()
+                                    .is_some_and(|value| site.function_range == value.text_range())
+                        })
+                }) {
+                    continue;
+                }
                 let key = self.key(assignment.syntax(), OopSystem::S3, OopKind::Method);
                 let mut issues: BTreeSet<_> = self
                     .facts
@@ -1222,6 +1336,13 @@ impl Projection<'_> {
                     })
                     .flat_map(|def| def.uncertainty.iter().copied())
                     .collect();
+                if !self.facts.generics.iter().any(|def| {
+                    def.key.system == OopSystem::S3
+                        && def.key.owner == owner
+                        && def.name == generic.name
+                }) {
+                    issues.insert(OopUncertainty::UnprovenMethod);
+                }
                 if !unconditional(assignment.syntax()) {
                     issues.insert(OopUncertainty::Conditional);
                 }
@@ -1240,6 +1361,7 @@ impl Projection<'_> {
                     registration: None,
                     uncertainty: issues,
                 });
+                self.implementation(&key, assignment.value_element(), false);
                 if let Some(token) = assignment.target_name_token() {
                     self.site(
                         token.text_range(),

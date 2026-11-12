@@ -47,3 +47,10 @@ writeLines(
   ),
   file.path(out_dir, "packages.txt")
 )
+
+# Primitive S4 dispatch supplies different metadata from standardGeneric().
+base_names <- ls(baseenv(), all.names = TRUE)
+primitives <- base_names[vapply(base_names, function(name) {
+  is.primitive(get(name, baseenv()))
+}, logical(1))]
+writeLines(sort(primitives), file.path(out_dir, "primitives.txt"))

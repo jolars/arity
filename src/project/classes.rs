@@ -8,7 +8,12 @@
 //! members, signatures, and symbolic dispatch targets. [`oop_sites`] recovers
 //! their declaration and use spans without putting body text in the projection.
 
+mod dispatch;
 mod environments;
+pub use dispatch::{
+    DispatchContexts, DispatchEnvironment, GenericEffect, NamedDispatchEnvironment,
+    apply_dispatch_contexts,
+};
 mod resolve;
 pub(crate) use environments::has_method_candidates;
 pub use environments::{

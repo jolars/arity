@@ -9,13 +9,14 @@ Definition "speak(point)": [{"range":[0,5],"text":"speak"}]
 TypeHierarchy "\"point\"": null
 
 === s3/use_sites ===
-known gap: S3 dispatch supplies .GenericCallEnv and .GenericDefEnv, but both are reported as undefined.
-diagnostic: undefined-symbol severity=2 112..127 ".GenericCallEnv"
-diagnostic: undefined-symbol severity=2 129..143 ".GenericDefEnv"
+diagnostics: []
 symbols: [["describe",12,"(x)"],["describe.point",12,"(x)"],["obj",13,null]]
 Definition "describe(obj)": [{"range":[0,8],"text":"describe"}]
 Completion "obj$value": [["value",5]]
 References "describe(obj)": [{"range":[208,216],"text":"describe"},{"range":[0,8],"text":"describe"}]
+Definition ".Generic,": null
+References ".Generic,": [{"range":[85,93],"text":".Generic"}]
+PrepareRename ".Generic,": null
 
 === s3/incomplete ===
 diagnostic: syntax-error severity=1 106..107 "$"
@@ -24,8 +25,7 @@ Definition "new_point(1)": [{"range":[0,9],"text":"new_point"}]
 Completion "obj$": []
 
 === s3/shadowing ===
-known gap: .Generic is silently exempt even in an ordinary function outside method dispatch.
-diagnostics: []
+diagnostic: undefined-symbol severity=2 133..141 ".Generic"
 symbols: [["UseMethod",12,"(generic, object)"],["generic",12,"(x)"],["outside",12,"()"]]
 Definition "UseMethod(\"generic\"": [{"range":[0,9],"text":"UseMethod"}]
 Definition "generic(1)": [{"range":[46,53],"text":"generic"}]
@@ -35,3 +35,13 @@ diagnostics: []
 symbols: [["generic_name",13,null],["class_name",13,null],["speak",12,"(x)"],["implementation",12,"(x)"],["obj",13,null]]
 Definition "speak(obj)": [{"range":[70,75],"text":"speak"}]
 TypeHierarchy "class_name)": null
+
+=== s3/method_environments ===
+diagnostic: undefined-symbol severity=2 197..205 ".Generic"
+symbols: [["g",12,"(x)"],["g.C",12,"(x)"],["g.C::nested",12,"()"],["g.D",12,"(x)"],["g.E",12,"(x, .Generic)"],["outside",12,"()"]]
+Definition ".Generic\n  nested <-": null
+References ".Generic\n  nested <-": [{"range":[55,63],"text":".Generic"},{"range":[87,95],"text":".Generic"}]
+PrepareRename ".Generic\n  nested <-": null
+Rename ".Generic\n  nested <-": null
+Highlights ".Generic\n  nested <-": [{"kind":2,"range":[55,63]},{"kind":2,"range":[87,95]}]
+Definition ".Generic) .Generic": [{"range":[156,164],"text":".Generic"}]

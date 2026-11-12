@@ -83,3 +83,11 @@ and non-portable classes. The Reference Class environment case covers bare
 fields, inherited methods and helpers, `.self`, `.refClassDef`, nested closures,
 nonlocal field updates, and the ordinary lexical lookup of external methods. No
 syntax gap was demonstrated by these cases.
+
+The dispatch environment case records the metadata visible to S3 ordinary,
+internal, group, and registered methods, S4 ordinary, primitive, and group
+methods, and replacement methods. It also checks parameter shadowing, lazy
+defaults, nested closures, and generic creation without an assignment. Rust
+tests compare metadata availability with these observations and keep class-name
+strings out of lexical bindings. Primitive names come from
+`scripts/dump_base_symbols.R`, alongside the default-package export lists.

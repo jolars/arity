@@ -5,7 +5,9 @@ They cover S3, S4, Reference Classes, R6, and released S7 0.2.2 syntax. Each
 system has definitions, use sites, incomplete editor input, shadowed APIs, and
 dynamic declarations. Additional cases reproduce issue #183, receiver completion
 leakage, generator aliases, named class arguments, and R6 and Reference Class
-method environments.
+method environments. S3 and S4 cases distinguish runtime dispatch metadata from
+ordinary lexical names, including primitive dispatch, nested closures, and
+parameter shadowing.
 
 The hand-maintained `fixture_names()` in `tests/lsp_protocol/oop.rs` registers
 every input. `matrix.json` declares its parse status, cursor probes, and known

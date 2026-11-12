@@ -86,7 +86,7 @@ pub(crate) fn compute_document_symbols_in(
 ) -> Vec<DocumentSymbol> {
     let text = buffer.text();
     let root = parse(text).cst;
-    let model = SemanticModel::build(&root);
+    let model = crate::project::classes::standalone_semantic_model(&root);
     document_symbols_from_model(&root, &model, buffer.line_index(), encoding)
 }
 
