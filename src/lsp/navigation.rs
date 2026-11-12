@@ -524,6 +524,13 @@ pub(crate) fn resolve_local_target(
             name,
         });
     }
+    if let Some(binding) = model.contextual_source_target(range) {
+        return Some(LocalTarget {
+            binding,
+            range,
+            name,
+        });
+    }
     let idx = model.bindings().iter().position(|b| b.def_range == range)?;
     Some(LocalTarget {
         binding: BindingId::from_index(idx),
@@ -668,7 +675,16 @@ pub fn compute_document_highlights(
         return Some(
             ranges
                 .into_iter()
-                .map(|range| (range, DocumentHighlightKind::READ))
+                .map(|range| {
+                    (
+                        range,
+                        if model.is_contextual_write(range) {
+                            DocumentHighlightKind::WRITE
+                        } else {
+                            DocumentHighlightKind::READ
+                        },
+                    )
+                })
                 .collect(),
         );
     }
@@ -680,11 +696,16 @@ pub fn compute_document_highlights(
             .into_iter()
             .map(|range| (range, DocumentHighlightKind::WRITE)),
     );
-    highlights.extend(
-        occ.reads
-            .into_iter()
-            .map(|range| (range, DocumentHighlightKind::READ)),
-    );
+    highlights.extend(occ.reads.into_iter().map(|range| {
+        (
+            range,
+            if model.is_contextual_write(range) {
+                DocumentHighlightKind::WRITE
+            } else {
+                DocumentHighlightKind::READ
+            },
+        )
+    }));
     highlights.sort_by_key(|(range, _)| range.start());
     Some(highlights)
 }
@@ -753,7 +774,12 @@ pub(crate) fn variable_occurrences(
     defs.dedup();
     let mut reads: Vec<TextRange> = cohort
         .iter()
-        .flat_map(|id| model.read_sites(*id).map(|ident| ident.range))
+        .flat_map(|id| {
+            model
+                .read_sites(*id)
+                .map(|ident| ident.range)
+                .chain(model.contextual_write_ranges(*id))
+        })
         .collect();
     reads.sort_by_key(|range| range.start());
     reads.dedup();

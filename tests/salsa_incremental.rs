@@ -3707,3 +3707,28 @@ fn control_flow_expression_decisions_backdate_and_refresh() {
         2
     );
 }
+
+#[test]
+fn reference_environments_share_project_inheritance_and_keep_writes_out_of_exports() {
+    use arity::incremental::{file_exports, file_free_reads, method_environments};
+    let (mut db, a, b) = package_ab(
+        "value <- 1\nBase <- methods::setRefClass('Base', fields = list(value = 'numeric'))\n",
+        "Child <- methods::setRefClass('Child', contains = 'Base', methods = list(read = function() { value <<- value + 1; value }))\n",
+    );
+    assert!(!file_exports(&db, b).contains("value"));
+    assert!(!arity::incremental::file_def_sites(&db, b).contains_key("value"));
+    assert!(!file_free_reads(&db, b).contains("value"));
+    assert!(
+        !project_graph(&db)
+            .for_file(Path::new("/pkg/R/a.R"))
+            .read_elsewhere("value")
+    );
+    let environments = method_environments(&db, b).clone();
+    assert_eq!(environments.len(), 1);
+    db.set_file_text(b, "# Prose.\nChild <- methods::setRefClass('Child', contains = 'Base', methods = list(read = function() { value <<- value + 2; value }))\n");
+    assert_eq!(method_environments(&db, b), &environments);
+    assert!(!file_free_reads(&db, b).contains("value"));
+    db.set_file_text(a, "value <- 1\nBase <- methods::setRefClass('Base')\n");
+    assert_ne!(method_environments(&db, b), &environments);
+    assert!(file_free_reads(&db, b).contains("value"));
+}

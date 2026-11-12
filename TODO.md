@@ -546,15 +546,20 @@ coverage need not block useful workspace support.
   cache binding availability without ranges, and the current CST supplies
   method implementation locations. Regressions cover #183, inherited copies,
   aliases, defaults, nested closures, shadowing, and rename safety across
-  cached and live editor reads. Generator `$set()` and bare member lookup for
-  `portable = FALSE` remain for later stages.
-- [ ] Model Reference Class bare field and method lookup, `.self`,
+  cached and live editor reads. Generator `$set()` remains for a later stage;
+  nonportable bare member lookup shares the Reference Class machinery below.
+- [x] Model Reference Class bare field and method lookup, `.self`,
   `.refClassDef`, and inherited helpers such as `callSuper()` and
   `initFields()`. Distinguish normal methods from external methods with an
   explicit `.self` parameter. Track field updates through `<<-` without
   manufacturing file-level lexical bindings or dead-store findings. Share
   appropriate environment machinery with R6 `portable = FALSE`, while
   preserving their behavioral differences.
+  Class-owned method enclosures now resolve bare members and runtime helpers,
+  preserve external methods' lexical lookup, and keep nonlocal field writes
+  out of lexical definitions and workspace exports. Pinned R observations,
+  lint and editor regressions, and incremental tests cover inheritance,
+  shadowing, nested closures, field updates, and cold and live buffer reads.
 - [ ] Replace the global S3 and S4 implicit-variable exemption with
   method-context facts. Cover `.Generic`, `.Method`, `.Class`, `.Group`,
   `.GenericCallEnv`/`.GenericDefEnv`, and S4's

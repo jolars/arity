@@ -767,7 +767,7 @@ pub(crate) fn build_class_index(
                 .as_ref()
                 .filter(|live| live.path == member.path)
                 .map_or_else(
-                    || file_exports(db, member.file).clone(),
+                    || crate::incremental::lexical_file_exports(db, member.file).clone(),
                     |live| Arc::new(crate::project::file_exports(live.model)),
                 ),
         })

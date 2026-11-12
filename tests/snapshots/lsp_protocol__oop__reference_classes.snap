@@ -2,6 +2,16 @@
 source: tests/lsp_protocol/oop.rs
 expression: report
 ---
+=== reference_classes/method_environments ===
+diagnostic: unused-binding severity=2 13..17 "Base"
+symbols: [["value",13,null],["Base",13,null],["Child",13,null]]
+Definition "value <<-": null
+References "value <<-": [{"range":[185,190],"text":"value"},{"range":[195,200],"text":"value"},{"range":[211,216],"text":"value"}]
+Highlights "value <<-": [{"kind":3,"range":[185,190]},{"kind":2,"range":[195,200]},{"kind":2,"range":[211,216]}]
+PrepareRename "value <<-": null
+Definition "list(.self$value, value)": [{"range":[0,5],"text":"value"}]
+References "value <- 100": [{"range":[339,344],"text":"value"},{"range":[0,5],"text":"value"}]
+
 === reference_classes/definitions ===
 diagnostic: unused-binding severity=2 0..4 "Base"
 symbols: [["Base",13,null],["Child",13,null],["obj",13,null]]
@@ -18,10 +28,8 @@ TypeHierarchy "Class = \"Child\"": [{"children":[],"detail":"S4 class","name":"C
 TypeHierarchy "contains = \"Formal\"": [{"children":["Reference"],"detail":"S4 class","name":"Formal","parents":[],"selection":[36,44]}]
 
 === reference_classes/use_sites ===
-known gap: Reference methods' bare fields and .self are reported as undefined.
 known gap: Reference methods have no member definition or signature help.
-diagnostic: undefined-symbol severity=2 120..125 "value"
-diagnostic: undefined-symbol severity=2 144..149 ".self"
+diagnostics: []
 symbols: [["Counter",13,null],["obj",13,null]]
 Definition "obj$read()": null
 SignatureHelp "obj$get()": null

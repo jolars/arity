@@ -422,7 +422,7 @@ impl Projection<'_> {
                             registration: None,
                             uncertainty: member_issues.clone(),
                         });
-                        if def.system() == ClassSystem::R6
+                        if matches!(def.system(), ClassSystem::R6 | ClassSystem::RefClass)
                             && let Some(function) = implementation
                                 .clone()
                                 .and_then(SyntaxElement::into_node)

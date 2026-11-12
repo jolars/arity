@@ -508,7 +508,7 @@ pub fn semantic_model(db: &dyn IncrementalDb, file: SourceFile) -> SemanticModel
 pub fn method_environments(
     db: &dyn IncrementalDb,
     file: SourceFile,
-) -> Vec<crate::project::classes::R6MethodEnvironment> {
+) -> Vec<crate::project::classes::ClassMethodEnvironment> {
     db.record_query(QueryLogEntry {
         kind: QueryKind::MethodEnvironments,
         file: Some(file),
@@ -523,7 +523,7 @@ pub fn method_environments(
         .unwrap_or_else(|| Path::new("buffer.R"));
     let index = project_classes(db);
     if index.file(path).is_some() {
-        return index.r6_method_environments(path);
+        return index.method_environments(path);
     }
     let root = parsed_tree_root(db, file);
     crate::project::graph::build_class_index(
@@ -535,7 +535,7 @@ pub fn method_environments(
             model: semantic_model(db, file),
         }),
     )
-    .r6_method_environments(path)
+    .method_environments(path)
 }
 
 #[salsa::tracked(returns(ref))]
@@ -559,7 +559,7 @@ fn method_semantic_model(db: &dyn IncrementalDb, file: SourceFile) -> Option<Sem
 /// preserve the dependency direction through `file_class_defs` and classes.
 pub fn runtime_semantic_model(db: &dyn IncrementalDb, file: SourceFile) -> &SemanticModel {
     let lexical = semantic_model(db, file);
-    if !crate::project::classes::has_r6_candidates(lexical) {
+    if !crate::project::classes::has_method_candidates(lexical) {
         return lexical;
     }
     method_semantic_model(db, file).as_ref().unwrap_or(lexical)
@@ -589,6 +589,18 @@ pub fn file_exports(db: &dyn IncrementalDb, file: SourceFile) -> Arc<BTreeSet<St
         kind: QueryKind::FileExports,
         file: Some(file),
     });
+    Arc::new(crate::project::file_exports(runtime_semantic_model(
+        db, file,
+    )))
+}
+
+/// Class resolution precedes runtime environments and needs only lexical names.
+/// Keeping this projection separate prevents a dependency cycle through classes.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn lexical_file_exports(
+    db: &dyn IncrementalDb,
+    file: SourceFile,
+) -> Arc<BTreeSet<String>> {
     Arc::new(crate::project::file_exports(semantic_model(db, file)))
 }
 
@@ -647,7 +659,10 @@ pub fn file_def_sites(db: &dyn IncrementalDb, file: SourceFile) -> BTreeMap<Stri
         kind: QueryKind::FileDefSites,
         file: Some(file),
     });
-    crate::project::file_def_sites(semantic_model(db, file), &parsed_tree_root(db, file))
+    crate::project::file_def_sites(
+        runtime_semantic_model(db, file),
+        &parsed_tree_root(db, file),
+    )
 }
 
 /// The file's OOP classes, generics, methods, members, and supertype edges

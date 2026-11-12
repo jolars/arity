@@ -41,6 +41,8 @@ pub struct Binding {
     pub loop_range: Option<TextRange>,
     /// A conditional expression may leave the enclosing binding visible.
     pub conditional: bool,
+    /// The execution scope of a nonlocal write, before resolving its runtime target.
+    pub super_assignment_scope: Option<ScopeId>,
     /// Whether any read of this binding has been observed during resolution.
     pub read: bool,
 }
