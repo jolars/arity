@@ -34,6 +34,49 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
+    fn generator_mutations_use_live_signatures_and_keep_older_instances() {
+        let mut db = IncrementalDatabase::default();
+        let definitions = db.upsert_file(Path::new("/mutation-live/R/a.R"), "G <- R6::R6Class(public = list(read = function(original) original))\nRef <- methods::setRefClass('LiveMutation', methods = list(read = function(original) original))\n");
+        let path = Path::new("/mutation-live/R/b.R");
+        let mutations = db.upsert_file(path, "G$set('public', 'read', function(stored) stored, overwrite = TRUE)\nRef$methods(read = function(stored) stored)\n");
+        db.set_workspace_members(vec![definitions, mutations], vec!["/mutation-live".into()]);
+        db.set_package_metadata(vec![PackageInfo {
+            root: "/mutation-live".into(),
+            namespace: None,
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        for (text, expected) in [
+            (
+                "G$set('public', 'read', function(live = 2) live, overwrite = TRUE)\nG$new()$read()",
+                "read(live = 2)",
+            ),
+            (
+                "old <- G$new()\nG$set('public', 'read', function(live) live, overwrite = TRUE)\nold$read()",
+                "read(original)",
+            ),
+            (
+                "Ref$methods(read = function(live = 3) live)\nRef()$read()",
+                "read(live = 3)",
+            ),
+        ] {
+            let buffer = TextBuffer::new(text);
+            let position = buffer
+                .line_index()
+                .byte_to_position(text.len() - 1, PositionEncoding::Utf16);
+            let help = signature::signature_help_via_db(
+                &db.snapshot(),
+                path,
+                &buffer,
+                position,
+                PositionEncoding::Utf16,
+            )
+            .unwrap();
+            assert_eq!(help.signatures[0].label, expected);
+        }
+    }
+
+    #[test]
     fn reference_reads_share_imported_class_identity_and_live_buffer_overlays() {
         let mut db = IncrementalDatabase::default();
         let parent_path = Path::new("/ref-parent/R/parent.R");

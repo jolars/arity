@@ -87,6 +87,14 @@ impl NamespaceVisibility {
                 .chain(
                     target
                         .facts
+                        .oop
+                        .callables
+                        .iter()
+                        .map(|binding| (binding.name.clone(), false)),
+                )
+                .chain(
+                    target
+                        .facts
                         .generator_aliases
                         .iter()
                         .filter(|binding| binding.owner.0.is_empty())

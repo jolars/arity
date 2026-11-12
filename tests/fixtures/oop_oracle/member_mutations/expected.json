@@ -1,0 +1,266 @@
+{
+  "versions": {
+    "r": "4.6.1",
+    "r6": "2.6.1",
+    "s7": "0.2.2"
+  },
+  "facts": {
+    "system": "member_mutations",
+    "classes": [
+      {
+        "name": "MutationR6",
+        "binding": "R6Generator",
+        "parents": [],
+        "members": {
+          "value": "field",
+          "added": "field",
+          "read": "method",
+          "clone": "method",
+          "doubled": "active-binding"
+        }
+      },
+      {
+        "name": "MutationReference",
+        "binding": "ReferenceGenerator",
+        "parents": [],
+        "members": {
+          "value": "field",
+          "doubled": "active-binding",
+          ".objectPackage": "method",
+          ".objectParent": "method",
+          "added": "method",
+          "after_lock": "method",
+          "callSuper": "method",
+          "copy": "method",
+          "export": "method",
+          "field": "method",
+          "getClass": "method",
+          "getRefClass": "method",
+          "import": "method",
+          "initFields": "method",
+          "read": "method",
+          "removed": "method",
+          "show": "method",
+          "trace": "method",
+          "untrace": "method",
+          "usingMethods": "method"
+        }
+      }
+    ],
+    "constructors": [
+      {
+        "binding": "R6Generator$new",
+        "formals": [
+          {
+            "name": "...",
+            "default": null
+          }
+        ]
+      },
+      {
+        "binding": "ReferenceGenerator",
+        "formals": [
+          {
+            "name": "...",
+            "default": null
+          }
+        ]
+      }
+    ],
+    "methods": [
+      {
+        "generic": "read",
+        "signature": [
+          "old"
+        ],
+        "formals": [
+          {
+            "name": "before",
+            "default": "1"
+          }
+        ],
+        "environment": [
+          [
+            ".__active__",
+            "self"
+          ]
+        ]
+      },
+      {
+        "generic": "read",
+        "signature": [
+          "fresh"
+        ],
+        "formals": [
+          {
+            "name": "after",
+            "default": "3"
+          }
+        ],
+        "environment": [
+          [
+            ".__active__",
+            "private",
+            "self"
+          ]
+        ]
+      },
+      {
+        "generic": "read",
+        "signature": [
+          "reference_old"
+        ],
+        "formals": [
+          {
+            "name": "after",
+            "default": "3"
+          }
+        ],
+        "environment": [
+          [
+            ".->value",
+            ".refClassDef",
+            ".self",
+            "doubled",
+            "read",
+            "value"
+          ]
+        ]
+      },
+      {
+        "generic": "read",
+        "signature": [
+          "reference_cached"
+        ],
+        "formals": [
+          {
+            "name": "before",
+            "default": "1"
+          }
+        ],
+        "environment": [
+          [
+            ".->value",
+            ".refClassDef",
+            ".self",
+            "doubled",
+            "read",
+            "value"
+          ]
+        ]
+      },
+      {
+        "generic": "clone",
+        "signature": [
+          "fresh"
+        ],
+        "formals": [
+          {
+            "name": "other",
+            "default": null
+          }
+        ],
+        "environment": [
+          [
+            ".__active__",
+            "private",
+            "self"
+          ]
+        ]
+      },
+      {
+        "generic": "read",
+        "signature": [
+          "reference_fresh"
+        ],
+        "formals": [
+          {
+            "name": "after",
+            "default": "3"
+          }
+        ],
+        "environment": [
+          [
+            ".->value",
+            ".refClassDef",
+            ".self",
+            "doubled",
+            "read",
+            "value"
+          ]
+        ]
+      }
+    ],
+    "dispatch": [
+      {
+        "expression": "old$read()",
+        "classes": [
+          "MutationR6",
+          "R6"
+        ],
+        "value": "2"
+      },
+      {
+        "expression": "fresh$read()",
+        "classes": [
+          "MutationR6",
+          "R6"
+        ],
+        "value": "15"
+      },
+      {
+        "expression": "fresh$doubled",
+        "classes": [
+          "MutationR6",
+          "R6"
+        ],
+        "value": "10"
+      },
+      {
+        "expression": "reference_old$read()",
+        "classes": [
+          "MutationReference"
+        ],
+        "value": "6"
+      },
+      {
+        "expression": "reference_cached$read()",
+        "classes": [
+          "MutationReference"
+        ],
+        "value": "2"
+      },
+      {
+        "expression": "reference_fresh$read()",
+        "classes": [
+          "MutationReference"
+        ],
+        "value": "6"
+      },
+      {
+        "expression": "locked_error",
+        "classes": [
+          "MutationR6",
+          "R6"
+        ],
+        "value": "TRUE"
+      },
+      {
+        "expression": "field_lock_error",
+        "classes": [
+          "MutationReference"
+        ],
+        "value": "TRUE"
+      },
+      {
+        "expression": "class_lock_error",
+        "classes": [
+          "MutationReference"
+        ],
+        "value": "TRUE"
+      }
+    ]
+  },
+  "source": "R6Generator <- R6::R6Class(\"MutationR6\", lock_class = TRUE,\n  public = list(value = 2, read = function(before = 1) self$value * before),\n  active = list(doubled = function(value) {\n    if (missing(value)) self$value * 2 else self$value <- value / 2\n  }))\nold <- R6Generator$new()\nlocked_error <- inherits(try(R6Generator$set(\"public\", \"blocked\", 1), silent = TRUE), \"try-error\")\nR6Generator$unlock()\nAlias <- R6Generator\nAlias$set(\"public\", \"read\", function(after = 3) self$value * after, overwrite = TRUE)\nAlias$set(\"private\", \"secret\", function(scale = 4) scale)\nAlias$set(\"public\", \"added\", NULL)\nAlias$set(\"public\", \"clone\", function(other) other, overwrite = TRUE)\nR6Generator$lock()\nfresh <- R6Generator$new()\nfresh$doubled <- 10\n\nReferenceGenerator <- methods::setRefClass(\"MutationReference\",\n  fields = list(value = \"numeric\", doubled = function(new_value) {\n    if (missing(new_value)) value * 2 else value <<- new_value / 2\n  }), methods = list(read = function(before = 1) value * before,\n                    removed = function() 1))\nreference_old <- ReferenceGenerator(value = 2)\nreference_cached <- ReferenceGenerator(value = 2)\ncached <- reference_cached$read\nReferenceAlias <- ReferenceGenerator\nReferenceAlias$methods(read = function(after = 3) value * after,\n                       added = function(scale = 4) value * scale)\nReferenceGenerator$methods(removed = NULL)\nReferenceGenerator$lock(\"value\")\nReferenceGenerator$methods(after_lock = function() value)\nreference_fresh <- ReferenceGenerator(value = 2)\nfield_lock_error <- inherits(try(reference_fresh$value <- 3, silent = TRUE), \"try-error\")\nGlobalLockedGenerator <- methods::setRefClass(\"MutationLockedGlobal\", where = globalenv())\nlockBinding(\".__C__MutationLockedGlobal\", globalenv())\nclass_lock_error <- inherits(try(GlobalLockedGenerator$methods(blocked = function() 1), silent = TRUE), \"try-error\")\n",
+  "observer": "owner <- environment()\nr6_members <- c(as.list(setNames(rep(\"field\", length(R6Generator$public_fields)),\n                                names(R6Generator$public_fields))),\n                as.list(setNames(rep(\"method\", length(R6Generator$public_methods)),\n                                names(R6Generator$public_methods))),\n                as.list(setNames(rep(\"active-binding\", length(R6Generator$active)),\n                                names(R6Generator$active))))\nreference_methods <- grep(\"#\", ReferenceGenerator$methods(), invert = TRUE, value = TRUE)\nfacts <- list(\n  system = \"member_mutations\",\n  classes = list(\n    list(name = \"MutationR6\", binding = \"R6Generator\", parents = list(), members = r6_members),\n    list(name = \"MutationReference\", binding = \"ReferenceGenerator\", parents = list(),\n         members = c(list(value = \"field\", doubled = \"active-binding\"),\n                     as.list(setNames(rep(\"method\", length(reference_methods)), reference_methods))))\n  ),\n  constructors = list(list(binding = \"R6Generator$new\", formals = formal_facts(R6Generator$new)),\n                      list(binding = \"ReferenceGenerator\", formals = formal_facts(ReferenceGenerator))),\n  methods = list(method_facts(\"read\", \"old\", old$read, owner),\n                 method_facts(\"read\", \"fresh\", fresh$read, owner),\n                 method_facts(\"read\", \"reference_old\", reference_old$read, owner),\n                 method_facts(\"read\", \"reference_cached\", reference_cached$read, owner),\n                 method_facts(\"clone\", \"fresh\", fresh$clone, owner),\n                 method_facts(\"read\", \"reference_fresh\", reference_fresh$read, owner)),\n  dispatch = list(dispatch_facts(\"old$read()\", old, owner),\n                  dispatch_facts(\"fresh$read()\", fresh, owner),\n                  dispatch_facts(\"fresh$doubled\", fresh, owner),\n                  dispatch_facts(\"reference_old$read()\", reference_old, owner),\n                  dispatch_facts(\"reference_cached$read()\", reference_cached, owner),\n                  dispatch_facts(\"reference_fresh$read()\", reference_fresh, owner),\n                  dispatch_facts(\"locked_error\", fresh, owner),\n                  dispatch_facts(\"field_lock_error\", reference_fresh, owner),\n                  dispatch_facts(\"class_lock_error\", reference_fresh, owner))\n)\n"
+}

@@ -24,6 +24,7 @@ fn fixture_names() -> &'static [&'static str] {
         "r6",
         "r6_environments",
         "r6_members",
+        "member_mutations",
         "s7",
     ]
 }
@@ -188,6 +189,96 @@ fn supported_class_projection_matches_runtime() {
                 .collect();
             assert_eq!(parents, class.parents, "{name}: {}", class.name);
         }
+    }
+}
+
+#[test]
+fn generator_mutations_match_pinned_members_and_historical_method_signatures() {
+    use arity::incremental::IncrementalDatabase;
+    use arity::project::classes::MemberKind;
+    let pin = pin("member_mutations");
+    let root = parse(&pin.source).cst;
+    let model = SemanticModel::build(&root);
+    let facts = file_class_defs(&model, &root);
+    let index = IncrementalDatabase::default().snapshot().class_index_in(
+        Path::new("mutations.R"),
+        &facts,
+        &root,
+        &model,
+    );
+    for runtime in &pin.facts.classes {
+        let id = index
+            .declarations
+            .iter()
+            .find(|(_, class)| {
+                class.declaration.binding.as_deref() == Some(runtime.binding.as_str())
+            })
+            .unwrap()
+            .0;
+        let members: BTreeMap<_, _> = if id.key.system == ClassSystem::R6 {
+            let api = index.r6_api(id).unwrap();
+            assert!(api.public.complete);
+            api.public
+                .entries
+                .into_iter()
+                .filter(|(name, _)| name != "self")
+                .map(|(name, members)| (name, members[0].kind))
+                .collect()
+        } else {
+            let api = index.reference_api(id).unwrap();
+            assert!(api.instance.complete);
+            api.instance
+                .entries
+                .into_iter()
+                .filter(|(name, _)| !matches!(name.as_str(), ".self" | ".refClassDef"))
+                .map(|(name, members)| (name, members[0].kind))
+                .collect()
+        };
+        let actual: BTreeMap<_, _> = members
+            .into_iter()
+            .map(|(name, kind)| {
+                (
+                    name.clone(),
+                    match kind {
+                        MemberKind::ActiveBinding => "active-binding",
+                        MemberKind::Method => "method",
+                        _ if matches!(name.as_str(), ".objectParent" | ".objectPackage") => {
+                            "method"
+                        }
+                        _ => "field",
+                    }
+                    .to_string(),
+                )
+            })
+            .collect();
+        assert_eq!(actual, runtime.members, "{}", runtime.binding);
+    }
+    for method in &pin.facts.methods {
+        let source = format!(
+            "{}\n{}${}()",
+            pin.source, method.signature[0], method.generic
+        );
+        let offset = source.rfind(')').unwrap();
+        let help = arity::lsp::compute_signature_help(
+            &source,
+            offset,
+            &arity::rindex::provider::IndexedProvider::empty(),
+        )
+        .unwrap();
+        let parameters: Vec<_> = method
+            .formals
+            .iter()
+            .map(|formal| match &formal.default {
+                Some(default) => format!("{} = {default}", formal.name),
+                None => formal.name.clone(),
+            })
+            .collect();
+        assert_eq!(
+            help.signatures[0].label,
+            format!("{}({})", method.generic, parameters.join(", ")),
+            "{:?}",
+            method.signature
+        );
     }
 }
 
@@ -437,7 +528,7 @@ fn reference_apis_match_pinned_fields_methods_slots_and_initializers() {
             .reference_super_method(
                 &ClassId {
                     path: path.into(),
-                    key: declaration.class.clone(),
+                    key: declaration.class.clone().unwrap(),
                 },
                 target,
             )
@@ -468,7 +559,7 @@ fn shared_member_and_method_facts_match_pinned_runtime_observations() {
         // runtime members (such as R6's clone) are not extra declarations.
         assert_eq!(facts.oop.members.len(), member_count, "{name}");
         for member in &facts.oop.members {
-            let class = facts.declaration(&member.class).unwrap();
+            let class = facts.declaration(member.class.as_ref().unwrap()).unwrap();
             let ClassName::Known(member_name) = &member.name else {
                 panic!("literal member");
             };

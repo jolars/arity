@@ -1,5 +1,7 @@
 use super::super::*;
 
+mod mutations;
+
 struct StringVector {
     entries: Vec<(Option<String>, ClassName, TextRange)>,
     factory: Option<FunctionRef>,
@@ -17,6 +19,16 @@ struct MemberEntry {
     untyped: bool,
 }
 
+struct MemberInput {
+    system: ClassSystem,
+    class: Option<ClassKey>,
+    visibility: MemberVisibility,
+    kind: MemberKind,
+    reference_field: bool,
+    issues: BTreeSet<OopUncertainty>,
+    entry: MemberEntry,
+}
+
 struct Projection<'a> {
     model: &'a SemanticModel,
     root: &'a SyntaxNode,
@@ -30,6 +42,7 @@ struct Projection<'a> {
     generic_values: HashMap<TextRange, OopKey>,
     counts: BTreeMap<(ClassOwner, OopSystem, OopKind), u32>,
     include_sites: bool,
+    events: Vec<(TextRange, OopEvent)>,
 }
 
 impl Projection<'_> {
@@ -43,6 +56,24 @@ impl Projection<'_> {
             .and_then(SyntaxElement::into_node)
             .and_then(FunctionExpr::cast)
         else {
+            if let Some(namespace) = value
+                .as_ref()
+                .and_then(SyntaxElement::as_node)
+                .cloned()
+                .and_then(BinaryExpr::cast)
+                .and_then(|binary| binary.namespace_access())
+            {
+                self.facts
+                    .method_implementations
+                    .push(MethodImplementationDef {
+                        method: key.clone(),
+                        source: MethodImplementationSource::Qualified {
+                            package: namespace.package.to_string(),
+                            name: namespace.name.to_string(),
+                        },
+                    });
+                return;
+            }
             if let Some(token) = value.as_ref().and_then(SyntaxElement::as_token)
                 && (token.kind() == SyntaxKind::IDENT
                     || (key.system == OopSystem::S3 && token.kind() == SyntaxKind::STRING))
@@ -272,6 +303,22 @@ pub(in crate::project::classes) fn declaration_roots(
         })
         .chain(
             root.descendants()
+                .filter_map(CallExpr::cast)
+                .filter(|call| {
+                    call.base()
+                        .and_then(SyntaxElement::into_node)
+                        .and_then(BinaryExpr::cast)
+                        .is_some_and(|binary| {
+                            binary.op_kind() == Some(SyntaxKind::DOLLAR)
+                                && binary.rhs().as_ref().and_then(literal).is_some_and(|name| {
+                                    matches!(name.as_str(), "set" | "methods" | "lock" | "unlock")
+                                })
+                        })
+                })
+                .map(|call| call.syntax().clone()),
+        )
+        .chain(
+            root.descendants()
                 .filter_map(AssignmentExpr::cast)
                 .filter(|assignment| {
                     assignment.target_name().is_some_and(|name| {
@@ -314,8 +361,11 @@ pub(in crate::project::classes) fn project(
         generic_values: HashMap::new(),
         counts: BTreeMap::new(),
         include_sites,
+        events: Vec::new(),
     };
     projection.members();
+    projection.mutations();
+    projection.execution_events();
     projection.generics();
     projection.generic_bindings();
     projection.registered_methods();
@@ -326,6 +376,12 @@ pub(in crate::project::classes) fn project(
         .map(|(_, reference, _)| reference)
         .collect::<BTreeSet<_>>()
         .into_iter()
+        .collect();
+    projection.events.sort_by_key(|(range, _)| range.end());
+    projection.facts.events = projection
+        .events
+        .iter()
+        .map(|(_, event)| event.clone())
         .collect();
     if include_sites {
         projection.use_sites();
@@ -351,6 +407,47 @@ pub fn method_implementation_sites(
     root: &SyntaxNode,
 ) -> Vec<MethodImplementationSite> {
     extract(model, root, false).method_implementations
+}
+
+pub fn oop_point(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+    path: &std::path::Path,
+    offset: TextSize,
+) -> OopPoint {
+    let classes = extract(model, root, false);
+    let owners = owner_map(root, &classes.facts.declarations, &classes.locations);
+    let mut projection = Projection {
+        model,
+        root,
+        owners: &owners,
+        classes: &classes,
+        class_keys: classes
+            .facts
+            .declarations
+            .iter()
+            .zip(&classes.locations)
+            .map(|(class, location)| (location.call_range, class.key.clone()))
+            .collect(),
+        facts: OopFacts::default(),
+        sites: Vec::new(),
+        method_bodies: Vec::new(),
+        method_implementations: Vec::new(),
+        generic_values: HashMap::new(),
+        counts: BTreeMap::new(),
+        include_sites: false,
+        events: Vec::new(),
+    };
+    projection.mutations();
+    projection.execution_events();
+    OopPoint {
+        path: path.into(),
+        event: projection
+            .events
+            .iter()
+            .filter(|(range, _)| range.end() <= offset)
+            .count(),
+    }
 }
 
 impl Projection<'_> {
@@ -499,171 +596,163 @@ impl Projection<'_> {
                     uncertainty: issues.clone(),
                 });
                 for arg in entries.into_iter().flatten() {
-                    let name = arg.name;
-                    let mut member_issues = issues.clone();
-                    if name.is_none() {
-                        member_issues.insert(OopUncertainty::DynamicName);
-                    }
-                    let implementation =
-                        self.implementation_value(arg.value.clone(), &mut BTreeSet::new(), false);
-                    let callable = signature(implementation.clone());
-                    let member_kind = if reference_field && callable.is_some() {
-                        MemberKind::ActiveBinding
-                    } else if reference_field
-                        && !arg.untyped
-                        && string_name(implementation.clone()) == ClassName::Unknown
-                    {
-                        member_issues.insert(OopUncertainty::UnresolvedImplementation);
-                        MemberKind::Unknown
-                    } else if kind == MemberKind::Field && def.system() == ClassSystem::R6 {
-                        if callable.is_some() {
-                            MemberKind::Method
-                        } else if implementation
-                            .clone()
-                            .and_then(crate::ast::Expr::cast)
-                            .is_some_and(|value| match value {
-                                crate::ast::Expr::Name(name) => name.is_reserved_constant(),
-                                crate::ast::Expr::IntLiteral(_)
-                                | crate::ast::Expr::FloatLiteral(_)
-                                | crate::ast::Expr::StringLiteral(_)
-                                | crate::ast::Expr::ComplexLiteral(_) => true,
-                                _ => false,
-                            })
-                            || implementation.as_ref().is_some_and(|value| {
-                                value
-                                    .as_node()
-                                    .cloned()
-                                    .and_then(CallExpr::cast)
-                                    .and_then(|call| {
-                                        call_function_ref(self.model, self.root, &call)
-                                    })
-                                    .is_some_and(|reference| {
-                                        matches!(reference,
-                                            FunctionRef::Qualified { package, name }
-                                                if package == "base" && name == "list")
-                                    })
-                            })
-                        {
-                            MemberKind::Field
-                        } else {
-                            member_issues.insert(OopUncertainty::UnresolvedImplementation);
-                            MemberKind::Unknown
-                        }
-                    } else {
-                        kind
-                    };
-                    if callable.is_none()
-                        && matches!(member_kind, MemberKind::Method | MemberKind::ActiveBinding)
-                    {
-                        member_issues.insert(OopUncertainty::UnresolvedImplementation);
-                    }
-                    let key = self.key(call.syntax(), def.system().into(), OopKind::Member);
-                    let method = if callable.is_some()
-                        && matches!(member_kind, MemberKind::Method | MemberKind::ActiveBinding)
-                    {
-                        let method_key =
-                            self.key(call.syntax(), def.system().into(), OopKind::Method);
-                        self.facts.methods.push(MethodDef {
-                            key: method_key.clone(),
-                            system: def.system().into(),
-                            name: name.clone().map_or(ClassName::Unknown, ClassName::Known),
+                    self.member_entry(
+                        &call,
+                        MemberInput {
+                            system: def.system(),
                             class: Some(def.key.clone()),
-                            generic: None,
-                            dispatch: Vec::new(),
-                            dispatch_factory: None,
-                            signature: callable,
-                            registration: None,
-                            uncertainty: member_issues.clone(),
-                        });
-                        if matches!(def.system(), ClassSystem::R6 | ClassSystem::RefClass)
-                            && let Some(function) = implementation
-                                .clone()
-                                .and_then(SyntaxElement::into_node)
-                                .and_then(FunctionExpr::cast)
-                        {
-                            let assignment =
-                                direct_assignment(&SyntaxElement::Node(function.syntax().clone()));
-                            let source = assignment
-                                .as_ref()
-                                .and_then(|assignment| {
-                                    Some(MethodImplementationSource::Binding {
-                                        owner: owner_at(assignment.syntax(), self.owners),
-                                        name: unbacktick(&assignment.target_name()?).to_string(),
-                                    })
-                                })
-                                .unwrap_or(MethodImplementationSource::Inline);
-                            let keep_original =
-                                !matches!(source, MethodImplementationSource::Inline);
-                            self.facts
-                                .method_implementations
-                                .push(MethodImplementationDef {
-                                    method: method_key.clone(),
-                                    source,
-                                });
-                            self.method_implementations.push(MethodImplementationSite {
-                                method: method_key.clone(),
-                                function_range: function.syntax().text_range(),
-                                owner_range: call
-                                    .syntax()
-                                    .ancestors()
-                                    .find_map(FunctionExpr::cast)
-                                    .map_or(self.root.text_range(), |owner| {
-                                        owner.syntax().text_range()
-                                    }),
-                                keep_original,
-                            });
-                        }
-                        if let Some(body) = arg.value.clone() {
-                            self.method_bodies
-                                .push((body.text_range(), def.key.clone()));
-                        }
-                        Some(method_key)
-                    } else {
-                        None
-                    };
-                    let declared_type = match member_kind {
-                        MemberKind::Slot => match string_name(arg.value.clone()) {
-                            ClassName::Known(name) => Some(DispatchClass::Formal(name)),
-                            _ => Some(DispatchClass::Unknown),
+                            visibility,
+                            kind,
+                            reference_field,
+                            issues: issues.clone(),
+                            entry: arg,
                         },
-                        MemberKind::Field if def.system() == ClassSystem::RefClass => {
-                            match string_name(implementation.clone()) {
-                                _ if arg.untyped => Some(DispatchClass::Any),
-                                ClassName::Known(name) if name == "ANY" => Some(DispatchClass::Any),
-                                ClassName::Known(name) => Some(DispatchClass::Formal(name)),
-                                _ => Some(DispatchClass::Unknown),
-                            }
-                        }
-                        MemberKind::Property => arg
-                            .value
-                            .clone()
-                            .map(|value| DispatchClass::Generator(self.generator(&value))),
-                        _ => None,
-                    };
-                    self.facts.members.push(MemberDef {
-                        key: key.clone(),
-                        class: def.key.clone(),
-                        name: name.map_or(ClassName::Unknown, ClassName::Known),
-                        visibility,
-                        kind: member_kind,
-                        method,
-                        declared_type,
-                        value_factory: implementation
-                            .as_ref()
-                            .and_then(SyntaxElement::as_node)
-                            .cloned()
-                            .and_then(CallExpr::cast)
-                            .and_then(|call| call_function_ref(self.model, self.root, &call)),
-                        uncertainty: member_issues,
-                    });
-                    self.site(
-                        arg.range,
-                        OopSiteRole::Declaration,
-                        OopTarget::Declaration(key),
                     );
                 }
             }
         }
+    }
+
+    fn member_entry(&mut self, call: &CallExpr, input: MemberInput) -> OopKey {
+        let MemberInput {
+            system,
+            class,
+            visibility,
+            kind,
+            reference_field,
+            issues,
+            entry: arg,
+        } = input;
+        let name = arg.name;
+        let mut member_issues = issues.clone();
+        if name.is_none() {
+            member_issues.insert(OopUncertainty::DynamicName);
+        }
+        let implementation =
+            self.implementation_value(arg.value.clone(), &mut BTreeSet::new(), false);
+        let callable = signature(implementation.clone());
+        let member_kind = if reference_field && callable.is_some() {
+            MemberKind::ActiveBinding
+        } else if reference_field
+            && !arg.untyped
+            && string_name(implementation.clone()) == ClassName::Unknown
+        {
+            member_issues.insert(OopUncertainty::UnresolvedImplementation);
+            MemberKind::Unknown
+        } else if kind == MemberKind::Field && system == ClassSystem::R6 {
+            if callable.is_some() {
+                MemberKind::Method
+            } else if implementation
+                .clone()
+                .and_then(crate::ast::Expr::cast)
+                .is_some_and(|value| match value {
+                    crate::ast::Expr::Name(name) => name.is_reserved_constant(),
+                    crate::ast::Expr::IntLiteral(_)
+                    | crate::ast::Expr::FloatLiteral(_)
+                    | crate::ast::Expr::StringLiteral(_)
+                    | crate::ast::Expr::ComplexLiteral(_) => true,
+                    _ => false,
+                })
+                || implementation.as_ref().is_some_and(|value| {
+                    value
+                        .as_node()
+                        .cloned()
+                        .and_then(CallExpr::cast)
+                        .and_then(|call| call_function_ref(self.model, self.root, &call))
+                        .is_some_and(|reference| {
+                            matches!(reference,
+                                            FunctionRef::Qualified { package, name }
+                                                if package == "base" && name == "list")
+                        })
+                })
+            {
+                MemberKind::Field
+            } else {
+                member_issues.insert(OopUncertainty::UnresolvedImplementation);
+                MemberKind::Unknown
+            }
+        } else {
+            kind
+        };
+        if callable.is_none()
+            && matches!(member_kind, MemberKind::Method | MemberKind::ActiveBinding)
+        {
+            member_issues.insert(OopUncertainty::UnresolvedImplementation);
+        }
+        let key = self.key(call.syntax(), system.into(), OopKind::Member);
+        let method = if matches!(
+            member_kind,
+            MemberKind::Method | MemberKind::ActiveBinding | MemberKind::Unknown
+        ) {
+            let method_key = self.key(call.syntax(), system.into(), OopKind::Method);
+            let declaration = MethodDef {
+                key: method_key.clone(),
+                system: system.into(),
+                name: name.clone().map_or(ClassName::Unknown, ClassName::Known),
+                class: class.clone(),
+                generic: None,
+                dispatch: Vec::new(),
+                dispatch_factory: None,
+                signature: callable,
+                registration: None,
+                uncertainty: member_issues.clone(),
+            };
+            if member_kind == MemberKind::Unknown {
+                self.facts.possible_methods.push(declaration);
+            } else {
+                self.facts.methods.push(declaration);
+            }
+            self.implementation(&method_key, arg.value.clone(), true);
+            if let Some(body) = arg.value.clone()
+                && let Some(class) = &class
+            {
+                self.method_bodies.push((body.text_range(), class.clone()));
+            }
+            Some(method_key)
+        } else {
+            None
+        };
+        let declared_type = match member_kind {
+            MemberKind::Slot => match string_name(arg.value.clone()) {
+                ClassName::Known(name) => Some(DispatchClass::Formal(name)),
+                _ => Some(DispatchClass::Unknown),
+            },
+            MemberKind::Field if system == ClassSystem::RefClass => {
+                match string_name(implementation.clone()) {
+                    _ if arg.untyped => Some(DispatchClass::Any),
+                    ClassName::Known(name) if name == "ANY" => Some(DispatchClass::Any),
+                    ClassName::Known(name) => Some(DispatchClass::Formal(name)),
+                    _ => Some(DispatchClass::Unknown),
+                }
+            }
+            MemberKind::Property => arg
+                .value
+                .clone()
+                .map(|value| DispatchClass::Generator(self.generator(&value))),
+            _ => None,
+        };
+        self.facts.members.push(MemberDef {
+            key: key.clone(),
+            class: class.clone(),
+            name: name.map_or(ClassName::Unknown, ClassName::Known),
+            visibility,
+            kind: member_kind,
+            method,
+            declared_type,
+            value_factory: implementation
+                .as_ref()
+                .and_then(SyntaxElement::as_node)
+                .cloned()
+                .and_then(CallExpr::cast)
+                .and_then(|call| call_function_ref(self.model, self.root, &call)),
+            uncertainty: member_issues,
+        });
+        self.site(
+            arg.range,
+            OopSiteRole::Declaration,
+            OopTarget::Declaration(key.clone()),
+        );
+        key
     }
 
     fn generics(&mut self) {

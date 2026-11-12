@@ -23,7 +23,12 @@ pub(crate) fn with_document_semantics<T>(
     let root = parse(buffer.text()).cst;
     let model = SemanticModel::build(&root);
     let resolved = salsa::Cancelled::catch(AssertUnwindSafe(|| {
-        if !crate::project::classes::has_method_candidates(&model) {
+        if !crate::project::classes::has_method_candidates(&model)
+            && !model
+                .scopes()
+                .iter()
+                .any(|scope| scope.kind == crate::semantic::ScopeKind::Function)
+        {
             return None;
         }
         let facts = crate::project::file_class_defs(&model, &root);

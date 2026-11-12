@@ -43,8 +43,7 @@ Definition "R6Class(\"Pretend\"": [{"range":[0,7],"text":"R6Class"}]
 TypeHierarchy "\"Pretend\"": null
 
 === r6/dynamic ===
-known gap: A method installed through $set has no implicit self binding.
-diagnostic: undefined-symbol severity=2 199..203 "self"
+diagnostics: []
 symbols: [["class_name",13,null],["factory",13,null],["Counter",13,null],["member_name",13,null],["obj",13,null]]
 TypeHierarchy "class_name, public": null
 Definition "obj$read()": null

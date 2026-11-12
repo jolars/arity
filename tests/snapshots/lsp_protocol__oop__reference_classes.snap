@@ -62,8 +62,7 @@ Definition "setRefClass(\"Pretend\"": [{"range":[0,11],"text":"setRefClass"}]
 TypeHierarchy "\"Pretend\"": null
 
 === reference_classes/dynamic ===
-known gap: A method added through a generator has no implicit .self binding.
-diagnostic: undefined-symbol severity=2 203..208 ".self"
+diagnostics: []
 symbols: [["class_name",13,null],["field_name",13,null],["Counter",13,null],["obj",13,null]]
 TypeHierarchy "class_name, fields": null
 Definition "obj$read()": null

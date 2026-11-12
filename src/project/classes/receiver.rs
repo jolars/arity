@@ -14,6 +14,9 @@ pub enum ClassAccess {
 pub struct ClassReceiver {
     pub class: ClassId,
     pub access: ClassAccess,
+    pub point: Option<OopPoint>,
+    pub cached_members: BTreeMap<String, OopPoint>,
+    pub uncertain_cache: bool,
 }
 
 impl ClassIndex {
@@ -60,7 +63,7 @@ impl ClassIndex {
             let receiver = self.class_receiver(path, root, model, &binary.lhs()?)?;
             let name = unbacktick(name.text());
             if receiver.class.key.system == ClassSystem::R6 {
-                let api = self.r6_api(&receiver.class)?;
+                let api = self.r6_api_at(&receiver.class, receiver.point.as_ref())?;
                 let surface = api.members(receiver.access);
                 if !surface.complete {
                     return None;
@@ -78,7 +81,7 @@ impl ClassIndex {
                 };
                 return Some((name.into(), signature));
             }
-            let api = self.reference_api(&receiver.class)?;
+            let api = self.reference_receiver_api(&receiver)?;
             let signature = if receiver.access == ClassAccess::Generator && name == "new" {
                 api.initializer?
             } else {
@@ -105,7 +108,7 @@ impl ClassIndex {
         {
             return Some((
                 base.to_string(),
-                self.reference_api(&receiver.class)?.initializer?,
+                self.reference_receiver_api(&receiver)?.initializer?,
             ));
         }
         let token = base.as_token()?;
@@ -149,10 +152,7 @@ impl ClassIndex {
         let [method] = candidates.as_slice() else {
             return None;
         };
-        let class = ClassId {
-            path: path.into(),
-            key: method.class.clone()?,
-        };
+        let class = self.method_class(path, &method.key)?;
         let member = if name == "callSuper" {
             let ClassName::Known(method_name) = &method.name else {
                 return None;
@@ -185,6 +185,105 @@ struct ReceiverLookup<'a> {
 }
 
 impl ReceiverLookup<'_> {
+    fn point(&self, value: &SyntaxElement) -> Option<OopPoint> {
+        if value.parent().is_some_and(|node| {
+            node.ancestors()
+                .any(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
+        }) {
+            return None;
+        }
+        Some(oop_point(
+            self.model,
+            self.root,
+            self.path,
+            value.text_range().start(),
+        ))
+    }
+
+    fn object_origin(&self, value: &SyntaxElement, depth: usize) -> Option<TextRange> {
+        if depth >= 32 {
+            return None;
+        }
+        if let Some(binding) = value
+            .as_token()
+            .and_then(|token| read_binding(self.model, token))
+        {
+            return self.object_origin(&stable_value(self.model, self.root, binding)?, depth + 1);
+        }
+        Some(value.text_range())
+    }
+
+    fn reference_cache(&self, receiver: &mut ClassReceiver, value: &SyntaxElement) {
+        let Some(origin) = self.object_origin(value, 0) else {
+            return;
+        };
+        for binary in self.root.descendants().filter_map(BinaryExpr::cast) {
+            if binary.op_kind() != Some(SyntaxKind::DOLLAR)
+                || binary.syntax().text_range().start() >= value.text_range().start()
+            {
+                continue;
+            }
+            let (Some(lhs), Some(rhs)) = (binary.lhs(), binary.rhs()) else {
+                continue;
+            };
+            if self.object_origin(&lhs, 0) != Some(origin) {
+                continue;
+            }
+            if binary
+                .syntax()
+                .ancestors()
+                .any(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
+            {
+                continue;
+            }
+            let Some(name) = rhs
+                .as_token()
+                .map(|token| unbacktick(token.text()).to_string())
+            else {
+                continue;
+            };
+            if binary
+                .syntax()
+                .parent()
+                .and_then(AssignmentExpr::cast)
+                .is_some_and(|assignment| {
+                    assignment
+                        .target_element()
+                        .is_some_and(|target| target.text_range() == binary.syntax().text_range())
+                })
+            {
+                continue;
+            }
+            let eager = unconditional(binary.syntax())
+                || binary
+                    .syntax()
+                    .parent()
+                    .and_then(CallExpr::cast)
+                    .is_some_and(|call| unconditional(call.syntax()));
+            if !eager {
+                let previous = self
+                    .index
+                    .reference_api_at(&receiver.class, self.point(&lhs).as_ref());
+                let current = self
+                    .index
+                    .reference_api_at(&receiver.class, receiver.point.as_ref());
+                if previous
+                    .as_ref()
+                    .and_then(|api| api.instance.entries.get(&name))
+                    != current
+                        .as_ref()
+                        .and_then(|api| api.instance.entries.get(&name))
+                {
+                    receiver.uncertain_cache = true;
+                }
+                continue;
+            }
+            if let Some(point) = self.point(&lhs) {
+                receiver.cached_members.entry(name).or_insert(point);
+            }
+        }
+    }
+
     fn resolve(
         &self,
         value: &SyntaxElement,
@@ -243,6 +342,9 @@ impl ReceiverLookup<'_> {
                 })
             {
                 return Some(ClassReceiver {
+                    point: self.point(value),
+                    cached_members: BTreeMap::new(),
+                    uncertain_cache: false,
                     class: id.clone(),
                     access: ClassAccess::Generator,
                 });
@@ -259,6 +361,9 @@ impl ReceiverLookup<'_> {
         {
             let receiver = self.resolve(&binary.lhs()?, visiting, depth + 1)?;
             return (receiver.access == ClassAccess::Generator).then_some(ClassReceiver {
+                point: self.point(value),
+                cached_members: BTreeMap::new(),
+                uncertain_cache: false,
                 class: receiver.class,
                 access: ClassAccess::Public,
             });
@@ -266,6 +371,9 @@ impl ReceiverLookup<'_> {
         if let Some(call) = value.as_node().cloned().and_then(CallExpr::cast) {
             if let Some(class) = index.reference_lookup(path, root, model, &call) {
                 return Some(ClassReceiver {
+                    point: self.point(value),
+                    cached_members: BTreeMap::new(),
+                    uncertain_cache: false,
                     class,
                     access: ClassAccess::Generator,
                 });
@@ -283,7 +391,7 @@ impl ReceiverLookup<'_> {
                     && receiver.access == ClassAccess::Public
                 {
                     let name = unbacktick(name.text());
-                    let api = index.reference_api(&receiver.class)?;
+                    let api = index.reference_receiver_api(&receiver)?;
                     let [member] = api.instance.entries.get(name)?.as_slice() else {
                         return None;
                     };
@@ -291,6 +399,9 @@ impl ReceiverLookup<'_> {
                         && (name == "copy" || call.arg_list()?.args().next().is_none())
                     {
                         return Some(ClassReceiver {
+                            point: self.point(value),
+                            cached_members: BTreeMap::new(),
+                            uncertain_cache: false,
                             class: receiver.class,
                             access: if name == "copy" {
                                 ClassAccess::Public
@@ -306,6 +417,9 @@ impl ReceiverLookup<'_> {
             return (receiver.class.key.system == ClassSystem::RefClass
                 && receiver.access == ClassAccess::Generator)
                 .then_some(ClassReceiver {
+                    point: self.point(value),
+                    cached_members: BTreeMap::new(),
+                    uncertain_cache: false,
                     class: receiver.class,
                     access: ClassAccess::Public,
                 });
@@ -350,20 +464,10 @@ impl ReceiverLookup<'_> {
                         .iter()
                         .filter(|site| site.function_range.contains_range(token.text_range()))
                         .filter(|site| Some(site.function_range.len()) == innermost)
-                        .filter_map(|site| {
-                            index
-                                .file(path)?
-                                .facts
-                                .oop
-                                .methods
-                                .iter()
-                                .find(|method| method.key == site.method)?
-                                .class
-                                .clone()
-                        })
+                        .filter_map(|site| index.method_class(path, &site.method))
                         .collect::<BTreeSet<_>>();
-                    candidates.retain(|key| {
-                        key.system
+                    candidates.retain(|id| {
+                        id.key.system
                             == if name == ".self" {
                                 ClassSystem::RefClass
                             } else {
@@ -372,10 +476,10 @@ impl ReceiverLookup<'_> {
                     });
                     if candidates.len() == 1 {
                         return Some(ClassReceiver {
-                            class: ClassId {
-                                path: path.into(),
-                                key: candidates.pop_first()?,
-                            },
+                            point: self.point(value),
+                            cached_members: BTreeMap::new(),
+                            uncertain_cache: false,
+                            class: candidates.pop_first()?,
                             access: match name {
                                 "private" => ClassAccess::Private,
                                 "super" => ClassAccess::Super,
@@ -393,6 +497,12 @@ impl ReceiverLookup<'_> {
         {
             return None;
         }
-        self.resolve(&stable_value(model, root, binding)?, visiting, depth + 1)
+        let mut receiver =
+            self.resolve(&stable_value(model, root, binding)?, visiting, depth + 1)?;
+        if receiver.class.key.system == ClassSystem::RefClass {
+            receiver.point = self.point(value);
+            self.reference_cache(&mut receiver, value);
+        }
+        Some(receiver)
     }
 }

@@ -10,6 +10,8 @@ use super::*;
 pub struct R6Options {
     pub class_attribute: Option<bool>,
     pub cloneable: Option<bool>,
+    pub lock_class: Option<bool>,
+    pub lock_objects: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,9 +217,13 @@ impl ClassIndex {
     /// Effective workspace R6 APIs. Unknown parents and member lists remain
     /// incomplete. No source or accessor is evaluated to discover a member.
     pub fn r6_api(&self, id: &ClassId) -> Option<R6Api> {
+        self.r6_api_at(id, None)
+    }
+
+    pub fn r6_api_at(&self, id: &ClassId, point: Option<&OopPoint>) -> Option<R6Api> {
         let class = &self.declarations.get(id)?.declaration;
         let options = class.r6.as_ref()?;
-        let layers = self.r6_layers(id, &mut BTreeSet::new());
+        let layers = self.r6_layers(id, &mut BTreeSet::new(), point);
         let mut public = layers.public();
         // R6 removes clone when the subclass and its immediate parent disagree,
         // even if an earlier ancestor had a different flag again.
@@ -247,7 +253,9 @@ impl ClassIndex {
             .map(|parents| parents.iter().collect::<Vec<_>>())
             .as_deref()
         {
-            Some([parent]) => self.r6_layers(parent, &mut BTreeSet::new()).super_members(),
+            Some([parent]) => self
+                .r6_layers(parent, &mut BTreeSet::new(), point)
+                .super_members(),
             _ => R6Members {
                 complete: class.parents.is_empty(),
                 ..R6Members::default()
@@ -281,7 +289,12 @@ impl ClassIndex {
         })
     }
 
-    fn r6_layers(&self, id: &ClassId, visiting: &mut BTreeSet<ClassId>) -> Layers {
+    fn r6_layers(
+        &self,
+        id: &ClassId,
+        visiting: &mut BTreeSet<ClassId>,
+        point: Option<&OopPoint>,
+    ) -> Layers {
         let mut layers = Layers {
             names: Some(Vec::new()),
             ..Layers::default()
@@ -301,7 +314,7 @@ impl ClassIndex {
         }
         let parents: Vec<_> = self.supertypes.get(id).into_iter().flatten().collect();
         if let [parent] = parents.as_slice() {
-            layers = self.r6_layers(parent, visiting);
+            layers = self.r6_layers(parent, visiting, point);
             if self
                 .declarations
                 .get(*parent)
@@ -351,31 +364,21 @@ impl ClassIndex {
                 }
             }
         }
+        let installed = self.own_members(id, point);
+        if !installed.complete {
+            own.incomplete();
+        }
         let mut names = BTreeSet::new();
-        for member in file
-            .facts
-            .oop
-            .members
-            .iter()
-            .filter(|member| member.class == id.key)
-        {
+        for installed in &installed.entries {
+            let member = &installed.definition;
             let ClassName::Known(name) = &member.name else {
                 own.incomplete();
                 continue;
             };
-            let stored_list = member.kind == MemberKind::Unknown
-                && member
-                    .value_factory
-                    .as_ref()
-                    .and_then(|factory| self.callee_identity(&id.path, factory))
-                    .is_some_and(|factory| factory.package == "base" && factory.name == "list");
-            let kind = if member.kind == MemberKind::Unknown && stored_list {
-                MemberKind::Field
-            } else {
-                member.kind
-            };
+            let kind = member.kind;
             if !names.insert(name)
-                || matches!(name.as_str(), "clone" | "self" | "super" | "private")
+                || matches!(name.as_str(), "self" | "super" | "private")
+                || (name == "clone" && member.class.is_some())
                 || (name == "initialize"
                     && (member.visibility == MemberVisibility::Private
                         || member.kind == MemberKind::ActiveBinding))
@@ -389,38 +392,24 @@ impl ClassIndex {
                 (MemberVisibility::Public, _) => &mut own.public_fields,
                 (MemberVisibility::Private, _) => &mut own.private_fields,
             };
-            let signature = member
-                .method
-                .as_ref()
-                .and_then(|key| {
-                    self.method(&OopId {
-                        path: id.path.clone(),
-                        key: key.clone(),
-                    })
-                })
-                .and_then(|method| method.signature.clone());
             target
                 .entries
                 .entry(name.clone())
                 .or_default()
                 .push(R6Member {
-                    declaration: Some(OopId {
-                        path: id.path.clone(),
-                        key: member.key.clone(),
-                    }),
+                    declaration: Some(installed.id.clone()),
                     kind,
-                    signature,
+                    signature: installed.signature.clone(),
                 });
             if member
                 .uncertainty
                 .contains(&OopUncertainty::UnresolvedImplementation)
-                && !stored_list
             {
                 target.complete = false;
             }
         }
         match def.r6.as_ref().and_then(|options| options.cloneable) {
-            Some(true) => {
+            Some(true) if !own.public_methods.entries.contains_key("clone") => {
                 own.public_methods.entries.insert(
                     "clone".into(),
                     vec![generated(
@@ -429,7 +418,7 @@ impl ClassIndex {
                     )],
                 );
             }
-            Some(false) => {}
+            Some(_) => {}
             None => own.public_methods.complete = false,
         }
         overlay(&mut layers.public_fields, &own.public_fields);

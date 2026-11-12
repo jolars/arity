@@ -117,6 +117,22 @@ fn generator_members() -> ReferenceMembers {
 }
 
 impl ClassIndex {
+    pub fn reference_receiver_api(&self, receiver: &ClassReceiver) -> Option<ReferenceApi> {
+        let mut api = self.reference_api_at(&receiver.class, receiver.point.as_ref())?;
+        api.instance.complete &= !receiver.uncertain_cache;
+        for (name, point) in &receiver.cached_members {
+            let cached = self.reference_api_at(&receiver.class, Some(point))?;
+            if let Some(members) = cached.instance.entries.get(name)
+                && members
+                    .iter()
+                    .any(|member| member.kind == MemberKind::Method)
+            {
+                api.instance.entries.insert(name.clone(), members.clone());
+                api.instance.complete &= cached.instance.complete;
+            }
+        }
+        Some(api)
+    }
     /// The standard base is supplied by methods itself, without a workspace
     /// declaration. A visible declaration with that name still needs resolution.
     pub(super) fn reference_base_parent(&self, id: &ClassId, ordinal: usize) -> bool {
@@ -202,9 +218,13 @@ impl ClassIndex {
     }
 
     pub fn reference_api(&self, id: &ClassId) -> Option<ReferenceApi> {
+        self.reference_api_at(id, None)
+    }
+
+    pub fn reference_api_at(&self, id: &ClassId, point: Option<&OopPoint>) -> Option<ReferenceApi> {
         (self.declarations.get(id)?.declaration.system() == ClassSystem::RefClass).then_some(())?;
         let (mut instance, mut slots) =
-            self.reference_members(id, &mut BTreeSet::new(), &mut BTreeMap::new());
+            self.reference_members(id, &mut BTreeSet::new(), &mut BTreeMap::new(), point);
         let class = &self.declarations.get(id)?.declaration;
         let registry_known = match &class.name {
             ClassName::Known(name) => {
@@ -264,7 +284,8 @@ impl ClassIndex {
             if self.declarations.get(parent)?.declaration.system() != ClassSystem::RefClass {
                 continue;
             }
-            let api = self.reference_api(parent)?;
+            let point = self.declaration_point(id);
+            let api = self.reference_api_at(parent, point.as_ref())?;
             if !api.instance.complete {
                 return None;
             }
@@ -293,9 +314,11 @@ impl ClassIndex {
         &self,
         id: &ClassId,
         visiting: &mut BTreeSet<ClassId>,
-        cache: &mut BTreeMap<ClassId, (ReferenceMembers, ReferenceMembers)>,
+        cache: &mut BTreeMap<(ClassId, Option<OopPoint>), (ReferenceMembers, ReferenceMembers)>,
+        point: Option<&OopPoint>,
     ) -> (ReferenceMembers, ReferenceMembers) {
-        if let Some(members) = cache.get(id) {
+        let cache_key = (id.clone(), point.cloned());
+        if let Some(members) = cache.get(&cache_key) {
             return members.clone();
         }
         let mut members = ReferenceMembers::default();
@@ -344,7 +367,9 @@ impl ClassIndex {
                 slots.complete = false;
                 continue;
             }
-            let (inherited, inherited_slots) = self.reference_members(parent, visiting, cache);
+            let declaration = self.declaration_point(id);
+            let (inherited, inherited_slots) =
+                self.reference_members(parent, visiting, cache, declaration.as_ref());
             members.complete &= inherited.complete;
             slots.complete &= inherited_slots.complete;
             for (name, candidates) in inherited.entries {
@@ -392,27 +417,21 @@ impl ClassIndex {
         }
         let mut own = BTreeMap::<String, Vec<ReferenceMember>>::new();
         let mut own_slots = BTreeMap::<String, Vec<ReferenceMember>>::new();
-        for member in file
-            .facts
-            .oop
-            .members
-            .iter()
-            .filter(|member| member.class == id.key)
-        {
+        let installed = self.own_members(id, point);
+        members.complete &= installed.complete;
+        members.entries.retain(|name, candidates| {
+            !installed.removals.contains(name)
+                || candidates
+                    .iter()
+                    .any(|member| member.kind != MemberKind::Method)
+        });
+        for installed in &installed.entries {
+            let member = &installed.definition;
             let ClassName::Known(name) = &member.name else {
                 members.complete = false;
                 continue;
             };
-            let mut signature = member
-                .method
-                .as_ref()
-                .and_then(|key| {
-                    self.method(&OopId {
-                        path: id.path.clone(),
-                        key: key.clone(),
-                    })
-                })
-                .and_then(|method| method.signature.clone());
+            let mut signature = installed.signature.clone();
             if member.kind == MemberKind::Method
                 && let Some(signature) = &mut signature
                 && signature
@@ -431,10 +450,7 @@ impl ClassIndex {
                 .entry(name.clone())
                 .or_default()
                 .push(ReferenceMember {
-                    declaration: Some(OopId {
-                        path: id.path.clone(),
-                        key: member.key.clone(),
-                    }),
+                    declaration: Some(installed.id.clone()),
                     kind: member.kind,
                     declared_type: member.declared_type.clone(),
                     signature,
@@ -464,7 +480,7 @@ impl ClassIndex {
             slots.entries.insert(name, candidates);
         }
         visiting.remove(id);
-        cache.insert(id.clone(), (members.clone(), slots.clone()));
+        cache.insert(cache_key, (members.clone(), slots.clone()));
         (members, slots)
     }
 }

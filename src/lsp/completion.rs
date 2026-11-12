@@ -239,7 +239,7 @@ fn completions_from_context(
                 let receiver = index.class_receiver(path, root, model, &receiver)?;
                 if receiver.class.key.system == crate::project::classes::ClassSystem::RefClass {
                     use crate::project::classes::{ClassAccess, DispatchClass, MemberKind};
-                    let api = index.reference_api(&receiver.class)?;
+                    let api = index.reference_receiver_api(&receiver)?;
                     let generator = receiver.access == ClassAccess::Generator;
                     let members = if at && !generator {
                         &api.slots
@@ -297,7 +297,7 @@ fn completions_from_context(
                 if at {
                     return None;
                 }
-                let api = index.r6_api(&receiver.class)?;
+                let api = index.r6_api_at(&receiver.class, receiver.point.as_ref())?;
                 let members = api.members(receiver.access);
                 let candidates = members
                     .entries

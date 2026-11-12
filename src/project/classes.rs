@@ -27,7 +27,10 @@ mod calls;
 use calls::*;
 mod r6;
 pub use r6::{R6Access, R6Api, R6Member, R6Members, R6Options, R6Receiver};
+mod member_access;
+mod mutations;
 mod receiver;
+pub use member_access::{AccessorArgument, MemberAccess, MemberEffect};
 pub use receiver::{ClassAccess, ClassReceiver};
 mod reference;
 pub use reference::{ReferenceApi, ReferenceMember, ReferenceMembers};
@@ -561,6 +564,12 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
                 def.r6 = Some(R6Options {
                     class_attribute: flag("class"),
                     cloneable: flag("cloneable"),
+                    lock_class: if argument("lock_class").is_none() {
+                        Some(false)
+                    } else {
+                        flag("lock_class")
+                    },
+                    lock_objects: flag("lock_objects"),
                 });
             }
             let name_arg = argument(match system {
@@ -1341,7 +1350,13 @@ mod tests {
     fn class_owner_keys_ignore_unrelated_closures_and_prose() {
         let before = "f <- function() { A <- R6::R6Class(\"A\"); A }\n";
         let after = "# Prose.\ng <- function() 2\nf <- function() { h <- function() 1; A <- R6::R6Class(\"A\"); A }\n";
-        assert_eq!(facts_of(before), facts_of(after));
+        let before = facts_of(before);
+        let after = facts_of(after);
+        assert_eq!(before.declarations, after.declarations);
+        assert_eq!(before.generators, after.generators);
+        // Ordinary callable declarations are now retained for installations in
+        // other files. Adding g changes that projection, but never class keys.
+        assert_eq!(after.oop.callables.len(), before.oop.callables.len() + 1);
         let before = "A <- R6::R6Class(\"A\")\nf <- function() 1\n";
         let after = "A <- R6::R6Class(\"A\")\nf <- function() { alias <- A; alias }\n";
         assert_eq!(facts_of(before), facts_of(after));

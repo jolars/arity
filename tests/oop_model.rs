@@ -34,7 +34,7 @@ Formal <- methods::setClass("Display", slots = c(value = "numeric"))
     );
     let members = &facts.oop.members;
     assert_eq!(members.len(), 8);
-    assert_eq!(members[0].class, facts.declarations[0].key);
+    assert_eq!(members[0].class.as_ref(), Some(&facts.declarations[0].key));
     assert_eq!(members[2].visibility, MemberVisibility::Private);
     assert_eq!(members[3].kind, MemberKind::ActiveBinding);
     assert_ne!(members[0].class, members[4].class);

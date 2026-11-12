@@ -13,7 +13,9 @@ pub(super) fn expected_package(name: &str) -> Option<&'static str> {
         | "signature" | "new" | "getRefClass" => "methods",
         "new_class" | "new_generic" | "method<-" => "S7",
         "UseMethod" | "registerS3method" | "c" | "list" | "character" | "structure" | "class"
-        | "class<-" => "base",
+        | "class<-" | "lockBinding" | "unlockBinding" | "do.call" | "environment" | "globalenv" => {
+            "base"
+        }
         _ => return None,
     })
 }
