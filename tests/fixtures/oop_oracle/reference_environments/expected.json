@@ -1,0 +1,164 @@
+{
+  "facts": {
+    "classes": [
+      {
+        "binding": "Base",
+        "members": {
+          "value": "field"
+        },
+        "name": "Base",
+        "parents": []
+      },
+      {
+        "binding": "Child",
+        "members": {
+          "label": "field",
+          "value": "field"
+        },
+        "name": "Child",
+        "parents": [
+          "Base"
+        ]
+      }
+    ],
+    "constructors": [
+      {
+        "binding": "Child$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      }
+    ],
+    "dispatch": [
+      {
+        "classes": [
+          "Child"
+        ],
+        "expression": "child$read()",
+        "value": "child 2"
+      },
+      {
+        "classes": [
+          "Child"
+        ],
+        "expression": "child$nested()",
+        "value": "2"
+      },
+      {
+        "classes": [
+          "Child"
+        ],
+        "expression": "child$definition()",
+        "value": "Child"
+      },
+      {
+        "classes": [
+          "Child"
+        ],
+        "expression": "child$external()",
+        "value": "2 100"
+      },
+      {
+        "classes": [
+          "Child"
+        ],
+        "expression": "child$probe()",
+        "value": "FALSE FALSE"
+      },
+      {
+        "classes": [
+          "Child"
+        ],
+        "expression": "child$update()",
+        "value": "3"
+      },
+      {
+        "classes": [
+          "Child"
+        ],
+        "expression": "value",
+        "value": "100"
+      }
+    ],
+    "methods": [
+      {
+        "environment": [
+          [
+            ".->value",
+            ".refClassDef",
+            ".self",
+            "read",
+            "value"
+          ]
+        ],
+        "formals": [],
+        "generic": "read",
+        "signature": [
+          "Base"
+        ]
+      },
+      {
+        "environment": [
+          [
+            "callSuper"
+          ],
+          [
+            ".->label",
+            ".->value",
+            ".refClassDef",
+            ".self",
+            "initFields",
+            "initialize",
+            "label",
+            "read",
+            "read#Base",
+            "value"
+          ]
+        ],
+        "formals": [],
+        "generic": "read",
+        "signature": [
+          "Child"
+        ]
+      },
+      {
+        "environment": [
+          [
+            ".->label",
+            ".->value",
+            ".refClassDef",
+            ".self",
+            "external",
+            "initFields",
+            "initialize",
+            "label",
+            "read",
+            "read#Base",
+            "value"
+          ]
+        ],
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ],
+        "generic": "external",
+        "signature": [
+          "Child"
+        ]
+      }
+    ],
+    "system": "reference_environments"
+  },
+  "observer": "owner <- environment()\nclass_facts <- function(generator, binding) {\n  definition <- methods::getClassDef(generator@className, where = owner)\n  list(name = generator@className[[1L]], binding = binding,\n       parents = as.list(setdiff(names(Filter(function(x) x@distance == 1L, definition@contains)), \"envRefClass\")),\n       members = as.list(setNames(rep(\"field\", length(generator$fields())), names(generator$fields()))))\n}\nfacts <- list(\n  system = \"reference_environments\",\n  classes = list(class_facts(Base, \"Base\"), class_facts(Child, \"Child\")),\n  constructors = list(list(binding = \"Child$new\", formals = formal_facts(Child$new))),\n  methods = list(\n    method_facts(\"read\", \"Base\", base$read, owner),\n    method_facts(\"read\", \"Child\", child$read, owner),\n    method_facts(\"external\", \"Child\", child$external, owner)\n  ),\n  dispatch = list(\n    dispatch_facts(\"child$read()\", child, owner),\n    dispatch_facts(\"child$nested()\", child, owner),\n    dispatch_facts(\"child$definition()\", child, owner),\n    dispatch_facts(\"child$external()\", child, owner),\n    dispatch_facts(\"child$probe()\", child, owner),\n    dispatch_facts(\"child$update()\", child, owner),\n    dispatch_facts(\"value\", child, owner)\n  )\n)\n",
+  "source": "value <- 100\nBase <- methods::setRefClass(\n  \"Base\", fields = list(value = \"numeric\"),\n  methods = list(read = function() value)\n)\nChild <- methods::setRefClass(\n  \"Child\", contains = \"Base\", fields = c(label = \"character\"),\n  methods = list(\n    initialize = function(...) initFields(...),\n    read = function() paste(label, callSuper()),\n    update = function() { value <<- value + 1; value },\n    nested = function() { f <- function() value; f() },\n    definition = function() .refClassDef@className,\n    external = function(.self) paste(.self$value, value),\n    probe = function(.self) paste(exists(\".refClassDef\"), exists(\"initFields\"))\n  )\n)\nbase <- Base$new(value = 1)\nchild <- Child$new(value = 2, label = \"child\")\n",
+  "versions": {
+    "r": "4.6.1",
+    "r6": "2.6.1",
+    "s7": "0.2.2"
+  }
+}

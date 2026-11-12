@@ -79,4 +79,7 @@ richer member, environment, constructor, and dispatch facts are available for
 the next semantic-model stages. The R6 environment cases also compare injected
 bindings with semantic availability, including inherited method copies, private
 methods, active bindings, defaults, nested closures, ordinary field functions,
-and non-portable classes. No syntax gap was demonstrated by these cases.
+and non-portable classes. The Reference Class environment case covers bare
+fields, inherited methods and helpers, `.self`, `.refClassDef`, nested closures,
+nonlocal field updates, and the ordinary lexical lookup of external methods. No
+syntax gap was demonstrated by these cases.

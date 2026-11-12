@@ -37,6 +37,7 @@ fn fixture_names() -> &'static [&'static str] {
         "s4/shadowing",
         "s4/dynamic",
         "s4/named_arguments",
+        "reference_classes/method_environments",
         "reference_classes/definitions",
         "reference_classes/declaration_identity",
         "reference_classes/use_sites",

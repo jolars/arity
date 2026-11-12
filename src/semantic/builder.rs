@@ -559,6 +559,9 @@ fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) 
             ctx.data_tables.insert(name.clone());
         }
         let id = push_binding(ctx.model, target_scope, name, kind, range, ctx.loop_range);
+        if kind == BindingKind::Implicit {
+            ctx.model.bindings[id.0 as usize].super_assignment_scope = Some(scope);
+        }
         ctx.model.bindings[id.0 as usize].available_from = node.text_range().end();
         ctx.model.bindings[id.0 as usize].conditional = node
             .ancestors()
@@ -1604,6 +1607,7 @@ fn push_binding(
         available_from: def_range.end(),
         loop_range,
         conditional: false,
+        super_assignment_scope: None,
         read: false,
     });
     model.scopes[scope.0 as usize].bindings.push(id);

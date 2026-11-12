@@ -218,7 +218,6 @@
   },
   "reference_classes/use_sites": {
     "known_gaps": [
-      "Reference methods' bare fields and .self are reported as undefined.",
       "Reference methods have no member definition or signature help."
     ],
     "probes": [
@@ -679,6 +678,40 @@
         "method": "definition",
         "needle": "fn = function() self",
         "offset": 16
+      }
+    ]
+  },
+  "reference_classes/method_environments": {
+    "probes": [
+      {
+        "method": "definition",
+        "needle": "value <<-",
+        "offset": 0
+      },
+      {
+        "method": "references",
+        "needle": "value <<-",
+        "offset": 0
+      },
+      {
+        "method": "highlights",
+        "needle": "value <<-",
+        "offset": 0
+      },
+      {
+        "method": "prepare-rename",
+        "needle": "value <<-",
+        "offset": 0
+      },
+      {
+        "method": "definition",
+        "needle": "list(.self$value, value)",
+        "offset": 18
+      },
+      {
+        "method": "references",
+        "needle": "value <- 100",
+        "offset": 0
       }
     ]
   }

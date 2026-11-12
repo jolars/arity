@@ -23,7 +23,7 @@ pub(crate) fn with_document_semantics<T>(
     let root = parse(buffer.text()).cst;
     let model = SemanticModel::build(&root);
     let resolved = salsa::Cancelled::catch(AssertUnwindSafe(|| {
-        if !crate::project::classes::has_r6_candidates(&model) {
+        if !crate::project::classes::has_method_candidates(&model) {
             return None;
         }
         let facts = crate::project::file_class_defs(&model, &root);
@@ -34,7 +34,7 @@ pub(crate) fn with_document_semantics<T>(
         crate::project::classes::apply_method_environments(
             &model,
             &root,
-            &index.r6_method_environments(path),
+            &index.method_environments(path),
         )
     }))
     .unwrap_or_else(|_| Some(crate::project::classes::standalone_semantic_model(&root)));
@@ -494,6 +494,54 @@ mod document_semantics_tests {
             source.replace(
                 "list(self, private, super)",
                 "{ nested <- function() list(self, private, super); nested() }"
+            )
+        ));
+        let overlay = with_document_semantics(&db.snapshot(), path, &live, |root, model| {
+            assert_eq!(root.text().to_string(), live.text());
+            model.clone()
+        });
+        db.set_file_text(child, live.text_arc());
+        let fresh = with_document_semantics(&db.snapshot(), path, &live, |_, model| model.clone());
+        assert_eq!(overlay, fresh);
+    }
+
+    #[test]
+    fn reference_cold_warm_and_live_overlays_share_project_environment_resolution() {
+        use crate::project::PackageInfo;
+        let path = Path::new("/pkg/R/child.R");
+        let source = "Child <- setRefClass('Child', contains = 'Parent', methods = list(read = function() { value <<- value + 1; list(value, .self, .refClassDef) }))\n";
+        let mut db = IncrementalDatabase::default();
+        let parent = db.upsert_file(
+            Path::new("/pkg/R/parent.R"),
+            "Parent <- methods::setRefClass('Parent', fields = list(value = 'numeric'))\n",
+        );
+        let child = db.upsert_file(path, source);
+        db.set_workspace_members(vec![parent, child], vec![PathBuf::from("/pkg")]);
+        db.set_package_metadata(vec![PackageInfo {
+            root: PathBuf::from("/pkg"),
+            namespace: Some("importFrom(methods, setRefClass)\n".into()),
+            dir_sources: Default::default(),
+            native_routines: Default::default(),
+        }]);
+        let buffer = buf(source);
+        let cold = with_document_semantics(&db.snapshot(), path, &buffer, |_, model| model.clone());
+        let warm = with_document_semantics(&db.snapshot(), path, &buffer, |_, model| model.clone());
+        assert_eq!(cold, warm);
+        for name in ["value", ".self", ".refClassDef"] {
+            assert!(
+                !cold.is_free_read(
+                    cold.idents()
+                        .iter()
+                        .find(|ident| ident.name == name)
+                        .unwrap()
+                )
+            );
+        }
+        let live = buf(&format!(
+            "# Shifted.\n{}",
+            source.replace(
+                "list(value, .self, .refClassDef)",
+                "{ nested <- function() list(value, .self, .refClassDef); nested() }"
             )
         ));
         let overlay = with_document_semantics(&db.snapshot(), path, &live, |root, model| {

@@ -1,10 +1,10 @@
 //! Runtime method enclosures supplied to the single-file lexical resolver.
 //!
 //! Project analysis proves which environments a function can acquire. This
-//! module only resolves reads through those supplied environments; it neither
-//! recognizes class declarations nor performs cross-file lookup.
+//! module resolves reads and nonlocal writes through those environments; it
+//! neither recognizes class declarations nor performs cross-file lookup.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use rowan::TextRange;
 use smol_str::SmolStr;
@@ -18,37 +18,11 @@ pub enum Availability {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum GeneratedName {
-    SelfObject,
-    Private,
-    Super,
-}
-
-impl GeneratedName {
-    fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "self" => Some(Self::SelfObject),
-            "private" => Some(Self::Private),
-            "super" => Some(Self::Super),
-            _ => None,
-        }
-    }
-
-    fn index(self) -> usize {
-        match self {
-            Self::SelfObject => 0,
-            Self::Private => 1,
-            Self::Super => 2,
-        }
-    }
-}
-
 /// An identity within this semantic model, deliberately without a source span.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GeneratedBinding {
     pub enclosure: u32,
-    pub name: GeneratedName,
+    pub name: SmolStr,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -77,8 +51,9 @@ pub struct MethodEnclosure {
     /// of reads, without proving that navigation can target its bindings.
     pub parent: Option<ScopeId>,
     pub parent_is_unknown: bool,
-    /// Availability of `self`, `private`, and `super`, respectively.
-    pub bindings: [Availability; 3],
+    pub bindings: BTreeMap<SmolStr, Availability>,
+    /// Computed member lists or unresolved ancestors can supply additional names.
+    pub unknown_members: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +69,7 @@ pub(super) struct MethodEnclosures {
     environments: Vec<MethodEnclosure>,
     functions: HashMap<ScopeId, Vec<Option<u32>>>,
     scopes: HashSet<ScopeId>,
+    writes: HashSet<TextRange>,
 }
 
 impl SemanticModel {
@@ -131,7 +107,10 @@ impl SemanticModel {
             environments,
             functions,
             scopes,
+            writes: HashSet::new(),
         };
+        let writes = model.resolve_method_writes();
+        model.method_enclosures.writes = writes.iter().map(|(range, _)| *range).collect();
         model.contextual_resolutions = model
             .idents()
             .iter()
@@ -140,9 +119,107 @@ impl SemanticModel {
                     .contextual_resolution(&ident.name, ident.range, ident.scope, ident.deferred)
                     .map(|resolution| (ident.range, resolution))
             })
+            .chain(writes)
             .collect();
         super::builder::refresh_resolution(&mut model);
         model
+    }
+
+    // The lexical builder cannot know the target of a nonlocal write. Replace
+    // its provisional binding once an enclosing local or runtime environment
+    // supplies that target, so a field update cannot define a file variable.
+    fn resolve_method_writes(&mut self) -> Vec<(TextRange, IdentifierResolution)> {
+        let mut removed = HashSet::new();
+        let mut writes = Vec::new();
+        for (index, binding) in self.bindings.iter().enumerate() {
+            let Some(origin) = binding.super_assignment_scope else {
+                continue;
+            };
+            if !self.method_enclosures.scopes.contains(&origin) {
+                continue;
+            }
+            let mut frame = origin;
+            while !matches!(
+                self.scope(frame).kind,
+                ScopeKind::Function | ScopeKind::File
+            ) {
+                let Some(parent) = self.scope(frame).parent else {
+                    break;
+                };
+                frame = parent;
+            }
+            let mut lookup = Lookup {
+                model: self,
+                name: binding_name_key(&binding.name),
+                range: binding.def_range,
+                deferred: false,
+                path: HashSet::new(),
+                budget: 512,
+                result: IdentifierResolution::default(),
+            };
+            lookup.enclosing(frame, false);
+            if !lookup.result.is_source_only() || !lookup.result.lexical.is_empty() {
+                removed.insert(BindingId::from_index(index));
+                writes.push((binding.def_range, lookup.result));
+            }
+        }
+        if removed.is_empty() {
+            return writes;
+        }
+        let mut remap = HashMap::new();
+        let mut next = 0;
+        for index in 0..self.bindings.len() {
+            let old = BindingId::from_index(index);
+            if !removed.contains(&old) {
+                remap.insert(old, BindingId::from_index(next));
+                next += 1;
+            }
+        }
+        let mut index = 0;
+        self.bindings.retain(|_| {
+            let keep = !removed.contains(&BindingId::from_index(index));
+            index += 1;
+            keep
+        });
+        for ids in self.bindings_by_name.values_mut() {
+            *ids = ids.iter().filter_map(|id| remap.get(id).copied()).collect();
+        }
+        for scope in &mut self.scopes {
+            scope.bindings = scope
+                .bindings
+                .iter()
+                .filter_map(|id| remap.get(id).copied())
+                .collect();
+        }
+        for (_, resolution) in &mut writes {
+            resolution.lexical = resolution
+                .lexical
+                .iter()
+                .filter_map(|id| remap.get(id).copied())
+                .collect();
+        }
+        writes
+    }
+
+    pub(crate) fn contextual_source_target(&self, range: TextRange) -> Option<BindingId> {
+        self.source_resolution_target(self.contextual_resolutions.get(&range)?)
+    }
+
+    pub(crate) fn contextual_write_ranges(&self, binding: BindingId) -> Vec<TextRange> {
+        self.method_enclosures
+            .writes
+            .iter()
+            .filter(|range| {
+                self.contextual_resolutions
+                    .get(range)
+                    .is_some_and(|resolution| resolution.lexical.contains(&binding))
+            })
+            .copied()
+            .collect()
+    }
+
+    pub(crate) fn is_contextual_write(&self, range: TextRange) -> bool {
+        self.method_enclosures.writes.contains(&range)
     }
 
     pub fn identifier_resolution(&self, ident: &super::IdentRef) -> IdentifierResolution {
@@ -203,22 +280,21 @@ impl SemanticModel {
         if resolution.generated.is_empty() {
             return None;
         }
-        Some(
-            self.idents()
+        Some({
+            let mut ranges: Vec<_> = self
+                .contextual_resolutions
                 .iter()
-                .filter(|ident| {
-                    self.contextual_resolutions
-                        .get(&ident.range)
-                        .is_some_and(|other| {
-                            other
-                                .generated
-                                .iter()
-                                .any(|id| resolution.generated.contains(id))
-                        })
+                .filter(|(_, other)| {
+                    other
+                        .generated
+                        .iter()
+                        .any(|id| resolution.generated.contains(id))
                 })
-                .map(|ident| ident.range)
-                .collect(),
-        )
+                .map(|(range, _)| *range)
+                .collect();
+            ranges.sort_by_key(|range| range.start());
+            ranges
+        })
     }
 
     /// One source occurrence cannot be rewritten differently in method copies
@@ -227,6 +303,10 @@ impl SemanticModel {
         self.variable_cohort(id).into_iter().all(|binding| {
             self.read_sites(binding)
                 .all(|ident| !self.blocks_source_navigation(ident.range))
+                && self
+                    .contextual_write_ranges(binding)
+                    .into_iter()
+                    .all(|range| !self.blocks_source_navigation(range))
         })
     }
 
@@ -255,7 +335,7 @@ impl SemanticModel {
         lookup
             .result
             .generated
-            .sort_by_key(|id| (id.enclosure, id.name.index()));
+            .sort_by(|a, b| (a.enclosure, &a.name).cmp(&(b.enclosure, &b.name)));
         lookup.result.generated.dedup();
         Some(lookup.result)
     }
@@ -287,6 +367,9 @@ impl Lookup<'_> {
             .filter(|binding| {
                 let binding = self.model.binding(*binding);
                 binding.def_range != self.range
+                    && !binding
+                        .super_assignment_scope
+                        .is_some_and(|origin| self.model.method_enclosures.scopes.contains(&origin))
                     && (!in_frame
                         || self.deferred
                         || binding.available_from <= self.range.start()
@@ -308,45 +391,48 @@ impl Lookup<'_> {
         });
         self.result.lexical.extend(candidates);
         if needs_parent {
-            if let Some(enclosures) = self.model.method_enclosures.functions.get(&id) {
-                for enclosure in enclosures {
-                    if let Some(enclosure) = enclosure {
-                        let environment =
-                            &self.model.method_enclosures.environments[*enclosure as usize];
-                        let availability = GeneratedName::from_name(&self.name)
-                            .map(|name| (name, environment.bindings[name.index()]));
-                        match availability {
-                            Some((name, Availability::Present)) => {
-                                self.result.generated.push(GeneratedBinding {
-                                    enclosure: *enclosure,
-                                    name,
-                                });
-                                continue;
-                            }
-                            Some((_, Availability::Unknown)) => self.result.uncertain = true,
-                            _ => {}
-                        }
-                        self.result.uncertain |= environment.parent_is_unknown;
-                        if let Some(parent) = environment.parent {
-                            self.scope(parent, false);
-                        } else {
-                            self.result.uncertain = true;
-                        }
-                    } else if let Some(parent) = scope.parent {
-                        self.scope(parent, false);
-                    } else {
-                        self.result.external = true;
-                    }
-                }
-            } else if let Some(parent) = scope.parent {
-                self.scope(
-                    parent,
-                    in_frame && !matches!(scope.kind, ScopeKind::Function | ScopeKind::File),
-                );
-            } else {
-                self.result.external = true;
-            }
+            self.enclosing(id, in_frame);
         }
         self.path.remove(&id);
+    }
+
+    fn enclosing(&mut self, id: ScopeId, in_frame: bool) {
+        let scope = self.model.scope(id);
+        if let Some(enclosures) = self.model.method_enclosures.functions.get(&id) {
+            for enclosure in enclosures {
+                if let Some(enclosure) = enclosure {
+                    let environment =
+                        &self.model.method_enclosures.environments[*enclosure as usize];
+                    match environment.bindings.get(&self.name) {
+                        Some(Availability::Present) => {
+                            self.result.generated.push(GeneratedBinding {
+                                enclosure: *enclosure,
+                                name: self.name.clone(),
+                            });
+                            continue;
+                        }
+                        Some(Availability::Unknown) => self.result.uncertain = true,
+                        _ => self.result.uncertain |= environment.unknown_members,
+                    }
+                    self.result.uncertain |= environment.parent_is_unknown;
+                    if let Some(parent) = environment.parent {
+                        self.scope(parent, false);
+                    } else {
+                        self.result.uncertain = true;
+                    }
+                } else if let Some(parent) = scope.parent {
+                    self.scope(parent, false);
+                } else {
+                    self.result.external = true;
+                }
+            }
+        } else if let Some(parent) = scope.parent {
+            self.scope(
+                parent,
+                in_frame && !matches!(scope.kind, ScopeKind::Function | ScopeKind::File),
+            );
+        } else {
+            self.result.external = true;
+        }
     }
 }

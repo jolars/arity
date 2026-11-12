@@ -18,6 +18,7 @@ fn fixture_names() -> &'static [&'static str] {
         "s3",
         "s4",
         "reference_classes",
+        "reference_environments",
         "r6",
         "r6_environments",
         "s7",
@@ -305,6 +306,75 @@ fn r6_method_environments_match_pinned_runtime_observations() {
             }
         }
     }
+}
+
+#[test]
+fn reference_environments_match_pinned_runtime_observations() {
+    use arity::semantic::enclosure::Availability;
+    let pin = pin("reference_environments");
+    let root = parse(&pin.source).cst;
+    let model = SemanticModel::build(&root);
+    let facts = file_class_defs(&model, &root);
+    let path = Path::new("oracle.R");
+    let index = arity::incremental::IncrementalDatabase::default()
+        .snapshot()
+        .class_index_in(path, &facts, &root, &model);
+    let environments = index.method_environments(path);
+    assert_eq!(environments.len(), 2);
+    for environment in environments {
+        let class = facts.declaration(&environment.class).unwrap();
+        let observation = pin
+            .facts
+            .methods
+            .iter()
+            .find(|method| method.generic == "read" && method.signature == [class.display_name()])
+            .unwrap();
+        for name in [".self", ".refClassDef", "value", "label"] {
+            let actual = observation
+                .environment
+                .iter()
+                .flatten()
+                .any(|binding| binding == name);
+            let expected = environment
+                .named_bindings
+                .get(name)
+                .copied()
+                .unwrap_or(Availability::Absent);
+            match expected {
+                Availability::Present => assert!(actual, "{}: {name}", class.display_name()),
+                Availability::Absent => assert!(!actual, "{}: {name}", class.display_name()),
+                Availability::Unknown => {}
+            }
+        }
+        for method in &environment.methods {
+            let definition = facts
+                .oop
+                .methods
+                .iter()
+                .find(|definition| definition.key == *method)
+                .unwrap();
+            assert_ne!(definition.name, ClassName::Known("external".into()));
+            assert_ne!(definition.name, ClassName::Known("probe".into()));
+        }
+    }
+    let external = pin
+        .facts
+        .methods
+        .iter()
+        .find(|method| method.generic == "external")
+        .unwrap();
+    // R wraps the external method and leaves the original closure outside the instance.
+    assert_eq!(external.formals.first().unwrap().name, "...");
+    let outcomes: Vec<_> = pin
+        .facts
+        .dispatch
+        .iter()
+        .map(|dispatch| dispatch.value.as_str())
+        .collect();
+    assert_eq!(
+        outcomes,
+        ["child 2", "2", "Child", "2 100", "FALSE FALSE", "3", "100"]
+    );
 }
 
 #[test]

@@ -10,8 +10,11 @@
 
 mod environments;
 mod resolve;
-pub(crate) use environments::has_r6_candidates;
-pub use environments::{R6MethodEnvironment, apply_method_environments, standalone_semantic_model};
+pub(crate) use environments::has_method_candidates;
+pub use environments::{
+    ClassMethodEnvironment, R6MethodEnvironment, apply_method_environments,
+    standalone_semantic_model,
+};
 pub use resolve::{ClassFile, ClassIndex, ClassResolution, ResolvedClass};
 mod oop;
 pub use oop::*;
@@ -244,6 +247,8 @@ pub struct ClassDef {
     pub parents: Vec<ParentRef>,
     /// A literal `c(...)` of parents is useful only if `c` really is base's.
     pub parent_vector: Option<FunctionRef>,
+    /// R6 defaults to portable lookup; a computed flag leaves member lookup uncertain.
+    pub portable: Option<bool>,
     pub uncertainty: BTreeSet<ClassUncertainty>,
 }
 
@@ -504,6 +509,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
             factory,
             parents: Vec::new(),
             parent_vector: None,
+            portable: None,
             uncertainty: BTreeSet::new(),
         };
         if matches!(def.factory, FunctionRef::Unresolved(_)) {
@@ -521,6 +527,14 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
             });
         if let Some(args) = matched_args(&call, system.formals()) {
             let argument = |formal: &str| argument(&args, formal);
+            if system == ClassSystem::R6 {
+                def.portable = match argument("portable") {
+                    None => Some(true),
+                    Some(SyntaxElement::Token(token)) if token.text() == "TRUE" => Some(true),
+                    Some(SyntaxElement::Token(token)) if token.text() == "FALSE" => Some(false),
+                    _ => None,
+                };
+            }
             let name_arg = argument(match system {
                 ClassSystem::R6 => "classname",
                 ClassSystem::S7 => "name",
