@@ -39,7 +39,7 @@ pub(crate) fn signature_help_via_db(
 }
 
 /// Build signature help for the cursor at byte `offset`, if it sits inside a
-/// call whose callee resolves to an indexed export or a known R6 member. Pure
+/// call whose callee resolves to an indexed export or a known class API. Pure
 /// (parses `text` itself) so it is unit-testable.
 pub fn compute_signature_help(
     text: &str,
@@ -69,52 +69,18 @@ fn signature_help_in(
 ) -> Option<SignatureHelp> {
     let offset = TextSize::new(offset as u32);
     let call = enclosing_call(root, offset)?;
-    if let Some(binary) = call
-        .base()
-        .and_then(crate::syntax::SyntaxElement::into_node)
-        .and_then(BinaryExpr::cast)
-        && binary.op_kind() == Some(SyntaxKind::DOLLAR)
-        && let Some(crate::syntax::SyntaxElement::Token(name)) = binary.rhs()
-        && let Some(receiver) = binary.lhs()
+    let help = oop::with_class_index(root, context, |index, model, path| {
+        let (name, signature) = index.class_call_signature(path, root, model, &call)?;
+        help_for_callable(&call, offset, &name, &signature)
+    });
+    if help.is_some()
+        || call
+            .base()
+            .and_then(crate::syntax::SyntaxElement::into_node)
+            .and_then(BinaryExpr::cast)
+            .is_some_and(|binary| binary.op_kind() == Some(SyntaxKind::DOLLAR))
     {
-        return oop::with_class_index(root, context, |index, model, path| {
-            use crate::project::classes::{MemberKind, R6Access};
-            let receiver = index.r6_receiver(path, root, model, &receiver)?;
-            let api = index.r6_api(&receiver.class)?;
-            let name = crate::semantic::symbols::unbacktick(name.text());
-            let surface = api.members(receiver.access);
-            if !surface.complete {
-                return None;
-            }
-            let signature = if receiver.access == R6Access::Generator && name == "new" {
-                api.initializer.as_ref()?
-            } else {
-                let [member] = surface.entries.get(name)?.as_slice() else {
-                    return None;
-                };
-                if member.kind != MemberKind::Method {
-                    return None;
-                }
-                member.signature.as_ref()?
-            };
-            let entry = SymbolEntry {
-                name: name.into(),
-                kind: SymbolKind::Function,
-                exported: false,
-                help: None,
-                formals: Some(
-                    signature
-                        .parameters
-                        .iter()
-                        .map(|formal| Formal {
-                            name: formal.name.clone().into(),
-                            default: formal.default.clone(),
-                        })
-                        .collect(),
-                ),
-            };
-            help_for_entry(&call, offset, &entry)
-        });
+        return help;
     }
     let callee = call.callee_token()?;
     // Resolve the callee through the same index path hover uses: this reuses
@@ -123,6 +89,31 @@ fn signature_help_in(
     let (_package, entry, _range) = resolve_query(query, root, indexed)?;
 
     help_for_entry(&call, offset, entry)
+}
+
+fn help_for_callable(
+    call: &CallExpr,
+    offset: TextSize,
+    name: &str,
+    signature: &crate::project::classes::CallableSignature,
+) -> Option<SignatureHelp> {
+    let entry = SymbolEntry {
+        name: name.into(),
+        kind: SymbolKind::Function,
+        exported: false,
+        help: None,
+        formals: Some(
+            signature
+                .parameters
+                .iter()
+                .map(|formal| Formal {
+                    name: formal.name.clone().into(),
+                    default: formal.default.clone(),
+                })
+                .collect(),
+        ),
+    };
+    help_for_entry(call, offset, &entry)
 }
 
 fn help_for_entry(call: &CallExpr, offset: TextSize, entry: &SymbolEntry) -> Option<SignatureHelp> {

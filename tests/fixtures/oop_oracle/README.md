@@ -98,3 +98,13 @@ initializer signatures, active bindings, unnamed classes, `class = FALSE`, and
 clone availability across three generations. The observer identifies active
 bindings without invoking their accessors. Ordinary Rust tests consume these
 facts without R.
+
+The Reference Class member case compares instance and generator APIs, declared
+field types, accessor identities, and inherited S4 slots separately. It covers
+direct generator calls, `$new()`, `getRefClass()`, external method formals,
+inherited initialization, ordered multiple inheritance, and `callSuper()` in an
+inherited method copy. Member discovery reads class metadata without executing
+accessors; explicit dispatch probes check accessor behavior in R. The pin
+retains external method wrappers' `(...)` formals and the underlying functions'
+`.self` parameters separately, so the editor's forwarding signatures can be
+checked against their targets.

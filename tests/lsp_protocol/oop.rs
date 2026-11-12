@@ -40,6 +40,7 @@ fn fixture_names() -> &'static [&'static str] {
         "s4/named_arguments",
         "s4/method_environments",
         "reference_classes/method_environments",
+        "reference_classes/member_apis",
         "reference_classes/definitions",
         "reference_classes/declaration_identity",
         "reference_classes/use_sites",

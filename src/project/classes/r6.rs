@@ -50,19 +50,8 @@ pub struct R6Api {
     pub class_attribute: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum R6Access {
-    Generator,
-    Public,
-    Private,
-    Super,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct R6Receiver {
-    pub class: ClassId,
-    pub access: R6Access,
-}
+pub type R6Access = ClassAccess;
+pub type R6Receiver = ClassReceiver;
 
 impl R6Api {
     pub fn members(&self, access: R6Access) -> &R6Members {
@@ -219,23 +208,8 @@ impl ClassIndex {
         model: &SemanticModel,
         value: &SyntaxElement,
     ) -> Option<R6Receiver> {
-        let extracted = extract(model, root, false);
-        let keys = extracted
-            .facts
-            .declarations
-            .iter()
-            .zip(&extracted.locations)
-            .map(|(class, location)| (location.call_range, class.key.clone()))
-            .collect();
-        ReceiverLookup {
-            index: self,
-            path,
-            root,
-            model,
-            keys: &keys,
-            implementations: &extracted.method_implementations,
-        }
-        .resolve(value, &mut BTreeSet::new())
+        self.class_receiver(path, root, model, value)
+            .filter(|receiver| receiver.class.key.system == ClassSystem::R6)
     }
 
     /// Effective workspace R6 APIs. Unknown parents and member lists remain
@@ -465,136 +439,5 @@ impl ClassIndex {
         overlay(&mut layers.active, &own.active);
         visiting.remove(id);
         layers
-    }
-}
-
-struct ReceiverLookup<'a> {
-    index: &'a ClassIndex,
-    path: &'a std::path::Path,
-    root: &'a SyntaxNode,
-    model: &'a SemanticModel,
-    keys: &'a HashMap<TextRange, ClassKey>,
-    implementations: &'a [MethodImplementationSite],
-}
-
-impl ReceiverLookup<'_> {
-    fn resolve(&self, value: &SyntaxElement, visiting: &mut BTreeSet<u32>) -> Option<R6Receiver> {
-        let Self {
-            index,
-            path,
-            root,
-            model,
-            keys,
-            implementations,
-        } = *self;
-        if let Some(paren) = value
-            .as_node()
-            .cloned()
-            .and_then(crate::ast::ParenExpr::cast)
-        {
-            return self.resolve(&paren.inner()?, visiting);
-        }
-        let reference = generator_ref(model, root, value, keys, &mut BTreeSet::new(), false);
-        if reference != GeneratorRef::Unknown {
-            let owner = ClassOwner::default();
-            let candidates = index.resolve_reference(
-                path,
-                &owner,
-                &ParentRef::Generator(reference),
-                value.parent().is_some_and(|node| {
-                    node.ancestors()
-                        .any(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
-                }),
-            );
-            if let [id] = candidates.as_slice()
-                && index.declarations.get(id).is_some_and(|class| {
-                    class.declaration.system() == ClassSystem::R6
-                        && class.declaration.binding_known()
-                })
-            {
-                return Some(R6Receiver {
-                    class: id.clone(),
-                    access: R6Access::Generator,
-                });
-            }
-        }
-        if let Some(call) = value.as_node().cloned().and_then(CallExpr::cast)
-            && let Some(binary) = call
-                .base()
-                .and_then(SyntaxElement::into_node)
-                .and_then(BinaryExpr::cast)
-            && binary.op_kind() == Some(SyntaxKind::DOLLAR)
-            && let Some(SyntaxElement::Token(name)) = binary.rhs()
-            && unbacktick(name.text()) == "new"
-        {
-            let receiver = self.resolve(&binary.lhs()?, visiting)?;
-            return (receiver.access == R6Access::Generator).then_some(R6Receiver {
-                class: receiver.class,
-                access: R6Access::Public,
-            });
-        }
-        let token = value
-            .as_token()
-            .filter(|token| token.kind() == SyntaxKind::IDENT)?;
-        let name = unbacktick(token.text());
-        if matches!(name, "self" | "private" | "super") {
-            let runtime = apply_method_environments(model, root, &index.method_environments(path));
-            if let Some(runtime) = &runtime
-                && let Some(ident) = runtime
-                    .idents()
-                    .iter()
-                    .find(|ident| ident.range == token.text_range())
-            {
-                let resolution = runtime.identifier_resolution(ident);
-                if resolution.lexical.is_empty()
-                    && !resolution.generated.is_empty()
-                    && !resolution.uncertain
-                    && !resolution.external
-                {
-                    let innermost = implementations
-                        .iter()
-                        .filter(|site| site.function_range.contains_range(token.text_range()))
-                        .map(|site| site.function_range.len())
-                        .min();
-                    let mut candidates = implementations
-                        .iter()
-                        .filter(|site| site.function_range.contains_range(token.text_range()))
-                        .filter(|site| Some(site.function_range.len()) == innermost)
-                        .filter_map(|site| {
-                            index
-                                .file(path)?
-                                .facts
-                                .oop
-                                .methods
-                                .iter()
-                                .find(|method| method.key == site.method)?
-                                .class
-                                .clone()
-                        })
-                        .collect::<BTreeSet<_>>();
-                    if candidates.len() == 1 {
-                        return Some(R6Receiver {
-                            class: ClassId {
-                                path: path.into(),
-                                key: candidates.pop_first()?,
-                            },
-                            access: match name {
-                                "private" => R6Access::Private,
-                                "super" => R6Access::Super,
-                                _ => R6Access::Public,
-                            },
-                        });
-                    }
-                }
-            }
-        }
-        let binding = read_binding(model, token)?;
-        if visiting.len() >= 32
-            || !visiting.insert(binding.0)
-            || model.binding(binding).def_range.start() >= token.text_range().start()
-        {
-            return None;
-        }
-        self.resolve(&stable_value(model, root, binding)?, visiting)
     }
 }

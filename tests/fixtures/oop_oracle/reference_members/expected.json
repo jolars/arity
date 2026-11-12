@@ -1,0 +1,1408 @@
+{
+  "facts": {
+    "classes": [
+      {
+        "binding": "Base",
+        "members": {
+          "generator/.objectPackage": "field",
+          "generator/.objectParent": "field",
+          "generator/.refClassDef": "field",
+          "generator/.self": "field",
+          "generator/accessors": "method",
+          "generator/callSuper": "method",
+          "generator/className": "field",
+          "generator/copy": "method",
+          "generator/def": "field",
+          "generator/export": "method",
+          "generator/field": "method",
+          "generator/fields": "method",
+          "generator/getClass": "method",
+          "generator/getRefClass": "method",
+          "generator/help": "method",
+          "generator/import": "method",
+          "generator/initFields": "method",
+          "generator/lock": "method",
+          "generator/methods": "method",
+          "generator/new": "method",
+          "generator/show": "method",
+          "generator/trace": "method",
+          "generator/untrace": "method",
+          "generator/usingMethods": "method",
+          "instance/.objectPackage": "field",
+          "instance/.objectParent": "field",
+          "instance/.refClassDef": "field",
+          "instance/.self": "field",
+          "instance/callSuper": "method",
+          "instance/copy": "method",
+          "instance/doubled": "active-binding",
+          "instance/export": "method",
+          "instance/external": "method",
+          "instance/field": "method",
+          "instance/getClass": "method",
+          "instance/getRefClass": "method",
+          "instance/import": "method",
+          "instance/initFields": "method",
+          "instance/initialize": "method",
+          "instance/read": "method",
+          "instance/show": "method",
+          "instance/trace": "method",
+          "instance/untrace": "method",
+          "instance/usingMethods": "method",
+          "instance/value": "field:numeric",
+          "slot/.xData": "slot"
+        },
+        "name": "Base",
+        "parents": []
+      },
+      {
+        "binding": "Child",
+        "members": {
+          "generator/.objectPackage": "field",
+          "generator/.objectParent": "field",
+          "generator/.refClassDef": "field",
+          "generator/.self": "field",
+          "generator/accessors": "method",
+          "generator/callSuper": "method",
+          "generator/className": "field",
+          "generator/copy": "method",
+          "generator/def": "field",
+          "generator/export": "method",
+          "generator/field": "method",
+          "generator/fields": "method",
+          "generator/getClass": "method",
+          "generator/getRefClass": "method",
+          "generator/help": "method",
+          "generator/import": "method",
+          "generator/initFields": "method",
+          "generator/lock": "method",
+          "generator/methods": "method",
+          "generator/new": "method",
+          "generator/show": "method",
+          "generator/trace": "method",
+          "generator/untrace": "method",
+          "generator/usingMethods": "method",
+          "instance/.objectPackage": "field",
+          "instance/.objectParent": "field",
+          "instance/.refClassDef": "field",
+          "instance/.self": "field",
+          "instance/callSuper": "method",
+          "instance/copy": "method",
+          "instance/doubled": "active-binding",
+          "instance/export": "method",
+          "instance/external": "method",
+          "instance/field": "method",
+          "instance/getClass": "method",
+          "instance/getRefClass": "method",
+          "instance/import": "method",
+          "instance/initFields": "method",
+          "instance/initialize": "method",
+          "instance/label": "field:character",
+          "instance/read": "method",
+          "instance/show": "method",
+          "instance/trace": "method",
+          "instance/untrace": "method",
+          "instance/usingMethods": "method",
+          "instance/value": "field:numeric",
+          "slot/.xData": "slot"
+        },
+        "name": "Child",
+        "parents": [
+          "Base"
+        ]
+      },
+      {
+        "binding": "Grandchild",
+        "members": {
+          "generator/.objectPackage": "field",
+          "generator/.objectParent": "field",
+          "generator/.refClassDef": "field",
+          "generator/.self": "field",
+          "generator/accessors": "method",
+          "generator/callSuper": "method",
+          "generator/className": "field",
+          "generator/copy": "method",
+          "generator/def": "field",
+          "generator/export": "method",
+          "generator/field": "method",
+          "generator/fields": "method",
+          "generator/getClass": "method",
+          "generator/getRefClass": "method",
+          "generator/help": "method",
+          "generator/import": "method",
+          "generator/initFields": "method",
+          "generator/lock": "method",
+          "generator/methods": "method",
+          "generator/new": "method",
+          "generator/show": "method",
+          "generator/trace": "method",
+          "generator/untrace": "method",
+          "generator/usingMethods": "method",
+          "instance/.objectPackage": "field",
+          "instance/.objectParent": "field",
+          "instance/.refClassDef": "field",
+          "instance/.self": "field",
+          "instance/callSuper": "method",
+          "instance/copy": "method",
+          "instance/doubled": "active-binding",
+          "instance/export": "method",
+          "instance/external": "method",
+          "instance/field": "method",
+          "instance/getClass": "method",
+          "instance/getRefClass": "method",
+          "instance/import": "method",
+          "instance/initFields": "method",
+          "instance/initialize": "method",
+          "instance/label": "field:character",
+          "instance/read": "method",
+          "instance/show": "method",
+          "instance/trace": "method",
+          "instance/untrace": "method",
+          "instance/usingMethods": "method",
+          "instance/value": "field:numeric",
+          "slot/.xData": "slot"
+        },
+        "name": "Grandchild",
+        "parents": [
+          "Child"
+        ]
+      },
+      {
+        "binding": "Other",
+        "members": {
+          "generator/.objectPackage": "field",
+          "generator/.objectParent": "field",
+          "generator/.refClassDef": "field",
+          "generator/.self": "field",
+          "generator/accessors": "method",
+          "generator/callSuper": "method",
+          "generator/className": "field",
+          "generator/copy": "method",
+          "generator/def": "field",
+          "generator/export": "method",
+          "generator/field": "method",
+          "generator/fields": "method",
+          "generator/getClass": "method",
+          "generator/getRefClass": "method",
+          "generator/help": "method",
+          "generator/import": "method",
+          "generator/initFields": "method",
+          "generator/lock": "method",
+          "generator/methods": "method",
+          "generator/new": "method",
+          "generator/show": "method",
+          "generator/trace": "method",
+          "generator/untrace": "method",
+          "generator/usingMethods": "method",
+          "instance/.objectPackage": "field",
+          "instance/.objectParent": "field",
+          "instance/.refClassDef": "field",
+          "instance/.self": "field",
+          "instance/callSuper": "method",
+          "instance/copy": "method",
+          "instance/export": "method",
+          "instance/field": "method",
+          "instance/first": "field:ANY",
+          "instance/getClass": "method",
+          "instance/getRefClass": "method",
+          "instance/import": "method",
+          "instance/initFields": "method",
+          "instance/read": "method",
+          "instance/second": "field:ANY",
+          "instance/show": "method",
+          "instance/trace": "method",
+          "instance/untrace": "method",
+          "instance/usingMethods": "method",
+          "slot/.xData": "slot"
+        },
+        "name": "Other",
+        "parents": []
+      },
+      {
+        "binding": "Multiple",
+        "members": {
+          "generator/.objectPackage": "field",
+          "generator/.objectParent": "field",
+          "generator/.refClassDef": "field",
+          "generator/.self": "field",
+          "generator/accessors": "method",
+          "generator/callSuper": "method",
+          "generator/className": "field",
+          "generator/copy": "method",
+          "generator/def": "field",
+          "generator/export": "method",
+          "generator/field": "method",
+          "generator/fields": "method",
+          "generator/getClass": "method",
+          "generator/getRefClass": "method",
+          "generator/help": "method",
+          "generator/import": "method",
+          "generator/initFields": "method",
+          "generator/lock": "method",
+          "generator/methods": "method",
+          "generator/new": "method",
+          "generator/show": "method",
+          "generator/trace": "method",
+          "generator/untrace": "method",
+          "generator/usingMethods": "method",
+          "instance/.objectPackage": "field",
+          "instance/.objectParent": "field",
+          "instance/.refClassDef": "field",
+          "instance/.self": "field",
+          "instance/callSuper": "method",
+          "instance/copy": "method",
+          "instance/doubled": "active-binding",
+          "instance/export": "method",
+          "instance/external": "method",
+          "instance/field": "method",
+          "instance/first": "field:ANY",
+          "instance/getClass": "method",
+          "instance/getRefClass": "method",
+          "instance/import": "method",
+          "instance/initFields": "method",
+          "instance/initialize": "method",
+          "instance/label": "field:character",
+          "instance/read": "method",
+          "instance/second": "field:ANY",
+          "instance/show": "method",
+          "instance/trace": "method",
+          "instance/untrace": "method",
+          "instance/usingMethods": "method",
+          "instance/value": "field:numeric",
+          "slot/.xData": "slot"
+        },
+        "name": "Multiple",
+        "parents": [
+          "Child",
+          "Other"
+        ]
+      },
+      {
+        "binding": "Mixed",
+        "members": {
+          "generator/.objectPackage": "field",
+          "generator/.objectParent": "field",
+          "generator/.refClassDef": "field",
+          "generator/.self": "field",
+          "generator/accessors": "method",
+          "generator/callSuper": "method",
+          "generator/className": "field",
+          "generator/copy": "method",
+          "generator/def": "field",
+          "generator/export": "method",
+          "generator/field": "method",
+          "generator/fields": "method",
+          "generator/getClass": "method",
+          "generator/getRefClass": "method",
+          "generator/help": "method",
+          "generator/import": "method",
+          "generator/initFields": "method",
+          "generator/lock": "method",
+          "generator/methods": "method",
+          "generator/new": "method",
+          "generator/show": "method",
+          "generator/trace": "method",
+          "generator/untrace": "method",
+          "generator/usingMethods": "method",
+          "instance/.objectPackage": "field",
+          "instance/.objectParent": "field",
+          "instance/.refClassDef": "field",
+          "instance/.self": "field",
+          "instance/callSuper": "method",
+          "instance/copy": "method",
+          "instance/doubled": "active-binding",
+          "instance/export": "method",
+          "instance/external": "method",
+          "instance/field": "method",
+          "instance/getClass": "method",
+          "instance/getRefClass": "method",
+          "instance/import": "method",
+          "instance/initFields": "method",
+          "instance/initialize": "method",
+          "instance/read": "method",
+          "instance/show": "method",
+          "instance/trace": "method",
+          "instance/untrace": "method",
+          "instance/usingMethods": "method",
+          "instance/value": "field:numeric",
+          "slot/.xData": "slot",
+          "slot/slot": "slot"
+        },
+        "name": "Mixed",
+        "parents": [
+          "Formal",
+          "Base"
+        ]
+      },
+      {
+        "binding": "Builtin",
+        "members": {
+          "generator/.objectPackage": "field",
+          "generator/.objectParent": "field",
+          "generator/.refClassDef": "field",
+          "generator/.self": "field",
+          "generator/accessors": "method",
+          "generator/callSuper": "method",
+          "generator/className": "field",
+          "generator/copy": "method",
+          "generator/def": "field",
+          "generator/export": "method",
+          "generator/field": "method",
+          "generator/fields": "method",
+          "generator/getClass": "method",
+          "generator/getRefClass": "method",
+          "generator/help": "method",
+          "generator/import": "method",
+          "generator/initFields": "method",
+          "generator/lock": "method",
+          "generator/methods": "method",
+          "generator/new": "method",
+          "generator/show": "method",
+          "generator/trace": "method",
+          "generator/untrace": "method",
+          "generator/usingMethods": "method",
+          "instance/.objectPackage": "field",
+          "instance/.objectParent": "field",
+          "instance/.refClassDef": "field",
+          "instance/.self": "field",
+          "instance/callSuper": "method",
+          "instance/copy": "method",
+          "instance/export": "method",
+          "instance/field": "method",
+          "instance/getClass": "method",
+          "instance/getRefClass": "method",
+          "instance/import": "method",
+          "instance/initFields": "method",
+          "instance/show": "method",
+          "instance/trace": "method",
+          "instance/untrace": "method",
+          "instance/usingMethods": "method",
+          "slot/.xData": "slot"
+        },
+        "name": "Builtin",
+        "parents": []
+      },
+      {
+        "binding": "CustomInit",
+        "members": {
+          "generator/.objectPackage": "field",
+          "generator/.objectParent": "field",
+          "generator/.refClassDef": "field",
+          "generator/.self": "field",
+          "generator/accessors": "method",
+          "generator/callSuper": "method",
+          "generator/className": "field",
+          "generator/copy": "method",
+          "generator/def": "field",
+          "generator/export": "method",
+          "generator/field": "method",
+          "generator/fields": "method",
+          "generator/getClass": "method",
+          "generator/getRefClass": "method",
+          "generator/help": "method",
+          "generator/import": "method",
+          "generator/initFields": "method",
+          "generator/lock": "method",
+          "generator/methods": "method",
+          "generator/new": "method",
+          "generator/show": "method",
+          "generator/trace": "method",
+          "generator/untrace": "method",
+          "generator/usingMethods": "method",
+          "instance/.objectPackage": "field",
+          "instance/.objectParent": "field",
+          "instance/.refClassDef": "field",
+          "instance/.self": "field",
+          "instance/callSuper": "method",
+          "instance/copy": "method",
+          "instance/export": "method",
+          "instance/field": "method",
+          "instance/getClass": "method",
+          "instance/getRefClass": "method",
+          "instance/import": "method",
+          "instance/initFields": "method",
+          "instance/initialize": "method",
+          "instance/show": "method",
+          "instance/trace": "method",
+          "instance/untrace": "method",
+          "instance/usingMethods": "method",
+          "slot/.xData": "slot"
+        },
+        "name": "CustomInit",
+        "parents": []
+      }
+    ],
+    "constructors": [
+      {
+        "binding": "Base",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Base$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Base$initialize",
+        "formals": [
+          {
+            "default": "3",
+            "name": "value"
+          },
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Child",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Child$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Child$initialize",
+        "formals": [
+          {
+            "default": "3",
+            "name": "value"
+          },
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Grandchild",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Grandchild$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Grandchild$initialize",
+        "formals": [
+          {
+            "default": "3",
+            "name": "value"
+          },
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Other",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Other$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Other$initialize",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Multiple",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Multiple$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Multiple$initialize",
+        "formals": [
+          {
+            "default": "3",
+            "name": "value"
+          },
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Mixed",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Mixed$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Mixed$initialize",
+        "formals": [
+          {
+            "default": "3",
+            "name": "value"
+          },
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Builtin",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Builtin$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Builtin$initialize",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "CustomInit",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "CustomInit$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "CustomInit$initialize",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "generator/import",
+        "formals": [
+          {
+            "default": null,
+            "name": "value"
+          },
+          {
+            "default": "class(value)",
+            "name": "Class"
+          }
+        ]
+      },
+      {
+        "binding": "generator/.objectParent",
+        "formals": []
+      },
+      {
+        "binding": "generator/help",
+        "formals": [
+          {
+            "default": null,
+            "name": "topic"
+          }
+        ]
+      },
+      {
+        "binding": "generator/accessors",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "generator/usingMethods",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "generator/show",
+        "formals": []
+      },
+      {
+        "binding": "generator/lock",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "generator/getClass",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "generator/fields",
+        "formals": []
+      },
+      {
+        "binding": "generator/untrace",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          },
+          {
+            "default": "FALSE",
+            "name": "classMethod"
+          }
+        ]
+      },
+      {
+        "binding": "generator/export",
+        "formals": [
+          {
+            "default": null,
+            "name": "Class"
+          }
+        ]
+      },
+      {
+        "binding": "generator/.objectPackage",
+        "formals": []
+      },
+      {
+        "binding": "generator/callSuper",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "generator/methods",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "generator/copy",
+        "formals": [
+          {
+            "default": "FALSE",
+            "name": "shallow"
+          }
+        ]
+      },
+      {
+        "binding": "generator/initFields",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "generator/getRefClass",
+        "formals": [
+          {
+            "default": ".refClassDef",
+            "name": "Class"
+          }
+        ]
+      },
+      {
+        "binding": "generator/new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "generator/trace",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          },
+          {
+            "default": "FALSE",
+            "name": "classMethod"
+          }
+        ]
+      },
+      {
+        "binding": "generator/field",
+        "formals": [
+          {
+            "default": null,
+            "name": "name"
+          },
+          {
+            "default": null,
+            "name": "value"
+          }
+        ]
+      },
+      {
+        "binding": "instance/.objectPackage",
+        "formals": []
+      },
+      {
+        "binding": "instance/.objectParent",
+        "formals": []
+      },
+      {
+        "binding": "instance/callSuper",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "instance/copy",
+        "formals": [
+          {
+            "default": "FALSE",
+            "name": "shallow"
+          }
+        ]
+      },
+      {
+        "binding": "instance/export",
+        "formals": [
+          {
+            "default": null,
+            "name": "Class"
+          }
+        ]
+      },
+      {
+        "binding": "instance/external",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "instance/field",
+        "formals": [
+          {
+            "default": null,
+            "name": "name"
+          },
+          {
+            "default": null,
+            "name": "value"
+          }
+        ]
+      },
+      {
+        "binding": "instance/getClass",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "instance/getRefClass",
+        "formals": [
+          {
+            "default": ".refClassDef",
+            "name": "Class"
+          }
+        ]
+      },
+      {
+        "binding": "instance/import",
+        "formals": [
+          {
+            "default": null,
+            "name": "value"
+          },
+          {
+            "default": "class(value)",
+            "name": "Class"
+          }
+        ]
+      },
+      {
+        "binding": "instance/initFields",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "instance/initialize",
+        "formals": [
+          {
+            "default": "3",
+            "name": "value"
+          },
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "instance/read",
+        "formals": [
+          {
+            "default": "2",
+            "name": "scale"
+          }
+        ]
+      },
+      {
+        "binding": "instance/show",
+        "formals": []
+      },
+      {
+        "binding": "instance/trace",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          },
+          {
+            "default": "FALSE",
+            "name": "classMethod"
+          }
+        ]
+      },
+      {
+        "binding": "instance/untrace",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          },
+          {
+            "default": "FALSE",
+            "name": "classMethod"
+          }
+        ]
+      },
+      {
+        "binding": "instance/usingMethods",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "external-source/Base$external",
+        "formals": [
+          {
+            "default": null,
+            "name": ".self"
+          },
+          {
+            "default": "1",
+            "name": "increment"
+          }
+        ]
+      }
+    ],
+    "dispatch": [
+      {
+        "classes": [
+          "Base"
+        ],
+        "expression": "base$read()",
+        "value": "6"
+      },
+      {
+        "classes": [
+          "Child"
+        ],
+        "expression": "child$read()",
+        "value": "12"
+      },
+      {
+        "classes": [
+          "Grandchild"
+        ],
+        "expression": "grandchild$read()",
+        "value": "12"
+      },
+      {
+        "classes": [
+          "Multiple"
+        ],
+        "expression": "multiple$read()",
+        "value": "12"
+      },
+      {
+        "classes": [
+          "Mixed"
+        ],
+        "expression": "mixed$read()",
+        "value": "18"
+      },
+      {
+        "classes": [
+          "Base"
+        ],
+        "expression": "base$external()",
+        "value": "4"
+      },
+      {
+        "classes": [
+          "Base"
+        ],
+        "expression": "base$doubled",
+        "value": "6"
+      },
+      {
+        "classes": [
+          "Builtin"
+        ],
+        "expression": "builtin$copy()$getRefClass()@className",
+        "value": "Builtin"
+      },
+      {
+        "classes": [
+          "CustomInit"
+        ],
+        "expression": "custom_init$getRefClass()@className",
+        "value": "CustomInit"
+      },
+      {
+        "classes": [
+          "Child"
+        ],
+        "expression": "getRefClass('Child')@className",
+        "value": "Child"
+      }
+    ],
+    "methods": [
+      {
+        "environment": [
+          [
+            ".->value",
+            ".refClassDef",
+            ".self",
+            "callSuper",
+            "copy",
+            "doubled",
+            "export",
+            "external",
+            "field",
+            "getClass",
+            "getRefClass",
+            "import",
+            "initFields",
+            "initialize",
+            "read",
+            "show",
+            "trace",
+            "untrace",
+            "usingMethods",
+            "value"
+          ]
+        ],
+        "formals": [
+          {
+            "default": "2",
+            "name": "scale"
+          }
+        ],
+        "generic": "read",
+        "signature": [
+          "Base"
+        ]
+      },
+      {
+        "environment": [
+          [
+            "callSuper"
+          ],
+          [
+            ".->label",
+            ".->value",
+            ".refClassDef",
+            ".self",
+            "doubled",
+            "initFields",
+            "initialize",
+            "label",
+            "read",
+            "read#Base",
+            "value"
+          ]
+        ],
+        "formals": [
+          {
+            "default": "4",
+            "name": "scale"
+          }
+        ],
+        "generic": "read",
+        "signature": [
+          "Child"
+        ]
+      },
+      {
+        "environment": [
+          [
+            "callSuper"
+          ],
+          [
+            ".->label",
+            ".->value",
+            ".refClassDef",
+            ".self",
+            "doubled",
+            "initFields",
+            "initialize",
+            "label",
+            "read",
+            "read#Base",
+            "value"
+          ]
+        ],
+        "formals": [
+          {
+            "default": "4",
+            "name": "scale"
+          }
+        ],
+        "generic": "read",
+        "signature": [
+          "Grandchild"
+        ]
+      },
+      {
+        "environment": [
+          [
+            ".->label",
+            ".->value",
+            ".refClassDef",
+            ".self",
+            "doubled",
+            "initFields",
+            "initialize",
+            "label",
+            "read",
+            "read#Base",
+            "value"
+          ]
+        ],
+        "formals": [
+          {
+            "default": "2",
+            "name": "scale"
+          }
+        ],
+        "generic": "callSuper/read",
+        "signature": [
+          "Child"
+        ]
+      },
+      {
+        "environment": [
+          [
+            ".->label",
+            ".->value",
+            ".refClassDef",
+            ".self",
+            "doubled",
+            "initFields",
+            "initialize",
+            "label",
+            "read",
+            "read#Base",
+            "value"
+          ]
+        ],
+        "formals": [
+          {
+            "default": "2",
+            "name": "scale"
+          }
+        ],
+        "generic": "callSuper/read",
+        "signature": [
+          "Grandchild"
+        ]
+      },
+      {
+        "environment": [
+          [
+            ".->value",
+            ".refClassDef",
+            ".self",
+            "doubled",
+            "initFields",
+            "initialize",
+            "read",
+            "read#Base",
+            "value"
+          ]
+        ],
+        "formals": [
+          {
+            "default": "2",
+            "name": "scale"
+          }
+        ],
+        "generic": "callSuper/read",
+        "signature": [
+          "Mixed"
+        ]
+      },
+      {
+        "environment": [
+          [
+            ".->value",
+            ".refClassDef",
+            ".self",
+            "callSuper",
+            "copy",
+            "doubled",
+            "export",
+            "external",
+            "field",
+            "getClass",
+            "getRefClass",
+            "import",
+            "initFields",
+            "initialize",
+            "read",
+            "show",
+            "trace",
+            "untrace",
+            "usingMethods",
+            "value"
+          ]
+        ],
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ],
+        "generic": "callSuper/initialize",
+        "signature": [
+          "Base"
+        ]
+      },
+      {
+        "environment": [
+          [
+            ".refClassDef",
+            ".self",
+            "copy",
+            "copy#envRefClass",
+            "field"
+          ]
+        ],
+        "formals": [
+          {
+            "default": "FALSE",
+            "name": "shallow"
+          }
+        ],
+        "generic": "callSuper/copy",
+        "signature": [
+          "Builtin"
+        ]
+      },
+      {
+        "environment": [
+          [
+            ".refClassDef",
+            ".self",
+            "copy",
+            "copy#envRefClass",
+            "field",
+            "show",
+            "show#envRefClass"
+          ]
+        ],
+        "formals": [],
+        "generic": "callSuper/show",
+        "signature": [
+          "Builtin"
+        ]
+      },
+      {
+        "environment": [
+          [
+            ".refClassDef",
+            ".self",
+            "initFields",
+            "initialize"
+          ]
+        ],
+        "formals": [
+          {
+            "default": "7",
+            "name": "x"
+          }
+        ],
+        "generic": "callSuper/initialize",
+        "signature": [
+          "CustomInit"
+        ]
+      },
+      {
+        "environment": [
+          [
+            ".->value",
+            ".refClassDef",
+            ".self",
+            "callSuper",
+            "copy",
+            "doubled",
+            "export",
+            "external",
+            "field",
+            "getClass",
+            "getRefClass",
+            "import",
+            "initFields",
+            "initialize",
+            "read",
+            "show",
+            "trace",
+            "untrace",
+            "usingMethods",
+            "value"
+          ]
+        ],
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ],
+        "generic": "external",
+        "signature": [
+          "Base"
+        ]
+      }
+    ],
+    "system": "reference_members"
+  },
+  "observer": "owner <- environment()\ngenerators <- list(Base = Base, Child = Child, Grandchild = Grandchild,\n                   Other = Other, Multiple = Multiple, Mixed = Mixed, Builtin = Builtin,\n                   CustomInit = CustomInit)\nobjects <- list(Base = base, Child = child, Grandchild = grandchild,\n                Other = other, Multiple = multiple, Mixed = mixed, Builtin = builtin,\n                CustomInit = custom_init)\ngenerator_definition <- methods::getClassDef(\"refGeneratorSlot\")\nobject_members <- function(generator) {\n  fields <- generator$fields()\n  result <- as.list(setNames(ifelse(fields == \"activeBindingFunction\",\n                                    \"active-binding\", paste0(\"field:\", fields)), names(fields)))\n  # Super implementation aliases and backing bindings are implementation details.\n  method_names <- grep(\"#\", generator$methods(), invert = TRUE, value = TRUE)\n  result <- c(result, as.list(setNames(ifelse(method_names %in% c(\".objectParent\", \".objectPackage\"),\n                                             \"field\", \"method\"), method_names)))\n  c(result, list(.self = \"field\", .refClassDef = \"field\"))\n}\nclass_facts <- function(binding) {\n  generator <- generators[[binding]]\n  definition <- methods::getClassDef(generator@className, where = owner)\n  slot_names <- names(methods::getSlots(definition))\n  slots <- as.list(setNames(rep(\"slot\", length(slot_names)), paste0(\"slot/\", slot_names)))\n  instance <- object_members(generator)\n  names(instance) <- paste0(\"instance/\", names(instance))\n  methods <- names(generator_definition@refMethods)\n  generator_members <- c(as.list(setNames(ifelse(methods %in% c(\".objectParent\", \".objectPackage\"),\n                                               \"field\", \"method\"), methods)),\n                         list(.self = \"field\", .refClassDef = \"field\", def = \"field\", className = \"field\"))\n  names(generator_members) <- paste0(\"generator/\", names(generator_members))\n  list(name = generator@className[[1L]], binding = binding,\n       parents = as.list(setdiff(names(Filter(function(x) x@distance == 1L, definition@contains)), \"envRefClass\")),\n       members = c(instance, generator_members, slots))\n}\nget_member <- function(object, name) do.call(\"$\", list(object, name))\nfacts <- list(\n  system = \"reference_members\",\n  classes = lapply(names(generators), class_facts),\n  constructors = c(unlist(lapply(names(generators), function(binding) {\n    generator <- generators[[binding]]\n    object <- objects[[binding]]\n    list(list(binding = binding, formals = formal_facts(generator)),\n         list(binding = paste0(binding, \"$new\"), formals = formal_facts(generator$new)),\n         list(binding = paste0(binding, \"$initialize\"), formals = if (\"initialize\" %in% generator$methods()) formal_facts(object$initialize) else formal_facts(function(...) NULL)))\n  }), recursive = FALSE), lapply(names(generator_definition@refMethods), function(name) {\n    value <- get_member(Base, name)\n    list(binding = paste0(\"generator/\", name), formals = if (is.function(value)) formal_facts(value) else list())\n  }), lapply(grep(\"#\", Base$methods(), invert = TRUE, value = TRUE), function(name) {\n    value <- get_member(base, name)\n    list(binding = paste0(\"instance/\", name), formals = if (is.function(value)) formal_facts(value) else list())\n  }), list(list(binding = \"external-source/Base$external\", formals = formal_facts(base$external@actual)))),\n  methods = list(\n    method_facts(\"read\", \"Base\", base$read, owner),\n    method_facts(\"read\", \"Child\", child$read, owner),\n    method_facts(\"read\", \"Grandchild\", grandchild$read, owner),\n    method_facts(\"callSuper/read\", \"Child\", environment(child$read)$callSuper, owner),\n    method_facts(\"callSuper/read\", \"Grandchild\", environment(grandchild$read)$callSuper, owner),\n    method_facts(\"callSuper/read\", \"Mixed\", environment(mixed$read)$callSuper, owner),\n    method_facts(\"callSuper/initialize\", \"Base\", environment(base$initialize)$callSuper, owner),\n    method_facts(\"callSuper/copy\", \"Builtin\", environment(builtin$copy)$callSuper, owner),\n    method_facts(\"callSuper/show\", \"Builtin\", environment(builtin$show)$callSuper, owner),\n    method_facts(\"callSuper/initialize\", \"CustomInit\", environment(custom_init$initialize)$callSuper, owner),\n    method_facts(\"external\", \"Base\", base$external, owner)\n  ),\n  dispatch = list(\n    dispatch_facts(\"base$read()\", base, owner),\n    dispatch_facts(\"child$read()\", child, owner),\n    dispatch_facts(\"grandchild$read()\", grandchild, owner),\n    dispatch_facts(\"multiple$read()\", multiple, owner),\n    dispatch_facts(\"mixed$read()\", mixed, owner),\n    dispatch_facts(\"base$external()\", base, owner),\n    dispatch_facts(\"base$doubled\", base, owner),\n    dispatch_facts(\"builtin$copy()$getRefClass()@className\", builtin, owner),\n    dispatch_facts(\"custom_init$getRefClass()@className\", custom_init, owner),\n    dispatch_facts(\"getRefClass('Child')@className\", child, owner)\n  )\n)\n",
+  "source": "read_impl <- function(scale = 2) value * scale\nBase <- methods::setRefClass(\n  \"Base\", fields = list(value = \"numeric\", doubled = function(value) {\n    if (missing(value)) .self$value * 2 else .self$value <- value / 2\n  }), methods = list(\n    initialize = function(value = 3, ...) callSuper(value = value, ...),\n    read = read_impl,\n    external = function(.self, increment = 1) .self$value + increment\n  )\n)\nAlias <- Base\nChild <- methods::setRefClass(\n  \"Child\", contains = \"Base\", fields = c(label = \"character\"),\n  methods = list(read = function(scale = 4) callSuper(scale))\n)\nGrandchild <- methods::setRefClass(\"Grandchild\", contains = \"Child\")\nOther <- methods::setRefClass(\"Other\", fields = c(\"first\", \"second\"),\n  methods = list(read = function(other = 5) other))\nMultiple <- methods::setRefClass(\"Multiple\", contains = c(\"Child\", \"Other\"))\nFormal <- methods::setClass(\"Formal\", slots = c(slot = \"numeric\"))\nMixed <- methods::setRefClass(\"Mixed\", contains = c(\"Formal\", \"Base\"),\n  methods = list(read = function(scale = 6) callSuper(scale)))\nBuiltin <- methods::setRefClass(\"Builtin\", contains = \"envRefClass\",\n  methods = list(copy = function() callSuper(), show = function() callSuper()))\nCustomInit <- methods::setRefClass(\"CustomInit\", methods = list(\n  initFields = function(x = 7) .self,\n  initialize = function(...) callSuper(...)))\nbase <- Alias()\nchild <- Child$new(label = \"child\")\ngrandchild <- getRefClass(\"Grandchild\")()\nother <- Other()\nmultiple <- Multiple()\nmixed <- Mixed()\nbuiltin <- Builtin()\ncustom_init <- CustomInit()\n",
+  "versions": {
+    "r": "4.6.1",
+    "r6": "2.6.1",
+    "s7": "0.2.2"
+  }
+}

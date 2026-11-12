@@ -197,6 +197,9 @@ pub struct OopFacts {
     pub members: Vec<MemberDef>,
     pub member_groups: Vec<MemberGroup>,
     pub method_implementations: Vec<MethodImplementationDef>,
+    /// Origins used by static class lookups, confirmed with the same imports
+    /// and masking rules as declarations. No call locations enter this projection.
+    pub class_lookups: Vec<FunctionRef>,
 }
 
 /// The source closure may also survive as an ordinary function. Its stable
