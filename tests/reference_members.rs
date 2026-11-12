@@ -153,6 +153,21 @@ fn reference_signatures_forward_initializers_and_hide_external_self() {
 }
 
 #[test]
+fn reference_receivers_find_later_generator_bindings_across_closure_boundaries() {
+    let declaration = "A <- methods::setRefClass('A', fields = list(value = 'numeric'), methods = list(initialize = function(value = 2) initFields(value = value)))";
+    let source = format!("make <- function() {{ obj <- A$new(); obj$| }}\n{declaration}\n");
+    assert!(completion(&source).iter().any(|item| item.label == "value"));
+    let source = format!("make <- function() A$new(|)\n{declaration}\n");
+    assert_eq!(help(&source).as_deref(), Some("new(value = 2)"));
+    for source in [
+        format!("A$new(|)\n{declaration}\n"),
+        format!("make <- function() {{ A$new(|)\n{declaration} }}\n"),
+    ] {
+        assert!(help(&source).is_none(), "{source}");
+    }
+}
+
+#[test]
 fn reference_super_signatures_are_relative_to_the_owning_method() {
     assert_eq!(
         help(&CLASSES.replace("callSuper(scale)", "callSuper(|)")).as_deref(),

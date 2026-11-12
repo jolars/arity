@@ -644,10 +644,17 @@ fn field_candidates(root: &SyntaxNode, receiver: &SyntaxElement, at: bool) -> Ve
     // 2. Infer fields from a local record construction bound to the receiver.
     //    S4 slot inference (`new()`/`setClass`) is a follow-up, so `@` harvests only.
     if !at {
+        let definitions = binding.map(|binding| {
+            model
+                .variable_cohort(binding)
+                .into_iter()
+                .map(|binding| model.binding(binding).def_range)
+                .collect()
+        });
         out.extend(constructed_fields(
             root,
             &receiver_text,
-            binding.map(|binding| model.binding(binding).def_range),
+            definitions.as_ref(),
         ));
     }
 
@@ -659,7 +666,7 @@ fn field_candidates(root: &SyntaxNode, receiver: &SyntaxElement, at: bool) -> Ve
 fn constructed_fields(
     root: &SyntaxNode,
     receiver: &str,
-    binding: Option<TextRange>,
+    definitions: Option<&HashSet<TextRange>>,
 ) -> Vec<Candidate> {
     const CONSTRUCTORS: [&str; 4] = ["list", "data.frame", "tibble", "data.table"];
     let mut out = Vec::new();
@@ -670,10 +677,10 @@ fn constructed_fields(
         if assign.target_name().as_deref() != Some(receiver) {
             continue;
         }
-        if binding.is_some_and(|binding| {
+        if definitions.is_some_and(|definitions| {
             assign
                 .target_name_token()
-                .is_none_or(|token| token.text_range() != binding)
+                .is_none_or(|token| !definitions.contains(&token.text_range()))
         }) {
             continue;
         }
@@ -1175,6 +1182,30 @@ mod tests {
         let got = dollar_labels(src);
         assert!(got.contains(&"alpha".to_string()), "{got:?}");
         assert!(got.contains(&"beta".to_string()), "{got:?}");
+    }
+
+    #[test]
+    fn field_construction_includes_reassignments_in_the_same_frame() {
+        for constructor in ["list", "data.frame", "tibble", "data.table"] {
+            let src = format!(
+                "x <- {constructor}(first = 1)\n\
+                 {{ x <- {constructor}(second = 2) }}\n\
+                 for (i in 1) x <- {constructor}(third = 3)\nx$\n"
+            );
+            let got = dollar_labels(&src);
+            assert_eq!(got, ["first", "second", "third"], "{src}");
+        }
+    }
+
+    #[test]
+    fn field_construction_excludes_shadowed_variables() {
+        let src = "x <- list(outer = 1)\ng <- function() { x <- list(hidden = 2) }\n\
+                   f <- function() { x <- list(first = 3); x <- list(second = 4); x$ }\n";
+        assert_eq!(dollar_labels(src), ["first", "second"]);
+        let src = src.replace("x$ }", "x$second }");
+        assert_eq!(dollar_labels(&format!("{src}x$\n")), ["outer"]);
+        let src = "x <- list(outer = 1)\nf <- function(x) { x$ }\n";
+        assert!(dollar_labels(src).is_empty());
     }
 
     #[test]

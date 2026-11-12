@@ -515,6 +515,9 @@ pub(crate) fn resolve_local_target(
         return None;
     }
     let range = token.text_range();
+    if model.blocks_source_navigation(range) {
+        return None;
+    }
     let name = SmolStr::new(token.text());
     if let Some(ident) = model.idents().iter().find(|i| i.range == range) {
         let binding = model.resolve_local(ident)?;

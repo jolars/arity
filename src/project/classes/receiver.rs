@@ -209,7 +209,20 @@ impl ReceiverLookup<'_> {
         {
             return self.resolve(&paren.inner()?, visiting, depth + 1);
         }
-        let reference = generator_ref(model, root, value, keys, &mut BTreeSet::new(), false);
+        // Enclosing frames and deferred promises can supply later bindings.
+        // Reads in the current execution frame still follow source order.
+        let deferred = model
+            .idents()
+            .iter()
+            .find(|ident| ident.range == value.text_range())
+            .is_some_and(|ident| {
+                ident.deferred
+                    || model.resolve_local(ident).is_some_and(|binding| {
+                        model.frame_scope(ident.scope)
+                            != model.frame_scope(model.binding(binding).scope)
+                    })
+            });
+        let reference = generator_ref(model, root, value, keys, &mut BTreeSet::new(), deferred);
         if reference != GeneratorRef::Unknown {
             let owner = ClassOwner::default();
             let candidates = index.resolve_reference(

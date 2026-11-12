@@ -94,6 +94,27 @@ value
 }
 
 #[test]
+fn reused_reference_methods_preserve_possible_external_writes() {
+    for write in ["value <<- 1", "1 ->> value"] {
+        let source = format!(
+            "helper <- function() {{ {write} }}\n\
+             A <- methods::setRefClass('A', fields = list(value = 'numeric'),\n\
+                 methods = list(update = helper))\nhelper()\nprint(value)\n"
+        );
+        assert!(findings(&source, "undefined-symbol").is_empty(), "{source}");
+        let root = arity::parser::parse(&source).cst;
+        let model = arity::project::classes::standalone_semantic_model(&root);
+        assert!(arity::project::file_exports(&model).contains("value"));
+        let offset = source.find(write).unwrap() + write.find("value").unwrap();
+        assert!(compute_definition(&source, offset).is_none());
+        for offset in [offset, source.rfind("value").unwrap()] {
+            assert!(compute_prepare_rename(&source, offset, PositionEncoding::Utf16).is_none());
+            assert!(compute_rename(&source, offset, "changed", PositionEncoding::Utf16).is_none());
+        }
+    }
+}
+
+#[test]
 fn reference_lookup_respects_shadowing_and_does_not_escape_methods() {
     let source = r#"
 A <- methods::setRefClass("A", fields = list(value = "numeric"), methods = list(
