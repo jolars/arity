@@ -22,20 +22,25 @@ pub(crate) fn signature_help_via_db(
             return None;
         }
         let root = snapshot.parsed_tree(file);
-        Some(signature_help_from_node(&root, offset, &index))
+        Some(signature_help_in(
+            &root,
+            offset,
+            &index,
+            Some((snapshot, path)),
+        ))
     }));
     match cached {
         Ok(Some(help)) => help,
         Ok(None) | Err(_) => {
             let root = parse(text).cst;
-            signature_help_from_node(&root, offset, &index)
+            signature_help_in(&root, offset, &index, Some((snapshot, path)))
         }
     }
 }
 
 /// Build signature help for the cursor at byte `offset`, if it sits inside a
-/// call whose callee resolves to an indexed export. Pure (parses `text` itself)
-/// so it is unit-testable.
+/// call whose callee resolves to an indexed export or a known R6 member. Pure
+/// (parses `text` itself) so it is unit-testable.
 pub fn compute_signature_help(
     text: &str,
     offset: usize,
@@ -53,14 +58,74 @@ pub(crate) fn signature_help_from_node(
     offset: usize,
     indexed: &IndexedProvider,
 ) -> Option<SignatureHelp> {
+    signature_help_in(root, offset, indexed, None)
+}
+
+fn signature_help_in(
+    root: &SyntaxNode,
+    offset: usize,
+    indexed: &IndexedProvider,
+    context: Option<(&Analysis, &Path)>,
+) -> Option<SignatureHelp> {
     let offset = TextSize::new(offset as u32);
     let call = enclosing_call(root, offset)?;
+    if let Some(binary) = call
+        .base()
+        .and_then(crate::syntax::SyntaxElement::into_node)
+        .and_then(BinaryExpr::cast)
+        && binary.op_kind() == Some(SyntaxKind::DOLLAR)
+        && let Some(crate::syntax::SyntaxElement::Token(name)) = binary.rhs()
+        && let Some(receiver) = binary.lhs()
+    {
+        return oop::with_class_index(root, context, |index, model, path| {
+            use crate::project::classes::{MemberKind, R6Access};
+            let receiver = index.r6_receiver(path, root, model, &receiver)?;
+            let api = index.r6_api(&receiver.class)?;
+            let name = crate::semantic::symbols::unbacktick(name.text());
+            let surface = api.members(receiver.access);
+            if !surface.complete {
+                return None;
+            }
+            let signature = if receiver.access == R6Access::Generator && name == "new" {
+                api.initializer.as_ref()?
+            } else {
+                let [member] = surface.entries.get(name)?.as_slice() else {
+                    return None;
+                };
+                if member.kind != MemberKind::Method {
+                    return None;
+                }
+                member.signature.as_ref()?
+            };
+            let entry = SymbolEntry {
+                name: name.into(),
+                kind: SymbolKind::Function,
+                exported: false,
+                help: None,
+                formals: Some(
+                    signature
+                        .parameters
+                        .iter()
+                        .map(|formal| Formal {
+                            name: formal.name.clone().into(),
+                            default: formal.default.clone(),
+                        })
+                        .collect(),
+                ),
+            };
+            help_for_entry(&call, offset, &entry)
+        });
+    }
     let callee = call.callee_token()?;
     // Resolve the callee through the same index path hover uses: this reuses
     // bare-name origin resolution and `pkg::fn(` namespace handling alike.
     let query = symbol_query_at(root, callee.text_range().start())?;
     let (_package, entry, _range) = resolve_query(query, root, indexed)?;
 
+    help_for_entry(&call, offset, entry)
+}
+
+fn help_for_entry(call: &CallExpr, offset: TextSize, entry: &SymbolEntry) -> Option<SignatureHelp> {
     let (label, parameters) = build_signature(entry)?;
     let active = active_parameter(call.arg_list().as_ref(), offset, entry, parameters.len());
     let info = SignatureInformation {
@@ -74,6 +139,22 @@ pub(crate) fn signature_help_from_node(
         active_signature: Some(0),
         active_parameter: active,
     })
+}
+
+pub(super) fn callable_label(
+    name: &str,
+    signature: &crate::project::classes::CallableSignature,
+) -> String {
+    let parameters = signature
+        .parameters
+        .iter()
+        .map(|parameter| match &parameter.default {
+            Some(default) => format!("{} = {default}", parameter.name),
+            None => parameter.name.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{name}({parameters})")
 }
 
 /// The innermost `CALL_EXPR` whose argument list the cursor sits inside, or

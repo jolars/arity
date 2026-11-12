@@ -84,6 +84,14 @@ impl NamespaceVisibility {
                         .filter(|binding| binding.owner.0.is_empty())
                         .map(|binding| (binding.name.clone(), false)),
                 )
+                .chain(
+                    target
+                        .facts
+                        .generator_aliases
+                        .iter()
+                        .filter(|binding| binding.owner.0.is_empty())
+                        .map(|binding| (binding.name.clone(), false)),
+                )
             {
                 if !exported(namespace, &name, formal) {
                     continue;

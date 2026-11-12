@@ -58,6 +58,7 @@ fn fixture_names() -> &'static [&'static str] {
         "r6/receiver_ownership",
         "r6/generator_alias",
         "r6/named_arguments",
+        "r6/member_apis",
         "s7/definitions",
         "s7/use_sites",
         "s7/incomplete",

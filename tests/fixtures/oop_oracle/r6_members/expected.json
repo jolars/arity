@@ -1,0 +1,609 @@
+{
+  "facts": {
+    "classes": [
+      {
+        "binding": "Original",
+        "members": {
+          "generator/active": "field",
+          "generator/class": "field",
+          "generator/classname": "field",
+          "generator/clone_method": "method",
+          "generator/cloneable": "field",
+          "generator/debug": "method",
+          "generator/debug_names": "field",
+          "generator/get_inherit": "method",
+          "generator/has_private": "method",
+          "generator/inherit": "field",
+          "generator/is_locked": "method",
+          "generator/lock": "method",
+          "generator/lock_class": "field",
+          "generator/lock_objects": "field",
+          "generator/new": "method",
+          "generator/parent_env": "field",
+          "generator/portable": "field",
+          "generator/private_fields": "field",
+          "generator/private_methods": "field",
+          "generator/public_fields": "field",
+          "generator/public_methods": "field",
+          "generator/self": "field",
+          "generator/set": "method",
+          "generator/undebug": "method",
+          "generator/unlock": "method",
+          "private/hidden": "method",
+          "private/secret": "field",
+          "public/clone": "method",
+          "public/doubled": "active-binding",
+          "public/initialize": "method",
+          "public/read": "method",
+          "public/value": "field"
+        },
+        "name": "Display",
+        "parents": []
+      },
+      {
+        "binding": "Child",
+        "members": {
+          "generator/active": "field",
+          "generator/class": "field",
+          "generator/classname": "field",
+          "generator/clone_method": "method",
+          "generator/cloneable": "field",
+          "generator/debug": "method",
+          "generator/debug_names": "field",
+          "generator/get_inherit": "method",
+          "generator/has_private": "method",
+          "generator/inherit": "field",
+          "generator/is_locked": "method",
+          "generator/lock": "method",
+          "generator/lock_class": "field",
+          "generator/lock_objects": "field",
+          "generator/new": "method",
+          "generator/parent_env": "field",
+          "generator/portable": "field",
+          "generator/private_fields": "field",
+          "generator/private_methods": "field",
+          "generator/public_fields": "field",
+          "generator/public_methods": "field",
+          "generator/self": "field",
+          "generator/set": "method",
+          "generator/undebug": "method",
+          "generator/unlock": "method",
+          "private/hidden": "method",
+          "private/secret": "field",
+          "public/clone": "method",
+          "public/doubled": "active-binding",
+          "public/initialize": "method",
+          "public/parent_private": "method",
+          "public/read": "method",
+          "public/value": "field",
+          "super/clone": "method",
+          "super/doubled": "active-binding",
+          "super/hidden": "method",
+          "super/initialize": "method",
+          "super/read": "method"
+        },
+        "name": "Display",
+        "parents": [
+          "Display"
+        ]
+      },
+      {
+        "binding": "Grandchild",
+        "members": {
+          "generator/active": "field",
+          "generator/class": "field",
+          "generator/classname": "field",
+          "generator/clone_method": "method",
+          "generator/cloneable": "field",
+          "generator/debug": "method",
+          "generator/debug_names": "field",
+          "generator/get_inherit": "method",
+          "generator/has_private": "method",
+          "generator/inherit": "field",
+          "generator/is_locked": "method",
+          "generator/lock": "method",
+          "generator/lock_class": "field",
+          "generator/lock_objects": "field",
+          "generator/new": "method",
+          "generator/parent_env": "field",
+          "generator/portable": "field",
+          "generator/private_fields": "field",
+          "generator/private_methods": "field",
+          "generator/public_fields": "field",
+          "generator/public_methods": "field",
+          "generator/self": "field",
+          "generator/set": "method",
+          "generator/undebug": "method",
+          "generator/unlock": "method",
+          "private/hidden": "method",
+          "private/secret": "field",
+          "public/clone": "method",
+          "public/doubled": "active-binding",
+          "public/initialize": "method",
+          "public/parent_private": "method",
+          "public/read": "method",
+          "public/value": "field",
+          "super/clone": "method",
+          "super/doubled": "active-binding",
+          "super/hidden": "method",
+          "super/initialize": "method",
+          "super/parent_private": "method",
+          "super/read": "method"
+        },
+        "name": "<unnamed>",
+        "parents": [
+          "Display"
+        ]
+      },
+      {
+        "binding": "NoClone",
+        "members": {
+          "generator/active": "field",
+          "generator/class": "field",
+          "generator/classname": "field",
+          "generator/clone_method": "method",
+          "generator/cloneable": "field",
+          "generator/debug": "method",
+          "generator/debug_names": "field",
+          "generator/get_inherit": "method",
+          "generator/has_private": "method",
+          "generator/inherit": "field",
+          "generator/is_locked": "method",
+          "generator/lock": "method",
+          "generator/lock_class": "field",
+          "generator/lock_objects": "field",
+          "generator/new": "method",
+          "generator/parent_env": "field",
+          "generator/portable": "field",
+          "generator/private_fields": "field",
+          "generator/private_methods": "field",
+          "generator/public_fields": "field",
+          "generator/public_methods": "field",
+          "generator/self": "field",
+          "generator/set": "method",
+          "generator/undebug": "method",
+          "generator/unlock": "method"
+        },
+        "name": "<unnamed>",
+        "parents": []
+      },
+      {
+        "binding": "ChildClone",
+        "members": {
+          "generator/active": "field",
+          "generator/class": "field",
+          "generator/classname": "field",
+          "generator/clone_method": "method",
+          "generator/cloneable": "field",
+          "generator/debug": "method",
+          "generator/debug_names": "field",
+          "generator/get_inherit": "method",
+          "generator/has_private": "method",
+          "generator/inherit": "field",
+          "generator/is_locked": "method",
+          "generator/lock": "method",
+          "generator/lock_class": "field",
+          "generator/lock_objects": "field",
+          "generator/new": "method",
+          "generator/parent_env": "field",
+          "generator/portable": "field",
+          "generator/private_fields": "field",
+          "generator/private_methods": "field",
+          "generator/public_fields": "field",
+          "generator/public_methods": "field",
+          "generator/self": "field",
+          "generator/set": "method",
+          "generator/undebug": "method",
+          "generator/unlock": "method"
+        },
+        "name": "<unnamed>",
+        "parents": [
+          "<unnamed>"
+        ]
+      },
+      {
+        "binding": "RestoredClone",
+        "members": {
+          "generator/active": "field",
+          "generator/class": "field",
+          "generator/classname": "field",
+          "generator/clone_method": "method",
+          "generator/cloneable": "field",
+          "generator/debug": "method",
+          "generator/debug_names": "field",
+          "generator/get_inherit": "method",
+          "generator/has_private": "method",
+          "generator/inherit": "field",
+          "generator/is_locked": "method",
+          "generator/lock": "method",
+          "generator/lock_class": "field",
+          "generator/lock_objects": "field",
+          "generator/new": "method",
+          "generator/parent_env": "field",
+          "generator/portable": "field",
+          "generator/private_fields": "field",
+          "generator/private_methods": "field",
+          "generator/public_fields": "field",
+          "generator/public_methods": "field",
+          "generator/self": "field",
+          "generator/set": "method",
+          "generator/undebug": "method",
+          "generator/unlock": "method",
+          "public/clone": "method",
+          "super/clone": "method"
+        },
+        "name": "<unnamed>",
+        "parents": [
+          "<unnamed>"
+        ]
+      },
+      {
+        "binding": "DisabledClone",
+        "members": {
+          "generator/active": "field",
+          "generator/class": "field",
+          "generator/classname": "field",
+          "generator/clone_method": "method",
+          "generator/cloneable": "field",
+          "generator/debug": "method",
+          "generator/debug_names": "field",
+          "generator/get_inherit": "method",
+          "generator/has_private": "method",
+          "generator/inherit": "field",
+          "generator/is_locked": "method",
+          "generator/lock": "method",
+          "generator/lock_class": "field",
+          "generator/lock_objects": "field",
+          "generator/new": "method",
+          "generator/parent_env": "field",
+          "generator/portable": "field",
+          "generator/private_fields": "field",
+          "generator/private_methods": "field",
+          "generator/public_fields": "field",
+          "generator/public_methods": "field",
+          "generator/self": "field",
+          "generator/set": "method",
+          "generator/undebug": "method",
+          "generator/unlock": "method",
+          "super/clone": "method"
+        },
+        "name": "<unnamed>",
+        "parents": [
+          "<unnamed>"
+        ]
+      }
+    ],
+    "constructors": [
+      {
+        "binding": "Original$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Original$initialize",
+        "formals": [
+          {
+            "default": "3",
+            "name": "value"
+          }
+        ]
+      },
+      {
+        "binding": "Child$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Child$initialize",
+        "formals": [
+          {
+            "default": "3",
+            "name": "value"
+          }
+        ]
+      },
+      {
+        "binding": "Grandchild$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "Grandchild$initialize",
+        "formals": [
+          {
+            "default": "3",
+            "name": "value"
+          }
+        ]
+      },
+      {
+        "binding": "NoClone$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "NoClone$initialize",
+        "formals": []
+      },
+      {
+        "binding": "ChildClone$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "ChildClone$initialize",
+        "formals": []
+      },
+      {
+        "binding": "RestoredClone$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "RestoredClone$initialize",
+        "formals": []
+      },
+      {
+        "binding": "DisabledClone$new",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          }
+        ]
+      },
+      {
+        "binding": "DisabledClone$initialize",
+        "formals": []
+      },
+      {
+        "binding": "Original$set",
+        "formals": [
+          {
+            "default": "NULL",
+            "name": "which"
+          },
+          {
+            "default": "NULL",
+            "name": "name"
+          },
+          {
+            "default": null,
+            "name": "value"
+          },
+          {
+            "default": "FALSE",
+            "name": "overwrite"
+          }
+        ]
+      },
+      {
+        "binding": "Original$debug",
+        "formals": [
+          {
+            "default": null,
+            "name": "name"
+          }
+        ]
+      },
+      {
+        "binding": "Original$undebug",
+        "formals": [
+          {
+            "default": null,
+            "name": "name"
+          }
+        ]
+      },
+      {
+        "binding": "Original$lock",
+        "formals": []
+      },
+      {
+        "binding": "Original$unlock",
+        "formals": []
+      },
+      {
+        "binding": "Original$is_locked",
+        "formals": []
+      },
+      {
+        "binding": "Original$get_inherit",
+        "formals": []
+      },
+      {
+        "binding": "Original$has_private",
+        "formals": []
+      },
+      {
+        "binding": "Original$clone_method",
+        "formals": [
+          {
+            "default": "FALSE",
+            "name": "deep"
+          }
+        ]
+      }
+    ],
+    "dispatch": [
+      {
+        "classes": [
+          "Display",
+          "R6"
+        ],
+        "expression": "base$read()",
+        "value": "6"
+      },
+      {
+        "classes": [
+          "environment"
+        ],
+        "expression": "child$read()",
+        "value": "30"
+      },
+      {
+        "classes": [
+          "Display",
+          "Display",
+          "R6"
+        ],
+        "expression": "grandchild$read()",
+        "value": "24"
+      },
+      {
+        "classes": [
+          "environment"
+        ],
+        "expression": "child$parent_private()",
+        "value": "5"
+      },
+      {
+        "classes": [
+          "environment"
+        ],
+        "expression": "child$doubled",
+        "value": "10"
+      },
+      {
+        "classes": [
+          "R6"
+        ],
+        "expression": "is.function(no_clone$clone)",
+        "value": "FALSE"
+      },
+      {
+        "classes": [
+          "R6"
+        ],
+        "expression": "is.function(child_clone$clone)",
+        "value": "FALSE"
+      },
+      {
+        "classes": [
+          "R6"
+        ],
+        "expression": "is.function(restored_clone$clone)",
+        "value": "TRUE"
+      },
+      {
+        "classes": [
+          "R6"
+        ],
+        "expression": "is.function(disabled_clone$clone)",
+        "value": "FALSE"
+      }
+    ],
+    "methods": [
+      {
+        "environment": [
+          [
+            ".__active__",
+            "private",
+            "self"
+          ]
+        ],
+        "formals": [
+          {
+            "default": "2",
+            "name": "scale"
+          }
+        ],
+        "generic": "read",
+        "signature": [
+          "Original"
+        ]
+      },
+      {
+        "environment": [
+          [
+            ".__active__",
+            "private",
+            "self",
+            "super"
+          ]
+        ],
+        "formals": [
+          {
+            "default": "6",
+            "name": "scale"
+          }
+        ],
+        "generic": "read",
+        "signature": [
+          "Child"
+        ]
+      },
+      {
+        "environment": [
+          [
+            ".__active__",
+            "private",
+            "self",
+            "super"
+          ]
+        ],
+        "formals": [
+          {
+            "default": "8",
+            "name": "scale"
+          }
+        ],
+        "generic": "read",
+        "signature": [
+          "Grandchild"
+        ]
+      },
+      {
+        "environment": [
+          [
+            ".__active__",
+            "private",
+            "self"
+          ]
+        ],
+        "formals": [
+          {
+            "default": "5",
+            "name": "x"
+          }
+        ],
+        "generic": "hidden",
+        "signature": [
+          "Original"
+        ]
+      }
+    ],
+    "system": "r6_members"
+  },
+  "observer": "owner <- environment()\ngenerators <- list(Original = Original, Child = Child, Grandchild = Grandchild,\n                   NoClone = NoClone, ChildClone = ChildClone,\n                   RestoredClone = RestoredClone, DisabledClone = DisabledClone)\nobjects <- list(Original = base, Child = child, Grandchild = grandchild,\n                NoClone = no_clone, ChildClone = child_clone,\n                RestoredClone = restored_clone, DisabledClone = disabled_clone)\nmember_facts <- function(env, prefix) {\n  if (is.null(env)) return(list())\n  names <- setdiff(ls(env, all.names = TRUE), \".__enclos_env__\")\n  if (length(names) == 0L) return(list())\n  values <- lapply(names, function(name) {\n    if (bindingIsActive(name, env)) \"active-binding\"\n    else if (is.function(env[[name]])) \"method\" else \"field\"\n  })\n  setNames(values, paste0(prefix, names))\n}\nclass_facts <- function(binding) {\n  generator <- generators[[binding]]\n  object <- objects[[binding]]\n  parent <- generator$get_inherit()\n  list(name = if (is.null(generator$classname)) \"<unnamed>\" else generator$classname,\n       binding = binding,\n       parents = if (is.null(parent)) list() else list(\n         if (is.null(parent$classname)) \"<unnamed>\" else parent$classname),\n       members = c(member_facts(object, \"public/\"),\n                   member_facts(object$.__enclos_env__$private, \"private/\"),\n                   member_facts(object$.__enclos_env__$super, \"super/\"),\n                   member_facts(generator, \"generator/\")))\n}\nfacts <- list(\n  system = \"r6_members\",\n  classes = lapply(names(generators), class_facts),\n  constructors = c(unlist(lapply(names(generators), function(binding) {\n    initialize <- objects[[binding]]$initialize\n    list(list(binding = paste0(binding, \"$new\"),\n              formals = formal_facts(generators[[binding]]$new)),\n         list(binding = paste0(binding, \"$initialize\"),\n              formals = if (is.null(initialize)) list() else formal_facts(initialize)))\n  }), recursive = FALSE), lapply(\n    c(\"set\", \"debug\", \"undebug\", \"lock\", \"unlock\", \"is_locked\", \"get_inherit\", \"has_private\", \"clone_method\"),\n    function(name) list(binding = paste0(\"Original$\", name),\n                        formals = formal_facts(Original[[name]]))\n  )),\n  methods = list(\n    method_facts(\"read\", \"Original\", base$read, owner),\n    method_facts(\"read\", \"Child\", child$read, owner),\n    method_facts(\"read\", \"Grandchild\", grandchild$read, owner),\n    method_facts(\"hidden\", \"Original\", child$.__enclos_env__$super$hidden, owner)\n  ),\n  dispatch = list(\n    dispatch_facts(\"base$read()\", base, owner),\n    dispatch_facts(\"child$read()\", child, owner),\n    dispatch_facts(\"grandchild$read()\", grandchild, owner),\n    dispatch_facts(\"child$parent_private()\", child, owner),\n    dispatch_facts(\"child$doubled\", child, owner),\n    dispatch_facts(\"is.function(no_clone$clone)\", no_clone, owner),\n    dispatch_facts(\"is.function(child_clone$clone)\", child_clone, owner),\n    dispatch_facts(\"is.function(restored_clone$clone)\", restored_clone, owner),\n    dispatch_facts(\"is.function(disabled_clone$clone)\", disabled_clone, owner)\n  )\n)\n",
+  "source": "read <- function(scale = 2) self$value * scale\nReadAlias <- read\nOriginal <- R6::R6Class(\n  \"Display\",\n  public = list(value = 3, initialize = function(value = 3) self$value <- value,\n                read = ReadAlias),\n  private = list(secret = 4, hidden = function(x = 5) x),\n  active = list(doubled = function(value) {\n    if (missing(value)) self$value * 2 else self$value <- value / 2\n  })\n)\nAlias <- Original\nChild <- R6::R6Class(\n  \"Display\", inherit = Alias, class = FALSE,\n  public = list(read = function(scale = 6) super$read(scale),\n                parent_private = function() super$hidden()),\n  private = list(secret = 7)\n)\nGrandchild <- R6::R6Class(inherit = Child,\n  public = list(read = function(scale = 8) super$read(scale)))\nNoClone <- R6::R6Class(cloneable = FALSE)\nChildClone <- R6::R6Class(inherit = NoClone)\nRestoredClone <- R6::R6Class(inherit = ChildClone)\nDisabledClone <- R6::R6Class(inherit = RestoredClone, cloneable = FALSE)\nbase <- Original$new()\nchild <- Child$new()\ngrandchild <- Grandchild$new()\nno_clone <- NoClone$new()\nchild_clone <- suppressMessages(ChildClone$new())\nrestored_clone <- suppressMessages(RestoredClone$new())\ndisabled_clone <- suppressMessages(DisabledClone$new())\nchild$doubled <- 10\n",
+  "versions": {
+    "r": "4.6.1",
+    "r6": "2.6.1",
+    "s7": "0.2.2"
+  }
+}

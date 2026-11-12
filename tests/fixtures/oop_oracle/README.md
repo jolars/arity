@@ -91,3 +91,10 @@ defaults, nested closures, and generic creation without an assignment. Rust
 tests compare metadata availability with these observations and keep class-name
 strings out of lexical bindings. Primitive names come from
 `scripts/dump_base_symbols.R`, alongside the default-package export lists.
+
+The R6 member case compares effective generator, public, private, and `super`
+surfaces with the shared project API. It pins aliased implementations, inherited
+initializer signatures, active bindings, unnamed classes, `class = FALSE`, and
+clone availability across three generations. The observer identifies active
+bindings without invoking their accessors. Ordinary Rust tests consume these
+facts without R.

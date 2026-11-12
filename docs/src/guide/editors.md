@@ -258,6 +258,22 @@ in your client's filetype or document selector settings. The `rd` language id
 also identifies pathless Rd buffers. This enables workspace symbol search
 without opening an R file first.
 
+## R6 classes
+
+Arity completes declared R6 fields, methods, and active bindings for workspace
+classes. It distinguishes a generator's API, such as `Counter$new()`, from an
+instance's members. Inside methods, `self`, `private`, and `super` use the
+owning class and its inherited members. Generator aliases and exported parents
+in workspace packages retain their class identity even when their display names
+differ from their bindings.
+
+Signature help shows method parameters and the initializer parameters forwarded
+by `$new(...)`. Arity reads these declarations statically and never runs a
+constructor or active binding. Computed member lists, unresolved parents, and
+reassigned receivers can limit the available information. For receivers without
+a known class, completion falls back to fields found in local construction and
+usage.
+
 ## DESCRIPTION files
 
 The server also serves a package's `DESCRIPTION`, which is a different grammar

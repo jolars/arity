@@ -345,7 +345,7 @@
   },
   "r6/use_sites": {
     "known_gaps": [
-      "Declared members have no member definition or signature help."
+      "Declared members have no member definition."
     ],
     "probes": [
       {
@@ -377,9 +377,6 @@
   },
   "r6/incomplete": {
     "parse_errors": true,
-    "known_gaps": [
-      "Declared R6 fields do not supply instance completion."
-    ],
     "probes": [
       {
         "method": "type-hierarchy",
@@ -444,9 +441,6 @@
     ]
   },
   "r6/receiver_ownership": {
-    "known_gaps": [
-      "self completion mixes alpha, beta, and gamma across three unrelated classes."
-    ],
     "probes": [
       {
         "method": "completion",
@@ -480,6 +474,45 @@
         "method": "definition",
         "needle": "Point$new()",
         "offset": 0
+      }
+    ]
+  },
+  "r6/member_apis": {
+    "probes": [
+      {
+        "method": "completion",
+        "needle": "Alias$new",
+        "offset": 6
+      },
+      {
+        "method": "signature-help",
+        "needle": "Alias$new(value = 3)",
+        "offset": 18
+      },
+      {
+        "method": "completion",
+        "needle": "obj$read",
+        "offset": 4
+      },
+      {
+        "method": "signature-help",
+        "needle": "obj$read(scale = 4)",
+        "offset": 16
+      },
+      {
+        "method": "completion",
+        "needle": "private$secret",
+        "offset": 8
+      },
+      {
+        "method": "signature-help",
+        "needle": "super$read(scale)",
+        "offset": 11
+      },
+      {
+        "method": "signature-help",
+        "needle": "super$hidden()",
+        "offset": 13
       }
     ]
   },
