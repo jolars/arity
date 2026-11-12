@@ -156,7 +156,8 @@ pub enum MemberKind {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct MemberDef {
     pub key: OopKey,
-    pub class: ClassKey,
+    /// Later installations acquire their class identity during project replay.
+    pub class: Option<ClassKey>,
     pub name: ClassName,
     pub visibility: MemberVisibility,
     pub kind: MemberKind,
@@ -194,12 +195,79 @@ pub struct OopFacts {
     pub generics: Vec<GenericDef>,
     pub generic_bindings: Vec<GenericBinding>,
     pub methods: Vec<MethodDef>,
+    /// Callable candidates whose values need project lookup before they can
+    /// establish methods. These never enter the definite method catalogue.
+    pub possible_methods: Vec<MethodDef>,
     pub members: Vec<MemberDef>,
     pub member_groups: Vec<MemberGroup>,
     pub method_implementations: Vec<MethodImplementationDef>,
     /// Origins used by static class lookups, confirmed with the same imports
     /// and masking rules as declarations. No call locations enter this projection.
     pub class_lookups: Vec<FunctionRef>,
+    pub mutations: Vec<MemberMutation>,
+    pub events: Vec<OopEvent>,
+    pub callables: Vec<CallableBinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub struct CallableBinding {
+    pub name: String,
+    pub signature: CallableSignature,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub enum MutationKind {
+    R6Set {
+        group: Option<String>,
+        overwrite: Option<bool>,
+    },
+    ReferenceMethods,
+    Lock {
+        locked: bool,
+        fields: Vec<ClassName>,
+    },
+    ClassBindingLock(bool),
+    Dynamic,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub struct MemberMutation {
+    pub owner: ClassOwner,
+    pub target: ParentRef,
+    pub lookup: Option<FunctionRef>,
+    pub kind: MutationKind,
+    pub members: Vec<OopKey>,
+    pub removals: Vec<String>,
+    pub factory: Option<FunctionRef>,
+    pub uncertainty: BTreeSet<OopUncertainty>,
+    pub deferred: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub enum OopEvent {
+    Class(ClassKey),
+    Generator {
+        name: String,
+        target: GeneratorRef,
+    },
+    UncertainGenerator {
+        name: String,
+        target: GeneratorRef,
+    },
+    /// Capture a recovered mutator's receiver where its closure was acquired.
+    Mutator(usize),
+    Mutation(usize),
+    Callable(usize),
+    Source(crate::project::source::SourceEdgeKey),
+    Binding(String),
+    InvalidateBindings,
+}
+
+/// Position in a range-free event sequence, recovered from the current CST.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct OopPoint {
+    pub path: PathBuf,
+    pub event: usize,
 }
 
 /// The source closure may also survive as an ordinary function. Its stable
@@ -213,6 +281,10 @@ pub enum MethodImplementationSource {
     },
     /// A callable that requires project lookup rather than an in-file value.
     Reference {
+        name: String,
+    },
+    Qualified {
+        package: String,
         name: String,
     },
 }
@@ -287,7 +359,9 @@ impl OopFacts {
     pub fn member_candidates(&self, class: &ClassKey, name: &str) -> Vec<&MemberDef> {
         self.members
             .iter()
-            .filter(|def| &def.class == class && def.name == ClassName::Known(name.to_string()))
+            .filter(|def| {
+                def.class.as_ref() == Some(class) && def.name == ClassName::Known(name.to_string())
+            })
             .collect()
     }
 

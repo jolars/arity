@@ -1,7 +1,7 @@
 //! Runtime method environment facts share declaration, callee, and inheritance resolution.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::semantic::SemanticModel;
 use crate::semantic::enclosure::{Availability, MethodEnclosure, MethodImplementation};
@@ -12,6 +12,9 @@ use super::*;
 #[derive(Debug, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub struct ClassMethodEnvironment {
     pub class: ClassKey,
+    pub class_path: PathBuf,
+    pub local_class: bool,
+    pub implementations: Vec<String>,
     pub methods: Vec<OopKey>,
     pub bindings: [Availability; 3],
     pub custom_parent: bool,
@@ -23,10 +26,11 @@ pub struct ClassMethodEnvironment {
 pub type R6MethodEnvironment = ClassMethodEnvironment;
 
 pub(crate) fn has_method_candidates(model: &SemanticModel) -> bool {
-    model
-        .referenced_packages()
-        .iter()
-        .any(|package| matches!(package.as_str(), "R6" | "methods"))
+    crate::semantic::calls::has_generator_mutations(model)
+        || model
+            .referenced_packages()
+            .iter()
+            .any(|package| matches!(package.as_str(), "R6" | "methods"))
         || model.idents().iter().any(|ident| {
             matches!(
                 unbacktick(&ident.name),
@@ -71,72 +75,82 @@ impl ClassIndex {
         let Some(file) = self.file(path) else {
             return Vec::new();
         };
-        file.facts
-            .declarations
+        self.declarations
             .iter()
-            .filter_map(|class| {
-                let id = ClassId {
-                    path: path.into(),
-                    key: class.key.clone(),
-                };
-                if !matches!(class.system(), ClassSystem::R6 | ClassSystem::RefClass)
-                    || !self.declarations.contains_key(&id)
-                {
+            .filter_map(|(id, resolved)| {
+                let class = &resolved.declaration;
+                if !matches!(class.system(), ClassSystem::R6 | ClassSystem::RefClass) {
                     return None;
                 }
-                let methods: Vec<_> = file
-                    .facts
-                    .oop
-                    .members
+                let installed = self.member_installations(id);
+                let methods: Vec<_> = installed
                     .iter()
-                    .filter(|member| member.class == class.key)
+                    .filter(|member| member.id.path == path)
                     .filter(|member| {
-                        let group = if class.system() == ClassSystem::RefClass {
-                            if member.kind == MemberKind::ActiveBinding {
-                                "fields"
-                            } else {
-                                "methods"
-                            }
-                        } else {
-                            match (member.visibility, member.kind) {
-                                (_, MemberKind::ActiveBinding) => "active",
-                                (MemberVisibility::Private, _) => "private",
-                                _ => "public",
-                            }
-                        };
-                        file.facts.oop.member_groups.iter().any(|candidate| {
-                            candidate.class == class.key
-                                && candidate.name == group
-                                && self.is_list_group(path, candidate)
-                        })
-                    })
-                    .filter_map(|member| member.method.clone())
-                    .filter(|key| {
-                        // External reference methods retain their ordinary closure.
                         class.system() != ClassSystem::RefClass
-                            || file.facts.oop.members.iter().any(|member| {
-                                member.method.as_ref() == Some(key)
-                                    && member.kind == MemberKind::ActiveBinding
-                            })
-                            || !file
-                                .facts
-                                .oop
-                                .methods
-                                .iter()
-                                .find(|method| method.key == *key)
-                                .and_then(|method| method.signature.as_ref())
+                            || member.definition.kind == MemberKind::ActiveBinding
+                            || !member
+                                .signature
+                                .as_ref()
                                 .and_then(|signature| signature.parameters.first())
                                 .is_some_and(|parameter| parameter.name == ".self")
                     })
+                    .filter_map(|member| member.definition.method.clone())
                     .collect();
-                if methods.is_empty() {
+                let implementations: Vec<_> = installed
+                    .iter()
+                    .filter_map(|member| {
+                        let method = member.definition.method.as_ref()?;
+                        let source = self.file(&member.id.path)?;
+                        let implementation = source
+                            .facts
+                            .oop
+                            .method_implementations
+                            .iter()
+                            .find(|implementation| &implementation.method == method)?;
+                        let (name, package) = match &implementation.source {
+                            MethodImplementationSource::Reference { name } => (name, None),
+                            MethodImplementationSource::Qualified { package, name } => {
+                                (name, Some(package.as_str()))
+                            }
+                            _ => return None,
+                        };
+                        if !file
+                            .facts
+                            .oop
+                            .callables
+                            .iter()
+                            .any(|callable| &callable.name == name)
+                        {
+                            return None;
+                        }
+                        if !self
+                            .implementation_files(&source.path, name, package)
+                            .contains(path)
+                        {
+                            return None;
+                        }
+                        if class.system() == ClassSystem::RefClass
+                            && member
+                                .signature
+                                .as_ref()?
+                                .parameters
+                                .first()
+                                .is_some_and(|parameter| parameter.name == ".self")
+                        {
+                            return None;
+                        }
+                        Some(name.clone())
+                    })
+                    .collect();
+                if methods.is_empty() && implementations.is_empty() {
                     return None;
                 }
                 let super_binding = if class.parents.is_empty() {
                     Availability::Absent
                 } else if self
                     .supertypes
-                    .get(&id)
+                    .get(id)
                     .is_some_and(|parents| !parents.is_empty())
                 {
                     Availability::Present
@@ -147,16 +161,15 @@ impl ClassIndex {
                 let mut unknown_members = false;
                 if class.system() == ClassSystem::RefClass || class.portable != Some(true) {
                     self.member_bindings(
-                        &id,
+                        id,
                         &mut named_bindings,
                         &mut unknown_members,
-                        &mut BTreeSet::new(),
                     );
                     // Inherited method copies can see members added by a subclass,
                     // while the original base instance still lacks those names.
                     let mut pending: Vec<_> = self
                         .subtypes
-                        .get(&id)
+                        .get(id)
                         .into_iter()
                         .flatten()
                         .cloned()
@@ -175,7 +188,6 @@ impl ClassIndex {
                             &child,
                             &mut child_bindings,
                             &mut unknown_members,
-                            &mut BTreeSet::new(),
                         );
                         for name in child_bindings.into_keys() {
                             named_bindings.entry(name).or_insert(Availability::Unknown);
@@ -212,6 +224,9 @@ impl ClassIndex {
                 }
                 Some(ClassMethodEnvironment {
                     class: class.key.clone(),
+                    class_path: id.path.clone(),
+                    local_class: id.path == path,
+                    implementations,
                     methods,
                     named_bindings,
                     unknown_members,
@@ -220,20 +235,21 @@ impl ClassIndex {
                     } else {
                         [
                             Availability::Present,
-                            self.method_private_binding(&id),
+                            self.method_private_binding(id),
                             super_binding,
                         ]
                     },
-                    custom_parent: class
-                        .uncertainty
-                        .contains(&ClassUncertainty::CustomEnvironment),
+                    custom_parent: class.uncertainty.contains(&ClassUncertainty::CustomEnvironment)
+                        // A copied closure can enclose another package or a
+                        // script caller. Its frame is outside this file's model.
+                        || (id.path != path && (resolved.package_root.is_none() || resolved.package_root != file.package_root)),
                 })
             })
             .collect()
     }
 
     fn method_private_binding(&self, id: &ClassId) -> Availability {
-        let initial = self.private_binding(id, &mut BTreeSet::new());
+        let initial = self.private_binding(id);
         if initial == Availability::Present {
             return initial;
         }
@@ -249,7 +265,7 @@ impl ClassIndex {
             if !seen.insert(class.clone()) {
                 continue;
             }
-            if self.private_binding(&class, &mut BTreeSet::new()) != initial {
+            if self.private_binding(&class) != initial {
                 return Availability::Unknown;
             }
             pending.extend(self.subtypes.get(&class).into_iter().flatten().cloned());
@@ -257,151 +273,37 @@ impl ClassIndex {
         initial
     }
 
-    fn is_list_group(&self, path: &Path, group: &MemberGroup) -> bool {
-        group
-            .factory
-            .as_ref()
-            .and_then(|factory| self.callee_identity(path, factory))
-            .is_some_and(|identity| identity.package == "base" && identity.name == "list")
-            && !group.uncertainty.contains(&OopUncertainty::DynamicMembers)
-    }
-
     fn member_bindings(
         &self,
         id: &ClassId,
         bindings: &mut BTreeMap<String, Availability>,
         unknown: &mut bool,
-        visiting: &mut BTreeSet<ClassId>,
     ) {
-        if visiting.len() >= 64 || !visiting.insert(id.clone()) {
-            *unknown = true;
-            return;
-        }
-        let (Some(class), Some(file)) = (self.declarations.get(id), self.file(&id.path)) else {
-            *unknown = true;
-            return;
-        };
-        for group in file
-            .facts
-            .oop
-            .member_groups
-            .iter()
-            .filter(|group| group.class == id.key)
-        {
-            let valid = !group.uncertainty.contains(&OopUncertainty::DynamicMembers)
-                && (group.name == "fields" && group.factory.is_none()
-                    || group
-                        .factory
-                        .as_ref()
-                        .and_then(|factory| self.callee_identity(&id.path, factory))
-                        .is_some_and(|identity| {
-                            identity.package == "base"
-                                && (identity.name == "list"
-                                    || (group.name == "fields" && identity.name == "character")
-                                    || (group.name == "fields" && identity.name == "c"))
-                        }));
-            if !valid {
-                *unknown = true;
-                continue;
-            }
-            for member in file
-                .facts
-                .oop
-                .members
-                .iter()
-                .filter(|member| member.class == id.key)
-            {
-                let member_group = if class.declaration.system() == ClassSystem::RefClass {
-                    if matches!(
-                        member.kind,
-                        MemberKind::Field | MemberKind::ActiveBinding | MemberKind::Unknown
-                    ) {
-                        "fields"
-                    } else {
-                        "methods"
-                    }
-                } else {
-                    match (member.visibility, member.kind) {
-                        (_, MemberKind::ActiveBinding) => "active",
-                        (MemberVisibility::Private, _) => "private",
-                        _ => "public",
-                    }
-                };
-                if member_group == group.name {
-                    if let ClassName::Known(name) = &member.name {
-                        bindings.insert(name.clone(), Availability::Present);
-                    } else {
-                        *unknown = true;
-                    }
+        if id.key.system == ClassSystem::R6 {
+            if let Some(api) = self.r6_api(id) {
+                *unknown |= !api.public.complete || !api.private.complete;
+                for name in api.public.entries.keys().chain(api.private.entries.keys()) {
+                    bindings.insert(name.clone(), Availability::Present);
                 }
-            }
-        }
-        let parents = self.supertypes.get(id);
-        let builtin_parents = (0..class.declaration.parents.len())
-            .filter(|ordinal| self.reference_base_parent(id, *ordinal))
-            .count();
-        if parents.map_or(0, BTreeSet::len) + builtin_parents < class.declaration.parents.len() {
-            *unknown = true;
-        }
-        for parent in parents.into_iter().flatten() {
-            self.member_bindings(parent, bindings, unknown, visiting);
-        }
-        visiting.remove(id);
-    }
-
-    fn private_binding(&self, id: &ClassId, visiting: &mut BTreeSet<ClassId>) -> Availability {
-        if visiting.len() >= 64 || !visiting.insert(id.clone()) {
-            return Availability::Unknown;
-        }
-        let result = self.private_binding_inner(id, visiting);
-        visiting.remove(id);
-        result
-    }
-
-    fn private_binding_inner(
-        &self,
-        id: &ClassId,
-        visiting: &mut BTreeSet<ClassId>,
-    ) -> Availability {
-        let Some(class) = self.declarations.get(id) else {
-            return Availability::Unknown;
-        };
-        let Some(file) = self.file(&id.path) else {
-            return Availability::Unknown;
-        };
-        let mut presence = Availability::Absent;
-        for group in file
-            .facts
-            .oop
-            .member_groups
-            .iter()
-            .filter(|group| group.class == id.key && group.name == "private")
-        {
-            if !self.is_list_group(&id.path, group) {
-                presence = Availability::Unknown;
-            } else if file.facts.oop.members.iter().any(|member| {
-                member.class == id.key
-                    && member.visibility == MemberVisibility::Private
-                    && matches!(member.name, ClassName::Known(_))
-            }) {
-                return Availability::Present;
-            }
-        }
-        if !class.declaration.parents.is_empty() {
-            let parents = self.supertypes.get(id);
-            if parents.is_none_or(BTreeSet::is_empty) {
-                presence = Availability::Unknown;
             } else {
-                for parent in parents.into_iter().flatten() {
-                    match self.private_binding(parent, visiting) {
-                        Availability::Present => return Availability::Present,
-                        Availability::Unknown => presence = Availability::Unknown,
-                        Availability::Absent => {}
-                    }
-                }
+                *unknown = true;
             }
+        } else if let Some(api) = self.reference_api(id) {
+            *unknown |= !api.instance.complete;
+            for name in api.instance.entries.keys() {
+                bindings.insert(name.clone(), Availability::Present);
+            }
+        } else {
+            *unknown = true;
         }
-        presence
+    }
+
+    fn private_binding(&self, id: &ClassId) -> Availability {
+        match self.r6_api(id) {
+            Some(api) if !api.private.entries.is_empty() => Availability::Present,
+            Some(api) if api.private.complete => Availability::Absent,
+            _ => Availability::Unknown,
+        }
     }
 }
 
@@ -425,15 +327,54 @@ pub fn apply_method_environments(
     let mut lowered = Vec::new();
     let mut implementations = Vec::new();
     for environment in environments {
-        let sites: Vec<_> = sites
+        let mut sites: Vec<_> = sites
             .iter()
             .filter(|site| environment.methods.contains(&site.method))
+            .map(|site| (site.function_range, site.owner_range, site.keep_original))
             .collect();
+        for (index, binding) in model.bindings().iter().enumerate() {
+            // Cross-file implementation lookup resolves a file-scope binding.
+            // A nested binding with the same name is a separate closure.
+            if model.scope(binding.scope).kind != crate::semantic::ScopeKind::File
+                || !environment
+                    .implementations
+                    .iter()
+                    .any(|name| name == unbacktick(&binding.name))
+            {
+                continue;
+            }
+            let Some(function) = stable_value(model, root, BindingId::from_index(index))
+                .and_then(SyntaxElement::into_node)
+                .and_then(FunctionExpr::cast)
+            else {
+                continue;
+            };
+            sites.push((function.syntax().text_range(), root.text_range(), true));
+        }
         let Some(site) = sites.first() else { continue };
+        let parent_range = environment
+            .local_class
+            .then(|| locate_class_def(root, &environment.class))
+            .flatten()
+            .and_then(|location| root.covering_element(location.call_range).parent())
+            .and_then(|node| {
+                node.ancestors()
+                    .find(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
+            })
+            .map_or_else(
+                || {
+                    if environment.local_class {
+                        root.text_range()
+                    } else {
+                        site.1
+                    }
+                },
+                |node| node.text_range(),
+            );
         let enclosure = lowered.len() as u32;
         lowered.push(MethodEnclosure {
             call_frame: false,
-            parent: scope_at(site.owner_range),
+            parent: scope_at(parent_range),
             parent_is_unknown: environment.custom_parent,
             bindings: ["self", "private", "super"]
                 .into_iter()
@@ -450,9 +391,9 @@ pub fn apply_method_environments(
         });
         implementations.extend(sites.into_iter().filter_map(|site| {
             Some(MethodImplementation {
-                scope: scope_at(site.function_range)?,
+                scope: scope_at(site.0)?,
                 enclosure,
-                keep_original: site.keep_original,
+                keep_original: site.2,
             })
         }));
     }
@@ -499,6 +440,9 @@ pub fn standalone_semantic_model(root: &SyntaxNode) -> SemanticModel {
             .collect();
         environments.push(ClassMethodEnvironment {
             class: class.key.clone(),
+            class_path: path.into(),
+            local_class: true,
+            implementations: Vec::new(),
             methods,
             bindings: [Availability::Unknown; 3],
             named_bindings: BTreeMap::new(),

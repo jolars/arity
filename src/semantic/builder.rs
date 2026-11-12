@@ -616,6 +616,16 @@ fn walk_replacement_target(ctx: &mut BuildCtx<'_>, target: &SyntaxNode, scope: S
 
 fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
     if ctx.quote_depth == 0
+        && let Some(binary) = CallExpr::cast(node.clone())
+            .and_then(|call| call.base())
+            .and_then(NodeOrToken::into_node)
+            .and_then(crate::ast::BinaryExpr::cast)
+        && binary.op_kind() == Some(SyntaxKind::DOLLAR)
+        && let Some(NodeOrToken::Token(name)) = binary.rhs()
+    {
+        ctx.model.signature_effects.record_member_call(name.text());
+    }
+    if ctx.quote_depth == 0
         && let Some(name) = CallExpr::cast(node.clone()).and_then(|call| call.callee_name())
     {
         ctx.model.signature_effects.record(&name, node.text_range());
@@ -1101,6 +1111,36 @@ pub(crate) fn call_quote_kind(node: &SyntaxNode) -> Option<QuoteKind> {
     CallExpr::cast(node.clone())
         .and_then(|call| call_callee_ident(&call))
         .and_then(|name| quoting_callee_kind(&name))
+}
+
+/// Whether syntax is captured by a quoting call, accounting for the same
+/// unquoting escapes as the semantic walk. Project execution projections use
+/// this to distinguish language objects from operations that can execute.
+pub(crate) fn is_quoted(node: &SyntaxNode) -> bool {
+    let ancestors: Vec<_> = node.ancestors().collect();
+    let mut quoted = false;
+    let mut escape = None;
+    for ancestor in ancestors.iter().rev() {
+        if escape
+            .and_then(|escape| unquote_operand(escape, ancestor))
+            .is_some_and(|operand| operand.text_range().contains_range(node.text_range()))
+        {
+            quoted = false;
+            escape = None;
+        }
+        if ancestor.kind() == SyntaxKind::ARG_LIST
+            && let Some(kind) = ancestor.parent().as_ref().and_then(call_quote_kind)
+        {
+            quoted = true;
+            escape = kind.escape();
+            if escape.is_none() {
+                // An opaque quote captures even nested quoting calls, so none
+                // of their escapes can execute in this context.
+                return true;
+            }
+        }
+    }
+    quoted
 }
 
 /// The operand that `escape` evaluates inside `node`, when `node` is that

@@ -55,7 +55,10 @@ Child <- R6::R6Class("Display", inherit = Alias, class = FALSE,
         .declaration
         .as_ref()
         .unwrap();
-    assert_eq!(index.member(own).unwrap().class, class(&index, "Child").key);
+    assert_eq!(
+        index.member(own).unwrap().class,
+        Some(class(&index, "Child").key)
+    );
     assert_eq!(
         child.public.entries["read"][0]
             .signature

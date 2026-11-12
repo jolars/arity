@@ -274,6 +274,28 @@ reassigned receivers can limit the available information. For receivers without
 a known class, completion falls back to fields found in local construction and
 usage.
 
+Arity also tracks literal `$set(...)` additions and replacements, including
+installations in another workspace file and methods supplied by a known function
+binding. Package `Collate` order and script `source()` order determine which
+members are available. Existing R6 instances retain the members they received at
+construction. Class locks prevent `$set()` changes; object locks separately
+control assignments to methods. Dynamic mutations and custom parent environments
+leave the affected API incomplete.
+
+## Reference classes
+
+Reference Class completion distinguishes fields, accessor functions, methods,
+and the generator's own API. Signature help follows initialization and inherited
+methods, including `callSuper()`. Arity tracks subsequent `$methods(...)`
+installations across workspace files. Inherited methods reflect the parent at
+class declaration, and an instance can retain methods it has already accessed.
+
+Active R6 bindings and Reference Class accessors appear as properties. Reads and
+assignments invoke their accessor functions; Arity never executes those
+functions or uses their bodies to guess a returned value's type. Reference Class
+field locks allow one initialization assignment and remain separate from locks
+on the class definition.
+
 ## DESCRIPTION files
 
 The server also serves a package's `DESCRIPTION`, which is a different grammar

@@ -1720,6 +1720,70 @@ fn r6_api_tracks_flags_members_and_parent_signatures_without_body_ranges() {
 }
 
 #[test]
+fn member_mutations_backdate_bodies_and_invalidate_for_signatures_and_order() {
+    let definitions = "G <- R6::R6Class('Mutation')\n";
+    let mutations = "G$set('public', 'read', function(scale = 2) self$value * scale)\n";
+    let (mut db, a, b) = package_ab(definitions, mutations);
+    db.refresh_descriptions([PathBuf::from("/pkg")]);
+    db.upsert_description(Path::new("/pkg"), "Package: pkg\nCollate: a.R b.R\n");
+    let before = project_classes(&db).clone();
+    let id = class_named(&before, "Mutation");
+    assert_eq!(
+        before.r6_api(&id).unwrap().public.entries["read"][0]
+            .signature
+            .as_ref()
+            .unwrap()
+            .parameters[0]
+            .default
+            .as_deref(),
+        Some("2")
+    );
+    db.clear_query_log();
+    db.set_file_text(
+        b,
+        mutations.replace("self$value * scale", "{ print(scale); self$value * scale }"),
+    );
+    assert_eq!(&before, project_classes(&db));
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+    db.set_file_text(b, mutations.replace("scale = 2", "scale = 8"));
+    assert_eq!(
+        project_classes(&db).r6_api(&id).unwrap().public.entries["read"][0]
+            .signature
+            .as_ref()
+            .unwrap()
+            .parameters[0]
+            .default
+            .as_deref(),
+        Some("8")
+    );
+    db.upsert_description(Path::new("/pkg"), "Package: pkg\nCollate: b.R a.R\n");
+    assert!(
+        !project_classes(&db)
+            .r6_api(&id)
+            .unwrap()
+            .public
+            .entries
+            .contains_key("read")
+    );
+    db.set_file_text(
+        a,
+        definitions.replace(
+            "R6Class('Mutation')",
+            "R6Class('Mutation', lock_class = TRUE)",
+        ),
+    );
+    db.upsert_description(Path::new("/pkg"), "Package: pkg\nCollate: a.R b.R\n");
+    assert!(
+        !project_classes(&db)
+            .r6_api(&id)
+            .unwrap()
+            .public
+            .entries
+            .contains_key("read")
+    );
+}
+
+#[test]
 fn reference_apis_backdate_bodies_and_refresh_fields_initializers_and_parents() {
     use arity::project::classes::DispatchClass;
     let source = "Parent <- methods::setRefClass('Display', fields = list(value = 'numeric', active = function(new_value) value), methods = list(initialize = function(x = 1) initFields(value = x), read = function(scale = 2) value * scale))\n";

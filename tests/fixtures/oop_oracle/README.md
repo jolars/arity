@@ -108,3 +108,13 @@ accessors; explicit dispatch probes check accessor behavior in R. The pin
 retains external method wrappers' `(...)` formals and the underlying functions'
 `.self` parameters separately, so the editor's forwarding signatures can be
 checked against their targets.
+
+The generator mutation case records R6 `$set()` additions and replacements,
+class locking, a custom `clone` method, and instances created before and after
+installation. Reference Class observations cover `$methods()` replacements,
+field locks, class definition locks, and the distinction between a cached method
+and a method first accessed after replacement. It also pins the current runtime
+behavior of `$methods(name = NULL)`, which rebuilds an own method from the
+class's retained definitions. Rust tests compare member surfaces and historical
+signatures with these observations, without executing accessors to discover
+completion or type information.

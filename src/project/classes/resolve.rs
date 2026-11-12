@@ -32,6 +32,7 @@ pub struct ClassResolution<'a> {
     pub packages: &'a [PackageDeclarations],
     pub indexed: &'a IndexedProvider,
     pub remote: &'a RemoteExports,
+    pub load_orders: &'a BTreeMap<PathBuf, Option<Vec<PathBuf>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, salsa::SalsaValue)]
@@ -60,9 +61,30 @@ pub struct ClassIndex {
     rejected_callees: BTreeSet<(PathBuf, FunctionRef)>,
     uncertain_methods: BTreeMap<OopId, MethodDef>,
     uncertain_generics: BTreeMap<OopId, GenericDef>,
+    pub(super) load_orders: BTreeMap<PathBuf, Option<Vec<PathBuf>>>,
 }
 
 impl ClassIndex {
+    pub(super) fn class_file_complete(&self, path: &Path) -> bool {
+        !self.incomplete.contains(path)
+    }
+
+    pub(super) fn implementation_files(
+        &self,
+        path: &Path,
+        name: &str,
+        package: Option<&str>,
+    ) -> BTreeSet<PathBuf> {
+        if package.is_some() {
+            self.namespace.generic_files(path, name, package)
+        } else {
+            let mut files = self.definition_files(path, name, false);
+            if files.is_empty() {
+                files.extend(self.namespace.generic_files(path, name, None));
+            }
+            files
+        }
+    }
     pub(super) fn registered_s3_method(&self, path: &Path, name: &str) -> bool {
         self.scope.for_file(path).is_s3_method(name)
     }
@@ -112,6 +134,7 @@ impl ClassIndex {
                 .map(|file| (file.path.clone(), file))
                 .collect(),
             scope: Arc::new(resolution.scope.clone()),
+            load_orders: resolution.load_orders.clone(),
             ..Self::default()
         };
         index.namespace = namespace::NamespaceVisibility::build(&index.files, resolution);
@@ -168,7 +191,21 @@ impl ClassIndex {
                         .iter()
                         .filter_map(|member| member.value_factory.as_ref()),
                 )
-                .chain(file.facts.oop.class_lookups.iter());
+                .chain(file.facts.oop.class_lookups.iter())
+                .chain(
+                    file.facts
+                        .oop
+                        .mutations
+                        .iter()
+                        .filter_map(|mutation| mutation.factory.as_ref()),
+                )
+                .chain(
+                    file.facts
+                        .oop
+                        .mutations
+                        .iter()
+                        .filter_map(|mutation| mutation.lookup.as_ref()),
+                );
             for reference in references {
                 for identity in possible_functions(reference) {
                     match function_availability(

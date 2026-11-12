@@ -295,9 +295,6 @@
     ]
   },
   "reference_classes/dynamic": {
-    "known_gaps": [
-      "A method added through a generator has no implicit .self binding."
-    ],
     "probes": [
       {
         "method": "type-hierarchy",
@@ -402,9 +399,6 @@
     ]
   },
   "r6/dynamic": {
-    "known_gaps": [
-      "A method installed through $set has no implicit self binding."
-    ],
     "probes": [
       {
         "method": "type-hierarchy",

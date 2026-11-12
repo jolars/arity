@@ -74,6 +74,7 @@ impl ClassIndex {
             .oop
             .methods
             .iter()
+            .chain(self.files.get(&id.path)?.facts.oop.possible_methods.iter())
             .find(|def| def.key == id.key)
     }
 
@@ -293,6 +294,30 @@ impl ClassIndex {
     /// duplicate members, visibility domains, or competing parent branches.
     /// Consumers apply the method environment's access and shadowing rules.
     pub fn member_candidates(&self, class: &ClassId, name: &str) -> Vec<OopId> {
+        if class.key.system == ClassSystem::R6
+            && let Some(api) = self.r6_api(class)
+        {
+            return [&api.public, &api.private]
+                .into_iter()
+                .filter_map(|members| members.entries.get(name))
+                .flatten()
+                .filter_map(|member| member.declaration.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+        }
+        if class.key.system == ClassSystem::RefClass
+            && let Some(api) = self.reference_api(class)
+        {
+            return [&api.instance, &api.slots]
+                .into_iter()
+                .filter_map(|members| members.entries.get(name))
+                .flatten()
+                .filter_map(|member| member.declaration.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+        }
         let mut pending = vec![class.clone()];
         let mut visited = BTreeSet::new();
         let mut result = BTreeSet::new();

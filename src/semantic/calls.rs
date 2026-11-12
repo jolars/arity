@@ -13,9 +13,16 @@ use crate::syntax::{SyntaxKind, SyntaxNode};
 pub(crate) struct SignatureEffects {
     dynamic_bindings: bool,
     dispatch_calls: Vec<TextRange>,
+    generator_mutations: bool,
 }
 
 impl SignatureEffects {
+    pub(crate) fn record_member_call(&mut self, name: &str) {
+        self.generator_mutations |= matches!(
+            super::symbols::unbacktick(name),
+            "set" | "methods" | "lock" | "unlock" | "accessors"
+        );
+    }
     pub(crate) fn record(&mut self, name: &str, range: TextRange) {
         let name = super::symbols::unbacktick(name);
         self.dynamic_bindings |= changes_bindings(name);
@@ -23,6 +30,10 @@ impl SignatureEffects {
             self.dispatch_calls.push(range);
         }
     }
+}
+
+pub(crate) fn has_generator_mutations(model: &SemanticModel) -> bool {
+    model.signature_effects.generator_mutations
 }
 
 pub(crate) fn changes_bindings(name: &str) -> bool {

@@ -17,7 +17,7 @@
 //! that compute their markdown flag at roxygenize time — it never *invents* a
 //! markdown default.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::ast::{Arg, AstNode, CallExpr, HasArgList};
@@ -92,6 +92,8 @@ pub struct DescriptionFacts {
     pub roxygen: Option<String>,
     /// Every `Collate*` field's entries.
     pub collate: BTreeSet<String>,
+    /// Each platform's execution order, separate from the completeness union.
+    pub collate_order: BTreeMap<String, Vec<String>>,
 }
 
 impl DescriptionFacts {
@@ -142,15 +144,17 @@ impl DescriptionFacts {
         // `Collate.unix`/`Collate.windows` over plain `Collate`; we union every
         // `Collate*`, since over-including only tightens completeness.
         let mut collate = BTreeSet::new();
+        let mut collate_order = BTreeMap::new();
         for field in document.fields() {
             if !field.name().starts_with("Collate") {
                 continue;
             }
-            collate.extend(
-                crate::dcf::collate::collate_entries(&field)
-                    .into_iter()
-                    .map(|entry| entry.name.to_string()),
-            );
+            let entries: Vec<_> = crate::dcf::collate::collate_entries(&field)
+                .into_iter()
+                .map(|entry| entry.name.to_string())
+                .collect();
+            collate.extend(entries.iter().cloned());
+            collate_order.insert(field.name().to_string(), entries);
         }
 
         DescriptionFacts {
@@ -164,6 +168,7 @@ impl DescriptionFacts {
             },
             roxygen: get("Roxygen"),
             collate,
+            collate_order,
         }
     }
 

@@ -606,13 +606,21 @@ coverage need not block useful workspace support.
   live-buffer, and incremental regressions cover ordered inheritance,
   external methods, shadowing, and custom initialization helpers.
 
-- [ ] Track statically known `Generator$set(...)` and `Generator$methods(...)`
+- [x] Track statically known `Generator$set(...)` and `Generator$methods(...)`
   additions or replacements, and methods installed from another file.
   Respect load order and known class/object locking. Record dynamic
   mutation, unknown member lists, and custom parent environments as
   incomplete. Model active/accessor members as executable reads and writes
   rather than plain stored fields; never execute their functions to obtain
-  completion or type information.
+  completion or type information. Range-free mutation events now feed the
+  shared APIs in package `Collate` and script `source()` order, including
+  generator aliases and implementations from sibling files or exported
+  workspace namespaces. R6 construction snapshots and Reference Class
+  inheritance and method caching preserve earlier implementations. Class and
+  object locks stay distinct, and accessor reads and writes carry explicit
+  execution effects. Pinned R observations, live-buffer regressions, and
+  incremental tests cover mutation signatures, locks, uncertain targets, and
+  method enclosures without evaluating R in production.
 
   Semantic references: the [Reference Class
   manual](https://stat.ethz.ch/R-manual/R-devel/library/methods/html/refClass.html)

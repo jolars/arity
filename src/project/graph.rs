@@ -887,6 +887,40 @@ pub(crate) fn build_class_index(
         .into_iter()
         .filter_map(|(root, facts)| facts.package.clone().map(|name| (root, name)))
         .collect();
+    let description_facts = description_facts_by_root(db);
+    let mut load_orders = BTreeMap::new();
+    for root in files
+        .iter()
+        .filter_map(|file| file.package_root.as_ref())
+        .collect::<BTreeSet<_>>()
+    {
+        let mut default_order: Vec<_> = files
+            .iter()
+            .filter(|file| file.package_root.as_ref() == Some(root))
+            .map(|file| file.path.clone())
+            .collect();
+        default_order.sort();
+        let orders = description_facts
+            .get(root)
+            .map(|facts| &facts.collate_order);
+        let platform_order = |platform: &str| -> Option<Vec<PathBuf>> {
+            let names =
+                orders.and_then(|orders| orders.get(platform).or_else(|| orders.get("Collate")));
+            match names {
+                None => Some(default_order.clone()),
+                Some(names) => {
+                    let paths: Vec<_> =
+                        names.iter().map(|name| root.join("R").join(name)).collect();
+                    let set: BTreeSet<_> = paths.iter().collect();
+                    (set.len() == paths.len() && set == default_order.iter().collect())
+                        .then_some(paths)
+                }
+            }
+        };
+        let unix = platform_order("Collate.unix");
+        let windows = platform_order("Collate.windows");
+        load_orders.insert(root.clone(), if unix == windows { unix } else { None });
+    }
     ClassIndex::build(
         files,
         &ClassResolution {
@@ -896,6 +930,7 @@ pub(crate) fn build_class_index(
             package_names: &package_names,
             indexed,
             remote,
+            load_orders: &load_orders,
         },
     )
 }

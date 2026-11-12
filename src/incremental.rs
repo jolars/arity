@@ -515,7 +515,7 @@ pub fn method_environments(
         file: Some(file),
     });
     let facts = file_class_defs(db, file);
-    if facts.oop.method_implementations.is_empty() {
+    if facts.oop.method_implementations.is_empty() && facts.oop.callables.is_empty() {
         return Vec::new();
     }
     let path = file
@@ -598,7 +598,12 @@ pub fn dispatch_contexts(
 /// preserve the dependency direction through `file_class_defs` and classes.
 pub fn runtime_semantic_model(db: &dyn IncrementalDb, file: SourceFile) -> &SemanticModel {
     let lexical = semantic_model(db, file);
-    if !crate::project::classes::has_method_candidates(lexical) {
+    let project_implementation = Workspace::try_get(db).is_some()
+        && lexical
+            .scopes()
+            .iter()
+            .any(|scope| scope.kind == crate::semantic::ScopeKind::Function);
+    if !crate::project::classes::has_method_candidates(lexical) && !project_implementation {
         return lexical;
     }
     method_semantic_model(db, file).as_ref().unwrap_or(lexical)
