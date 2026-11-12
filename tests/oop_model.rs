@@ -109,7 +109,7 @@ fn closure_mutations_withhold_callable_alias_proofs() {
 }
 
 #[test]
-fn conventional_s3_methods_do_not_escape_untracked_closures() {
+fn conventional_s3_methods_retain_their_lexical_owners() {
     for closure in [
         "f <- function() { g.foo <- function(x) x }",
         "f <- function() { inner <- function() { g.foo <- function(x) x } }",
@@ -121,9 +121,11 @@ fn conventional_s3_methods_do_not_escape_untracked_closures() {
              g.bar <- function(x) x\n{closure}\n"
         );
         let facts = facts(&source);
-        assert_eq!(facts.oop.methods.len(), 1, "{source}");
+        assert_eq!(facts.oop.methods.len(), 2, "{source}");
         assert_eq!(facts.oop.methods[0].name, ClassName::Known("g.bar".into()));
         assert!(facts.oop.methods[0].key.owner.0.is_empty());
+        assert_eq!(facts.oop.methods[1].name, ClassName::Known("g.foo".into()));
+        assert!(!facts.oop.methods[1].key.owner.0.is_empty());
     }
     let facts =
         facts("f <- function() { g <- function(x) base::UseMethod('g'); g.foo <- function(x) x }");

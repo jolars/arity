@@ -3031,17 +3031,16 @@ fn undefined_symbol_still_flags_outside_quoting() {
 }
 
 #[test]
-fn undefined_symbol_skips_implicit_method_variables() {
-    // S3/S4 group generics bind `.Generic`/`.Method`/`.Class` implicitly in the
-    // method body; they are always defined there, never undefined.
+fn undefined_symbol_flags_dispatch_metadata_outside_methods() {
+    // Dispatch metadata is supplied by a method call, not an ordinary function.
     let p = CompositeProvider::base_only();
     let msgs = undefined_with(
         "f <- function(e1, e2) paste(.Generic, .Method, .Class)\nf(1, 2)\n",
         &p,
     );
     assert!(
-        msgs.is_empty(),
-        "implicit method vars must not be flagged, got {msgs:?}"
+        msgs.len() == 3,
+        "ordinary functions do not acquire dispatch metadata: {msgs:?}"
     );
 }
 

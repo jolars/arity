@@ -14,6 +14,7 @@ mod oop;
 use crate::project::{PackageDeclarations, ProjectScope, ReadBinding, ReadSite};
 use crate::rindex::provider::{IndexedProvider, package_indexed, resolve_origin};
 use crate::rindex::remote::RemoteExports;
+use crate::semantic::enclosure::Availability;
 use crate::semantic::{LoadedPackage, PackageOrigin};
 
 #[derive(Debug, Clone, PartialEq, Eq, salsa::SalsaValue)]
@@ -56,11 +57,20 @@ pub struct ClassIndex {
     namespace: namespace::NamespaceVisibility,
     incomplete: BTreeSet<PathBuf>,
     callees: BTreeMap<(PathBuf, FunctionRef), FunctionIdentity>,
+    rejected_callees: BTreeSet<(PathBuf, FunctionRef)>,
     uncertain_methods: BTreeMap<OopId, MethodDef>,
     uncertain_generics: BTreeMap<OopId, GenericDef>,
 }
 
 impl ClassIndex {
+    pub(super) fn registered_s3_method(&self, path: &Path, name: &str) -> bool {
+        self.scope.for_file(path).is_s3_method(name)
+    }
+
+    pub(super) fn registered_s3_names(&self, path: &Path) -> BTreeSet<String> {
+        self.scope.for_file(path).s3_method_names().clone()
+    }
+
     /// All OOP source facts share the class projection and its package owner.
     /// These include unconfirmed declarations; consumers must inspect their
     /// provenance and uncertainty before treating them as resolved definitions.
@@ -80,6 +90,19 @@ impl ClassIndex {
         reference: &FunctionRef,
     ) -> Option<&FunctionIdentity> {
         self.callees.get(&(path.to_path_buf(), reference.clone()))
+    }
+
+    pub(super) fn callee_availability(&self, path: &Path, reference: &FunctionRef) -> Availability {
+        if self.callee_identity(path, reference).is_some() {
+            Availability::Present
+        } else if self
+            .rejected_callees
+            .contains(&(path.to_path_buf(), reference.clone()))
+        {
+            Availability::Absent
+        } else {
+            Availability::Unknown
+        }
     }
 
     pub fn build(files: Vec<ClassFile>, resolution: &ClassResolution<'_>) -> Self {
@@ -140,7 +163,7 @@ impl ClassIndex {
                 );
             for reference in references {
                 for identity in possible_functions(reference) {
-                    if confirms_function(
+                    match function_availability(
                         file,
                         reference,
                         &identity.package,
@@ -148,9 +171,17 @@ impl ClassIndex {
                         &index.files,
                         resolution,
                     ) {
-                        index
-                            .callees
-                            .insert((file.path.clone(), reference.clone()), identity);
+                        Availability::Present => {
+                            index
+                                .callees
+                                .insert((file.path.clone(), reference.clone()), identity);
+                        }
+                        Availability::Absent => {
+                            index
+                                .rejected_callees
+                                .insert((file.path.clone(), reference.clone()));
+                        }
+                        Availability::Unknown => {}
                     }
                 }
             }
@@ -193,14 +224,14 @@ impl ClassIndex {
                 .parent_candidates
                 .insert(id.clone(), candidates.clone());
             let vector_known = def.parent_vector.as_ref().is_none_or(|vector| {
-                confirms_function(
+                function_availability(
                     &index.files[&id.path],
                     vector,
                     "base",
                     "c",
                     &index.files,
                     resolution,
-                )
+                ) == Availability::Present
             });
             if !def.binding_known() || !vector_known {
                 continue;
@@ -399,7 +430,12 @@ impl ClassIndex {
         }
     }
 
-    fn definition_files(&self, path: &Path, name: &str, in_function: bool) -> BTreeSet<PathBuf> {
+    pub(super) fn definition_files(
+        &self,
+        path: &Path,
+        name: &str,
+        in_function: bool,
+    ) -> BTreeSet<PathBuf> {
         self.files.get(path).map_or_else(BTreeSet::new, |file| {
             definition_files(file, name, in_function, &self.files, &self.scope)
         })
@@ -452,20 +488,26 @@ fn definition_files(
     }
 }
 
-fn confirms_function(
+fn function_availability(
     file: &ClassFile,
     reference: &FunctionRef,
     package: &str,
     name: &str,
     files: &BTreeMap<PathBuf, ClassFile>,
     resolution: &ClassResolution<'_>,
-) -> bool {
+) -> Availability {
     match reference {
         FunctionRef::Qualified {
             package: actual_package,
             name: actual_name,
-        } => actual_package == package && actual_name == name,
-        FunctionRef::Unresolved(_) => false,
+        } => {
+            if actual_package == package && actual_name == name {
+                Availability::Present
+            } else {
+                Availability::Absent
+            }
+        }
+        FunctionRef::Unresolved(_) => Availability::Unknown,
         FunctionRef::Bare {
             name: actual_name,
             attached,
@@ -475,7 +517,7 @@ fn confirms_function(
                 || actual_name != name
                 || resolution.scope.for_file(&file.path).resolution_incomplete
             {
-                return false;
+                return Availability::Unknown;
             }
             // A workspace binding wins over imports and the search path, even
             // when its value is not a class factory we know how to summarize.
@@ -487,14 +529,14 @@ fn confirms_function(
                                 || file.exports.contains("require")))
                 })
             }) {
-                return false;
+                return Availability::Unknown;
             }
             if let Some(root) = &file.package_root
                 && let Some((_, text)) = resolution.namespaces.iter().find(|(path, _)| path == root)
             {
                 let namespace = crate::namespace::parse(text);
                 if !namespace.diagnostics.is_empty() {
-                    return false;
+                    return Availability::Unknown;
                 }
                 let mut imports = BTreeSet::new();
                 let mut wildcard = Vec::new();
@@ -521,7 +563,7 @@ fn confirms_function(
                                     .ancestors()
                                     .any(|node| node.kind() == SyntaxKind::IF_EXPR)
                                 {
-                                    return false;
+                                    return Availability::Unknown;
                                 }
                                 imports.insert(source);
                             }
@@ -532,7 +574,7 @@ fn confirms_function(
                                 .ancestors()
                                 .any(|node| node.kind() == SyntaxKind::IF_EXPR)
                             {
-                                return false;
+                                return Availability::Unknown;
                             }
                             for source in args
                                 .iter()
@@ -549,11 +591,17 @@ fn confirms_function(
                     .iter()
                     .any(|package| !package_indexed(resolution.indexed, resolution.remote, package))
                 {
-                    return false;
+                    return Availability::Unknown;
                 }
                 imports.extend(package_origins(resolution, name, &wildcard));
                 if !imports.is_empty() {
-                    return imports.len() == 1 && imports.contains(package);
+                    return if imports.len() == 1 && imports.contains(package) {
+                        Availability::Present
+                    } else if !imports.contains(package) {
+                        Availability::Absent
+                    } else {
+                        Availability::Unknown
+                    };
                 }
             }
             let mut loaded = Vec::new();
@@ -565,7 +613,7 @@ fn confirms_function(
             {
                 loaded.extend(declaration.attached.iter().cloned());
                 if package_origins(resolution, name, &loaded).len() > 1 {
-                    return false;
+                    return Availability::Unknown;
                 }
             }
             // Depends attaches before this file executes its own library calls.
@@ -580,14 +628,24 @@ fn confirms_function(
             if loaded.iter().any(|package| {
                 !package_indexed(resolution.indexed, resolution.remote, &package.name)
             }) {
-                return false;
+                return Availability::Unknown;
             }
             match resolve_origin(resolution.indexed, resolution.remote, name, &loaded) {
-                PackageOrigin::Resolved(origin) => origin == package,
-                PackageOrigin::Ambiguous(origins) => {
-                    origins.last().is_some_and(|origin| origin == package)
+                PackageOrigin::Resolved(origin) => {
+                    if origin == package {
+                        Availability::Present
+                    } else {
+                        Availability::Absent
+                    }
                 }
-                PackageOrigin::Unknown => false,
+                PackageOrigin::Ambiguous(origins) => {
+                    if origins.last().is_some_and(|origin| origin == package) {
+                        Availability::Present
+                    } else {
+                        Availability::Unknown
+                    }
+                }
+                PackageOrigin::Unknown => Availability::Unknown,
             }
         }
     }

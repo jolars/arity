@@ -560,7 +560,7 @@ coverage need not block useful workspace support.
   out of lexical definitions and workspace exports. Pinned R observations,
   lint and editor regressions, and incremental tests cover inheritance,
   shadowing, nested closures, field updates, and cold and live buffer reads.
-- [ ] Replace the global S3 and S4 implicit-variable exemption with
+- [x] Replace the global S3 and S4 implicit-variable exemption with
   method-context facts. Cover `.Generic`, `.Method`, `.Class`, `.Group`,
   `.GenericCallEnv`/`.GenericDefEnv`, and S4's
   `.Methods`/`.defined`/`.target` where each dispatch mechanism actually
@@ -570,6 +570,13 @@ coverage need not block useful workspace support.
   not treat every class-name string as a lexical binding. Ensure definition,
   references, rename, symbols, and unused checks handle implicit identities
   without fictitious editable definitions.
+  Dispatch contexts now supply metadata to the actual method implementations,
+  including aliases, NAMESPACE registrations, and implementations in visible
+  sibling files. Primitive and group dispatch retain their distinct bindings,
+  and uncertain contexts remain conservative. Generic registration effects
+  contribute names without source definitions. Pinned R observations and
+  regressions cover lexical shadowing, nonlocal writes, editor navigation,
+  replacement APIs, unused checks, and incremental preservation.
 
 #### 3. R6 and Reference Class members
 

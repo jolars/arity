@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use rowan::TextRange;
+use rowan::{TextRange, TextSize};
 use smol_str::SmolStr;
 
 use super::{BindingId, ScopeId, ScopeKind, SemanticModel, binding_name_key};
@@ -21,8 +21,23 @@ pub enum Availability {
 /// An identity within this semantic model, deliberately without a source span.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GeneratedBinding {
-    pub enclosure: u32,
+    pub origin: GeneratedOrigin,
     pub name: SmolStr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum GeneratedOrigin {
+    Method(u32),
+    Scope(u32),
+}
+
+/// A registration can introduce a name without an editable identifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeBinding {
+    pub scope: ScopeId,
+    pub name: SmolStr,
+    pub available_from: TextSize,
+    pub availability: Availability,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -54,6 +69,9 @@ pub struct MethodEnclosure {
     pub bindings: BTreeMap<SmolStr, Availability>,
     /// Computed member lists or unresolved ancestors can supply additional names.
     pub unknown_members: bool,
+    /// Dispatch metadata lives in the call frame. A direct `<<-` skips it,
+    /// whereas a write from a nested closure can reach it.
+    pub call_frame: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,7 +87,16 @@ pub(super) struct MethodEnclosures {
     environments: Vec<MethodEnclosure>,
     functions: HashMap<ScopeId, Vec<Option<u32>>>,
     scopes: HashSet<ScopeId>,
+    method_scopes: HashSet<ScopeId>,
     writes: HashSet<TextRange>,
+    bindings: Vec<ScopeBinding>,
+    nonlocal_writes: HashMap<TextRange, NonlocalWrite>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NonlocalWrite {
+    name: SmolStr,
+    origin: ScopeId,
 }
 
 impl SemanticModel {
@@ -81,48 +108,107 @@ impl SemanticModel {
         implementations: &[MethodImplementation],
     ) -> Self {
         let mut model = self.clone();
-        let mut functions: HashMap<ScopeId, Vec<Option<u32>>> = HashMap::new();
+        let offset = model.method_enclosures.environments.len() as u32;
+        model.method_enclosures.environments.extend(environments);
         for implementation in implementations {
-            let candidates = functions.entry(implementation.scope).or_default();
+            let candidates = model
+                .method_enclosures
+                .functions
+                .entry(implementation.scope)
+                .or_default();
             if implementation.keep_original && !candidates.contains(&None) {
                 candidates.push(None);
             }
-            if !candidates.contains(&Some(implementation.enclosure)) {
-                candidates.push(Some(implementation.enclosure));
+            if !candidates.contains(&Some(offset + implementation.enclosure)) {
+                candidates.push(Some(offset + implementation.enclosure));
             }
         }
+        model.refresh_contextual_resolution();
+        model
+    }
+
+    pub fn with_scope_bindings(&self, bindings: Vec<ScopeBinding>) -> Self {
+        let mut model = self.clone();
+        // Converting an ordinary function into a generic consumes its old
+        // value. The literal registration name is a use, not a rename site.
+        model
+            .use_only_reads
+            .extend(bindings.iter().filter_map(|binding| {
+                Some(super::UseOnlyRead {
+                    name: binding.name.clone(),
+                    scope: binding.scope,
+                    range: TextRange::empty(binding.available_from.checked_sub(TextSize::new(1))?),
+                    deferred: false,
+                    gate: None,
+                })
+            }));
+        model.method_enclosures.bindings.extend(bindings);
+        model
+            .method_enclosures
+            .bindings
+            .sort_by_key(|binding| binding.available_from);
+        model.refresh_contextual_resolution();
+        model
+    }
+
+    pub fn generated_file_names(&self) -> impl Iterator<Item = &str> {
+        self.method_enclosures
+            .bindings
+            .iter()
+            .filter(|binding| {
+                self.scope(binding.scope).kind == ScopeKind::File
+                    && binding.availability != Availability::Absent
+            })
+            .map(|binding| binding.name.as_str())
+    }
+
+    fn refresh_contextual_resolution(&mut self) {
         let mut scopes = HashSet::new();
-        for index in 0..model.scopes.len() {
+        let mut method_scopes = HashSet::new();
+        for index in 0..self.scopes.len() {
             let id = ScopeId::from_index(index);
             let mut current = Some(id);
             while let Some(scope) = current {
-                if functions.contains_key(&scope) {
+                if self.method_enclosures.functions.contains_key(&scope) {
                     scopes.insert(id);
+                    method_scopes.insert(id);
                     break;
                 }
-                current = model.scope(scope).parent;
+                if self
+                    .method_enclosures
+                    .bindings
+                    .iter()
+                    .any(|binding| binding.scope == scope)
+                {
+                    scopes.insert(id);
+                }
+                current = self.scope(scope).parent;
             }
         }
-        model.method_enclosures = MethodEnclosures {
-            environments,
-            functions,
-            scopes,
-            writes: HashSet::new(),
-        };
-        let writes = model.resolve_method_writes();
-        model.method_enclosures.writes = writes.iter().map(|(range, _)| *range).collect();
-        model.contextual_resolutions = model
+        self.method_enclosures.scopes = scopes;
+        self.method_enclosures.method_scopes = method_scopes;
+        let writes = self.resolve_method_writes();
+        self.method_enclosures.writes = writes.iter().map(|(range, _)| *range).collect();
+        // NextMethod() synthesizes one read per formal at the same call span.
+        // Cache only unambiguous spans; those synthetic reads resolve by name.
+        let mut seen = HashSet::new();
+        let repeated: HashSet<_> = self
             .idents()
             .iter()
+            .filter(|ident| !seen.insert(ident.range))
+            .map(|ident| ident.range)
+            .collect();
+        self.contextual_resolutions = self
+            .idents()
+            .iter()
+            .filter(|ident| !repeated.contains(&ident.range))
             .filter_map(|ident| {
-                model
-                    .contextual_resolution(&ident.name, ident.range, ident.scope, ident.deferred)
+                self.contextual_resolution(&ident.name, ident.range, ident.scope, ident.deferred)
                     .map(|resolution| (ident.range, resolution))
             })
             .chain(writes)
             .collect();
-        super::builder::refresh_resolution(&mut model);
-        model
+        super::builder::refresh_resolution(self);
     }
 
     // The lexical builder cannot know the target of a nonlocal write. Replace
@@ -131,14 +217,27 @@ impl SemanticModel {
     fn resolve_method_writes(&mut self) -> Vec<(TextRange, IdentifierResolution)> {
         let mut removed = HashSet::new();
         let mut writes = Vec::new();
+        let mut binding_ids = HashMap::new();
         for (index, binding) in self.bindings.iter().enumerate() {
             let Some(origin) = binding.super_assignment_scope else {
                 continue;
             };
-            if !self.method_enclosures.scopes.contains(&origin) {
+            binding_ids.insert(binding.def_range, BindingId::from_index(index));
+            // Keep the source operation after removing its provisional binding.
+            // Another method context can add a different target for this write.
+            self.method_enclosures
+                .nonlocal_writes
+                .entry(binding.def_range)
+                .or_insert_with(|| NonlocalWrite {
+                    name: binding_name_key(&binding.name),
+                    origin,
+                });
+        }
+        for (range, write) in &self.method_enclosures.nonlocal_writes {
+            if !self.method_enclosures.scopes.contains(&write.origin) {
                 continue;
             }
-            let mut frame = origin;
+            let mut frame = write.origin;
             while !matches!(
                 self.scope(frame).kind,
                 ScopeKind::Function | ScopeKind::File
@@ -150,17 +249,20 @@ impl SemanticModel {
             }
             let mut lookup = Lookup {
                 model: self,
-                name: binding_name_key(&binding.name),
-                range: binding.def_range,
+                name: write.name.clone(),
+                range: *range,
                 deferred: false,
                 path: HashSet::new(),
                 budget: 512,
                 result: IdentifierResolution::default(),
+                nonlocal_write: true,
             };
-            lookup.enclosing(frame, false);
+            lookup.enclosing(frame, false, true);
             if !lookup.result.is_source_only() || !lookup.result.lexical.is_empty() {
-                removed.insert(BindingId::from_index(index));
-                writes.push((binding.def_range, lookup.result));
+                if let Some(id) = binding_ids.get(range) {
+                    removed.insert(*id);
+                }
+                writes.push((*range, lookup.result));
             }
         }
         if removed.is_empty() {
@@ -300,6 +402,12 @@ impl SemanticModel {
     /// One source occurrence cannot be rewritten differently in method copies
     /// and in the original closure, so a mixed identity makes rename unsafe.
     pub fn binding_rename_is_safe(&self, id: BindingId) -> bool {
+        let binding = self.binding(id);
+        if self.method_enclosures.bindings.iter().any(|effect| {
+            effect.scope == binding.scope && effect.name == binding_name_key(&binding.name)
+        }) {
+            return false;
+        }
         self.variable_cohort(id).into_iter().all(|binding| {
             self.read_sites(binding)
                 .all(|ident| !self.blocks_source_navigation(ident.range))
@@ -328,6 +436,7 @@ impl SemanticModel {
             path: HashSet::new(),
             budget: 512,
             result: IdentifierResolution::default(),
+            nonlocal_write: false,
         };
         lookup.scope(scope, true);
         lookup.result.lexical.sort_by_key(|id| id.0);
@@ -335,7 +444,7 @@ impl SemanticModel {
         lookup
             .result
             .generated
-            .sort_by(|a, b| (a.enclosure, &a.name).cmp(&(b.enclosure, &b.name)));
+            .sort_by(|a, b| (a.origin, &a.name).cmp(&(b.origin, &b.name)));
         lookup.result.generated.dedup();
         Some(lookup.result)
     }
@@ -349,6 +458,7 @@ struct Lookup<'a> {
     path: HashSet<ScopeId>,
     budget: usize,
     result: IdentifierResolution,
+    nonlocal_write: bool,
 }
 
 impl Lookup<'_> {
@@ -367,9 +477,11 @@ impl Lookup<'_> {
             .filter(|binding| {
                 let binding = self.model.binding(*binding);
                 binding.def_range != self.range
-                    && !binding
-                        .super_assignment_scope
-                        .is_some_and(|origin| self.model.method_enclosures.scopes.contains(&origin))
+                    && !binding.super_assignment_scope.is_some_and(|origin| {
+                        self.model.method_enclosures.method_scopes.contains(&origin)
+                            || (self.nonlocal_write
+                                && self.model.method_enclosures.scopes.contains(&origin))
+                    })
                     && (!in_frame
                         || self.deferred
                         || binding.available_from <= self.range.start()
@@ -389,29 +501,80 @@ impl Lookup<'_> {
                     || (in_frame && !self.deferred)
                     || binding.available_from <= self.range.start())
         });
-        self.result.lexical.extend(candidates);
+        let effect = self
+            .model
+            .method_enclosures
+            .bindings
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, binding)| {
+                binding.scope == id
+                    && binding.name == self.name
+                    && (!in_frame || self.deferred || binding.available_from <= self.range.start())
+            });
+        let mut needs_parent = needs_parent;
+        if let Some((index, effect)) = effect {
+            let later_local = candidates.iter().any(|id| {
+                let binding = self.model.binding(*id);
+                !binding.conditional && binding.available_from >= effect.available_from
+            });
+            if !later_local {
+                self.result.generated.push(GeneratedBinding {
+                    origin: GeneratedOrigin::Scope(index as u32),
+                    name: self.name.clone(),
+                });
+                if effect.availability == Availability::Present {
+                    needs_parent = false;
+                } else {
+                    self.result.uncertain = true;
+                }
+            }
+        }
+        self.result
+            .lexical
+            .extend(candidates.into_iter().filter(|binding| {
+                effect.is_none_or(|(_, effect)| {
+                    effect.availability != Availability::Present
+                        || self.model.binding(*binding).available_from >= effect.available_from
+                })
+            }));
         if needs_parent {
-            self.enclosing(id, in_frame);
+            self.enclosing(id, in_frame, false);
         }
         self.path.remove(&id);
     }
 
-    fn enclosing(&mut self, id: ScopeId, in_frame: bool) {
+    fn enclosing(&mut self, id: ScopeId, in_frame: bool, nonlocal_write: bool) {
         let scope = self.model.scope(id);
         if let Some(enclosures) = self.model.method_enclosures.functions.get(&id) {
             for enclosure in enclosures {
                 if let Some(enclosure) = enclosure {
                     let environment =
                         &self.model.method_enclosures.environments[*enclosure as usize];
+                    if nonlocal_write && environment.call_frame {
+                        if let Some(parent) = scope.parent {
+                            self.scope(parent, false);
+                        } else {
+                            self.result.external = true;
+                        }
+                        continue;
+                    }
                     match environment.bindings.get(&self.name) {
                         Some(Availability::Present) => {
                             self.result.generated.push(GeneratedBinding {
-                                enclosure: *enclosure,
+                                origin: GeneratedOrigin::Method(*enclosure),
                                 name: self.name.clone(),
                             });
                             continue;
                         }
-                        Some(Availability::Unknown) => self.result.uncertain = true,
+                        Some(Availability::Unknown) => {
+                            self.result.generated.push(GeneratedBinding {
+                                origin: GeneratedOrigin::Method(*enclosure),
+                                name: self.name.clone(),
+                            });
+                            self.result.uncertain = true;
+                        }
                         _ => self.result.uncertain |= environment.unknown_members,
                     }
                     self.result.uncertain |= environment.parent_is_unknown;

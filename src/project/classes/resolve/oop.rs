@@ -241,7 +241,11 @@ impl ClassIndex {
         candidates
     }
 
-    fn generic_confirmed(&self, path: &Path, def: &GenericDef) -> bool {
+    pub(in crate::project::classes) fn generic_confirmed(
+        &self,
+        path: &Path,
+        def: &GenericDef,
+    ) -> bool {
         let (package, name) = match def.key.system {
             OopSystem::S3 => ("base", "UseMethod"),
             OopSystem::S4 => ("methods", "setGeneric"),

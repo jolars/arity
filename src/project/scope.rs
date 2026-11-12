@@ -94,7 +94,13 @@ impl LayeredSet {
     pub fn contains(&self, name: &str) -> bool {
         // `shared` answers almost every query, and the common answer is "no";
         // checking it first keeps the miss to one lookup plus one.
-        (self.shared.contains(name) || self.added.contains(name)) && !self.removed.contains(name)
+        // Generated registration names have no source backticks. Quoting a
+        // read does not change that binding's identity.
+        let bare = unbacktick(name);
+        let contains = |names: &BTreeSet<String>| {
+            names.contains(name) || (bare != name && names.contains(bare))
+        };
+        (contains(&self.shared) || contains(&self.added)) && !contains(&self.removed)
     }
 
     /// Every name, deduplicated, in no guaranteed order. For tests and

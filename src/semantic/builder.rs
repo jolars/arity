@@ -299,9 +299,8 @@ fn record_ident_read(ctx: &mut BuildCtx<'_>, tok: &SyntaxToken<RLanguage>, scope
     // reserved literal constants (`TRUE`, `NA`, `NULL`, `Inf`, …) lex as IDENT
     // but are values, not symbol references. (`T`/`F` are *not* excluded: they
     // are rebindable base bindings.)
-    // `.Generic`/`.Method`/`.Class` are bound implicitly inside method bodies.
     if let Some(ident) = Ident::cast(tok.clone())
-        && (ident.is_dots() || ident.is_reserved_constant() || ident.is_implicit_method_var())
+        && (ident.is_dots() || ident.is_reserved_constant())
     {
         return;
     }

@@ -10,8 +10,9 @@ use crate::ast::{AssignmentExpr, FunctionExpr};
 use crate::semantic::{BindingKind, ScopeKind, SemanticModel};
 use crate::syntax::SyntaxNode;
 
-/// The names bound at file (top) level — the symbols another file in the same
-/// package or `source()` closure can see.
+/// The names bound at file (top) level, including possible generic registration
+/// effects — the symbols another file in the same package or `source()` closure
+/// can see. Generated names need no editable source definition.
 ///
 /// Returned as a `BTreeSet` so equality is order-independent: this is the
 /// firewall between per-file analysis and cross-file resolution. Editing a
@@ -24,6 +25,7 @@ pub fn file_exports(model: &SemanticModel) -> BTreeSet<String> {
         .filter(|binding| matches!(binding.kind, BindingKind::Local | BindingKind::Implicit))
         .filter(|binding| model.scope(binding.scope).kind == ScopeKind::File)
         .map(|binding| binding.name.to_string())
+        .chain(model.generated_file_names().map(str::to_owned))
         .collect()
 }
 
@@ -75,8 +77,9 @@ pub enum DefKind {
 
 /// The top-level binding names a file defines, each tagged with its [`DefKind`].
 ///
-/// The name set mirrors [`file_exports`] exactly (file-scope `Local`/`Implicit`
-/// bindings); this adds the function-vs-value tag a symbol index needs. It is
+/// This covers editable file-scope `Local`/`Implicit` bindings. Registration
+/// effects in [`file_exports`] have no source definition and stay out of this
+/// index. The function-vs-value tag is
 /// deliberately **range-free**: a `def_range` shifts on any earlier edit, so a
 /// consumer that needs the actual span re-resolves it from the fresh
 /// [`SemanticModel`] per request (see the project-wide aggregate). Keeping ranges

@@ -3732,3 +3732,189 @@ fn reference_environments_share_project_inheritance_and_keep_writes_out_of_expor
     assert_ne!(method_environments(&db, b), &environments);
     assert!(file_free_reads(&db, b).contains("value"));
 }
+
+#[test]
+fn dispatch_contexts_backdate_while_current_reads_follow_edits() {
+    use arity::incremental::dispatch_contexts;
+    let source = "g <- function(x) UseMethod('g')\ng.C <- function(x) .Generic\n";
+    let (mut db, file) = script_one(source);
+    let contexts = dispatch_contexts(&db, file).clone();
+    assert!(!contexts.methods.is_empty());
+    let _ = db.runtime_semantic_model(file);
+    db.clear_query_log();
+    let edited = format!(
+        "# Prose.\n{}",
+        source.replace("function(x) .Generic", "function(x) { print(x); .Generic }")
+    );
+    db.set_file_text(file, edited.clone());
+    assert_eq!(dispatch_contexts(&db, file), &contexts);
+    let model = db.runtime_semantic_model(file);
+    let ident = model
+        .idents()
+        .iter()
+        .find(|ident| ident.name == ".Generic")
+        .unwrap();
+    assert!(!model.is_free_read(ident));
+    assert_eq!(
+        usize::from(ident.range.start()),
+        edited.find(".Generic").unwrap()
+    );
+    let counts = count_by_kind(&db.query_log());
+    assert!(!counts.contains_key(&QueryKind::DispatchContexts));
+    assert!(!counts.contains_key(&QueryKind::ProjectClasses));
+}
+
+#[test]
+fn namespace_registration_supplies_s3_metadata_to_a_nonconventional_name() {
+    use arity::incremental::dispatch_contexts;
+    let (mut db, _, file) = package_ab(
+        "g <- function(x) UseMethod('g')\n",
+        "handler <- function(x) list(.Generic, .Class, .Group)\n",
+    );
+    let metadata = |namespace: &str| {
+        vec![PackageInfo {
+            root: PathBuf::from("/pkg"),
+            namespace: Some(namespace.into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]
+    };
+    db.set_package_metadata(metadata("S3method(g, C, handler)\n"));
+    assert_eq!(dispatch_contexts(&db, file).registered_s3, ["handler"]);
+    let model = db.runtime_semantic_model(file);
+    assert!(
+        model
+            .idents()
+            .iter()
+            .filter(|ident| ident.name.starts_with('.'))
+            .all(|ident| !model.is_free_read(ident))
+    );
+    db.set_package_metadata(metadata(""));
+    let model = db.runtime_semantic_model(file);
+    assert!(
+        model
+            .idents()
+            .iter()
+            .filter(|ident| ident.name.starts_with('.'))
+            .all(|ident| model.is_free_read(ident))
+    );
+}
+
+#[test]
+fn generic_effects_reach_sibling_files_without_creating_source_definitions() {
+    use arity::incremental::{file_def_sites, file_exports};
+    let (mut db, a, _b) = package_ab(
+        "methods::setGeneric('generated', function(x) standardGeneric('generated'))\nmethods::setClass('HiddenClass')\n",
+        "f <- function() generated(1)\n",
+    );
+    assert!(file_exports(&db, a).contains("generated"));
+    assert!(!file_exports(&db, a).contains("HiddenClass"));
+    assert!(!file_def_sites(&db, a).contains_key("generated"));
+    assert!(
+        project_graph(&db)
+            .for_file(Path::new("/pkg/R/b.R"))
+            .resolves("generated")
+    );
+    let before = arity::incremental::dispatch_contexts(&db, a).clone();
+    db.set_file_text(a, "# Prose.\nmethods::setGeneric('generated', function(x) { standardGeneric('generated') })\nmethods::setClass('HiddenClass')\n");
+    assert_eq!(arity::incremental::dispatch_contexts(&db, a), &before);
+    assert!(db.snapshot().workspace_def_sites("generated").is_empty());
+}
+
+#[test]
+fn dispatch_metadata_rejects_a_disproven_imported_registration_api() {
+    let (mut db, _, file) = package_ab("", "setMethod('g', 'ANY', function(x) .Generic)\n");
+    db.set_package_metadata(vec![PackageInfo {
+        root: PathBuf::from("/pkg"),
+        namespace: Some("importFrom(other, setMethod)\n".into()),
+        dir_sources: BTreeSet::new(),
+        native_routines: BTreeSet::new(),
+    }]);
+    let model = db.runtime_semantic_model(file);
+    let ident = model
+        .idents()
+        .iter()
+        .find(|ident| ident.name == ".Generic")
+        .unwrap();
+    assert!(model.is_free_read(ident));
+}
+
+#[test]
+fn dispatch_registrations_supply_context_to_a_sibling_implementation() {
+    let (mut db, implementation, registration) = package_ab(
+        "implementation <- function(x) list(.Generic, .target, .Class)\n",
+        "methods::setMethod('show', 'ANY', implementation)\n",
+    );
+    let assert_context = |db: &IncrementalDatabase, expected: bool| {
+        let model = db.runtime_semantic_model(implementation);
+        for ident in model
+            .idents()
+            .iter()
+            .filter(|ident| matches!(ident.name.as_str(), ".Generic" | ".target"))
+        {
+            assert_eq!(!model.is_free_read(ident), expected, "{}", ident.name);
+        }
+        assert!(
+            model.is_free_read(
+                model
+                    .idents()
+                    .iter()
+                    .find(|ident| ident.name == ".Class")
+                    .unwrap()
+            )
+        );
+    };
+    assert_context(&db, true);
+    db.set_file_text(registration, "");
+    assert_context(&db, false);
+}
+
+#[test]
+fn sourced_dispatch_implementations_require_visibility_and_backdate_body_edits() {
+    use arity::incremental::dispatch_contexts;
+    let registration_source = "methods::setMethod('show', 'ANY', implementation)\n";
+    let (mut db, registration, implementation) = scripts_ab(
+        registration_source,
+        "implementation <- function(x) .Generic\n",
+    );
+    assert!(dispatch_contexts(&db, implementation).named.is_empty());
+    db.set_file_text(
+        registration,
+        format!("source('b.R')\n{registration_source}"),
+    );
+    let before = dispatch_contexts(&db, implementation).clone();
+    assert_eq!(before.named.len(), 1);
+    let _ = db.runtime_semantic_model(implementation);
+    db.clear_query_log();
+    let edited = "# Prose.\nimplementation <- function(x) { print(x); .Generic }\n";
+    db.set_file_text(implementation, edited);
+    assert_eq!(dispatch_contexts(&db, implementation), &before);
+    let model = db.runtime_semantic_model(implementation);
+    let ident = model
+        .idents()
+        .iter()
+        .find(|ident| ident.name == ".Generic")
+        .unwrap();
+    assert!(!model.is_free_read(ident));
+    assert_eq!(
+        usize::from(ident.range.start()),
+        edited.find(".Generic").unwrap()
+    );
+    let counts = count_by_kind(&db.query_log());
+    assert!(!counts.contains_key(&QueryKind::DispatchContexts));
+    assert!(!counts.contains_key(&QueryKind::ProjectClasses));
+}
+
+#[test]
+fn generated_replacement_names_resolve_from_sibling_files() {
+    let (mut db, _, file) = package_ab(
+        "methods::setGeneric('value<-', function(x, value) standardGeneric('value<-'))\n",
+        "f <- function(x) `value<-`(x, 1)\n",
+    );
+    let library = db.set_library_index(IndexedProvider::empty());
+    assert!(
+        !external_resolution(&db, library, file)
+            .unresolved
+            .contains("`value<-`")
+    );
+}

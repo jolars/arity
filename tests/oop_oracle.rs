@@ -17,6 +17,7 @@ fn fixture_names() -> &'static [&'static str] {
     &[
         "s3",
         "s4",
+        "dispatch_environments",
         "reference_classes",
         "reference_environments",
         "r6",
@@ -375,6 +376,74 @@ fn reference_environments_match_pinned_runtime_observations() {
         outcomes,
         ["child 2", "2", "Child", "2 100", "FALSE FALSE", "3", "100"]
     );
+}
+
+#[test]
+fn dispatch_environments_match_pinned_runtime_observations() {
+    use arity::project::classes::OopSystem;
+    use arity::semantic::enclosure::Availability;
+    let pin = pin("dispatch_environments");
+    let root = parse(&pin.source).cst;
+    let model = SemanticModel::build(&root);
+    let facts = file_class_defs(&model, &root);
+    let path = Path::new("oracle.R");
+    let index = arity::incremental::IncrementalDatabase::default()
+        .snapshot()
+        .class_index_in(path, &facts, &root, &model);
+    let contexts = index.dispatch_contexts(path);
+    for (system, name, observation) in [
+        (OopSystem::S3, "g.Dispatch", 0),
+        (OopSystem::S3, "Ops.Dispatch", 1),
+        (OopSystem::S3, "[.Dispatch", 2),
+        (OopSystem::S3, "g", 3),
+        (OopSystem::S4, "readDispatch", 5),
+        (OopSystem::S4, "length", 6),
+        (OopSystem::S4, "Math", 7),
+        (OopSystem::S4, "replaceDispatch<-", 8),
+    ] {
+        let method = facts
+            .oop
+            .methods
+            .iter()
+            .find(|method| method.system == system && method.name == ClassName::Known(name.into()))
+            .unwrap();
+        let context = contexts
+            .methods
+            .iter()
+            .find(|context| context.method == method.key)
+            .unwrap();
+        let observed = pin.facts.dispatch[observation]
+            .value
+            .split(';')
+            .next()
+            .unwrap();
+        for name in [
+            ".Generic",
+            ".Method",
+            ".Class",
+            ".Group",
+            ".GenericCallEnv",
+            ".GenericDefEnv",
+            ".Methods",
+            ".defined",
+            ".target",
+        ] {
+            let present = observed.split(',').any(|binding| binding == name);
+            match context
+                .bindings
+                .get(name)
+                .copied()
+                .unwrap_or(Availability::Absent)
+            {
+                Availability::Present => assert!(present, "{system:?}: {name}"),
+                Availability::Absent => assert!(!present, "{system:?}: {name}"),
+                Availability::Unknown => {}
+            }
+        }
+    }
+    assert_eq!(pin.facts.dispatch[4].value, "formal");
+    assert_eq!(pin.facts.dispatch[9].value, "TRUE");
+    assert_eq!(pin.facts.dispatch[10].value, "FALSE");
 }
 
 #[test]

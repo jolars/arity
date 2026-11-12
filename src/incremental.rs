@@ -266,6 +266,7 @@ pub enum QueryKind {
     LineIndex,
     SemanticModel,
     MethodEnvironments,
+    DispatchContexts,
     RuntimeSemanticModel,
     ControlFlow,
     FileExports,
@@ -545,14 +546,52 @@ fn method_semantic_model(db: &dyn IncrementalDb, file: SourceFile) -> Option<Sem
         file: Some(file),
     });
     let environments = method_environments(db, file);
-    if environments.is_empty() {
+    let dispatch = dispatch_contexts(db, file);
+    if environments.is_empty()
+        && dispatch.methods.is_empty()
+        && dispatch.generics.is_empty()
+        && dispatch.registered_s3.is_empty()
+        && dispatch.named.is_empty()
+    {
         return None;
     }
-    crate::project::classes::apply_method_environments(
-        semantic_model(db, file),
-        &parsed_tree_root(db, file),
-        environments,
+    let lexical = semantic_model(db, file);
+    let root = parsed_tree_root(db, file);
+    let model = crate::project::classes::apply_method_environments(lexical, &root, environments)
+        .unwrap_or_else(|| lexical.clone());
+    Some(crate::project::classes::apply_dispatch_contexts(&model, &root, dispatch).unwrap_or(model))
+}
+
+/// Dispatch availability and generated generic names contain no body ranges.
+#[salsa::tracked(returns(ref))]
+pub fn dispatch_contexts(
+    db: &dyn IncrementalDb,
+    file: SourceFile,
+) -> crate::project::classes::DispatchContexts {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::DispatchContexts,
+        file: Some(file),
+    });
+    let facts = file_class_defs(db, file);
+    let path = file
+        .path(db)
+        .as_deref()
+        .unwrap_or_else(|| Path::new("buffer.R"));
+    let index = project_classes(db);
+    if index.file(path).is_some() {
+        return index.dispatch_contexts(path);
+    }
+    let root = parsed_tree_root(db, file);
+    crate::project::graph::build_class_index(
+        db,
+        Some(crate::project::graph::LiveClassFile {
+            path,
+            facts,
+            root: &root,
+            model: semantic_model(db, file),
+        }),
     )
+    .dispatch_contexts(path)
 }
 
 /// Runtime reads use method enclosures; declaration queries stay lexical to

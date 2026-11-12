@@ -27,14 +27,20 @@ pub(crate) fn with_document_semantics<T>(
             return None;
         }
         let facts = crate::project::file_class_defs(&model, &root);
-        if facts.oop.method_implementations.is_empty() {
-            return None;
-        }
         let index = snapshot.class_index_in(path, &facts, &root, &model);
-        crate::project::classes::apply_method_environments(
+        let resolved = crate::project::classes::apply_method_environments(
             &model,
             &root,
             &index.method_environments(path),
+        )
+        .unwrap_or_else(|| model.clone());
+        Some(
+            crate::project::classes::apply_dispatch_contexts(
+                &resolved,
+                &root,
+                &index.dispatch_contexts(path),
+            )
+            .unwrap_or(resolved),
         )
     }))
     .unwrap_or_else(|_| Some(crate::project::classes::standalone_semantic_model(&root)));

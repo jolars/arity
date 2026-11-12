@@ -176,6 +176,8 @@ pub enum OopUncertainty {
     UnresolvedCallee,
     UnresolvedImplementation,
     UnresolvedAlias,
+    /// A dotted function name is a possible convention-based S3 method.
+    UnprovenMethod,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
@@ -200,7 +202,14 @@ pub struct OopFacts {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum MethodImplementationSource {
     Inline,
-    Binding { owner: ClassOwner, name: String },
+    Binding {
+        owner: ClassOwner,
+        name: String,
+    },
+    /// A callable that requires project lookup rather than an in-file value.
+    Reference {
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]

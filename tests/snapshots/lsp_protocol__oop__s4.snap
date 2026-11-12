@@ -3,10 +3,8 @@ source: tests/lsp_protocol/oop.rs
 expression: report
 ---
 === s4/definitions ===
-known gap: setGeneric creates describe without an assignment, but its use is reported as undefined.
 known gap: Registered method definitions and class members are absent from the outline.
 diagnostic: unused-binding severity=2 66..78 "ColoredPoint"
-diagnostic: undefined-symbol severity=2 330..338 "describe"
 symbols: [["Point",13,null],["ColoredPoint",13,null],["obj",13,null]]
 TypeHierarchy "\"ColoredPoint\"": [{"children":[],"detail":"S4 class","name":"ColoredPoint","parents":["Point"],"selection":[103,117]}]
 Definition "describe(obj)": null
@@ -22,15 +20,14 @@ TypeHierarchy "Class = \"Child\"": [{"children":[],"detail":"S4 class","name":"C
 TypeHierarchy "contains = \"Base\"": [{"children":[],"detail":"S4 class via First","name":"Base","parents":[],"selection":[48,54]},{"children":[],"detail":"S4 class via Second","name":"Base","parents":[],"selection":[92,98]}]
 
 === s4/use_sites ===
-known gap: S4 dispatch metadata .Methods, .defined, and .target is reported as undefined.
-known gap: The generic binding created by setGeneric has no definition or signature help.
-diagnostic: undefined-symbol severity=2 155..163 ".Methods"
-diagnostic: undefined-symbol severity=2 165..173 ".defined"
-diagnostic: undefined-symbol severity=2 175..182 ".target"
-diagnostic: undefined-symbol severity=2 193..204 "audit_speak"
+known gap: Generic signatures from unassigned registrations are unavailable to signature help.
+diagnostics: []
 symbols: []
 Definition "audit_speak(1)": null
 SignatureHelp "audit_speak(1)": null
+Definition ".defined,": null
+References ".defined,": [{"range":[165,173],"text":".defined"}]
+PrepareRename ".defined,": null
 
 === s4/incomplete ===
 known gap: Declared slots do not supply completion for a constructed S4 instance.
@@ -57,3 +54,12 @@ diagnostic: unused-binding severity=2 0..5 "Point"
 symbols: [["Point",13,null],["obj",13,null]]
 TypeHierarchy "Class = \"Point\"": [{"children":[],"detail":"S4 class","name":"Point","parents":[],"selection":[35,42]}]
 Completion "obj@value": [["value",5]]
+
+=== s4/method_environments ===
+diagnostic: undefined-symbol severity=2 224..232 ".defined"
+symbols: [["nested",12,"()"]]
+Definition ".defined\n  nested <-": null
+References ".defined\n  nested <-": [{"range":[106,114],"text":".defined"},{"range":[138,146],"text":".defined"}]
+PrepareRename ".defined\n  nested <-": null
+Rename ".defined\n  nested <-": null
+Highlights ".defined\n  nested <-": [{"kind":2,"range":[106,114]},{"kind":2,"range":[138,146]}]

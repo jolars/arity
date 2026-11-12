@@ -1,0 +1,135 @@
+{
+  "facts": {
+    "classes": [
+      {
+        "binding": "Formal",
+        "members": {
+          "value": "numeric"
+        },
+        "name": "DispatchFormal",
+        "parents": []
+      }
+    ],
+    "constructors": [
+      {
+        "binding": "Dispatch",
+        "formals": [
+          {
+            "default": "1",
+            "name": "value"
+          }
+        ]
+      }
+    ],
+    "dispatch": [
+      {
+        "classes": [
+          "Dispatch"
+        ],
+        "expression": "g(Dispatch())",
+        "value": ".Generic,.Method,.Class,.Group,.GenericCallEnv,.GenericDefEnv;g:g"
+      },
+      {
+        "classes": [
+          "Dispatch"
+        ],
+        "expression": "Dispatch() + 1",
+        "value": ".Generic,.Method,.Class,.Group,.GenericCallEnv,.GenericDefEnv"
+      },
+      {
+        "classes": [
+          "Dispatch"
+        ],
+        "expression": "Dispatch()[1]",
+        "value": ".Generic,.Method,.Class,.Group,.GenericCallEnv,.GenericDefEnv"
+      },
+      {
+        "classes": [
+          "Dispatch"
+        ],
+        "expression": "g(structure(1, class = 'Registered'))",
+        "value": ".Generic,.Method,.Class,.Group,.GenericCallEnv,.GenericDefEnv"
+      },
+      {
+        "classes": [
+          "Dispatch"
+        ],
+        "expression": "shadow(Dispatch())",
+        "value": "formal"
+      },
+      {
+        "classes": [
+          "DispatchFormal"
+        ],
+        "expression": "readDispatch(Formal())",
+        "value": ".Generic,.Method,.Methods,.defined,.target"
+      },
+      {
+        "classes": [
+          "DispatchFormal"
+        ],
+        "expression": "length(Formal())",
+        "value": ".Generic"
+      },
+      {
+        "classes": [
+          "DispatchFormal"
+        ],
+        "expression": "abs(Formal())",
+        "value": ".Generic,.Method,.Methods,.defined,.target"
+      },
+      {
+        "classes": [
+          "DispatchFormal"
+        ],
+        "expression": "`replaceDispatch<-`(Formal(), 1)",
+        "value": ".Generic,.Method,.Methods,.defined,.target"
+      },
+      {
+        "classes": [
+          "DispatchFormal"
+        ],
+        "expression": "exists('readDispatch', inherits = FALSE)",
+        "value": "TRUE"
+      },
+      {
+        "classes": [
+          "DispatchFormal"
+        ],
+        "expression": "exists('HiddenDispatchClass', inherits = FALSE)",
+        "value": "FALSE"
+      }
+    ],
+    "methods": [
+      {
+        "environment": [],
+        "formals": [
+          {
+            "default": null,
+            "name": "x"
+          },
+          {
+            "default": ".Generic",
+            "name": "meta"
+          },
+          {
+            "default": null,
+            "name": "..."
+          }
+        ],
+        "generic": "g",
+        "signature": [
+          "Dispatch"
+        ]
+      }
+    ],
+    "system": "dispatch_environments"
+  },
+  "observer": "owner <- environment()\nfacts <- list(\n  system = \"dispatch_environments\",\n  classes = list(list(name = \"DispatchFormal\", binding = \"Formal\", parents = list(),\n                      members = list(value = \"numeric\"))),\n  constructors = list(list(binding = \"Dispatch\", formals = formal_facts(Dispatch))),\n  methods = list(method_facts(\"g\", \"Dispatch\", g.Dispatch, owner)),\n  dispatch = list(\n    dispatch_facts(\"g(Dispatch())\", Dispatch(), owner),\n    dispatch_facts(\"Dispatch() + 1\", Dispatch(), owner),\n    dispatch_facts(\"Dispatch()[1]\", Dispatch(), owner),\n    dispatch_facts(\"g(structure(1, class = 'Registered'))\", Dispatch(), owner),\n    dispatch_facts(\"shadow(Dispatch())\", Dispatch(), owner),\n    dispatch_facts(\"readDispatch(Formal())\", Formal(), owner),\n    dispatch_facts(\"length(Formal())\", Formal(), owner),\n    dispatch_facts(\"abs(Formal())\", Formal(), owner),\n    dispatch_facts(\"`replaceDispatch<-`(Formal(), 1)\", Formal(), owner),\n    dispatch_facts(\"exists('readDispatch', inherits = FALSE)\", Formal(), owner),\n    dispatch_facts(\"exists('HiddenDispatchClass', inherits = FALSE)\", Formal(), owner)\n  )\n)\n",
+  "source": "metadata <- function(frame) {\n  names <- c(\n    \".Generic\", \".Method\", \".Class\", \".Group\", \".GenericCallEnv\",\n    \".GenericDefEnv\", \".Methods\", \".defined\", \".target\"\n  )\n  present <- vapply(names, exists, logical(1), envir = frame, inherits = TRUE)\n  paste(names[present], collapse = \",\")\n}\nDispatch <- function(value = 1) structure(value, class = \"Dispatch\")\ng <- function(x, ...) UseMethod(\"g\")\ng.Dispatch <- function(x, meta = .Generic, ...) {\n  nested <- function() paste(meta, .Generic, sep = \":\")\n  paste(metadata(environment()), nested(), sep = \";\")\n}\nOps.Dispatch <- function(e1, e2) metadata(environment())\n`[.Dispatch` <- function(x, ...) metadata(environment())\nregister <- base::registerS3method\nregister(\"g\", \"Registered\", function(x, ...) metadata(environment()))\nshadow.Dispatch <- function(x, .Generic = \"formal\") .Generic\nshadow <- function(x, ...) UseMethod(\"shadow\")\nFormal <- methods::setClass(\"DispatchFormal\", slots = c(value = \"numeric\"))\nmethods::setClass(\"HiddenDispatchClass\", slots = c(value = \"numeric\"))\nmethods::setGeneric(\"readDispatch\", function(x) standardGeneric(\"readDispatch\"))\nmethods::setMethod(\"readDispatch\", \"DispatchFormal\", function(x) {\n  metadata(environment())\n})\nmethods::setMethod(\"length\", \"DispatchFormal\", function(x) metadata(environment()))\nmethods::setMethod(\"Math\", \"DispatchFormal\", function(x) metadata(environment()))\n`replaceDispatch<-` <- function(x, value) x\nmethods::setReplaceMethod(\"replaceDispatch\", \"DispatchFormal\", function(x, value) {\n  metadata(environment())\n})\n",
+  "versions": {
+    "r": "4.6.1",
+    "r6": "2.6.1",
+    "s7": "0.2.2"
+  }
+}
