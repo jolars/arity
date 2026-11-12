@@ -317,6 +317,40 @@ fn r6_signature_help_uses_initializers_overrides_and_owning_superclass() {
 }
 
 #[test]
+fn r6_receivers_find_later_generator_bindings_across_closure_boundaries() {
+    let declaration = "A <- R6::R6Class(public = list(value = 1, initialize = function(value = 2) self$value <- value))";
+    for body in [
+        "make <- function() { obj <- A$new(); obj$| }",
+        "make <- function() { A$new()$| }",
+    ] {
+        for source in [
+            format!("{body}\n{declaration}\n"),
+            format!("factory <- function() {{ {body}\n{declaration}\nmake }}\n"),
+        ] {
+            let items = completions(&source);
+            assert!(items.iter().any(|item| item.label == "value"), "{source}");
+        }
+    }
+    for source in [
+        format!("make <- function() A$new(|)\n{declaration}\n"),
+        format!("factory <- function() {{ make <- function() A$new(|)\n{declaration}\nmake }}\n"),
+    ] {
+        assert_eq!(
+            help(&source).unwrap().signatures[0].label,
+            "new(value = 2)",
+            "{source}"
+        );
+    }
+    for source in [
+        format!("A$new(|)\n{declaration}\n"),
+        format!("make <- function() {{ A$new(|)\n{declaration} }}\n"),
+        format!("Alias <- A\n{declaration}\nmake <- function() Alias$new(|)\n"),
+    ] {
+        assert!(help(&source).is_none(), "{source}");
+    }
+}
+
+#[test]
 fn r6_receivers_respect_lexical_shadowing_and_unknown_accessors() {
     let marked = EDITOR_CLASSES.replace("PROBE", "self <- list(local = 1); self$|");
     let labels: Vec<_> = completions(&marked)

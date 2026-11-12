@@ -156,6 +156,35 @@ fn registered_aliases_keep_ordinary_closure_uses_and_block_mixed_renames() {
 }
 
 #[test]
+fn conventional_s3_aliases_keep_ordinary_closure_uses_and_block_mixed_renames() {
+    for implementation in ["helper", "(helper)", "alias"] {
+        let source = format!(
+            ".Group <- 'outer'\ng <- function(x) UseMethod('g')\n\
+             helper <- function(x) .Group\nalias <- helper\n\
+             g.C <- {implementation}\nhelper(1)\n"
+        );
+        assert!(findings(&source, "undefined-symbol").is_empty());
+        let model =
+            arity::project::classes::standalone_semantic_model(&arity::parser::parse(&source).cst);
+        assert!(
+            model
+                .bindings()
+                .iter()
+                .find(|binding| binding.name == ".Group")
+                .unwrap()
+                .read,
+            "{source}"
+        );
+        let read = source.find(".Group\nalias").unwrap();
+        assert!(compute_definition(&source, read).is_none());
+        for offset in [0, read] {
+            assert!(compute_prepare_rename(&source, offset, PositionEncoding::Utf16).is_none());
+            assert!(compute_rename(&source, offset, "changed", PositionEncoding::Utf16).is_none());
+        }
+    }
+}
+
+#[test]
 fn registration_effects_respect_order_shadowing_and_custom_environments() {
     let source = "created\nmethods::setGeneric('created', function(x) standardGeneric('created'))\ncreated(1)\ncreated <- function(x) x\ncreated(2)\nmethods::setGeneric('elsewhere', function(x) x, where = base::new.env())\nelsewhere(1)\nsetGeneric <- function(...) NULL\nsetGeneric('fake', function(x) x)\nfake(1)\n";
     assert_eq!(

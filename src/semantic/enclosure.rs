@@ -212,8 +212,8 @@ impl SemanticModel {
     }
 
     // The lexical builder cannot know the target of a nonlocal write. Replace
-    // its provisional binding once an enclosing local or runtime environment
-    // supplies that target, so a field update cannot define a file variable.
+    // its provisional binding once every possible enclosure supplies a target,
+    // so a field-only update cannot define a file variable.
     fn resolve_method_writes(&mut self) -> Vec<(TextRange, IdentifierResolution)> {
         let mut removed = HashSet::new();
         let mut writes = Vec::new();
@@ -259,7 +259,11 @@ impl SemanticModel {
             };
             lookup.enclosing(frame, false, true);
             if !lookup.result.is_source_only() || !lookup.result.lexical.is_empty() {
-                if let Some(id) = binding_ids.get(range) {
+                // An ordinary closure branch can still create the provisional
+                // binding even when a method copy writes to a runtime member.
+                if !lookup.result.external
+                    && let Some(id) = binding_ids.get(range)
+                {
                     removed.insert(*id);
                 }
                 writes.push((*range, lookup.result));
@@ -409,8 +413,10 @@ impl SemanticModel {
             return false;
         }
         self.variable_cohort(id).into_iter().all(|binding| {
-            self.read_sites(binding)
-                .all(|ident| !self.blocks_source_navigation(ident.range))
+            !self.blocks_source_navigation(self.binding(binding).def_range)
+                && self
+                    .read_sites(binding)
+                    .all(|ident| !self.blocks_source_navigation(ident.range))
                 && self
                     .contextual_write_ranges(binding)
                     .into_iter()

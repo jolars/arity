@@ -1454,7 +1454,13 @@ impl Projection<'_> {
                     registration: None,
                     uncertainty: issues,
                 });
-                self.implementation(&key, assignment.value_element(), false);
+                let keep_original = implementation.as_ref().is_some_and(|value| {
+                    !assignment
+                        .syntax()
+                        .text_range()
+                        .contains_range(value.text_range())
+                });
+                self.implementation(&key, assignment.value_element(), keep_original);
                 if let Some(token) = assignment.target_name_token() {
                     self.site(
                         token.text_range(),

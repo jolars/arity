@@ -3883,6 +3883,17 @@ fn reference_environments_share_project_inheritance_and_keep_writes_out_of_expor
 }
 
 #[test]
+fn reference_alias_writes_remain_available_to_other_files() {
+    let (db, a, b) = package_ab(
+        "helper <- function() { value <<- 1 }\nA <- methods::setRefClass('A', fields = list(value = 'numeric'), methods = list(update = helper))\n",
+        "helper()\nprint(value)\n",
+    );
+    assert!(arity::incremental::file_exports(&db, a).contains("value"));
+    assert!(file_def_sites(&db, a).contains_key("value"));
+    assert!(visible_symbols(&db, b).visible.contains("value"));
+}
+
+#[test]
 fn dispatch_contexts_backdate_while_current_reads_follow_edits() {
     use arity::incremental::dispatch_contexts;
     let source = "g <- function(x) UseMethod('g')\ng.C <- function(x) .Generic\n";
