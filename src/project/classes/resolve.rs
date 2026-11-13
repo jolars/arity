@@ -44,7 +44,8 @@ pub struct ResolvedClass {
     pub fingerprint: u64,
 }
 
-/// All declaration sites survive aggregation. Only proven edges enter the graph;
+/// Explicit declaration sites survive aggregation. Registered old-class ancestors
+/// reuse their existing identities. Only proven edges enter the graph;
 /// `parent_candidates` retains ambiguity for consumers that can present it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, salsa::SalsaValue)]
 pub struct ClassIndex {
@@ -134,6 +135,42 @@ impl ClassIndex {
         }
     }
 
+    /// Body-local provenance belongs to a live read, separate from the shared
+    /// declaration projection and its fingerprints.
+    pub(crate) fn confirm_body_class_lookups(
+        &mut self,
+        path: &Path,
+        model: &SemanticModel,
+        root: &SyntaxNode,
+        resolution: &ClassResolution<'_>,
+    ) {
+        let Some(file) = self.files.get(path) else {
+            return;
+        };
+        for reference in class_lookups(model, root, true) {
+            for identity in possible_functions(&reference) {
+                match function_availability(
+                    file,
+                    &reference,
+                    &identity.package,
+                    &identity.name,
+                    &self.files,
+                    resolution,
+                ) {
+                    Availability::Present => {
+                        self.callees
+                            .insert((path.into(), reference.clone()), identity);
+                    }
+                    Availability::Absent => {
+                        self.rejected_callees
+                            .insert((path.into(), reference.clone()));
+                    }
+                    Availability::Unknown => {}
+                }
+            }
+        }
+    }
+
     pub fn build(files: Vec<ClassFile>, resolution: &ClassResolution<'_>) -> Self {
         let mut index = Self {
             files: files
@@ -200,6 +237,30 @@ impl ClassIndex {
                         .filter_map(|member| member.value_factory.as_ref()),
                 )
                 .chain(file.facts.oop.class_lookups.iter())
+                .chain(
+                    file.facts
+                        .declarations
+                        .iter()
+                        .filter_map(|def| def.s4.as_ref())
+                        .flat_map(|s4| s4.schema_helpers.iter().chain(&s4.prototype.helpers)),
+                )
+                .chain(
+                    file.facts
+                        .declarations
+                        .iter()
+                        .filter_map(|def| def.s4.as_ref()?.old_class.as_ref())
+                        .flat_map(|old| std::iter::once(&old.factory).chain(&old.helpers)),
+                )
+                .chain(file.facts.s4.relations.iter().flat_map(|relation| {
+                    std::iter::once(&relation.factory).chain(&relation.helpers)
+                }))
+                .chain(
+                    file.facts
+                        .s4
+                        .coercions
+                        .iter()
+                        .map(|coercion| &coercion.factory),
+                )
                 .chain(file.facts.s3.helpers.iter())
                 .chain(
                     file.facts
@@ -249,7 +310,7 @@ impl ClassIndex {
                     .callee_identity(&file.path, &def.factory)
                     .is_some_and(|identity| {
                         identity.package == def.system().package()
-                            && identity.name == def.system().callee()
+                            && ClassSystem::from_callee(&identity.name) == Some(def.system())
                     })
                 {
                     index.declarations.insert(
@@ -265,6 +326,7 @@ impl ClassIndex {
                 }
             }
         }
+        index.reuse_s4_old_class_ancestors();
         index.confirm_dispatch_helpers();
         for (id, class) in &index.declarations {
             let def = &class.declaration;
@@ -287,11 +349,25 @@ impl ClassIndex {
                     resolution,
                 ) == Availability::Present
             });
-            if !def.binding_known() || !vector_known {
+            if !def.binding_known()
+                || !vector_known
+                || def.s4.as_ref().is_some_and(|s4| {
+                    (s4.definition == S4Definition::OldClass
+                        && s4
+                            .old_class
+                            .as_ref()
+                            .is_some_and(|old| old.test != Some(false)))
+                        || s4
+                            .schema_helpers
+                            .iter()
+                            .any(|helper| index.callee_identity(&id.path, helper).is_none())
+                })
+            {
                 continue;
             }
-            for (reference, parents) in def.parents.iter().zip(candidates) {
-                if !index.reference_known(&id.path, &id.key.owner, reference, deferred)
+            for (ordinal, (reference, parents)) in def.parents.iter().zip(candidates).enumerate() {
+                if !index.s4_parent_known(id, ordinal)
+                    || !index.reference_known(&id.path, &id.key.owner, reference, deferred)
                     || resolution.scope.for_file(&id.path).resolution_incomplete
                 {
                     continue;
@@ -324,6 +400,7 @@ impl ClassIndex {
                 }
             }
         }
+        index.install_s4_relations();
         index.s3 = index.build_s3_registry(resolution);
         index
     }

@@ -39,6 +39,11 @@ mod s3;
 pub use s3::{S3ClassEvidence, S3Constructor, S3Facts};
 mod s3_dispatch;
 pub use s3_dispatch::*;
+mod s4;
+pub use s4::{
+    S4Class, S4Coercion, S4Default, S4Definition, S4Facts, S4OldClass, S4Prototype, S4Relation,
+    S4RelationKind, S4Slot, S4Slots,
+};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
@@ -102,7 +107,7 @@ impl ClassSystem {
 
     fn from_callee(name: &str) -> Option<Self> {
         match name {
-            "setClass" => Some(Self::S4),
+            "setClass" | "setClassUnion" | "setOldClass" => Some(Self::S4),
             "R6Class" => Some(Self::R6),
             "setRefClass" => Some(Self::RefClass),
             "new_class" => Some(Self::S7),
@@ -269,10 +274,17 @@ pub struct ClassDef {
     /// R6 defaults to portable lookup; a computed flag leaves member lookup uncertain.
     pub portable: Option<bool>,
     pub r6: Option<R6Options>,
+    pub s4: Option<S4Class>,
     pub uncertainty: BTreeSet<ClassUncertainty>,
 }
 
 impl ClassDef {
+    fn returns_generator(&self) -> bool {
+        self.s4
+            .as_ref()
+            .is_none_or(|s4| s4.definition != S4Definition::OldClass)
+    }
+
     pub fn system(&self) -> ClassSystem {
         self.key.system
     }
@@ -324,6 +336,7 @@ pub struct FileClassFacts {
     pub oop: OopFacts,
     /// S3 return evidence and helper origins, distinct from class declarations.
     pub s3: S3Facts,
+    pub s4: S4Facts,
 }
 
 impl FileClassFacts {
@@ -438,34 +451,19 @@ pub fn class_occurrence_at_offset(
 }
 
 fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Extracted {
-    let calls: Vec<_> = root
-        .descendants()
-        .filter_map(CallExpr::cast)
-        .flat_map(|call| {
-            let Some(factory) = call_function_ref(model, root, &call) else {
+    let calls: Vec<_> = factories(model, root)
+        .into_iter()
+        .flat_map(|(call, factory, name)| {
+            let Some(system) = ClassSystem::from_callee(&name) else {
                 return Vec::new();
             };
-            let systems: Vec<_> = match &factory {
-                FunctionRef::Qualified { package, name } => ClassSystem::from_callee(name)
-                    .filter(|system| package == system.package())
-                    .into_iter()
-                    .collect(),
-                FunctionRef::Bare { name, .. } => {
-                    ClassSystem::from_callee(name).into_iter().collect()
-                }
-                FunctionRef::Unresolved(candidates) => candidates
-                    .iter()
-                    .filter_map(|candidate| {
-                        ClassSystem::from_callee(&candidate.name)
-                            .filter(|system| candidate.package == system.package())
-                    })
-                    .collect::<BTreeSet<_>>()
-                    .into_iter()
-                    .collect(),
+            let count = if system == ClassSystem::S4 {
+                s4::declaration_count(model, root, &call, &name)
+            } else {
+                1
             };
-            systems
-                .into_iter()
-                .map(|system| (call.clone(), system, factory.clone()))
+            (0..count)
+                .map(|ordinal| (call.clone(), system, factory.clone(), name.clone(), ordinal))
                 .collect::<Vec<_>>()
         })
         .collect();
@@ -478,7 +476,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
     {
         if !calls
             .iter()
-            .any(|(call, _, _)| node.text_range().contains_range(call.syntax().text_range()))
+            .any(|(call, _, _, _, _)| node.text_range().contains_range(call.syntax().text_range()))
             && !oop_roots
                 .iter()
                 .any(|decl| node.text_range().contains_range(decl.text_range()))
@@ -503,7 +501,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
     let mut counts = BTreeMap::new();
     let calls: Vec<_> = calls
         .into_iter()
-        .map(|(call, system, factory)| {
+        .map(|(call, system, factory, name, ordinal)| {
             let owner = owner_at(call.syntax(), &owners);
             let occurrence = counts.entry((owner.clone(), system)).or_insert(0);
             let key = ClassKey {
@@ -512,13 +510,15 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
                 occurrence: *occurrence,
             };
             *occurrence += 1;
-            (call, system, factory, key)
+            (call, system, factory, name, ordinal, key)
         })
         .collect();
     let keys: HashMap<_, _> = calls
         .iter()
-        .filter(|(_, _, factory, _)| !matches!(factory, FunctionRef::Unresolved(_)))
-        .map(|(call, _, _, key)| (call.syntax().text_range(), key.clone()))
+        .filter(|(_, _, factory, name, _, _)| {
+            name != "setOldClass" && !matches!(factory, FunctionRef::Unresolved(_))
+        })
+        .map(|(call, _, _, _, _, key)| (call.syntax().text_range(), key.clone()))
         .collect();
     let mut result = Extracted {
         owners: owners.clone(),
@@ -528,7 +528,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         oop_sites: Vec::new(),
         method_implementations: Vec::new(),
     };
-    for (call, system, factory, key) in calls {
+    for (call, system, factory, factory_name, ordinal, key) in calls {
         let assignment = direct_assignment(&SyntaxElement::Node(call.syntax().clone()));
         let binding_token = assignment
             .as_ref()
@@ -545,6 +545,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
             parent_vector: None,
             portable: None,
             r6: None,
+            s4: None,
             uncertainty: BTreeSet::new(),
         };
         if matches!(def.factory, FunctionRef::Unresolved(_)) {
@@ -560,8 +561,21 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
                 call.callee_token()
                     .map_or(call.syntax().text_range(), |token| token.text_range())
             });
-        if let Some(args) = matched_args(&call, system.formals()) {
+        if let Some(args) = matched_args(
+            &call,
+            if system == ClassSystem::S4 {
+                s4::formals(&factory_name)
+            } else {
+                system.formals()
+            },
+        ) {
             let argument = |formal: &str| argument(&args, formal);
+            if factory_name == "setClass"
+                && args.contains_key("slots")
+                && args.contains_key("representation")
+            {
+                def.uncertainty.insert(ClassUncertainty::InvalidArguments);
+            }
             if system == ClassSystem::R6 {
                 let flag = |name| match argument(name) {
                     None => Some(true),
@@ -584,6 +598,8 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
             let name_arg = argument(match system {
                 ClassSystem::R6 => "classname",
                 ClassSystem::S7 => "name",
+                ClassSystem::S4 if factory_name == "setClassUnion" => "name",
+                ClassSystem::S4 if factory_name == "setOldClass" => "Classes",
                 _ => "Class",
             });
             def.name = match name_arg {
@@ -606,9 +622,6 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
                 }
                 _ => ClassName::Unknown,
             };
-            if def.name == ClassName::Unknown {
-                def.uncertainty.insert(ClassUncertainty::DynamicName);
-            }
             if argument(if system == ClassSystem::R6 {
                 "parent_env"
             } else {
@@ -618,7 +631,42 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
             {
                 def.uncertainty.insert(ClassUncertainty::CustomEnvironment);
             }
-            if let Some(parent) = argument(match system {
+            if system == ClassSystem::S4 {
+                if let Some(shape) = s4::class_shape(model, root, &call, &factory_name, ordinal) {
+                    def.name = shape.name;
+                    if matches!(def.name, ClassName::Known(_))
+                        && let Some(range) = shape.name_range
+                    {
+                        selection = range;
+                        if !result
+                            .occurrences
+                            .iter()
+                            .any(|(range, _)| *range == selection)
+                        {
+                            result
+                                .occurrences
+                                .push((selection, ClassOccurrence::Declaration(key.clone())));
+                        }
+                    }
+                    for (name, range) in shape.parents {
+                        let reference = ParentRef::Formal(name);
+                        result.occurrences.push((
+                            range,
+                            ClassOccurrence::Reference {
+                                owner: key.owner.clone(),
+                                reference: reference.clone(),
+                                deferred: !key.owner.0.is_empty(),
+                            },
+                        ));
+                        def.parents.push(reference);
+                    }
+                    if !shape.metadata.parents_complete {
+                        def.parents.push(ParentRef::Unknown);
+                        def.uncertainty.insert(ClassUncertainty::DynamicParent);
+                    }
+                    def.s4 = Some(shape.metadata);
+                }
+            } else if let Some(parent) = argument(match system {
                 ClassSystem::R6 => "inherit",
                 ClassSystem::S7 => "parent",
                 _ => "contains",
@@ -672,10 +720,78 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
                     }
                 }
             }
+            if def.name == ClassName::Unknown {
+                def.uncertainty.insert(ClassUncertainty::DynamicName);
+            }
         } else {
             def.uncertainty.insert(ClassUncertainty::InvalidArguments);
         }
-        if let Some(token) = binding_token {
+        if def.binding_known()
+            && let Some(old) = def
+                .s4
+                .as_ref()
+                .filter(|s4| s4.definition == S4Definition::OldClass)
+                .and_then(|s4| s4.old_class.as_ref())
+            && old.s4_class
+                == match &def.name {
+                    ClassName::Known(name) => Some(ParentRef::Formal(name.clone())),
+                    _ => None,
+                }
+            && let Some(previous) = result.facts.declarations.iter_mut().rev().find(|previous| {
+                previous.key.owner == key.owner
+                    && previous.name == def.name
+                    && previous
+                        .s4
+                        .as_ref()
+                        .is_some_and(|s4| s4.definition == S4Definition::Class)
+            })
+            && let Some(s4) = &mut previous.s4
+        {
+            let mut old = old.clone();
+            old.parent_start = previous.parents.len();
+            previous.parents.extend(def.parents);
+            s4.old_class = Some(old);
+            let previous_key = previous.key.clone();
+            for (_, occurrence) in &mut result.occurrences {
+                if matches!(occurrence, ClassOccurrence::Declaration(candidate) if *candidate == key)
+                {
+                    *occurrence = ClassOccurrence::Declaration(previous_key.clone());
+                }
+            }
+            continue;
+        }
+        if factory_name == "setOldClass"
+            && ordinal > 0
+            && def.binding_known()
+            && matches!(def.name, ClassName::Known(_))
+            && result.facts.declarations.iter().any(|previous| {
+                previous.key.owner == key.owner
+                    && previous.name == def.name
+                    && previous.binding_known()
+                    && previous.s4.is_some()
+                    && (previous.factory == def.factory
+                        || matches!(&previous.factory, FunctionRef::Qualified { package, .. } if package == "methods"))
+            })
+        {
+            for (_, occurrence) in &mut result.occurrences {
+                if matches!(occurrence, ClassOccurrence::Declaration(candidate) if *candidate == key)
+                    && let ClassName::Known(name) = &def.name
+                {
+                    *occurrence = ClassOccurrence::Reference {
+                        owner: key.owner.clone(),
+                        reference: ParentRef::Formal(name.clone()),
+                        deferred: !key.owner.0.is_empty(),
+                    };
+                }
+            }
+            continue;
+        }
+        if factory_name == "setOldClass" {
+            def.binding = None;
+        }
+        if let Some(token) = binding_token
+            && def.returns_generator()
+        {
             result
                 .occurrences
                 .push((token.text_range(), ClassOccurrence::Declaration(key)));
@@ -720,7 +836,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
             if result
                 .facts
                 .declaration(&target)
-                .is_none_or(|def| !def.binding_known())
+                .is_none_or(|def| !def.binding_known() || !def.returns_generator())
             {
                 continue;
             }
@@ -749,6 +865,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
     result.method_implementations = implementations;
     result.facts.oop = facts;
     result.facts.s3 = s3::project(model, root);
+    result.facts.s4 = s4::project(model, root, &owners, &result.facts.declarations);
     result.oop_sites = sites;
     result
 }

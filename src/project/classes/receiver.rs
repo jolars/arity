@@ -1,4 +1,4 @@
-//! Bounded receiver evidence shared by R6 and Reference Classes.
+//! Bounded receiver evidence shared by class systems, without executing accessors.
 
 use super::*;
 
@@ -308,6 +308,26 @@ impl ReceiverLookup<'_> {
         {
             return self.resolve(&paren.inner()?, visiting, depth + 1);
         }
+        if let Some(binary) = value.as_node().cloned().and_then(BinaryExpr::cast)
+            && binary.op_kind() == Some(SyntaxKind::AT)
+        {
+            let receiver = self.resolve(&binary.lhs()?, visiting, depth + 1)?;
+            let rhs = binary.rhs()?;
+            let name = rhs.as_token().and_then(|token| {
+                if token.kind() == SyntaxKind::STRING {
+                    crate::semantic::decode_string_literal(token.text())
+                } else {
+                    Some(unbacktick(token.text()).to_string())
+                }
+            })?;
+            return Some(ClassReceiver {
+                class: index.s4_slot_class(&receiver, &name)?,
+                access: ClassAccess::Public,
+                point: self.point(value),
+                cached_members: BTreeMap::new(),
+                uncertain_cache: false,
+            });
+        }
         // Enclosing frames and deferred promises can supply later bindings.
         // Reads in the current execution frame still follow source order.
         let deferred = model
@@ -337,8 +357,9 @@ impl ReceiverLookup<'_> {
                 && index.declarations.get(id).is_some_and(|class| {
                     matches!(
                         class.declaration.system(),
-                        ClassSystem::R6 | ClassSystem::RefClass
+                        ClassSystem::R6 | ClassSystem::RefClass | ClassSystem::S4
                     ) && class.declaration.binding_known()
+                        && class.declaration.returns_generator()
                 })
             {
                 return Some(ClassReceiver {
@@ -360,7 +381,12 @@ impl ReceiverLookup<'_> {
             && unbacktick(name.text()) == "new"
         {
             let receiver = self.resolve(&binary.lhs()?, visiting, depth + 1)?;
-            return (receiver.access == ClassAccess::Generator).then_some(ClassReceiver {
+            return (receiver.access == ClassAccess::Generator
+                && matches!(
+                    receiver.class.key.system,
+                    ClassSystem::R6 | ClassSystem::RefClass
+                ))
+            .then_some(ClassReceiver {
                 point: self.point(value),
                 cached_members: BTreeMap::new(),
                 uncertain_cache: false,
@@ -369,6 +395,53 @@ impl ReceiverLookup<'_> {
             });
         }
         if let Some(call) = value.as_node().cloned().and_then(CallExpr::cast) {
+            if let Some((object, name, replacement)) =
+                s4::slot_call(index, path, root, model, &call)
+            {
+                let receiver = self.resolve(&object, visiting, depth + 1)?;
+                if replacement {
+                    return Some(receiver);
+                }
+                return Some(ClassReceiver {
+                    class: index.s4_slot_class(&receiver, &name)?,
+                    access: ClassAccess::Public,
+                    point: self.point(value),
+                    cached_members: BTreeMap::new(),
+                    uncertain_cache: false,
+                });
+            }
+            if let Some(reference) = call_function_ref(model, root, &call)
+                && let Some(identity) = index.callee_identity(path, &reference)
+                && identity.package == "methods"
+            {
+                let class = if identity.name == "new" {
+                    let args = matched_args(&call, &["Class", "..."])?;
+                    Some(index.s4_named_class(path, root, model, &argument(&args, "Class")?)?)
+                } else if identity.name == "as" {
+                    let args = matched_args(&call, &["object", "Class", "strict", "ext"])?;
+                    Some(index.s4_named_class(path, root, model, &argument(&args, "Class")?)?)
+                } else if identity.name == "as<-" {
+                    let args = matched_args(&call, &["object", "Class", "value"])?;
+                    return self.resolve(&argument(&args, "object")?, visiting, depth + 1);
+                } else {
+                    None
+                };
+                if let Some(class) = class {
+                    if identity.name == "new"
+                        && class.key.system == ClassSystem::S4
+                        && !index.s4_constructible(&class)
+                    {
+                        return None;
+                    }
+                    return Some(ClassReceiver {
+                        class,
+                        access: ClassAccess::Public,
+                        point: self.point(value),
+                        cached_members: BTreeMap::new(),
+                        uncertain_cache: false,
+                    });
+                }
+            }
             if let Some(class) = index.reference_lookup(path, root, model, &call) {
                 return Some(ClassReceiver {
                     point: self.point(value),
@@ -414,7 +487,9 @@ impl ReceiverLookup<'_> {
                 return None;
             }
             let receiver = self.resolve(&call.base()?, visiting, depth + 1)?;
-            return (receiver.class.key.system == ClassSystem::RefClass
+            return ((receiver.class.key.system == ClassSystem::RefClass
+                || (receiver.class.key.system == ClassSystem::S4
+                    && index.s4_constructible(&receiver.class)))
                 && receiver.access == ClassAccess::Generator)
                 .then_some(ClassReceiver {
                     point: self.point(value),

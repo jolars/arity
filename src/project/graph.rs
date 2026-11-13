@@ -921,18 +921,20 @@ pub(crate) fn build_class_index(
         let windows = platform_order("Collate.windows");
         load_orders.insert(root.clone(), if unix == windows { unix } else { None });
     }
-    ClassIndex::build(
-        files,
-        &ClassResolution {
-            scope: &scope,
-            namespaces: &namespace_texts,
-            packages: &package_declarations,
-            package_names: &package_names,
-            indexed,
-            remote,
-            load_orders: &load_orders,
-        },
-    )
+    let resolution = ClassResolution {
+        scope: &scope,
+        namespaces: &namespace_texts,
+        packages: &package_declarations,
+        package_names: &package_names,
+        indexed,
+        remote,
+        load_orders: &load_orders,
+    };
+    let mut index = ClassIndex::build(files, &resolution);
+    if let Some(live) = live {
+        index.confirm_body_class_lookups(live.path, live.model, live.root, &resolution);
+    }
+    index
 }
 
 /// One package's Rd topics: each topic name mapped to the blocks that merge

@@ -686,7 +686,7 @@ coverage need not block useful workspace support.
 
 #### 5. S4 classes, slots, and multiple dispatch
 
-- [ ] Extend `setClass()` extraction to slots and legacy `representation`,
+- [x] Extend `setClass()` extraction to slots and legacy `representation`,
   prototypes, virtual/sealed classes, and multiple inheritance. Add
   `setClassUnion()`, `setIs()` relationships and coercions, and
   `setOldClass()` bridges to S3. Distinguish constructor bindings returned
@@ -694,6 +694,14 @@ coverage need not block useful workspace support.
   declared slot schemas and their inheritance for `new()`, class-generator
   calls, `@`, `slot()`, and replacement forms. Keep validity and coercion
   bodies unevaluated.
+
+  The shared class model now records slot declarations, legacy representations,
+  prototypes, virtual and sealed classes, unions, coercion relationships, and S3
+  bridges. Project queries recover inherited schemas for constructors, `@`,
+  `slot()`, and replacement calls. Completion uses those schemas while
+  preserving incomplete and ambiguous facts. Pinned R observations, live buffer
+  tests, and incremental regressions cover the model. Production analysis leaves
+  validity and coercion bodies unevaluated.
 
 - [ ] Index `setGeneric()`, `setMethod()`, `setReplaceMethod()`, generic
   defaults, `signature(...)`, named and positional signatures, and the

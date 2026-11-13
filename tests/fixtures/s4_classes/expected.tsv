@@ -1,0 +1,84 @@
+class	S4Base	FALSE	TRUE
+slot	S4Base	value	numeric
+class	S4Child	FALSE	FALSE
+slot	S4Child	flag	logical
+slot	S4Child	label	character
+slot	S4Child	value	numeric
+class	S4Legacy	FALSE	FALSE
+slot	S4Legacy	flag	logical
+slot	S4Legacy	label	character
+slot	S4Legacy	note	character
+slot	S4Legacy	value	numeric
+class	S4Any	FALSE	FALSE
+slot	S4Any	first	ANY
+slot	S4Any	second	ANY
+class	S4Virtual	TRUE	FALSE
+slot	S4Virtual	common	ANY
+class	S4Wide	FALSE	FALSE
+slot	S4Wide	value	ANY
+class	S4Narrow	FALSE	FALSE
+slot	S4Narrow	value	numeric
+class	S4Combined	FALSE	FALSE
+slot	S4Combined	value	numeric
+class	S4Concrete	FALSE	FALSE
+slot	S4Concrete	common	ANY
+class	S4Empty	TRUE	FALSE
+class	S4Prototype	FALSE	FALSE
+class	S4Union	TRUE	FALSE
+class	S4OldChild	TRUE	FALSE
+slot	S4OldChild	.S3Class	character
+class	S4OldParent	TRUE	FALSE
+slot	S4OldParent	.S3Class	character
+class	S4OldShape	FALSE	FALSE
+slot	S4OldShape	.S3Class	character
+slot	S4OldShape	known	numeric
+class	S4OldCopy	FALSE	FALSE
+slot	S4OldCopy	.S3Class	character
+slot	S4OldCopy	known	numeric
+class	S4Number	FALSE	FALSE
+slot	S4Number	.Data	numeric
+class	S4Environment	FALSE	FALSE
+slot	S4Environment	.xData	environment
+class	S4RegisteredAncestor	TRUE	FALSE
+slot	S4RegisteredAncestor	.S3Class	character
+class	S4RegisteredChild	TRUE	FALSE
+slot	S4RegisteredChild	.S3Class	character
+class	S4OldPrototype	FALSE	FALSE
+slot	S4OldPrototype	.S3Class	character
+class	S4FormalBridge	FALSE	FALSE
+slot	S4FormalBridge	.S3Class	character
+slot	S4FormalBridge	x	numeric
+class	S4BridgeAncestor	TRUE	FALSE
+slot	S4BridgeAncestor	.S3Class	character
+class	S4RelationCopy	FALSE	FALSE
+slot	S4RelationCopy	.S3Class	character
+slot	S4RelationCopy	shape	numeric
+class	S4DataAny	FALSE	FALSE
+slot	S4DataAny	.Data	ANY
+class	S4DataS4	FALSE	FALSE
+slot	S4DataS4	.Data	S4
+class	S4DataNull	FALSE	FALSE
+slot	S4DataNull	.xData	NULL
+class	S4ImplicitCombined	FALSE	FALSE
+slot	S4ImplicitCombined	x	numeric
+generator	MakeBase	TRUE
+generator	MakeUnion	TRUE
+generator	OldResult	FALSE
+extends	S4Base	S4Union	TRUE
+extends	S4Any	S4Union	TRUE
+extends	S4Any	S4Converted	TRUE
+conditional	S4Any	S4Conditional	TRUE
+coercion	S4Base	S4Label	coerced
+prototype	S4Base	value	2
+prototype	S4Child	value	2
+prototype	S4Child	flag	TRUE
+extends	S4RegisteredChild	S4RegisteredAncestor	TRUE
+extends	S4FormalBridge	S4BridgeAncestor	TRUE
+extends	S4RelationCopy	S4RelationTarget	TRUE
+extends	S4RelationCopy	S4RelationUnion	TRUE
+constructible	S4OldPrototype	TRUE
+implicit	S4ImplicitCombined	x	TRUE
+access	at	3
+access	slot	3
+replace	at	4
+replace	slot	5

@@ -334,6 +334,33 @@ impl ClassIndex {
             return (members, slots);
         };
         let def = &class.declaration;
+        if def.system() == ClassSystem::S4 {
+            if let Some(schema) = self.s4_slots(id) {
+                slots.complete = schema.complete;
+                slots.entries = schema
+                    .entries
+                    .into_iter()
+                    .map(|(name, candidates)| {
+                        (
+                            name,
+                            candidates
+                                .into_iter()
+                                .map(|slot| ReferenceMember {
+                                    declaration: slot.declaration,
+                                    kind: MemberKind::Slot,
+                                    declared_type: Some(slot.declared_type),
+                                    signature: None,
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect();
+            } else {
+                slots.complete = false;
+            }
+            visiting.remove(id);
+            return (members, slots);
+        }
         if !def.binding_known()
             || def
                 .parent_vector

@@ -34,6 +34,14 @@ impl ClassIndex {
         if receiver.access == ClassAccess::Generator {
             return None;
         }
+        if receiver.class.key.system == ClassSystem::S4 {
+            let slots = self.s4_slots(&receiver.class)?;
+            slots.entries.get(name)?;
+            return Some(MemberAccess {
+                read: MemberEffect::Stored,
+                write: MemberEffect::Stored,
+            });
+        }
         let (kind, declaration, write) = if receiver.class.key.system == ClassSystem::R6 {
             let api = self.r6_api_at(&receiver.class, receiver.point.as_ref())?;
             let members = api.members(receiver.access);

@@ -343,7 +343,7 @@ pub(in crate::project::classes) fn declaration_roots(
         .into_iter()
         .filter_map(|(call, reference, name)| {
             let package = match name.as_str() {
-                "setGeneric" | "setMethod" | "setReplaceMethod" => "methods",
+                "setGeneric" | "setMethod" | "setReplaceMethod" | "setIs" | "setAs" => "methods",
                 "new_generic" | "method<-" => "S7",
                 "registerS3method" | ".S3method" | "UseMethod" => "base",
                 _ => return None,
@@ -427,13 +427,7 @@ pub(in crate::project::classes) fn project(
     projection.generic_bindings();
     projection.registered_methods();
     projection.s3_methods();
-    projection.facts.class_lookups = factories(model, root)
-        .into_iter()
-        .filter(|(_, _, name)| name == "getRefClass")
-        .map(|(_, reference, _)| reference)
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    projection.facts.class_lookups = class_lookups(model, root, false);
     projection.events.sort_by_key(|(range, _)| range.end());
     projection.facts.events = projection
         .events
@@ -524,6 +518,48 @@ impl Projection<'_> {
             else {
                 continue;
             };
+            if let Some(s4) = &def.s4 {
+                let factory = match s4.definition {
+                    S4Definition::Class => "setClass",
+                    S4Definition::Union => "setClassUnion",
+                    S4Definition::OldClass => "setOldClass",
+                };
+                let ordinal = s4.old_class.as_ref().map_or(0, |old| old.index);
+                let Some(shape) = s4::class_shape(self.model, self.root, &call, factory, ordinal)
+                else {
+                    continue;
+                };
+                let mut issues = BTreeSet::new();
+                if !shape.metadata.slots_complete {
+                    issues.insert(OopUncertainty::DynamicMembers);
+                }
+                self.facts.member_groups.push(MemberGroup {
+                    class: def.key.clone(),
+                    name: "slots".into(),
+                    factory: None,
+                    uncertainty: issues.clone(),
+                });
+                for entry in shape.slots {
+                    self.member_entry(
+                        &call,
+                        MemberInput {
+                            system: ClassSystem::S4,
+                            class: Some(def.key.clone()),
+                            visibility: MemberVisibility::Public,
+                            kind: MemberKind::Slot,
+                            reference_field: false,
+                            issues: issues.clone(),
+                            entry: MemberEntry {
+                                name: entry.name,
+                                value: entry.value,
+                                range: entry.range,
+                                untyped: entry.untyped,
+                            },
+                        },
+                    );
+                }
+                continue;
+            }
             let Some(args) = matched_args(&call, def.system().formals()) else {
                 continue;
             };
@@ -770,7 +806,9 @@ impl Projection<'_> {
             None
         };
         let declared_type = match member_kind {
+            MemberKind::Slot if arg.untyped => Some(DispatchClass::Any),
             MemberKind::Slot => match string_name(arg.value.clone()) {
+                ClassName::Known(name) if name == "ANY" => Some(DispatchClass::Any),
                 ClassName::Known(name) => Some(DispatchClass::Formal(name)),
                 _ => Some(DispatchClass::Unknown),
             },

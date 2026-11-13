@@ -30,11 +30,10 @@ References ".defined,": [{"range":[165,173],"text":".defined"}]
 PrepareRename ".defined,": null
 
 === s4/incomplete ===
-known gap: Declared slots do not supply completion for a constructed S4 instance.
 diagnostic: syntax-error severity=1 109..110 "@"
 symbols: [["Point",13,null],["obj",13,null]]
 TypeHierarchy "setClass(\"Point\"": [{"children":[],"detail":"S4 class","name":"Point","parents":[],"selection":[27,34]}]
-Completion "obj@": []
+Completion "obj@": [["value",5]]
 
 === s4/shadowing ===
 diagnostics: []

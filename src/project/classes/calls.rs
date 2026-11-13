@@ -10,12 +10,13 @@ pub(super) fn expected_package(name: &str) -> Option<&'static str> {
     Some(match name {
         "R6Class" => "R6",
         "setClass" | "setRefClass" | "setGeneric" | "setMethod" | "setReplaceMethod"
-        | "signature" | "new" | "getRefClass" => "methods",
+        | "signature" | "new" | "getRefClass" | "setClassUnion" | "setOldClass" | "setIs"
+        | "setAs" | "representation" | "prototype" | "slot" | "slot<-" | "as" | "as<-" => "methods",
         "new_class" | "new_generic" | "method<-" => "S7",
         "UseMethod" | "NextMethod" | ".S3method" | "registerS3method" | "c" | "list"
         | "character" | "structure" | "class" | "class<-" | "oldClass" | "oldClass<-"
         | "unclass" | "return" | "lockBinding" | "unlockBinding" | "do.call" | "environment"
-        | "globalenv" => "base",
+        | "globalenv" | "@" | "@<-" => "base",
         _ => return None,
     })
 }
@@ -89,6 +90,29 @@ pub(super) fn factories(
                 .map(|identity| (call.clone(), reference.clone(), identity.name))
                 .collect::<Vec<_>>()
         })
+        .collect()
+}
+
+pub(super) fn class_lookups(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+    body_local: bool,
+) -> Vec<FunctionRef> {
+    factories(model, root)
+        .into_iter()
+        .filter(|(call, _, name)| {
+            matches!(
+                name.as_str(),
+                "getRefClass" | "new" | "slot" | "slot<-" | "as" | "as<-" | "@" | "@<-"
+            ) && call
+                .syntax()
+                .ancestors()
+                .any(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
+                == body_local
+        })
+        .map(|(_, reference, _)| reference)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect()
 }
 

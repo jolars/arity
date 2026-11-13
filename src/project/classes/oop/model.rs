@@ -206,8 +206,8 @@ pub struct OopFacts {
     pub method_implementations: Vec<MethodImplementationDef>,
     /// The supplied S3 binding stays distinct from the closure reached through it.
     pub s3_implementations: Vec<MethodImplementationDef>,
-    /// Origins used by static class lookups, confirmed with the same imports
-    /// and masking rules as declarations. No call locations enter this projection.
+    /// Origins used by top-level static class lookups. Body-local lookups are
+    /// confirmed against the live CST without entering this shared projection.
     pub class_lookups: Vec<FunctionRef>,
     pub mutations: Vec<MemberMutation>,
     pub events: Vec<OopEvent>,

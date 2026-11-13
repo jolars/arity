@@ -1041,6 +1041,189 @@ fn project_classes_aggregates_inheritance_edges() {
 }
 
 #[test]
+fn s4_slot_and_relationship_edits_invalidate_the_shared_index() {
+    let (mut db, a, b) = package_ab(
+        "Make <- methods::setClass('Base', slots = c(value = 'numeric'), validity = function(object) TRUE)\nmethods::setClassUnion('Union', 'Base')\n",
+        "methods::setClass('Child', contains = 'Base', slots = c(label = 'character'))\nmethods::setIs('Child', 'Union')\n",
+    );
+    let before = project_classes(&db);
+    let child = class_named(before, "Child");
+    let union = class_named(before, "Union");
+    assert!(
+        before
+            .s4_slots(&child)
+            .unwrap()
+            .entries
+            .contains_key("value")
+    );
+    assert!(before.supertypes[&child].contains(&union));
+
+    db.clear_query_log();
+    db.set_file_text(a, "# Prose.\nMake <- methods::setClass('Base', slots = c(value = 'numeric'), validity = function(object) FALSE)\nmethods::setClassUnion('Union', 'Base')\n");
+    let _ = project_classes(&db);
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+
+    db.clear_query_log();
+    db.set_file_text(a, "Make <- methods::setClass('Base', slots = c(renamed = 'character'), validity = function(object) FALSE)\nmethods::setClassUnion('Union', 'Base')\n");
+    let after = project_classes(&db);
+    let slots = after.s4_slots(&child).unwrap();
+    assert!(slots.entries.contains_key("renamed"));
+    assert!(!slots.entries.contains_key("value"));
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ProjectClasses),
+        Some(&1)
+    );
+
+    db.set_file_text(b, "methods::setClass('Child', contains = 'Base', slots = c(label = 'character'))\nmethods::setIs('Child', 'Union', test = function(object) TRUE)\n");
+    let after = project_classes(&db);
+    assert!(!after.supertypes[&child].contains(&union));
+    assert_eq!(after.s4_slots(&child).unwrap().entries.len(), 2);
+}
+
+#[test]
+fn s4_opaque_coercion_edits_backdate_but_prototype_edits_do_not() {
+    let source = "methods::setClass('A', slots = c(value = 'numeric'), prototype = list(value = 1))\nmethods::setClass('B', contains = 'VIRTUAL')\nmethods::setIs('A', 'B', coerce = function(from) from)\nmethods::setAs('B', 'A', function(from) stop('opaque'))\n";
+    let (mut db, a, _) = package_ab(source, "");
+    let _ = project_classes(&db);
+    db.clear_query_log();
+    db.set_file_text(a, source.replace("stop('opaque')", "stop('changed')"));
+    let _ = project_classes(&db);
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+
+    db.clear_query_log();
+    db.set_file_text(a, source.replace("value = 1", "value = 2"));
+    let index = project_classes(&db);
+    assert_eq!(
+        index.s4_prototype(&class_named(index, "A")).unwrap().slots["value"],
+        arity::project::classes::S4Default::Literal("2".into())
+    );
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ProjectClasses),
+        Some(&1)
+    );
+}
+
+#[test]
+fn s4_body_local_class_lookups_do_not_rebuild_the_shared_index() {
+    let source = "methods::setClass('A', slots = c(x = 'numeric'), validity = function(object) { TRUE })\nmethods::setClass('B', contains = 'VIRTUAL')\nmethods::setIs('A', 'B', coerce = function(from) { TRUE })\nmethods::setAs('B', 'A', function(from) { TRUE })\n";
+    let (mut db, a, _) = package_ab(source, "");
+    let before = project_classes(&db).clone();
+    for body in [
+        "methods::slot(object, 'x'); TRUE",
+        "slot(object, 'x'); TRUE",
+        "methods::new('A'); TRUE",
+        "methods::as(object, 'A'); TRUE",
+        "fetch <- methods::slot; fetch(object, 'x'); TRUE",
+    ] {
+        db.clear_query_log();
+        db.set_file_text(a, source.replace("{ TRUE }", &format!("{{ {body} }}")));
+        assert!(project_classes(&db) == &before, "{body}");
+        assert!(
+            !count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses),
+            "a body-local lookup must not rebuild project_classes: {body}"
+        );
+    }
+}
+
+#[test]
+fn s4_slot_helpers_require_project_confirmed_origins() {
+    let (db, _, _) = package_ab(
+        "methods::setClass('A', slots = c(value = 'numeric'))\n",
+        "c <- function(...) NULL\n",
+    );
+    let index = project_classes(&db);
+    let slots = index.s4_slots(&class_named(index, "A")).unwrap();
+    assert!(!slots.complete);
+    assert!(slots.entries.is_empty());
+}
+
+#[test]
+fn s4_old_class_bridges_require_a_confirmed_registration() {
+    let (db, _, _) = package_ab(
+        "methods::setOldClass('Ancestor')\nmethods::setClass('Base', slots = c(base = 'character'))\nmethods::setClass('A', contains = 'Base', slots = c(value = 'numeric'))\nsetOldClass(c('A', 'Ancestor'), S4Class = 'A')\n",
+        "setOldClass <- function(...) NULL\n",
+    );
+    let index = project_classes(&db);
+    let id = class_named(index, "A");
+    let slots = index.s4_slots(&id).unwrap();
+    assert!(!slots.complete);
+    assert!(!slots.entries.contains_key(".S3Class"));
+    assert!(slots.entries.contains_key("value"));
+    assert!(slots.entries.contains_key("base"));
+    assert!(index.supertypes[&id].contains(&class_named(index, "Base")));
+    assert!(!index.supertypes[&id].contains(&class_named(index, "Ancestor")));
+    let old = index.s4_class(&id).unwrap().old_class.unwrap();
+    assert!(index.callee_identity(&id.path, &old.factory).is_none());
+}
+
+#[test]
+fn old_class_prototype_helpers_require_confirmed_origins() {
+    for (prototype, mask) in [
+        (
+            "structure(base::list(), class = 'Old')",
+            "structure <- function(...) NULL\n",
+        ),
+        (
+            "base::structure(list(), class = 'Old')",
+            "list <- function(...) NULL\n",
+        ),
+    ] {
+        let (db, _, _) = package_ab(
+            &format!("methods::setOldClass('Old', prototype = {prototype})\n"),
+            mask,
+        );
+        let index = project_classes(&db);
+        assert_eq!(
+            index
+                .s4_class(&class_named(index, "Old"))
+                .unwrap()
+                .virtual_class,
+            None,
+            "{mask}"
+        );
+    }
+}
+
+#[test]
+fn old_class_ancestor_reuse_requires_a_confirmed_predecessor() {
+    for (first, mask) in [
+        ("setOldClass('A')", "setOldClass <- function(...) NULL\n"),
+        (
+            "setClass('A', slots = c(x = 'numeric'))",
+            "setClass <- function(...) NULL\n",
+        ),
+        ("setOldClass('A')", ""),
+    ] {
+        let (db, _, _) = package_ab(
+            &format!("{first}\nmethods::setOldClass(c('B', 'A'))\n"),
+            mask,
+        );
+        let index = project_classes(&db);
+        assert_eq!(index.declarations.len(), 2, "{first}: {mask}");
+        let a = class_named(index, "A");
+        let b = class_named(index, "B");
+        assert!(index.supertypes[&b].contains(&a), "{first}: {mask}");
+        assert!(index.s4_slots(&a).unwrap().complete, "{first}: {mask}");
+        assert!(index.s4_slots(&b).unwrap().complete, "{first}: {mask}");
+    }
+}
+
+#[test]
+fn old_class_ancestors_reuse_registrations_from_earlier_package_files() {
+    let (db, _, _) = package_ab(
+        "methods::setOldClass('A')\n",
+        "methods::setOldClass(c('B', 'A'))\n",
+    );
+    let index = project_classes(&db);
+    assert_eq!(index.declarations.len(), 2);
+    let a = class_named(index, "A");
+    let b = class_named(index, "B");
+    assert!(index.supertypes[&b].contains(&a));
+    assert!(index.s4_slots(&a).unwrap().complete);
+    assert!(index.s4_slots(&b).unwrap().complete);
+}
+
+#[test]
 fn body_edit_does_not_rebuild_project_classes() {
     // The firewall: editing a function body in b.R re-runs its model, but the
     // class-def set is unchanged, so the project-wide class aggregate is reused.

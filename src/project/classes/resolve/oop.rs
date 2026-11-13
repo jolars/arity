@@ -294,6 +294,15 @@ impl ClassIndex {
     /// duplicate members, visibility domains, or competing parent branches.
     /// Consumers apply the method environment's access and shadowing rules.
     pub fn member_candidates(&self, class: &ClassId, name: &str) -> Vec<OopId> {
+        if class.key.system == ClassSystem::S4 {
+            return self
+                .s4_slots(class)
+                .and_then(|slots| slots.entries.get(name).cloned())
+                .into_iter()
+                .flatten()
+                .filter_map(|slot| slot.declaration)
+                .collect();
+        }
         if class.key.system == ClassSystem::R6
             && let Some(api) = self.r6_api(class)
         {
