@@ -477,7 +477,7 @@ pub fn binds_a_function(root: &SyntaxNode, def_range: TextRange) -> bool {
 /// Dispatch reaches a method without any read of its name, so "nothing reads
 /// it" is no evidence that it is dead. A `NAMESPACE` lookup
 /// ([`crate::project::FileScope::is_s3_method`]) answers a *different*
-/// question — `S3method()` decides what is registered for outside callers,
+/// question — `S3method()` records explicit registration for dispatch,
 /// while R dispatches to a method defined in the namespace either way — so for
 /// reachability the name's shape is all there is. Whether the prefix really
 /// names a generic is a run-time fact, and arity never evaluates R; roxygen2

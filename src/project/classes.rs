@@ -20,6 +20,7 @@ pub use environments::{
     ClassMethodEnvironment, R6MethodEnvironment, apply_method_environments,
     standalone_semantic_model,
 };
+pub use resolve::s3_registry::*;
 pub use resolve::{ClassFile, ClassIndex, ClassResolution, ResolvedClass};
 mod oop;
 pub use oop::*;

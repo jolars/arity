@@ -12,9 +12,9 @@ pub(super) fn expected_package(name: &str) -> Option<&'static str> {
         "setClass" | "setRefClass" | "setGeneric" | "setMethod" | "setReplaceMethod"
         | "signature" | "new" | "getRefClass" => "methods",
         "new_class" | "new_generic" | "method<-" => "S7",
-        "UseMethod" | "registerS3method" | "c" | "list" | "character" | "structure" | "class"
-        | "class<-" | "oldClass" | "oldClass<-" | "unclass" | "return" | "lockBinding"
-        | "unlockBinding" | "do.call" | "environment" | "globalenv" => "base",
+        "UseMethod" | ".S3method" | "registerS3method" | "c" | "list" | "character"
+        | "structure" | "class" | "class<-" | "oldClass" | "oldClass<-" | "unclass" | "return"
+        | "lockBinding" | "unlockBinding" | "do.call" | "environment" | "globalenv" => "base",
         _ => return None,
     })
 }

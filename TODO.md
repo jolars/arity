@@ -642,13 +642,22 @@ coverage need not block useful workspace support.
   semantics, copies, source visibility, and class-vector edits, while S3
   evidence stays separate from formal class declarations and hierarchy edges.
 
-- [ ] Index explicit `UseMethod()` generics, known internal/group generics,
+- [x] Index explicit `UseMethod()` generics, known internal/group generics,
   `generic.class` methods, and NAMESPACE two-/three-argument and delayed
   `S3method()` registrations. Include statically recoverable `.S3method()`
   and `registerS3method()` calls. Keep the generic, class, implementation
   binding, registration owner, and ordinary export status separate. Retain
   conservative unused-method protection for possible methods whose generic
   cannot be resolved; absence from the registry is not proof of dead code.
+
+  The shared S3 registry retains explicit and known generic identities, all
+  possible dotted-name splits, implementation bindings, lexical and package
+  registration owners, delayed registrations, and ordinary exports separately.
+  Script registrations preserve supplied aliases independently of their closure
+  origins. R-generated internal/group generic names and pinned base-R
+  observations cover registration forms without evaluating R in production.
+  Incremental tests cover namespace and script edits, while unused checks retain
+  unresolved possible methods and implementations named through strings.
 
 - [ ] Resolve method candidates using class-vector order, `.default`, and
   registration visibility. Cover `NextMethod()`, internal generics, group

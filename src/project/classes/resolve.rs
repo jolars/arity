@@ -11,11 +11,13 @@ use super::*;
 
 mod namespace;
 mod oop;
+pub(super) mod s3_registry;
 use crate::project::{PackageDeclarations, ProjectScope, ReadBinding, ReadSite};
 use crate::rindex::provider::{IndexedProvider, package_indexed, resolve_origin};
 use crate::rindex::remote::RemoteExports;
 use crate::semantic::enclosure::Availability;
 use crate::semantic::{LoadedPackage, PackageOrigin};
+use s3_registry::S3Registry;
 
 #[derive(Debug, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub struct ClassFile {
@@ -47,6 +49,7 @@ pub struct ResolvedClass {
 #[derive(Debug, Clone, Default, PartialEq, Eq, salsa::SalsaValue)]
 pub struct ClassIndex {
     pub declarations: BTreeMap<ClassId, ResolvedClass>,
+    pub s3: S3Registry,
     pub unresolved: BTreeSet<ClassId>,
     pub parent_candidates: BTreeMap<ClassId, Vec<Vec<ClassId>>>,
     pub supertypes: BTreeMap<ClassId, BTreeSet<ClassId>>,
@@ -316,6 +319,7 @@ impl ClassIndex {
                 }
             }
         }
+        index.s3 = index.build_s3_registry(resolution);
         index
     }
 

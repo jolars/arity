@@ -4244,3 +4244,189 @@ fn generated_replacement_names_resolve_from_sibling_files() {
             .contains("`value<-`")
     );
 }
+
+#[test]
+fn s3_registry_tracks_namespace_identity_and_backdates_method_bodies() {
+    use arity::project::classes::{ClassName, S3MethodSource};
+    let (mut db, _, b) = package_ab(
+        "g <- function(x) UseMethod('g')\n",
+        "handler <- function(x) x\ng.dotted.class <- function(x) x\n",
+    );
+    let metadata = |text: &str| {
+        vec![PackageInfo {
+            root: PathBuf::from("/pkg"),
+            namespace: Some(text.into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]
+    };
+    db.set_package_metadata(metadata(
+        "S3method(g, C, handler)\nS3method(other::g, D, handler)\n",
+    ));
+    let before = project_classes(&db).s3.clone();
+    let registrations: Vec<_> = before
+        .methods
+        .iter()
+        .filter(|method| matches!(method.source, S3MethodSource::Namespace { .. }))
+        .collect();
+    assert_eq!(registrations.len(), 2);
+    assert_eq!(registrations[0].generics.len(), 1);
+    assert!(!registrations[0].exported);
+    assert!(registrations[1].delayed);
+    assert_eq!(registrations[1].generic.package.as_deref(), Some("other"));
+    assert!(registrations[1].generics.is_empty());
+    assert!(
+        before
+            .methods
+            .iter()
+            .any(|method| method.generic.name == ClassName::Known("g".into())
+                && method.class == ClassName::Known("dotted.class".into())
+                && method.generics.len() == 1)
+    );
+    let visibility = visible_symbols(&db, b).scope();
+    assert!(!visibility.exported_by_namespace("handler"));
+    assert!(visibility.is_s3_method("handler"));
+    assert!(!visibility.used_elsewhere("handler"));
+    db.clear_query_log();
+    db.set_file_text(
+        b,
+        "# Prose.\nhandler <- function(x) { print(x); x }\ng.dotted.class <- function(x) x\n",
+    );
+    assert_eq!(project_classes(&db).s3, before);
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+    db.set_package_metadata(metadata("S3method(g, Changed, handler)\nexport(handler)\n"));
+    let after = &project_classes(&db).s3;
+    assert_ne!(after, &before);
+    let registration = after
+        .methods
+        .iter()
+        .find(|method| matches!(method.source, S3MethodSource::Namespace { .. }))
+        .unwrap();
+    assert_eq!(registration.class, ClassName::Known("Changed".into()));
+    assert!(registration.exported);
+}
+
+#[test]
+fn s3_registry_tracks_script_registration_edits() {
+    let (mut db, _, b) = package_ab(
+        "g <- function(x) UseMethod('g')\nhandler <- function(x) x\n",
+        ".onLoad <- function(lib, pkg) base::registerS3method('g', 'C', 'handler')\n",
+    );
+    let before = project_classes(&db).s3.clone();
+    let registration = before
+        .methods
+        .iter()
+        .find(|method| method.registered)
+        .unwrap();
+    assert_eq!(registration.generics.len(), 1);
+    assert!(!registration.owner.lexical.0.is_empty());
+    db.set_file_text(
+        b,
+        ".onLoad <- function(lib, pkg) base::registerS3method('g', 'D', 'handler')\n",
+    );
+    assert_ne!(project_classes(&db).s3, before);
+}
+
+#[test]
+fn s3_registry_tracks_generic_lookup_context_changes() {
+    let (mut db, _, b) = package_ab(
+        "handler <- function(x) x\n",
+        "install <- function() base::registerS3method('print', 'C', handler)\n",
+    );
+    db.set_library_index(IndexedProvider::empty());
+    let before = project_classes(&db).s3.clone();
+    assert_eq!(
+        before
+            .methods
+            .iter()
+            .find(|method| method.registered)
+            .unwrap()
+            .generics
+            .len(),
+        1
+    );
+    for source in [
+        "install <- function() { print <- function(x) x; base::registerS3method('print', 'C', handler) }\n",
+        "library(maskpkg)\ninstall <- function() base::registerS3method('print', 'C', handler)\n",
+    ] {
+        db.set_file_text(b, source);
+        let after = &project_classes(&db).s3;
+        assert_ne!(after, &before);
+        assert!(
+            after
+                .methods
+                .iter()
+                .find(|method| method.registered)
+                .unwrap()
+                .generics
+                .is_empty()
+        );
+    }
+    db.set_library_index(IndexedProvider::from_indices([index_pkg(
+        "maskpkg",
+        &["print"],
+    )]));
+    assert!(
+        project_classes(&db)
+            .s3
+            .methods
+            .iter()
+            .find(|method| method.registered)
+            .unwrap()
+            .generics
+            .is_empty()
+    );
+    db.set_library_index(IndexedProvider::from_indices([index_pkg("maskpkg", &[])]));
+    assert_eq!(
+        project_classes(&db)
+            .s3
+            .methods
+            .iter()
+            .find(|method| method.registered)
+            .unwrap()
+            .generics
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn s3_registry_tracks_implementation_binding_ownership_and_backdates_bodies() {
+    let (mut db, _, b) = package_ab(
+        "g <- function(x) UseMethod('g')\nhandler <- function(x) x\n",
+        ".onLoad <- function(lib, pkg) { handler <- function(x) x + 1; base::registerS3method('g', 'C', handler) }\n",
+    );
+    db.set_package_metadata(vec![PackageInfo {
+        root: "/pkg".into(),
+        namespace: Some("export(handler)\n".into()),
+        dir_sources: BTreeSet::new(),
+        native_routines: BTreeSet::new(),
+    }]);
+    let before = project_classes(&db).s3.clone();
+    assert!(
+        !before
+            .methods
+            .iter()
+            .find(|method| method.registered)
+            .unwrap()
+            .exported
+    );
+    db.clear_query_log();
+    db.set_file_text(b, ".onLoad <- function(lib, pkg) { handler <- function(x) { print(x); x + 2 }; base::registerS3method('g', 'C', handler) }\n");
+    assert_eq!(project_classes(&db).s3, before);
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+    db.set_file_text(
+        b,
+        ".onLoad <- function(lib, pkg) base::registerS3method('g', 'C', handler)\n",
+    );
+    let after = &project_classes(&db).s3;
+    assert_ne!(after, &before);
+    assert!(
+        after
+            .methods
+            .iter()
+            .find(|method| method.registered)
+            .unwrap()
+            .exported
+    );
+}

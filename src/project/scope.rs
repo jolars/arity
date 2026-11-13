@@ -212,7 +212,7 @@ pub struct ProjectScope {
     /// Per package file: the names its package's NAMESPACE `export()`s. Both
     /// sets feed [`FileScope::used_elsewhere`]; only this one marks public API.
     namespace_exports: HashMap<PathBuf, Arc<BTreeSet<String>>>,
-    /// Per package file: the subset of `namespace_exports` registered as S3
+    /// Per package file: the implementation names registered as S3
     /// methods (`S3method(...)`). Reached by dispatch, never by a direct call.
     s3_methods: HashMap<PathBuf, Arc<BTreeSet<String>>>,
     /// Per file: the packages its NAMESPACE `import()`s wholesale. Recorded
@@ -375,9 +375,8 @@ impl<'a> FileScope<'a> {
         self.namespace_exports
     }
 
-    /// The subset of [`namespace_export_names`](Self::namespace_export_names)
-    /// registered via `S3method()`. A method is reached by dispatch, so the
-    /// absence of a direct call to its name means nothing.
+    /// Implementation names registered via `S3method()`, independent of exports.
+    /// Dispatch reaches a method without any direct call to its name.
     pub fn s3_method_names(&self) -> &BTreeSet<String> {
         self.s3_methods
     }

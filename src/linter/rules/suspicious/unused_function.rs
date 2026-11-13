@@ -124,24 +124,13 @@ impl Rule for UnusedFunction {
 /// Whether `name` names an S3 method, which dispatch reaches without any direct
 /// call — so "nothing calls it" is not evidence that it is dead.
 ///
-/// Two tiers, mirroring the two export signals. This rule only ever fires on a
-/// name declared *exported*, and with a project the NAMESPACE answers that
-/// exactly: `S3method(print, foo)` registers `print.foo`, while `export(my.util)`
-/// is roxygen2 stating the name is not a method. Without a project arity cannot
-/// reproduce that decision — roxygen2 splits `print.foo` into `generic.class`
-/// only if `print` is a generic *at build time*, which is a runtime fact — so
-/// the name's shape decides and any dotted name is withheld. That under-reports
-/// a genuinely dead `my.util`, which is the safe direction for an opt-in audit;
-/// the NAMESPACE path still reports it.
-///
-/// The shape tier is `unused-binding`'s *only* tier, because it asks about
-/// reachability rather than about the public surface — see
-/// [`matchers::looks_like_s3_method`].
+/// A registration proves reachability, but its absence cannot prove dead code.
+/// Keep possible convention-based methods even when the generic is external or
+/// installed at runtime.
 fn is_s3_method(ctx: &RuleContext<'_>, name: &str) -> bool {
-    match ctx.project {
-        Some(project) => project.is_s3_method(name),
-        None => matchers::looks_like_s3_method(name),
-    }
+    ctx.project
+        .is_some_and(|project| project.is_s3_method(name))
+        || matchers::looks_like_s3_method(name)
 }
 
 /// The names a roxygen `@export` declares in this file: for every top-level

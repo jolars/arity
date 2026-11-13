@@ -70,6 +70,8 @@ pub struct GenericRef {
     /// A generator binding may differ from the registered generic name.
     pub by_binding: bool,
     pub local: Option<OopKey>,
+    /// S3 registrations look up generic names in their registration environment.
+    pub lookup: Option<FunctionRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
@@ -201,6 +203,8 @@ pub struct OopFacts {
     pub members: Vec<MemberDef>,
     pub member_groups: Vec<MemberGroup>,
     pub method_implementations: Vec<MethodImplementationDef>,
+    /// The supplied S3 binding stays distinct from the closure reached through it.
+    pub s3_implementations: Vec<MethodImplementationDef>,
     /// Origins used by static class lookups, confirmed with the same imports
     /// and masking rules as declarations. No call locations enter this projection.
     pub class_lookups: Vec<FunctionRef>,

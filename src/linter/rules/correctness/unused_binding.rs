@@ -55,7 +55,7 @@ impl Rule for UnusedBinding {
                     // A top-level binding read by a sibling file (same package or
                     // source-closure) is used cross-file, so it isn't unused.
                     let top_level = ctx.model.scope(b.scope).kind == ScopeKind::File;
-                    if top_level && ctx.project.is_some_and(|p| p.used_elsewhere(&b.name)) {
+                    if top_level && ctx.project.is_some_and(|p| p.used_elsewhere(&b.name) || p.is_s3_method(&b.name)) {
                         return false;
                     }
                     // A method is reached by dispatch, not by a read of its

@@ -881,3 +881,50 @@ fn alias_registration_sites_and_facts_survive_formatting_and_reparse() {
         assert_eq!(&source[before.range], &shifted[after.range]);
     }
 }
+
+#[test]
+fn script_s3method_supports_aliases_strings_and_implicit_implementations() {
+    for registration in [
+        ".S3method('g', 'C', handler)",
+        "base::.S3method('g', 'C', 'handler')",
+        "register <- base::.S3method; register('g', 'C', handler)",
+        ".S3method('g', 'C')",
+    ] {
+        let source = format!(
+            "g <- function(x) UseMethod('g')\nhandler <- function(x) x\ng.C <- handler\n{registration}\n"
+        );
+        let facts = facts(&source);
+        let method = facts
+            .oop
+            .methods
+            .iter()
+            .find(|method| method.registration.is_some())
+            .unwrap_or_else(|| panic!("missing script registration: {source}"));
+        assert_eq!(
+            method.generic.as_ref().unwrap().name,
+            ClassName::Known("g".into())
+        );
+        assert_eq!(method.dispatch[0].class, DispatchClass::S3("C".into()));
+        assert!(
+            facts
+                .oop
+                .method_implementations
+                .iter()
+                .any(|implementation| implementation.method == method.key)
+        );
+    }
+}
+
+#[test]
+fn namespace_s3_registrations_preserve_dispatch_and_export_identities() {
+    use arity::rindex::harvest::parse_namespace;
+    let info = parse_namespace(
+        "S3method(print, C)\nS3method(pkg::as.data.frame, dotted.class)\nS3method(pkg::g, C, handler)\nexport(handler)\n",
+        &[],
+    );
+    assert_eq!(
+        info.exports.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["handler"]
+    );
+    assert!(info.s3_methods.contains("as.data.frame.dotted.class"));
+}

@@ -1523,16 +1523,15 @@ fn unused_function_skips_dotted_name_without_a_project() {
 }
 
 #[test]
-fn unused_function_flags_dotted_plain_export_in_a_project() {
-    // With a NAMESPACE the answer is exact: `my.util` is a plain `export()`,
-    // not an `S3method()`, so the dotted-name withholding does not apply.
+fn unused_function_withholds_unresolved_possible_method_in_a_project() {
+    // An export does not prove that downstream dispatch cannot reach this name.
     let result = lint_package_files(
         "export(my.util)\n",
         &[("a.R", "my.util <- function() 1\n")],
         &unused_function_only(),
     );
     assert!(
-        rules_for(&result, "a.R").contains(&"unused-function"),
+        !rules_for(&result, "a.R").contains(&"unused-function"),
         "a.R: {:?}",
         rules_for(&result, "a.R")
     );
@@ -9408,4 +9407,20 @@ fn list_comparison_is_default_enabled_and_suppressible() {
         )
         .is_empty()
     );
+}
+
+#[test]
+fn s3_registration_strings_keep_nonconventional_implementations_live() {
+    for call in [
+        ".S3method('g', 'C', 'handler')",
+        "base::registerS3method('g', 'C', 'handler')",
+    ] {
+        let source = format!("g <- function(x) UseMethod('g')\nhandler <- function(x) x\n{call}\n");
+        let config = arity::config::LintConfig {
+            select: Some(vec!["unused-binding".into()]),
+            ..Default::default()
+        };
+        let diagnostics = check_document(Path::new("test.R"), &source, &config).unwrap();
+        assert!(diagnostics.is_empty(), "{call}: {diagnostics:?}");
+    }
 }

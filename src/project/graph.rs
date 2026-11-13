@@ -166,7 +166,7 @@ pub struct Visibility {
     /// equality is by *contents* (the pointer check is only a fast path for
     /// `true`), so the memo still backdates when a rebuilt set is unchanged.
     pub namespace_exports: Arc<BTreeSet<String>>,
-    /// The subset of `namespace_exports` registered via `S3method()` — reached
+    /// Implementation names registered via `S3method()` — reached
     /// by dispatch, so no direct call to the name is expected.
     pub s3_methods: Arc<BTreeSet<String>>,
     /// Packages this file's NAMESPACE `import()`s wholesale. Range-free and
