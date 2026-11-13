@@ -34,6 +34,105 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
+    fn s4_slot_completion_uses_imports_and_live_buffer_class_facts() {
+        let mut db = IncrementalDatabase::default();
+        let parent_path = Path::new("/s4-parent/R/classes.R");
+        let child_path = Path::new("/s4-child/R/classes.R");
+        let parent = db.upsert_file(
+            parent_path,
+            "methods::setClass('Inner', slots = c(hidden = 'numeric'))\nMaker <- methods::setClass('Display', slots = c(value = 'numeric', inner = 'Inner'))\n",
+        );
+        let source = "Child <- methods::setClass('Child', contains = 'Display', slots = c(own = 'logical'))\nobj <- Child()\nobj@";
+        let child = db.upsert_file(child_path, source);
+        db.set_workspace_members(
+            vec![parent, child],
+            vec!["/s4-parent".into(), "/s4-child".into()],
+        );
+        db.refresh_descriptions(["/s4-parent".into(), "/s4-child".into()]);
+        db.upsert_description(Path::new("/s4-parent"), "Package: parent\n");
+        db.upsert_description(Path::new("/s4-child"), "Package: child\nImports: parent\n");
+        let metadata = |exported| {
+            [
+                (
+                    "/s4-parent",
+                    if exported {
+                        "exportClasses(Display)\nexport(Maker)\n"
+                    } else {
+                        ""
+                    },
+                ),
+                (
+                    "/s4-child",
+                    "importClassesFrom(parent, Display)\nimportFrom(parent, Maker)\n",
+                ),
+            ]
+            .into_iter()
+            .map(|(root, namespace)| PackageInfo {
+                root: root.into(),
+                namespace: Some(namespace.into()),
+                dir_sources: BTreeSet::new(),
+                native_routines: BTreeSet::new(),
+            })
+            .collect()
+        };
+        db.set_package_metadata(metadata(true));
+        for (text, expected) in [
+            (source.to_string(), vec!["inner", "own", "value"]),
+            (
+                source.replace("own = 'logical'", "edited = 'character'"),
+                vec!["edited", "inner", "value"],
+            ),
+            ("parent::Maker()@".to_string(), vec!["inner", "value"]),
+            (
+                "methods::new('Display')@".to_string(),
+                vec!["inner", "value"],
+            ),
+            ("methods::new('Display')@inner@".to_string(), vec!["hidden"]),
+            ("methods::new('Inner')@".to_string(), vec![]),
+        ] {
+            let buffer = TextBuffer::new(text.clone());
+            let position = buffer
+                .line_index()
+                .byte_to_position(text.len(), PositionEncoding::Utf16);
+            let CompletionResponse::List(list) = completion::completion_via_db(
+                &db.snapshot(),
+                child_path,
+                &buffer,
+                position,
+                PositionEncoding::Utf16,
+            )
+            .unwrap() else {
+                panic!("completion list");
+            };
+            assert!(!list.is_incomplete, "{text}: {list:?}");
+            assert_eq!(
+                list.items
+                    .iter()
+                    .map(|item| item.label.as_str())
+                    .collect::<Vec<_>>(),
+                expected,
+                "{text}"
+            );
+        }
+        db.set_package_metadata(metadata(false));
+        let text = "methods::new('Display')@";
+        let buffer = TextBuffer::new(text.to_string());
+        let position = buffer
+            .line_index()
+            .byte_to_position(text.len(), PositionEncoding::Utf16);
+        let CompletionResponse::List(list) = completion::completion_via_db(
+            &db.snapshot(),
+            child_path,
+            &buffer,
+            position,
+            PositionEncoding::Utf16,
+        )
+        .unwrap() else {
+            panic!("completion list");
+        };
+        assert!(list.items.is_empty());
+    }
+    #[test]
     fn generator_mutations_use_live_signatures_and_keep_older_instances() {
         let mut db = IncrementalDatabase::default();
         let definitions = db.upsert_file(Path::new("/mutation-live/R/a.R"), "G <- R6::R6Class(public = list(read = function(original) original))\nRef <- methods::setRefClass('LiveMutation', methods = list(read = function(original) original))\n");

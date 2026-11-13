@@ -251,8 +251,10 @@ impl ClassIndex {
                             return None;
                         }
                         imports.extend(namespace.named.get(name).into_iter().flatten().cloned());
-                        for source in &namespace.wildcard {
-                            if self.s3_origins.exports.get(source)?.contains(name) {
+                        for (source, exclusions) in &namespace.wildcard {
+                            if !exclusions.contains(name)
+                                && self.s3_origins.exports.get(source)?.contains(name)
+                            {
                                 imports.insert(source.clone());
                             }
                         }

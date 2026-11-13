@@ -1,0 +1,15 @@
+selection	nearest	s4Distance	DistanceChild,numeric	DistanceParent,ANY	s4Distance	FALSE
+selection	missing	s4Distance	DistanceChild,missing	DistanceParent,missing	s4Distance	FALSE
+selection	crossed	s4Crossed	Both,Both	Left,ANY	s4Crossed	TRUE
+selection	equal	s4Equal	Both	Left	s4Equal	FALSE
+selection	union_class	s4Union	DistanceChild	Either	s4Union	FALSE
+selection	union_builtin	s4Union	NULL	Either	s4Union	FALSE
+selection	old_class	s4Old	OldChild	OldParent	s4Old	FALSE
+selection	reference_storage	s4Reference	RefChild	DistanceRoot	s4Reference	FALSE
+selection	reference_base	s4Environment	RefChild	envRefClass	s4Environment	FALSE
+selection	primitive	length	DistanceChild	DistanceRoot	length	FALSE
+selection	member	+	DistanceRoot,DistanceRoot	DistanceRoot,DistanceRoot	+	FALSE
+selection	group	-	DistanceRoot,DistanceRoot	DistanceRoot,DistanceRoot	Arith	FALSE
+selection	default_override	s4Default	numeric	ANY	s4Default	FALSE
+next	root
+storage	.xData,value	field

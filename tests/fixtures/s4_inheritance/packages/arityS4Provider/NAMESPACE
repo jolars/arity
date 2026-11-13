@@ -1,0 +1,4 @@
+importClassesFrom(arityS4Owner, Parent)
+importFrom(arityS4Owner, g)
+exportClasses(Marker)
+exportMethods(g, length)

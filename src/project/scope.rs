@@ -241,11 +241,10 @@ pub struct ProjectScope {
     /// The reverse of `sees_extra`, so [`seen_by`](Self::seen_by) is a lookup
     /// rather than a scan of every file's closure.
     seen_by_extra: HashMap<PathBuf, HashSet<PathBuf>>,
-    /// Per package file: whether its package root's analyzed member set is
+    /// Per package root: whether its analyzed member set is
     /// *complete* (covers every `R/*.[RrSsQq]` source the package loads). When
     /// false, a def/read could hide in an unanalyzed sibling, so a flat-namespace
-    /// rename-all over this package's cohort must refuse. Absent (→ vacuously
-    /// complete) for non-package files.
+    /// rename-all over this package's cohort must refuse.
     package_complete: HashMap<PathBuf, bool>,
     /// Per file: the range-free per-file facts the load-order replay needs,
     /// held as one entry rather than three parallel maps.
@@ -492,19 +491,6 @@ impl ProjectScope {
         let file_root: HashMap<PathBuf, PathBuf> = files
             .iter()
             .filter_map(|f| Some((f.path.clone(), f.package_root.clone()?)))
-            .collect();
-
-        // Per package file, its root's completeness verdict (a root absent from
-        // the map is vacuously complete). Only recorded for package files.
-        let package_complete: HashMap<PathBuf, bool> = files
-            .iter()
-            .filter_map(|f| {
-                let root = f.package_root.as_ref()?;
-                Some((
-                    f.path.clone(),
-                    package_complete.get(root).copied().unwrap_or(true),
-                ))
-            })
             .collect();
 
         // Per-file data retained for the load-order replay (`source()` position),
@@ -850,7 +836,7 @@ impl ProjectScope {
             file_root,
             sees_extra,
             seen_by_extra,
-            package_complete,
+            package_complete: package_complete.clone(),
             retained,
             sources,
             source_environments,
@@ -943,7 +929,19 @@ impl ProjectScope {
     /// incomplete over). A `false` here is what makes a multi-def package cohort
     /// refuse rename instead of half-rewriting the namespace.
     pub fn package_complete(&self, path: &Path) -> bool {
-        self.package_complete.get(path).copied().unwrap_or(true)
+        self.file_root
+            .get(path)
+            .and_then(|root| self.package_complete.get(root))
+            .copied()
+            .unwrap_or(true)
+    }
+
+    pub(crate) fn analyzed_package(&self, root: &Path) -> bool {
+        self.package_complete.get(root) == Some(&true)
+    }
+
+    pub(crate) fn source_graph(&self) -> &SourceGraph {
+        &self.sources
     }
 
     /// Resolve, by sequential load order, what `name`'s *top-level* reads in

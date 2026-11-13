@@ -123,6 +123,47 @@ fn source_paths_inherit_the_callers_directory_and_restore_after_chdir() {
 }
 
 #[test]
+fn class_hierarchy_uses_source_execution_directories() {
+    for chdir in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), ".git", "gitdir: /external/worktree\n");
+        let entry = format!(
+            "source('sub/loader.R', chdir = {flag})\nChild <- R6::R6Class('Child', inherit = Generator)\n",
+            flag = if chdir { "TRUE" } else { "FALSE" },
+        );
+        let db = workspace(
+            dir.path(),
+            &[
+                ("scripts/entry.R", &entry),
+                ("sub/loader.R", "source('helper.R')\n"),
+                ("helper.R", "Generator <- R6::R6Class('Root')\n"),
+                ("sub/helper.R", "Generator <- R6::R6Class('Nested')\n"),
+            ],
+        );
+        let path = dir.path().join("scripts/entry.R");
+        let parent_path = dir
+            .path()
+            .join(if chdir { "sub/helper.R" } else { "helper.R" });
+        let assert_parent = |index: &arity::project::ClassIndex| {
+            let child = index
+                .declarations
+                .keys()
+                .find(|id| id.path == path)
+                .unwrap();
+            let parents = index.supertypes.get(child).unwrap();
+            assert_eq!(parents.len(), 1, "chdir={chdir}");
+            assert_eq!(parents.first().unwrap().path, parent_path, "chdir={chdir}");
+        };
+        assert_parent(arity::project::project_classes(&db));
+
+        let root = arity::parser::parse(&entry).cst;
+        let model = arity::semantic::SemanticModel::build(&root);
+        let facts = arity::project::file_class_defs(&model, &root);
+        assert_parent(&db.snapshot().class_index_in(&path, &facts, &root, &model));
+    }
+}
+
+#[test]
 fn script_directory_fallback_is_inherited_across_source_calls() {
     let dir = tempfile::tempdir().unwrap();
     let db = workspace(

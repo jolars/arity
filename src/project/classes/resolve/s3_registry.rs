@@ -74,7 +74,7 @@ pub(in crate::project::classes) struct S3LookupOrigins {
 #[derive(Debug, Clone, Default, PartialEq, Eq, salsa::SalsaValue)]
 pub(in crate::project::classes) struct S3NamespaceImports {
     pub named: BTreeMap<String, BTreeSet<String>>,
-    pub wildcard: BTreeSet<String>,
+    pub wildcard: Vec<(String, BTreeSet<String>)>,
     pub loaded: BTreeSet<String>,
     pub unknown: bool,
 }
@@ -92,6 +92,29 @@ impl S3NamespaceImports {
             .directives()
             .filter(|directive| matches!(directive.kind(), Import | ImportFrom))
         {
+            if directive
+                .syntax()
+                .ancestors()
+                .any(|node| node.kind() == SyntaxKind::IF_EXPR)
+            {
+                result.unknown = true;
+                continue;
+            }
+            if directive.kind() == Import {
+                if let Some((packages, exclusions)) = super::namespace::wildcard_import(&directive)
+                    && !packages.is_empty()
+                {
+                    result.loaded.extend(packages.iter().cloned());
+                    result.wildcard.extend(
+                        packages
+                            .into_iter()
+                            .map(|package| (package, exclusions.clone())),
+                    );
+                } else {
+                    result.unknown = true;
+                }
+                continue;
+            }
             let Some(args) = directive
                 .arguments()
                 .map(|argument| argument.value().and_then(namespace_name))
@@ -100,32 +123,17 @@ impl S3NamespaceImports {
                 result.unknown = true;
                 continue;
             };
-            if directive
-                .syntax()
-                .ancestors()
-                .any(|node| node.kind() == SyntaxKind::IF_EXPR)
-                || args.is_empty()
-            {
+            let Some((source, names)) = args.split_first() else {
                 result.unknown = true;
                 continue;
-            }
-            match directive.kind() {
-                Import => {
-                    result.loaded.extend(args.iter().cloned());
-                    result.wildcard.extend(args);
-                }
-                ImportFrom => {
-                    let source = &args[0];
-                    result.loaded.insert(source.clone());
-                    for name in args.iter().skip(1) {
-                        result
-                            .named
-                            .entry(name.clone())
-                            .or_default()
-                            .insert(source.clone());
-                    }
-                }
-                _ => unreachable!("only import directives were retained"),
+            };
+            result.loaded.insert(source.clone());
+            for name in names {
+                result
+                    .named
+                    .entry(name.clone())
+                    .or_default()
+                    .insert(source.clone());
             }
         }
         result

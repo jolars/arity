@@ -1,0 +1,36 @@
+generic	s4Pair	.GlobalEnv	y,x	-	-
+method	s4Pair	.GlobalEnv	y:numeric,x:ANY
+method	s4Pair	.GlobalEnv	y:missing,x:numeric
+method	s4Pair	.GlobalEnv	y:numeric,x:character
+method	s4Pair	.GlobalEnv	y:numeric,x:character
+method	s4Pair	.GlobalEnv	y:ANY,x:ANY
+method	s4Pair	.GlobalEnv	y:ANY,x:ANY
+method	s4Pair	.GlobalEnv	y:ANY,x:ANY
+generic	s4Value<-	.GlobalEnv	object,value	-	-
+method	s4Value<-	.GlobalEnv	object:S4Either,value:missing
+generic	s4Default	.GlobalEnv	x,y	-	x,y
+generic	s4Explicit	.GlobalEnv	x,y	-	x,y
+generic	s4Existing	.GlobalEnv	x	-	x
+generic	s4Previous	.GlobalEnv	x	-	x
+generic	s4Disabled	.GlobalEnv	x	-	-
+generic	s4Grouped	.GlobalEnv	x	Math	-
+method	Arith	base	e1:ANY,e2:S4A
+generic	s4Next	.GlobalEnv	x,y	-	x,y
+method	s4Next	.GlobalEnv	x:numeric,y:ANY
+method	s4Next	.GlobalEnv	x:numeric,y:numeric
+method	s4Promoted	.GlobalEnv	x:numeric,y:ANY
+generic	s4Qualified	.GlobalEnv	x	-	x
+generic	s4Partial	.GlobalEnv	object,other	-	-
+method	s4Partial	.GlobalEnv	object:numeric,other:character
+method	s4Partial	.GlobalEnv	object:character,other:numeric
+group	Ops	base	e1,e2	-
+group	Arith	base	e1,e2	Ops
+group	Compare	methods	e1,e2	Ops
+group	Logic	base	e1,e2	Ops
+group	Math	base	x	-
+group	Math2	methods	x,digits	-
+group	Summary	base	x,na.rm	-
+group	Complex	base	z	-
+group	matrixOps	base	x,y	-
+generic	s4Promoted	.GlobalEnv	x,y	-	x,y
+owner	one	two

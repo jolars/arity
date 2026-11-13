@@ -32,6 +32,7 @@ pub enum OopKind {
     Generic,
     Method,
     Member,
+    Coercion,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
@@ -85,6 +86,7 @@ pub struct GenericDef {
     /// A literal vector's helper must be confirmed before its shape is known.
     pub dispatch_factory: Option<FunctionRef>,
     pub s3_dispatch: Option<super::super::S3GenericDispatch>,
+    pub s4: Option<super::super::S4GenericDefinition>,
     pub uncertainty: BTreeSet<OopUncertainty>,
 }
 
@@ -96,7 +98,7 @@ impl GenericDef {
 
     /// Bare factories retain conditional binding facts until the project can
     /// confirm their origins. Ambiguous callee aliases cannot establish them.
-    pub(super) fn binding_possible(&self) -> bool {
+    pub(in crate::project::classes) fn binding_possible(&self) -> bool {
         !matches!(self.factory, FunctionRef::Unresolved(_))
             && !self.uncertainty.iter().any(|issue| {
                 matches!(
@@ -137,6 +139,16 @@ pub struct MethodDef {
     pub dispatch_factory: Option<FunctionRef>,
     pub signature: Option<CallableSignature>,
     pub registration: Option<FunctionRef>,
+    pub uncertainty: BTreeSet<OopUncertainty>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub struct S4RemovalDef {
+    pub key: OopKey,
+    pub generic: GenericRef,
+    pub dispatch: Vec<DispatchArgument>,
+    pub dispatch_factory: Option<FunctionRef>,
+    pub factory: FunctionRef,
     pub uncertainty: BTreeSet<OopUncertainty>,
 }
 
@@ -198,6 +210,7 @@ pub struct OopFacts {
     pub generics: Vec<GenericDef>,
     pub generic_bindings: Vec<GenericBinding>,
     pub methods: Vec<MethodDef>,
+    pub s4_removals: Vec<S4RemovalDef>,
     /// Callable candidates whose values need project lookup before they can
     /// establish methods. These never enter the definite method catalogue.
     pub possible_methods: Vec<MethodDef>,
@@ -206,8 +219,8 @@ pub struct OopFacts {
     pub method_implementations: Vec<MethodImplementationDef>,
     /// The supplied S3 binding stays distinct from the closure reached through it.
     pub s3_implementations: Vec<MethodImplementationDef>,
-    /// Origins used by static class lookups, confirmed with the same imports
-    /// and masking rules as declarations. No call locations enter this projection.
+    /// Origins used by top-level static class lookups. Body-local lookups are
+    /// confirmed against the live CST without entering this shared projection.
     pub class_lookups: Vec<FunctionRef>,
     pub mutations: Vec<MemberMutation>,
     pub events: Vec<OopEvent>,
@@ -218,6 +231,8 @@ pub struct OopFacts {
 pub struct CallableBinding {
     pub name: String,
     pub signature: CallableSignature,
+    /// Index of the originating closure's binding, retained by callable aliases.
+    pub origin: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
@@ -251,6 +266,14 @@ pub struct MemberMutation {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum OopEvent {
     Class(ClassKey),
+    Generic {
+        name: ClassName,
+        target: OopKey,
+    },
+    /// Capture named S4 implementations before later bindings replace them.
+    Method(OopKey),
+    RemoveS4Method(OopKey),
+    S4Relation(usize),
     Generator {
         name: String,
         target: GeneratorRef,

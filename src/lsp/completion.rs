@@ -237,6 +237,42 @@ fn completions_from_context(
         } => {
             let known = oop::with_class_index(root, context, |index, model, path| {
                 let receiver = index.class_receiver(path, root, model, &receiver)?;
+                if receiver.class.key.system == crate::project::classes::ClassSystem::S4 {
+                    use crate::project::classes::{ClassAccess, DispatchClass};
+                    if !at || receiver.access == ClassAccess::Generator {
+                        return Some((Vec::new(), true));
+                    }
+                    let slots = index.s4_slots(&receiver.class)?;
+                    let candidates = slots
+                        .entries
+                        .iter()
+                        .map(|(name, entries)| {
+                            let declared_type = entries
+                                .first()
+                                .filter(|first| {
+                                    entries
+                                        .iter()
+                                        .all(|entry| entry.declared_type == first.declared_type)
+                                })
+                                .and_then(|slot| match &slot.declared_type {
+                                    DispatchClass::Formal(name) => Some(name.clone()),
+                                    DispatchClass::Any => Some("ANY".into()),
+                                    _ => None,
+                                });
+                            Candidate {
+                                label: name.clone(),
+                                kind: CompletionItemKind::FIELD,
+                                sort_group: 0,
+                                data: CompletionData::ClassMember {
+                                    signature: None,
+                                    declared_type,
+                                },
+                                origin: Some(SmolStr::new_static("S4")),
+                            }
+                        })
+                        .collect();
+                    return Some((candidates, slots.complete));
+                }
                 if receiver.class.key.system == crate::project::classes::ClassSystem::RefClass {
                     use crate::project::classes::{ClassAccess, DispatchClass, MemberKind};
                     let api = index.reference_receiver_api(&receiver)?;
@@ -642,7 +678,6 @@ fn field_candidates(root: &SyntaxNode, receiver: &SyntaxElement, at: bool) -> Ve
     }
 
     // 2. Infer fields from a local record construction bound to the receiver.
-    //    S4 slot inference (`new()`/`setClass`) is a follow-up, so `@` harvests only.
     if !at {
         let definitions = binding.map(|binding| {
             model

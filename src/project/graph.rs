@@ -853,6 +853,7 @@ pub(crate) fn build_class_index(
         {
             package_declarations.push(PackageDeclarations {
                 root: root.clone(),
+                name: facts.package.clone(),
                 attached: facts.attached_packages(),
                 declared: facts.declared_packages(),
             });
@@ -880,15 +881,18 @@ pub(crate) fn build_class_index(
                 .members
                 .iter()
                 .find(|member| member.path == file.path);
+            let execution_directory = member
+                .and_then(|member| member.file.execution_directory(db))
+                .or_else(|| file.path.parent());
             let (source_edges, top_level_events) = match live {
                 Some(live) => (
                     Arc::new(crate::project::collect_source_edge_keys(
                         live.root,
-                        live.path.parent(),
+                        execution_directory,
                     )),
                     Arc::new(crate::project::collect_top_level_events(
                         live.root,
-                        live.path.parent(),
+                        execution_directory,
                         live.model,
                     )),
                 ),
@@ -902,12 +906,15 @@ pub(crate) fn build_class_index(
             };
             FileFacts {
                 path: file.path.clone(),
+                execution_directory: execution_directory.map(Path::to_path_buf),
                 exports: file.exports.clone(),
                 free_reads: empty_names.clone(),
-                qualified_reads: empty_names.clone(),
+                qualified_reads: Arc::default(),
                 use_only_reads: empty_names.clone(),
                 source_edges,
                 top_level_events,
+                // Class lookup uses top-level events so method-body edits backdate.
+                source_program: None,
                 package_root: file.package_root.clone(),
             }
         })
@@ -919,7 +926,17 @@ pub(crate) fn build_class_index(
         .map(|collation| (collation.root.clone(), collation.complete))
         .collect();
     let native = project.native_routines.iter().cloned().collect();
-    let scope = ProjectScope::build(&scope_facts, &namespaces, &completeness, &native);
+    let scope_package_names = package_declarations
+        .iter()
+        .filter_map(|package| Some((package.root.clone(), package.name.clone()?)))
+        .collect();
+    let scope = ProjectScope::build(
+        &scope_facts,
+        &namespaces,
+        &completeness,
+        &native,
+        &scope_package_names,
+    );
     let package_names = description_facts_by_root(db)
         .into_iter()
         .filter_map(|(root, facts)| facts.package.clone().map(|name| (root, name)))
@@ -958,18 +975,20 @@ pub(crate) fn build_class_index(
         let windows = platform_order("Collate.windows");
         load_orders.insert(root.clone(), if unix == windows { unix } else { None });
     }
-    ClassIndex::build(
-        files,
-        &ClassResolution {
-            scope: &scope,
-            namespaces: &namespace_texts,
-            packages: &package_declarations,
-            package_names: &package_names,
-            indexed,
-            remote,
-            load_orders: &load_orders,
-        },
-    )
+    let resolution = ClassResolution {
+        scope: &scope,
+        namespaces: &namespace_texts,
+        packages: &package_declarations,
+        package_names: &package_names,
+        indexed,
+        remote,
+        load_orders: &load_orders,
+    };
+    let mut index = ClassIndex::build(files, &resolution);
+    if let Some(live) = live {
+        index.confirm_body_class_lookups(live.path, live.model, live.root, &resolution);
+    }
+    index
 }
 
 /// One package's Rd topics: each topic name mapped to the blocks that merge

@@ -1,0 +1,8 @@
+Package: arityS4Owner
+Version: 0.0.0.9000
+Title: S4 Generic Owner Oracle
+Description: Tests the distinction between class metadata and lexical exports.
+Authors@R: person("Arity", "Oracle", email = "oracle@example.com", role = c("aut", "cre"))
+License: MIT
+Imports: methods
+Encoding: UTF-8

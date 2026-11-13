@@ -10,12 +10,15 @@ pub(super) fn expected_package(name: &str) -> Option<&'static str> {
     Some(match name {
         "R6Class" => "R6",
         "setClass" | "setRefClass" | "setGeneric" | "setMethod" | "setReplaceMethod"
-        | "signature" | "new" | "getRefClass" => "methods",
+        | "signature" | "new" | "getRefClass" | "setClassUnion" | "setOldClass" | "setIs"
+        | "setAs" | "representation" | "prototype" | "slot" | "slot<-" | "as" | "as<-"
+        | "callNextMethod" | "selectMethod" | "removeMethod" => "methods",
         "new_class" | "new_generic" | "method<-" => "S7",
         "UseMethod" | "NextMethod" | ".S3method" | "registerS3method" | "c" | "list"
         | "character" | "structure" | "class" | "class<-" | "oldClass" | "oldClass<-"
         | "unclass" | "return" | "lockBinding" | "unlockBinding" | "do.call" | "environment"
-        | "globalenv" => "base",
+        | "globalenv" | "@" | "@<-" | "standardGeneric" | "library" | "require"
+        | "requireNamespace" | "loadNamespace" => "base",
         _ => return None,
     })
 }
@@ -92,6 +95,56 @@ pub(super) fn factories(
         .collect()
 }
 
+pub(super) fn class_lookups(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+    body_local: bool,
+) -> Vec<FunctionRef> {
+    factories(model, root)
+        .into_iter()
+        .filter(|(call, _, name)| {
+            let selection_helper = matches!(name.as_str(), "signature" | "c" | "character")
+                && call
+                    .syntax()
+                    .ancestors()
+                    .skip(1)
+                    .find_map(CallExpr::cast)
+                    .and_then(|parent| call_function_ref(model, root, &parent))
+                    .is_some_and(|reference| {
+                        possible_functions(&reference).iter().any(|identity| {
+                            identity.package == "methods" && identity.name == "selectMethod"
+                        })
+                    });
+            (matches!(
+                name.as_str(),
+                "getRefClass"
+                    | "new"
+                    | "slot"
+                    | "slot<-"
+                    | "as"
+                    | "as<-"
+                    | "@"
+                    | "@<-"
+                    | "standardGeneric"
+                    | "callNextMethod"
+                    | "selectMethod"
+                    | "library"
+                    | "require"
+                    | "requireNamespace"
+                    | "loadNamespace"
+            ) || selection_helper)
+                && call
+                    .syntax()
+                    .ancestors()
+                    .any(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
+                    == body_local
+        })
+        .map(|(_, reference, _)| reference)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 type SuppliedArgument = (Option<SmolStr>, Option<SyntaxElement>);
 pub(super) type MatchedArguments = BTreeMap<String, Option<SyntaxElement>>;
 
@@ -142,6 +195,15 @@ pub(super) fn matched_args(call: &CallExpr, formals: &[&str]) -> Option<MatchedA
 
 pub(super) fn argument(args: &MatchedArguments, name: &str) -> Option<SyntaxElement> {
     args.get(name)?.clone()
+}
+
+pub(super) fn constant_atom(value: &SyntaxElement, text: &str) -> bool {
+    match value {
+        SyntaxElement::Token(token) => token.text() == text,
+        SyntaxElement::Node(node) => crate::ast::ParenExpr::cast(node.clone())
+            .and_then(|paren| paren.inner())
+            .is_some_and(|inner| constant_atom(&inner, text)),
+    }
 }
 
 pub(super) fn registration_args(

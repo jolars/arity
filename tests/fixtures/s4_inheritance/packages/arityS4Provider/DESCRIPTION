@@ -1,0 +1,8 @@
+Package: arityS4Provider
+Version: 0.0.0.9000
+Title: S4 Method Provider Oracle
+Description: Registers methods for a generic owned by another package and for a primitive.
+Authors@R: person("Arity", "Oracle", email = "oracle@example.com", role = c("aut", "cre"))
+License: MIT
+Imports: methods, arityS4Owner
+Encoding: UTF-8

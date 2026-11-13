@@ -3,6 +3,133 @@
 use super::*;
 
 impl Projection<'_> {
+    fn binding_event(
+        &self,
+        token: &SyntaxToken,
+        before: TextSize,
+    ) -> Option<&(TextRange, OopEvent)> {
+        let name = unbacktick(token.text());
+        let frame = |mut scope| {
+            while !matches!(
+                self.model.scope(scope).kind,
+                crate::semantic::ScopeKind::File | crate::semantic::ScopeKind::Function
+            ) {
+                scope = self.model.scope(scope).parent?;
+            }
+            Some(scope)
+        };
+        let binding = read_binding(self.model, token).map(|binding| self.model.binding(binding));
+        let binding_frame = binding.and_then(|binding| frame(binding.scope));
+        self.events
+            .iter()
+            .filter(|(range, _)| range.end() <= before)
+            .filter(|(range, _)| {
+                // Installing a closure writes in the frame enclosing its value.
+                self.root
+                    .covering_element(*range)
+                    .parent()
+                    .and_then(|node| {
+                        frame(self.model.innermost_scope_at(node.text_range().start()))
+                    })
+                    .is_some_and(|event_frame| {
+                        self.model
+                            .scope(event_frame)
+                            .range
+                            .contains_range(token.text_range())
+                            && binding_frame.is_none_or(|binding_frame| {
+                                self.model
+                                    .scope(binding_frame)
+                                    .range
+                                    .contains_range(self.model.scope(event_frame).range)
+                                    && (binding_frame != event_frame
+                                        || self.model.scope(binding_frame).kind
+                                            == crate::semantic::ScopeKind::File
+                                        || binding.is_none_or(|binding| {
+                                            binding.available_from <= range.end()
+                                        }))
+                            })
+                    })
+            })
+            .filter(|(_, event)| match event {
+                OopEvent::Generic { name: binding, .. } => {
+                    matches!(binding, ClassName::Known(binding) if binding == name)
+                }
+                OopEvent::Method(target) => self.facts.methods.iter().any(|method| {
+                    method.key == *target
+                        && matches!(&method.name, ClassName::Known(binding) if binding == name)
+                        && method.generic.as_ref().is_some_and(|reference| {
+                            reference.local.is_none()
+                                && reference.package.is_none()
+                                && !reference.by_binding
+                        })
+                }),
+                OopEvent::Callable(index) => self.facts.callables[*index].name == name,
+                OopEvent::Binding(binding)
+                | OopEvent::Generator { name: binding, .. }
+                | OopEvent::UncertainGenerator { name: binding, .. } => binding == name,
+                OopEvent::InvalidateBindings | OopEvent::Source(_) => true,
+                _ => false,
+            })
+            .max_by_key(|(range, _)| range.end())
+    }
+
+    /// A registration can install a generic over an ordinary assignment. Keep
+    /// its event as the alias target; project resolution confirms promotion.
+    /// None follows ordinary assignments; Some(None) marks an uncertain write.
+    pub(super) fn s4_generic_binding(&self, token: &SyntaxToken) -> Option<Option<OopKey>> {
+        let mut before = token.text_range().start();
+        let mut promotion = None;
+        while let Some((range, event)) = self.binding_event(token, before) {
+            match event {
+                OopEvent::Generic { target, .. } => {
+                    return Some(
+                        self.facts
+                            .generics
+                            .iter()
+                            .find(|def| def.key == *target && def.binding_possible())
+                            .map(|_| target.clone()),
+                    );
+                }
+                OopEvent::Method(target) => {
+                    let method = self.facts.methods.iter().find(|def| def.key == *target)?;
+                    if method.uncertainty.iter().any(|issue| {
+                        matches!(
+                            issue,
+                            OopUncertainty::Conditional
+                                | OopUncertainty::CustomEnvironment
+                                | OopUncertainty::InvalidArguments
+                        )
+                    }) {
+                        return Some(None);
+                    }
+                    promotion.get_or_insert_with(|| target.clone());
+                    before = range.start();
+                }
+                OopEvent::InvalidateBindings | OopEvent::Source(_) => return Some(None),
+                _ => return promotion.map(Some),
+            }
+        }
+        promotion.map(Some)
+    }
+
+    fn callable_alias(&self, value: &SyntaxElement) -> Option<usize> {
+        if let Some(paren) = value
+            .as_node()
+            .cloned()
+            .and_then(crate::ast::ParenExpr::cast)
+        {
+            return self.callable_alias(&paren.inner()?);
+        }
+        let token = value
+            .as_token()
+            .filter(|token| token.kind() == SyntaxKind::IDENT)?;
+        let (_, event) = self.binding_event(token, token.text_range().start())?;
+        match event {
+            OopEvent::Callable(index) => Some(*index),
+            _ => None,
+        }
+    }
+
     fn mutator_base(&self, value: SyntaxElement, depth: usize) -> Option<BinaryExpr> {
         if depth >= 64 {
             return None;
@@ -63,6 +190,7 @@ impl Projection<'_> {
                     .push((call.syntax().text_range(), OopEvent::InvalidateBindings));
             }
         }
+        let mut callable_origins = HashMap::new();
         for binding in self.model.bindings() {
             if self.model.scope(binding.scope).kind != crate::semantic::ScopeKind::File {
                 continue;
@@ -84,15 +212,30 @@ impl Projection<'_> {
                 ));
                 continue;
             }
-            if let Some(signature) = signature(self.implementation_value(
-                Some(value.clone()),
-                &mut BTreeSet::new(),
-                false,
-            )) {
+            if let Some(alias) = self.callable_alias(&value) {
+                let callable = &self.facts.callables[alias];
                 let index = self.facts.callables.len();
+                self.facts.callables.push(CallableBinding {
+                    name,
+                    signature: callable.signature.clone(),
+                    origin: callable.origin,
+                });
+                self.events
+                    .push((value.text_range(), OopEvent::Callable(index)));
+                continue;
+            }
+            if let Some(implementation) =
+                self.implementation_value(Some(value.clone()), &mut BTreeSet::new(), false)
+                && let Some(signature) = signature(Some(implementation.clone()))
+            {
+                let index = self.facts.callables.len();
+                let origin = *callable_origins
+                    .entry(implementation.text_range())
+                    .or_insert(index);
                 self.facts.callables.push(CallableBinding {
                     name: name.clone(),
                     signature,
+                    origin,
                 });
                 self.events
                     .push((value.text_range(), OopEvent::Callable(index)));

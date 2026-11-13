@@ -1,0 +1,8 @@
+Package: arityS4ClassClient
+Version: 0.0.0.9000
+Title: S4 Class Import Oracle
+Description: Loads method registrations through an independent class import.
+Authors@R: person("Arity", "Oracle", email = "oracle@example.com", role = c("aut", "cre"))
+License: MIT
+Imports: methods, arityS4Owner, arityS4Provider
+Encoding: UTF-8

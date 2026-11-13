@@ -1,0 +1,11 @@
+loaded_method	arityS4Provider	numeric
+generic_owner	arityS4Owner
+method_owner	arityS4Provider
+inherited	Parent
+primitive_owner	base
+primitive_method	Parent
+class_import	TRUE
+class_value_import	FALSE
+class_value_export	FALSE
+generic_import	TRUE
+primitive_import	FALSE

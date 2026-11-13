@@ -45,7 +45,7 @@ pub struct DispatchContexts {
     pub named: Vec<NamedDispatchEnvironment>,
 }
 
-fn primitive(name: &str) -> bool {
+pub(super) fn primitive(name: &str) -> bool {
     use std::collections::HashSet;
     use std::sync::OnceLock;
     static NAMES: OnceLock<HashSet<&str>> = OnceLock::new();

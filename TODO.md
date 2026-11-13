@@ -718,7 +718,7 @@ coverage need not block useful workspace support.
 
 #### 5. S4 classes, slots, and multiple dispatch
 
-- [ ] Extend `setClass()` extraction to slots and legacy `representation`,
+- [x] Extend `setClass()` extraction to slots and legacy `representation`,
   prototypes, virtual/sealed classes, and multiple inheritance. Add
   `setClassUnion()`, `setIs()` relationships and coercions, and
   `setOldClass()` bridges to S3. Distinguish constructor bindings returned
@@ -727,7 +727,15 @@ coverage need not block useful workspace support.
   calls, `@`, `slot()`, and replacement forms. Keep validity and coercion
   bodies unevaluated.
 
-- [ ] Index `setGeneric()`, `setMethod()`, `setReplaceMethod()`, generic
+  The shared class model now records slot declarations, legacy representations,
+  prototypes, virtual and sealed classes, unions, coercion relationships, and S3
+  bridges. Project queries recover inherited schemas for constructors, `@`,
+  `slot()`, and replacement calls. Completion uses those schemas while
+  preserving incomplete and ambiguous facts. Pinned R observations, live buffer
+  tests, and incremental regressions cover the model. Production analysis leaves
+  validity and coercion bodies unevaluated.
+
+- [x] Index `setGeneric()`, `setMethod()`, `setReplaceMethod()`, generic
   defaults, `signature(...)`, named and positional signatures, and the
   generic's selected dispatch arguments. Preserve multiple arguments, `ANY`,
   `missing`, class unions, group generics, and method ownership across
@@ -735,13 +743,27 @@ coverage need not block useful workspace support.
   `selectMethod()` with the same generic and method identities; do not
   borrow S3's single-class selection rule.
 
-- [ ] Resolve inherited method candidates with explicit ambiguity and
+  The S4 registry keeps generic identity separate from registration ownership
+  and normalizes every dispatch position against the generic's selected
+  arguments. It records default implementations and S4 group metadata. Live
+  `standardGeneric()`, `callNextMethod()`, and `selectMethod()` queries reuse
+  those identities while retaining unknown shapes and competing registrations.
+  Pinned R observations and incremental tests cover the model. Production
+  analysis does not invoke R.
+
+- [x] Resolve inherited method candidates with explicit ambiguity and
   incompleteness. Preserve the separate meanings of `exportClasses`,
   `exportMethods`, `importClassesFrom`, and `importMethodsFrom`, rather than
   flattening their class and method relationships into lexical name sets.
   Cover methods for primitives and generics owned by another package.
   Integrate Reference Class inheritance and S3 bridges without claiming
   every S4 slot is a Reference Class field.
+
+  Project queries now rank inherited signatures and preserve ambiguous or
+  incomplete candidates. Namespace metadata records classes and method tables
+  separately, retaining primitive and foreign generic identities. Pinned R
+  observations and incremental tests cover Reference Class ancestry and S3
+  bridges, with S4 slots kept separate from Reference Class fields.
 
   Semantic references: [class
   definitions](https://stat.ethz.ch/R-manual/R-devel/library/methods/html/setClass.html),

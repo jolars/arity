@@ -171,6 +171,48 @@ fn editor_signatures_follow_mutation_order_and_instance_creation() {
 }
 
 #[test]
+fn s4_registrations_preserve_live_member_mutation_order() {
+    for (declaration, mutation, addition) in [
+        (
+            "G <- R6::R6Class(public = list(read = function(before) before))\n",
+            "G$set('public', 'read', function(after) after, overwrite = TRUE)\n",
+            "G$set('public', 'added', function() 1)\n",
+        ),
+        (
+            "G <- methods::setRefClass('S4EventReference', methods = list(read = function(before) before))\n",
+            "G$methods(read = function(after) after)\n",
+            "G$methods(added = function() 1)\n",
+        ),
+    ] {
+        let registration = "methods::setGeneric('g', function(x) standardGeneric('g'))\nmethods::setMethod('g', 'numeric', function(x) x)\n";
+        assert_eq!(
+            help(&format!(
+                "{declaration}{registration}G$new()$read(|)\n{mutation}"
+            )),
+            Some("read(before)".into())
+        );
+        assert_eq!(
+            help(&format!(
+                "{declaration}{registration}{mutation}G$new()$read(|)"
+            )),
+            Some("read(after)".into())
+        );
+        let source = format!("{declaration}{registration}{addition}G$new()$");
+        let completions = arity::lsp::compute_completions(
+            &source,
+            source.len(),
+            &arity::rindex::provider::IndexedProvider::empty(),
+        )
+        .unwrap();
+        let items = match completions {
+            lsp_types::CompletionResponse::List(list) => list.items,
+            lsp_types::CompletionResponse::Array(items) => items,
+        };
+        assert!(items.iter().any(|item| item.label == "added"), "{source}");
+    }
+}
+
+#[test]
 fn members_installed_from_another_file_follow_collate_order() {
     let mut db = IncrementalDatabase::default();
     let root = Path::new("/member-mutations");

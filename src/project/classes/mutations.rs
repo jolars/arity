@@ -737,7 +737,11 @@ impl ClassIndex {
                         _ => {}
                     }
                 }
-                OopEvent::Source(_) => {}
+                OopEvent::Source(_)
+                | OopEvent::Generic { .. }
+                | OopEvent::Method(_)
+                | OopEvent::RemoveS4Method(_)
+                | OopEvent::S4Relation(_) => {}
                 OopEvent::Binding(name) => {
                     live.remove(name);
                     possible.remove(name);

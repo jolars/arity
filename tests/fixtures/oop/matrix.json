@@ -151,9 +151,6 @@
   },
   "s4/incomplete": {
     "parse_errors": true,
-    "known_gaps": [
-      "Declared slots do not supply completion for a constructed S4 instance."
-    ],
     "probes": [
       {
         "method": "type-hierarchy",

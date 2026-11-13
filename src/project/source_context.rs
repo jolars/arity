@@ -35,7 +35,7 @@ pub(crate) struct SourceContext {
     pub directory: Option<PathBuf>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedSource {
     pub target: SourceTarget,
     pub directory: Option<PathBuf>,
@@ -76,7 +76,7 @@ pub(crate) struct SourceClosure {
 /// with different `chdir` settings). Keep those executions distinct during
 /// traversal; only visibility and use tracking take their union. Rename can
 /// require the per-context binding results to agree.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct SourceGraph {
     /// Normalize for matching while preserving the spelling used by the rest
     /// of the project graph and diagnostics (including relative CLI paths).

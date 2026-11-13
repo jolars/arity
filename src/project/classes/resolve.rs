@@ -10,6 +10,7 @@ use smol_str::SmolStr;
 use super::*;
 
 mod namespace;
+pub use namespace::S4Namespace;
 mod oop;
 pub(super) mod s3_registry;
 use crate::project::{PackageDeclarations, ProjectScope, ReadBinding, ReadSite};
@@ -44,15 +45,19 @@ pub struct ResolvedClass {
     pub fingerprint: u64,
 }
 
-/// All declaration sites survive aggregation. Only proven edges enter the graph;
+/// Explicit declaration sites survive aggregation. Registered old-class ancestors
+/// reuse their existing identities. Only proven edges enter the graph;
 /// `parent_candidates` retains ambiguity for consumers that can present it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, salsa::SalsaValue)]
 pub struct ClassIndex {
     pub declarations: BTreeMap<ClassId, ResolvedClass>,
     pub s3: S3Registry,
+    pub s4: S4Registry,
     pub(super) s3_origins: s3_registry::S3LookupOrigins,
     pub unresolved: BTreeSet<ClassId>,
     pub parent_candidates: BTreeMap<ClassId, Vec<Vec<ClassId>>>,
+    /// Proven declaration parents, indexed by their position in ClassDef::parents.
+    pub(super) s4_structural_parents: BTreeMap<ClassId, BTreeSet<usize>>,
     pub supertypes: BTreeMap<ClassId, BTreeSet<ClassId>>,
     pub subtypes: BTreeMap<ClassId, BTreeSet<ClassId>>,
     files: BTreeMap<PathBuf, ClassFile>,
@@ -69,8 +74,93 @@ pub struct ClassIndex {
 }
 
 impl ClassIndex {
+    pub fn s4_namespace(&self, root: &Path) -> Option<&S4Namespace> {
+        self.namespace.s4.get(root)
+    }
+
+    pub(super) fn s4_workspace_package(&self, package: &str) -> bool {
+        self.s3_origins
+            .package_names
+            .values()
+            .any(|name| name == package)
+    }
+
+    pub(super) fn s4_reexports(
+        &self,
+        package: &str,
+        name: &str,
+    ) -> Option<namespace::ReexportSources> {
+        self.namespace.s4_reexports(package, name)
+    }
+
+    pub(super) fn s4_workspace_root(&self, package: &str) -> Option<&PathBuf> {
+        let mut roots = self
+            .s3_origins
+            .package_names
+            .iter()
+            .filter_map(|(root, name)| (name == package).then_some(root));
+        let root = roots.next()?;
+        roots.next().is_none().then_some(root)
+    }
+
+    pub(super) fn s4_method_files(
+        &self,
+        path: &Path,
+        name: &str,
+        package: Option<&str>,
+    ) -> BTreeSet<PathBuf> {
+        self.namespace.method_files(path, name, package)
+    }
+
+    pub(super) fn s4_loaded_packages(
+        &self,
+        path: &Path,
+        explicit: &BTreeSet<PathBuf>,
+        attachments: &BTreeSet<PathBuf>,
+    ) -> (BTreeSet<PathBuf>, bool) {
+        let mut pending: Vec<_> = explicit
+            .iter()
+            .chain(self.file(path).and_then(|file| file.package_root.as_ref()))
+            .map(|root| (root.clone(), false))
+            .chain(attachments.iter().map(|root| (root.clone(), true)))
+            .collect();
+        let mut roots = BTreeSet::new();
+        let mut attached = BTreeSet::new();
+        let mut complete = true;
+        while let Some((root, attach)) = pending.pop() {
+            let dependencies = if attach {
+                if !attached.insert(root.clone()) {
+                    continue;
+                }
+                pending.push((root.clone(), false));
+                self.s3_origins.attached.get(&root)
+            } else {
+                if !roots.insert(root.clone()) {
+                    continue;
+                }
+                let namespace = self.namespace.s4.get(&root);
+                complete &= namespace.is_some_and(|namespace| namespace.complete)
+                    && self.scope.analyzed_package(&root);
+                namespace.map(|namespace| &namespace.loaded_packages)
+            };
+            for package in dependencies.into_iter().flatten() {
+                // Only the pinned base/methods metadata and analyzed workspace
+                // namespaces can establish the contents of a loaded S4 table.
+                if let Some(root) = self.s4_workspace_root(package) {
+                    pending.push((root.clone(), attach));
+                } else {
+                    complete &= matches!(package.as_str(), "base" | "methods");
+                }
+            }
+        }
+        (roots, complete)
+    }
+
     pub(super) fn sees_file(&self, path: &Path, target: &Path) -> bool {
         self.scope.sees(path).iter().any(|path| path == target)
+    }
+    pub(super) fn source_graph(&self) -> &crate::project::source_context::SourceGraph {
+        self.scope.source_graph()
     }
     pub(super) fn class_file_complete(&self, path: &Path) -> bool {
         !self.incomplete.contains(path)
@@ -91,6 +181,10 @@ impl ClassIndex {
             }
             files
         }
+    }
+
+    pub(super) fn imported_generic_files(&self, path: &Path, name: &str) -> BTreeSet<PathBuf> {
+        self.namespace.generic_files(path, name, None)
     }
     pub(super) fn registered_s3_method(&self, path: &Path, name: &str) -> bool {
         self.scope.for_file(path).is_s3_method(name)
@@ -134,6 +228,42 @@ impl ClassIndex {
         }
     }
 
+    /// Body-local provenance belongs to a live read, separate from the shared
+    /// declaration projection and its fingerprints.
+    pub(crate) fn confirm_body_class_lookups(
+        &mut self,
+        path: &Path,
+        model: &SemanticModel,
+        root: &SyntaxNode,
+        resolution: &ClassResolution<'_>,
+    ) {
+        let Some(file) = self.files.get(path) else {
+            return;
+        };
+        for reference in class_lookups(model, root, true) {
+            for identity in possible_functions(&reference) {
+                match function_availability(
+                    file,
+                    &reference,
+                    &identity.package,
+                    &identity.name,
+                    &self.files,
+                    resolution,
+                ) {
+                    Availability::Present => {
+                        self.callees
+                            .insert((path.into(), reference.clone()), identity);
+                    }
+                    Availability::Absent => {
+                        self.rejected_callees
+                            .insert((path.into(), reference.clone()));
+                    }
+                    Availability::Unknown => {}
+                }
+            }
+        }
+    }
+
     pub fn build(files: Vec<ClassFile>, resolution: &ClassResolution<'_>) -> Self {
         let mut index = Self {
             files: files
@@ -169,6 +299,14 @@ impl ClassIndex {
                         .oop
                         .generics
                         .iter()
+                        .filter_map(|def| def.s4.as_ref())
+                        .flat_map(|def| def.group_factory.iter().chain(&def.standard_factory)),
+                )
+                .chain(
+                    file.facts
+                        .oop
+                        .generics
+                        .iter()
                         .filter_map(|def| def.dispatch_factory.as_ref()),
                 )
                 .chain(
@@ -178,6 +316,9 @@ impl ClassIndex {
                         .iter()
                         .filter_map(|def| def.dispatch_factory.as_ref()),
                 )
+                .chain(file.facts.oop.s4_removals.iter().flat_map(|removal| {
+                    std::iter::once(&removal.factory).chain(&removal.dispatch_factory)
+                }))
                 .chain(
                     file.facts
                         .oop
@@ -200,6 +341,30 @@ impl ClassIndex {
                         .filter_map(|member| member.value_factory.as_ref()),
                 )
                 .chain(file.facts.oop.class_lookups.iter())
+                .chain(
+                    file.facts
+                        .declarations
+                        .iter()
+                        .filter_map(|def| def.s4.as_ref())
+                        .flat_map(|s4| s4.schema_helpers.iter().chain(&s4.prototype.helpers)),
+                )
+                .chain(
+                    file.facts
+                        .declarations
+                        .iter()
+                        .filter_map(|def| def.s4.as_ref()?.old_class.as_ref())
+                        .flat_map(|old| std::iter::once(&old.factory).chain(&old.helpers)),
+                )
+                .chain(file.facts.s4.relations.iter().flat_map(|relation| {
+                    std::iter::once(&relation.factory).chain(&relation.helpers)
+                }))
+                .chain(
+                    file.facts
+                        .s4
+                        .coercions
+                        .iter()
+                        .map(|coercion| &coercion.factory),
+                )
                 .chain(file.facts.s3.helpers.iter())
                 .chain(
                     file.facts
@@ -249,7 +414,7 @@ impl ClassIndex {
                     .callee_identity(&file.path, &def.factory)
                     .is_some_and(|identity| {
                         identity.package == def.system().package()
-                            && identity.name == def.system().callee()
+                            && ClassSystem::from_callee(&identity.name) == Some(def.system())
                     })
                 {
                     index.declarations.insert(
@@ -265,6 +430,7 @@ impl ClassIndex {
                 }
             }
         }
+        index.reuse_s4_old_class_ancestors();
         index.confirm_dispatch_helpers();
         for (id, class) in &index.declarations {
             let def = &class.declaration;
@@ -287,11 +453,25 @@ impl ClassIndex {
                     resolution,
                 ) == Availability::Present
             });
-            if !def.binding_known() || !vector_known {
+            if !def.binding_known()
+                || !vector_known
+                || def.s4.as_ref().is_some_and(|s4| {
+                    (s4.definition == S4Definition::OldClass
+                        && s4
+                            .old_class
+                            .as_ref()
+                            .is_some_and(|old| old.test != Some(false)))
+                        || s4
+                            .schema_helpers
+                            .iter()
+                            .any(|helper| index.callee_identity(&id.path, helper).is_none())
+                })
+            {
                 continue;
             }
-            for (reference, parents) in def.parents.iter().zip(candidates) {
-                if !index.reference_known(&id.path, &id.key.owner, reference, deferred)
+            for (ordinal, (reference, parents)) in def.parents.iter().zip(candidates).enumerate() {
+                if !index.s4_parent_known(id, ordinal)
+                    || !index.reference_known(&id.path, &id.key.owner, reference, deferred)
                     || resolution.scope.for_file(&id.path).resolution_incomplete
                 {
                     continue;
@@ -311,6 +491,13 @@ impl ClassIndex {
                             }
                     })
                 {
+                    if matches!(def.system(), ClassSystem::S4 | ClassSystem::RefClass) {
+                        index
+                            .s4_structural_parents
+                            .entry(id.clone())
+                            .or_default()
+                            .insert(ordinal);
+                    }
                     index
                         .supertypes
                         .entry(id.clone())
@@ -324,7 +511,9 @@ impl ClassIndex {
                 }
             }
         }
+        index.install_s4_relations();
         index.s3 = index.build_s3_registry(resolution);
+        index.s4 = index.build_s4_registry(resolution);
         index
     }
 
@@ -628,23 +817,26 @@ fn function_availability(
                 let mut imports = BTreeSet::new();
                 let mut wildcard = Vec::new();
                 for directive in namespace.document().directives() {
-                    let args: Vec<_> = directive.arguments().collect();
-                    let Some(source) = args
-                        .first()
-                        .and_then(|arg| arg.value())
-                        .and_then(namespace_name)
-                    else {
-                        continue;
-                    };
                     match directive.kind() {
                         crate::namespace::DirectiveKind::ImportFrom => {
-                            if args
-                                .iter()
-                                .skip(1)
-                                .filter_map(|arg| arg.value())
-                                .filter_map(namespace_name)
-                                .any(|imported| imported == name)
-                            {
+                            let mut args = directive.arguments();
+                            let Some(source) = args
+                                .next()
+                                .and_then(|arg| arg.value())
+                                .and_then(namespace_name)
+                            else {
+                                continue;
+                            };
+                            if args.any(|arg| {
+                                arg.name().map_or_else(
+                                    || {
+                                        arg.value()
+                                            .and_then(namespace_name)
+                                            .is_some_and(|imported| imported == name)
+                                    },
+                                    |local| local == name,
+                                )
+                            }) {
                                 if directive
                                     .syntax()
                                     .ancestors()
@@ -663,12 +855,13 @@ fn function_availability(
                             {
                                 return Availability::Unknown;
                             }
-                            for source in args
-                                .iter()
-                                .filter_map(|arg| arg.value())
-                                .filter_map(namespace_name)
-                            {
-                                wildcard.push(source);
+                            let Some((packages, exclusions)) =
+                                namespace::wildcard_import(&directive)
+                            else {
+                                return Availability::Unknown;
+                            };
+                            if !exclusions.contains(name) {
+                                wildcard.extend(packages);
                             }
                         }
                         _ => {}

@@ -1,0 +1,3 @@
+importClassesFrom(arityS4Owner, Parent)
+importMethodsFrom(arityS4Provider, g, length)
+export(probe, probeLength)

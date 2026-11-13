@@ -97,6 +97,17 @@ impl ClassIndex {
         reference: &GenericRef,
         in_function: bool,
     ) -> Vec<OopId> {
+        self.generic_candidates_where(path, reference, in_function, |_, _| true)
+    }
+
+    /// Apply visibility before deciding whether local declarations hide imports.
+    pub(in crate::project::classes) fn generic_candidates_where(
+        &self,
+        path: &Path,
+        reference: &GenericRef,
+        in_function: bool,
+        visible: impl Fn(&Path, &GenericDef) -> bool,
+    ) -> Vec<OopId> {
         let Some(file) = self.files.get(path) else {
             return Vec::new();
         };
@@ -107,7 +118,7 @@ impl ClassIndex {
             };
             return self
                 .generic(&id)
-                .filter(|def| self.generic_confirmed(path, def))
+                .filter(|def| self.generic_confirmed(path, def) && visible(path, def))
                 .map(|_| id)
                 .into_iter()
                 .collect();
@@ -130,6 +141,7 @@ impl ClassIndex {
                             def.key.owner.0.is_empty()
                                 && def.key.system == reference.system
                                 && self.generic_confirmed(&file.path, def)
+                                && visible(&file.path, def)
                                 && if reference.by_binding {
                                     file.facts.oop.generic_bindings.iter().any(|binding| {
                                         binding.target == def.key
@@ -151,6 +163,7 @@ impl ClassIndex {
             def.key.system == reference.system
                 && def.key.owner.0 == owner
                 && self.generic_confirmed(&file.path, def)
+                && visible(&file.path, def)
                 && if reference.by_binding {
                     file.facts.oop.generic_bindings.iter().any(|binding| {
                         binding.target == def.key
@@ -294,6 +307,15 @@ impl ClassIndex {
     /// duplicate members, visibility domains, or competing parent branches.
     /// Consumers apply the method environment's access and shadowing rules.
     pub fn member_candidates(&self, class: &ClassId, name: &str) -> Vec<OopId> {
+        if class.key.system == ClassSystem::S4 {
+            return self
+                .s4_slots(class)
+                .and_then(|slots| slots.entries.get(name).cloned())
+                .into_iter()
+                .flatten()
+                .filter_map(|slot| slot.declaration)
+                .collect();
+        }
         if class.key.system == ClassSystem::R6
             && let Some(api) = self.r6_api(class)
         {

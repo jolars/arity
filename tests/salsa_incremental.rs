@@ -1044,6 +1044,189 @@ fn project_classes_aggregates_inheritance_edges() {
 }
 
 #[test]
+fn s4_slot_and_relationship_edits_invalidate_the_shared_index() {
+    let (mut db, a, b) = package_ab(
+        "Make <- methods::setClass('Base', slots = c(value = 'numeric'), validity = function(object) TRUE)\nmethods::setClassUnion('Union', 'Base')\n",
+        "methods::setClass('Child', contains = 'Base', slots = c(label = 'character'))\nmethods::setIs('Child', 'Union')\n",
+    );
+    let before = project_classes(&db);
+    let child = class_named(before, "Child");
+    let union = class_named(before, "Union");
+    assert!(
+        before
+            .s4_slots(&child)
+            .unwrap()
+            .entries
+            .contains_key("value")
+    );
+    assert!(before.supertypes[&child].contains(&union));
+
+    db.clear_query_log();
+    db.set_file_text(a, "# Prose.\nMake <- methods::setClass('Base', slots = c(value = 'numeric'), validity = function(object) FALSE)\nmethods::setClassUnion('Union', 'Base')\n");
+    let _ = project_classes(&db);
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+
+    db.clear_query_log();
+    db.set_file_text(a, "Make <- methods::setClass('Base', slots = c(renamed = 'character'), validity = function(object) FALSE)\nmethods::setClassUnion('Union', 'Base')\n");
+    let after = project_classes(&db);
+    let slots = after.s4_slots(&child).unwrap();
+    assert!(slots.entries.contains_key("renamed"));
+    assert!(!slots.entries.contains_key("value"));
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ProjectClasses),
+        Some(&1)
+    );
+
+    db.set_file_text(b, "methods::setClass('Child', contains = 'Base', slots = c(label = 'character'))\nmethods::setIs('Child', 'Union', test = function(object) TRUE)\n");
+    let after = project_classes(&db);
+    assert!(!after.supertypes[&child].contains(&union));
+    assert_eq!(after.s4_slots(&child).unwrap().entries.len(), 2);
+}
+
+#[test]
+fn s4_opaque_coercion_edits_backdate_but_prototype_edits_do_not() {
+    let source = "methods::setClass('A', slots = c(value = 'numeric'), prototype = list(value = 1))\nmethods::setClass('B', contains = 'VIRTUAL')\nmethods::setIs('A', 'B', coerce = function(from) from)\nmethods::setAs('B', 'A', function(from) stop('opaque'))\n";
+    let (mut db, a, _) = package_ab(source, "");
+    let _ = project_classes(&db);
+    db.clear_query_log();
+    db.set_file_text(a, source.replace("stop('opaque')", "stop('changed')"));
+    let _ = project_classes(&db);
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+
+    db.clear_query_log();
+    db.set_file_text(a, source.replace("value = 1", "value = 2"));
+    let index = project_classes(&db);
+    assert_eq!(
+        index.s4_prototype(&class_named(index, "A")).unwrap().slots["value"],
+        arity::project::classes::S4Default::Literal("2".into())
+    );
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ProjectClasses),
+        Some(&1)
+    );
+}
+
+#[test]
+fn s4_body_local_class_lookups_do_not_rebuild_the_shared_index() {
+    let source = "methods::setClass('A', slots = c(x = 'numeric'), validity = function(object) { TRUE })\nmethods::setClass('B', contains = 'VIRTUAL')\nmethods::setIs('A', 'B', coerce = function(from) { TRUE })\nmethods::setAs('B', 'A', function(from) { TRUE })\n";
+    let (mut db, a, _) = package_ab(source, "");
+    let before = project_classes(&db).clone();
+    for body in [
+        "methods::slot(object, 'x'); TRUE",
+        "slot(object, 'x'); TRUE",
+        "methods::new('A'); TRUE",
+        "methods::as(object, 'A'); TRUE",
+        "fetch <- methods::slot; fetch(object, 'x'); TRUE",
+    ] {
+        db.clear_query_log();
+        db.set_file_text(a, source.replace("{ TRUE }", &format!("{{ {body} }}")));
+        assert!(project_classes(&db) == &before, "{body}");
+        assert!(
+            !count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses),
+            "a body-local lookup must not rebuild project_classes: {body}"
+        );
+    }
+}
+
+#[test]
+fn s4_slot_helpers_require_project_confirmed_origins() {
+    let (db, _, _) = package_ab(
+        "methods::setClass('A', slots = c(value = 'numeric'))\n",
+        "c <- function(...) NULL\n",
+    );
+    let index = project_classes(&db);
+    let slots = index.s4_slots(&class_named(index, "A")).unwrap();
+    assert!(!slots.complete);
+    assert!(slots.entries.is_empty());
+}
+
+#[test]
+fn s4_old_class_bridges_require_a_confirmed_registration() {
+    let (db, _, _) = package_ab(
+        "methods::setOldClass('Ancestor')\nmethods::setClass('Base', slots = c(base = 'character'))\nmethods::setClass('A', contains = 'Base', slots = c(value = 'numeric'))\nsetOldClass(c('A', 'Ancestor'), S4Class = 'A')\n",
+        "setOldClass <- function(...) NULL\n",
+    );
+    let index = project_classes(&db);
+    let id = class_named(index, "A");
+    let slots = index.s4_slots(&id).unwrap();
+    assert!(!slots.complete);
+    assert!(!slots.entries.contains_key(".S3Class"));
+    assert!(slots.entries.contains_key("value"));
+    assert!(slots.entries.contains_key("base"));
+    assert!(index.supertypes[&id].contains(&class_named(index, "Base")));
+    assert!(!index.supertypes[&id].contains(&class_named(index, "Ancestor")));
+    let old = index.s4_class(&id).unwrap().old_class.unwrap();
+    assert!(index.callee_identity(&id.path, &old.factory).is_none());
+}
+
+#[test]
+fn old_class_prototype_helpers_require_confirmed_origins() {
+    for (prototype, mask) in [
+        (
+            "structure(base::list(), class = 'Old')",
+            "structure <- function(...) NULL\n",
+        ),
+        (
+            "base::structure(list(), class = 'Old')",
+            "list <- function(...) NULL\n",
+        ),
+    ] {
+        let (db, _, _) = package_ab(
+            &format!("methods::setOldClass('Old', prototype = {prototype})\n"),
+            mask,
+        );
+        let index = project_classes(&db);
+        assert_eq!(
+            index
+                .s4_class(&class_named(index, "Old"))
+                .unwrap()
+                .virtual_class,
+            None,
+            "{mask}"
+        );
+    }
+}
+
+#[test]
+fn old_class_ancestor_reuse_requires_a_confirmed_predecessor() {
+    for (first, mask) in [
+        ("setOldClass('A')", "setOldClass <- function(...) NULL\n"),
+        (
+            "setClass('A', slots = c(x = 'numeric'))",
+            "setClass <- function(...) NULL\n",
+        ),
+        ("setOldClass('A')", ""),
+    ] {
+        let (db, _, _) = package_ab(
+            &format!("{first}\nmethods::setOldClass(c('B', 'A'))\n"),
+            mask,
+        );
+        let index = project_classes(&db);
+        assert_eq!(index.declarations.len(), 2, "{first}: {mask}");
+        let a = class_named(index, "A");
+        let b = class_named(index, "B");
+        assert!(index.supertypes[&b].contains(&a), "{first}: {mask}");
+        assert!(index.s4_slots(&a).unwrap().complete, "{first}: {mask}");
+        assert!(index.s4_slots(&b).unwrap().complete, "{first}: {mask}");
+    }
+}
+
+#[test]
+fn old_class_ancestors_reuse_registrations_from_earlier_package_files() {
+    let (db, _, _) = package_ab(
+        "methods::setOldClass('A')\n",
+        "methods::setOldClass(c('B', 'A'))\n",
+    );
+    let index = project_classes(&db);
+    assert_eq!(index.declarations.len(), 2);
+    let a = class_named(index, "A");
+    let b = class_named(index, "B");
+    assert!(index.supertypes[&b].contains(&a));
+    assert!(index.s4_slots(&a).unwrap().complete);
+    assert!(index.s4_slots(&b).unwrap().complete);
+}
+
+#[test]
 fn body_edit_does_not_rebuild_project_classes() {
     // The firewall: editing a function body in b.R re-runs its model, but the
     // class-def set is unchanged, so the project-wide class aggregate is reused.
@@ -2034,6 +2217,500 @@ fn generic_method_body_edits_backdate_but_dispatch_edits_invalidate() {
         count_by_kind(&db.query_log()).get(&QueryKind::ProjectClasses),
         Some(&1)
     );
+}
+
+#[test]
+fn s4_imported_generic_bodies_track_compatibility_but_ignore_trivia() {
+    use arity::project::classes::{S4GenericId, S4MethodId};
+    let source = "methods::setGeneric('g', function(x) standardGeneric('g'))\n";
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(Path::new("/one/R/a.R"), source);
+    let b = db.upsert_file(
+        Path::new("/two/R/b.R"),
+        format!("{source}methods::setMethod('g', 'numeric', function(x) x)\n"),
+    );
+    let roots = vec![PathBuf::from("/one"), PathBuf::from("/two")];
+    db.set_workspace_members(vec![a, b], roots.clone());
+    db.refresh_descriptions(roots);
+    db.upsert_description(Path::new("/one"), "Package: one\n");
+    db.upsert_description(Path::new("/two"), "Package: two\nImports: one\n");
+    db.set_package_metadata(
+        [("/one", "export(g)\n"), ("/two", "importFrom(one, g)\n")]
+            .into_iter()
+            .map(|(root, namespace)| PackageInfo {
+                root: root.into(),
+                namespace: Some(namespace.into()),
+                dir_sources: BTreeSet::new(),
+                native_routines: BTreeSet::new(),
+            })
+            .collect(),
+    );
+    let registered_generics = |index: &arity::project::classes::ClassIndex| {
+        index
+            .s4
+            .methods
+            .iter()
+            .find(|method| matches!(method.id, S4MethodId::Registration(_)))
+            .unwrap()
+            .generics
+            .clone()
+    };
+    let before = project_classes(&db).clone();
+    assert_eq!(
+        registered_generics(&before),
+        [S4GenericId::Named {
+            name: "g".into(),
+            package: "one".into()
+        }]
+    );
+    db.clear_query_log();
+    db.set_file_text(a, "methods::setGeneric(\"g\", function(x)\n  # same generic body\n  standardGeneric(\"g\"))\n");
+    assert_eq!(&before, project_classes(&db));
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+    db.clear_query_log();
+    db.set_file_text(
+        a,
+        "methods::setGeneric('g', function(x) { message('new'); standardGeneric('g') })\n",
+    );
+    assert_eq!(
+        registered_generics(project_classes(&db)),
+        [S4GenericId::Named {
+            name: "g".into(),
+            package: "two".into()
+        }]
+    );
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ProjectClasses),
+        Some(&1)
+    );
+}
+
+#[test]
+fn s4_registry_preserves_generic_and_registration_packages() {
+    use arity::project::classes::{DispatchClass, S4GenericId, S4MethodId};
+    let mut db = IncrementalDatabase::default();
+    let a = db.upsert_file(
+        Path::new("/one/R/a.R"),
+        "methods::setGeneric('g', function(x, y) standardGeneric('g'), signature = c('y', 'x'))\n",
+    );
+    let b = db.upsert_file(Path::new("/two/R/b.R"), "methods::setMethod('g', methods::signature(x = 'numeric', y = 'missing'), function(x, y) x)\n");
+    db.set_workspace_members(vec![a, b], vec!["/one".into(), "/two".into()]);
+    db.refresh_descriptions([PathBuf::from("/one"), PathBuf::from("/two")]);
+    db.upsert_description(Path::new("/one"), "Package: one\n");
+    db.upsert_description(Path::new("/two"), "Package: two\nImports: one\n");
+    db.set_package_metadata(
+        [("/one", "export(g)\n"), ("/two", "importFrom(one, g)\n")]
+            .into_iter()
+            .map(|(root, namespace)| PackageInfo {
+                root: root.into(),
+                namespace: Some(namespace.into()),
+                dir_sources: BTreeSet::new(),
+                native_routines: BTreeSet::new(),
+            })
+            .collect(),
+    );
+    let index = project_classes(&db);
+    let methods = index.s4.methods_for_generic(&S4GenericId::Named {
+        package: "one".into(),
+        name: "g".into(),
+    });
+    let [method] = methods.as_slice() else {
+        panic!("{methods:?}");
+    };
+    assert!(matches!(method.id, S4MethodId::Registration(_)));
+    assert_eq!(method.owner.package.as_deref(), Some("two"));
+    let row = include_str!("fixtures/s4_dispatch/expected.tsv")
+        .lines()
+        .find(|row| row.starts_with("owner\t"))
+        .unwrap();
+    assert_eq!(
+        row,
+        format!(
+            "owner\t{}\t{}",
+            match &method.generics[0] {
+                S4GenericId::Named { package, .. } => package.as_str(),
+                _ => "?",
+            },
+            method.owner.package.as_deref().unwrap()
+        )
+    );
+    assert_eq!(
+        method.owner.package_root.as_deref(),
+        Some(Path::new("/two"))
+    );
+    assert_eq!(
+        method.dispatch[0].arguments[0].argument.as_deref(),
+        Some("y")
+    );
+    assert_eq!(
+        method.dispatch[0].arguments[0].class,
+        DispatchClass::Missing
+    );
+    assert_eq!(
+        method.dispatch[0].arguments[1].class,
+        DispatchClass::Formal("numeric".into())
+    );
+    assert!(method.dispatch[0].complete);
+}
+
+#[test]
+fn s4_promoted_imported_functions_keep_the_defining_package() {
+    use arity::project::classes::{S4DefaultKind, S4GenericId, S4MethodId};
+    for (dependency, namespace) in [
+        ("Imports: one\n", "importFrom(one, g)\n"),
+        ("Imports: one\n", "import(one)\n"),
+        ("Depends: one\n", ""),
+        ("Imports: one\n", ""),
+    ] {
+        let mut db = IncrementalDatabase::default();
+        let a = db.upsert_file(Path::new("/one/R/a.R"), "g <- function(x) x\n");
+        let b = db.upsert_file(
+            Path::new("/two/R/b.R"),
+            "methods::setMethod('g', 'numeric', function(x) x)\n",
+        );
+        let c = db.upsert_file(
+            Path::new("/three/R/c.R"),
+            "methods::setMethod('g', 'character', function(x) x)\n",
+        );
+        let roots = [
+            PathBuf::from("/one"),
+            PathBuf::from("/two"),
+            PathBuf::from("/three"),
+        ];
+        db.set_workspace_members(vec![a, b, c], roots.to_vec());
+        db.refresh_descriptions(roots);
+        db.upsert_description(Path::new("/one"), "Package: one\n");
+        for package in ["two", "three"] {
+            db.upsert_description(
+                Path::new(&format!("/{package}")),
+                format!("Package: {package}\n{dependency}"),
+            );
+        }
+        db.set_package_metadata(
+            [
+                ("/one", "export(g)\n"),
+                ("/two", namespace),
+                ("/three", namespace),
+            ]
+            .into_iter()
+            .map(|(root, namespace)| PackageInfo {
+                root: root.into(),
+                namespace: Some(namespace.into()),
+                dir_sources: BTreeSet::new(),
+                native_routines: BTreeSet::new(),
+            })
+            .collect(),
+        );
+        let index = project_classes(&db);
+        let id = S4GenericId::Named {
+            package: "one".into(),
+            name: "g".into(),
+        };
+        let methods = index.s4.methods_for_generic(&id);
+        if dependency.starts_with("Imports:") && namespace.is_empty() {
+            assert!(methods.is_empty());
+            assert!(
+                index
+                    .s4
+                    .methods
+                    .iter()
+                    .all(|method| method.generics.is_empty())
+            );
+            continue;
+        }
+        assert_eq!(methods.len(), 3, "{dependency} {namespace}: {:?}", index.s4);
+        let generic = index
+            .s4
+            .generics
+            .iter()
+            .find(|generic| generic.id == id)
+            .unwrap();
+        assert_eq!(generic.default.kind, S4DefaultKind::Existing);
+        let registrations: Vec<_> = methods
+            .iter()
+            .filter(|method| matches!(method.id, S4MethodId::Registration(_)))
+            .collect();
+        assert_eq!(registrations.len(), 2);
+        assert!(
+            registrations
+                .iter()
+                .all(|method| method.generics == [id.clone()] && method.dispatch[0].complete)
+        );
+        assert_eq!(
+            registrations
+                .iter()
+                .map(|method| method.owner.package.as_deref().unwrap())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["two", "three"])
+        );
+    }
+}
+
+#[test]
+fn s4_generic_redeclarations_reuse_prior_sibling_installations() {
+    use arity::parser::parse;
+    use arity::project::classes::{ClassName, S4DefaultKind, S4GenericId, S4MethodId};
+    use arity::semantic::SemanticModel;
+    let a = "methods::setGeneric('g', function(x, y) standardGeneric('g'), signature = 'y', group = 'Math', useAsDefault = function(x, y) x)\n";
+    let b = "methods::setGeneric('g')\nmethods::setMethod('g', 'numeric', function(x, y) y)\nmethods::selectMethod('g', 'numeric', useInherited = FALSE)\n";
+    for (first, second, order, declaration_path, source) in [
+        (a, b, "a.R b.R", "/pkg/R/b.R", b),
+        (b, a, "b.R a.R", "/pkg/R/a.R", b),
+    ] {
+        let (mut db, _, _) = package_ab(first, second);
+        db.refresh_descriptions([PathBuf::from("/pkg")]);
+        db.upsert_description(
+            Path::new("/pkg"),
+            format!("Package: pkg\nCollate: {order}\n"),
+        );
+        let index = project_classes(&db);
+        let id = S4GenericId::Named {
+            name: "g".into(),
+            package: "pkg".into(),
+        };
+        let generics: Vec<_> = index
+            .s4
+            .generics
+            .iter()
+            .filter(|generic| generic.declaration.is_some())
+            .collect();
+        assert_eq!(generics.len(), 2);
+        for generic in generics {
+            assert_eq!(generic.id, id, "{order}: {generic:?}");
+            assert_eq!(generic.dispatch_arguments, [ClassName::Known("y".into())]);
+            assert_eq!(generic.groups, [ClassName::Known("Math".into())]);
+            assert_eq!(generic.default.kind, S4DefaultKind::Explicit);
+            assert!(generic.uncertainty.is_empty(), "{generic:?}");
+        }
+        let methods = index.s4.methods_for_generic(&id);
+        assert_eq!(methods.len(), 2, "{methods:?}");
+        let method = methods
+            .into_iter()
+            .find(|method| matches!(method.id, S4MethodId::Registration(_)))
+            .unwrap();
+        assert!(
+            method
+                .dispatch
+                .iter()
+                .all(|dispatch| dispatch.valid && dispatch.complete)
+        );
+        let parsed = parse(source);
+        let model = SemanticModel::build(&parsed.cst);
+        let calls = index.s4_dispatch_calls(Path::new(declaration_path), &parsed.cst, &model);
+        let call = calls.last().unwrap();
+        assert_eq!(call.generics.as_slice(), std::slice::from_ref(&id));
+        assert_eq!(
+            call.exact_methods.as_slice(),
+            std::slice::from_ref(&method.id)
+        );
+        assert!(call.uncertainty.is_empty(), "{order}: {call:?}");
+    }
+}
+
+#[test]
+fn s4_named_method_frames_resolve_registrations_in_sibling_files() {
+    use arity::parser::parse;
+    use arity::project::classes::{S4CallKind, S4MethodId, file_class_defs};
+    use arity::semantic::SemanticModel;
+    let implementation = "impl <- function(x) methods::callNextMethod()\n";
+    let registration = "methods::setGeneric('g', function(x) standardGeneric('g'))\nmethods::setMethod('g', 'numeric', impl)\n";
+    let (db, _, _) = package_ab(implementation, registration);
+    let parsed = parse(implementation);
+    let model = SemanticModel::build(&parsed.cst);
+    let snapshot = db.snapshot();
+    let path = Path::new("/pkg/R/a.R");
+    let index = snapshot.class_index_in(
+        path,
+        &file_class_defs(&model, &parsed.cst),
+        &parsed.cst,
+        &model,
+    );
+    let calls = index.s4_dispatch_calls(path, &parsed.cst, &model);
+    let [call] = calls.as_slice() else {
+        panic!("{calls:?}")
+    };
+    assert_eq!(call.kind, S4CallKind::NextMethod);
+    assert!(call.uncertainty.is_empty(), "{call:?}");
+    let method = index
+        .s4
+        .methods
+        .iter()
+        .find(|method| matches!(method.id, S4MethodId::Registration(_)))
+        .unwrap();
+    assert_eq!(call.methods.as_slice(), std::slice::from_ref(&method.id));
+    assert_eq!(call.generics, method.generics);
+    assert_eq!(call.dispatch, method.dispatch);
+}
+
+#[test]
+fn s4_generic_skeleton_frames_resolve_declarations_in_sibling_files() {
+    use arity::parser::parse;
+    use arity::project::classes::{S4CallKind, S4CallUncertainty, file_class_defs};
+    use arity::semantic::SemanticModel;
+    let implementation = "skeleton <- function(x) standardGeneric('g')\nunrelated <- function(x) standardGeneric('g')\n";
+    let (db, _, _) = package_ab(implementation, "methods::setGeneric('g', skeleton)\n");
+    let parsed = parse(implementation);
+    let model = SemanticModel::build(&parsed.cst);
+    let snapshot = db.snapshot();
+    let path = Path::new("/pkg/R/a.R");
+    let index = snapshot.class_index_in(
+        path,
+        &file_class_defs(&model, &parsed.cst),
+        &parsed.cst,
+        &model,
+    );
+    let calls = index.s4_dispatch_calls(path, &parsed.cst, &model);
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(calls[0].kind, S4CallKind::StandardGeneric);
+    assert_eq!(calls[0].generics.len(), 1);
+    assert!(calls[0].uncertainty.is_empty(), "{:?}", calls[0]);
+    assert!(
+        calls[1]
+            .uncertainty
+            .contains(&S4CallUncertainty::InvalidFrame),
+        "{:?}",
+        calls[1]
+    );
+}
+
+#[test]
+fn s4_disabled_defaults_survive_uncertain_helper_resolution() {
+    use arity::parser::parse;
+    use arity::project::classes::{OopUncertainty, S4DefaultKind, S4MethodId, file_class_defs};
+    use arity::semantic::SemanticModel;
+    let source = "methods::setGeneric('g', function(x) standardGeneric('g'), useAsDefault = FALSE)\nmethods::selectMethod('g', 'ANY', useInherited = FALSE)\n";
+    let (db, _, _) = package_ab(source, "standardGeneric <- function(...) NULL\n");
+    let parsed = parse(source);
+    let model = SemanticModel::build(&parsed.cst);
+    let snapshot = db.snapshot();
+    let path = Path::new("/pkg/R/a.R");
+    let index = snapshot.class_index_in(
+        path,
+        &file_class_defs(&model, &parsed.cst),
+        &parsed.cst,
+        &model,
+    );
+    let generic = index
+        .s4
+        .generics
+        .iter()
+        .find(|generic| generic.declaration.is_some())
+        .unwrap();
+    assert!(
+        generic
+            .uncertainty
+            .contains(&OopUncertainty::UnresolvedCallee)
+    );
+    assert_eq!(generic.default.kind, S4DefaultKind::None);
+    assert!(
+        !index
+            .s4
+            .methods
+            .iter()
+            .any(|method| matches!(method.id, S4MethodId::Default(_)))
+    );
+    let calls = index.s4_dispatch_calls(path, &parsed.cst, &model);
+    assert!(calls.last().unwrap().exact_methods.is_empty(), "{calls:?}");
+}
+
+#[test]
+fn s4_defaults_and_live_calls_preserve_incremental_boundaries() {
+    use arity::project::classes::{S4DefaultKind, S4GenericId};
+    let source = "fallback <- function(x, y = 1) x\nmethods::setGeneric('g', function(x, y = 1) standardGeneric('g'), signature = 'x', useAsDefault = fallback, group = 'Math')\n";
+    let body =
+        "methods::setMethod('g', 'numeric', function(x, y = 1) methods::callNextMethod(x))\n";
+    let (mut db, a, b) = package_ab(source, body);
+    db.refresh_descriptions([PathBuf::from("/pkg")]);
+    db.upsert_description(Path::new("/pkg"), "Package: pkg\n");
+    let before = project_classes(&db).clone();
+    assert_eq!(
+        before
+            .s4
+            .generics
+            .iter()
+            .find(|generic| generic.id
+                == S4GenericId::Named {
+                    package: "pkg".into(),
+                    name: "g".into()
+                })
+            .unwrap()
+            .default
+            .kind,
+        S4DefaultKind::Explicit
+    );
+    db.clear_query_log();
+    db.set_file_text(
+        a,
+        source.replace("function(x, y = 1) x", "function(x, y = 1) { print(x); x }"),
+    );
+    assert_eq!(&before, project_classes(&db));
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+    db.clear_query_log();
+    db.set_file_text(
+        b,
+        body.replace("callNextMethod(x)", "callNextMethod('different', y)"),
+    );
+    assert_eq!(&before, project_classes(&db));
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+    for changed in [
+        source.replace("signature = 'x'", "signature = 'y'"),
+        source.replace("group = 'Math'", "group = 'Complex'"),
+        source.replace("useAsDefault = fallback", "useAsDefault = FALSE"),
+    ] {
+        db.clear_query_log();
+        db.set_file_text(a, changed);
+        assert_ne!(&before, project_classes(&db));
+        assert_eq!(
+            count_by_kind(&db.query_log()).get(&QueryKind::ProjectClasses),
+            Some(&1)
+        );
+    }
+}
+
+#[test]
+fn s4_live_dispatch_calls_follow_body_edits_without_rebuilding_declarations() {
+    use arity::parser::parse;
+    use arity::project::classes::{S4CallKind, S4GenericId, file_class_defs};
+    use arity::semantic::SemanticModel;
+    let generic = "methods::setGeneric('g', function(x, y) base::standardGeneric('g'), signature = c('y', 'x'))\n";
+    let body = "methods::setMethod('g', c(x = 'numeric', y = 'missing'), function(x, y) methods::callNextMethod())\n";
+    let (mut db, _, b) = package_ab(generic, body);
+    db.refresh_descriptions([PathBuf::from("/pkg")]);
+    db.upsert_description(Path::new("/pkg"), "Package: pkg\n");
+    let before = project_classes(&db).clone();
+    let live = body.replace(
+        "callNextMethod()",
+        "selectMethod('g', methods::signature(x = 'numeric', y = 'missing'))",
+    );
+    let parsed = parse(&live);
+    assert!(parsed.diagnostics.is_empty());
+    let model = SemanticModel::build(&parsed.cst);
+    let snapshot = db.snapshot();
+    let index = snapshot.class_index_in(
+        Path::new("/pkg/R/b.R"),
+        &file_class_defs(&model, &parsed.cst),
+        &parsed.cst,
+        &model,
+    );
+    let calls = index.s4_dispatch_calls(Path::new("/pkg/R/b.R"), &parsed.cst, &model);
+    let [call] = calls.as_slice() else {
+        panic!("{calls:?}");
+    };
+    assert_eq!(call.kind, S4CallKind::SelectMethod);
+    assert_eq!(
+        call.generics,
+        [S4GenericId::Named {
+            name: "g".into(),
+            package: "pkg".into()
+        }]
+    );
+    assert!(call.uncertainty.is_empty(), "{call:?}");
+    assert!(call.dispatch[0].complete);
+    drop(snapshot);
+    db.clear_query_log();
+    db.set_file_text(b, live);
+    assert_eq!(&before, project_classes(&db));
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
 }
 
 #[test]

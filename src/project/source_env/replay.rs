@@ -13,7 +13,7 @@ use crate::project::FileFacts;
 use crate::project::source::SourceTarget;
 use crate::semantic::symbols::unbacktick;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct SourceEnvironments {
     pub reads: HashMap<PathBuf, SourceReads>,
     pub used: HashMap<PathBuf, BTreeSet<String>>,
