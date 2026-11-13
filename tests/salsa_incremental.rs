@@ -4430,3 +4430,131 @@ fn s3_registry_tracks_implementation_binding_ownership_and_backdates_bodies() {
             .exported
     );
 }
+
+#[test]
+fn s3_dispatch_refreshes_class_order_and_registrations_but_backdates_method_bodies() {
+    use arity::ast::CallExpr;
+    use arity::project::classes::{MethodImplementationSource, S3Dispatch, file_class_defs};
+    use rowan::ast::AstNode as _;
+    let (mut db, a, b) = package_ab(
+        "g <- function(x) UseMethod('g')\nfirst <- function(x) x\nsecond <- function(x) x\n",
+        "f <- function() probe(g(structure(list(), class = c('C', 'D'))))\n",
+    );
+    let metadata = |class: &str| {
+        vec![PackageInfo {
+            root: "/pkg".into(),
+            namespace: Some(format!(
+                "S3method(g, {class}, first)\nS3method(g, D, second)\n"
+            )),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]
+    };
+    db.set_package_metadata(metadata("C"));
+    let probe = |db: &IncrementalDatabase| {
+        let root = db.parsed_tree(b);
+        let model = db.semantic_model(b);
+        let value = root
+            .descendants()
+            .filter_map(CallExpr::cast)
+            .find(|call| call.callee_name().as_deref() == Some("g"))
+            .unwrap()
+            .syntax()
+            .clone()
+            .into();
+        let path = Path::new("/pkg/R/b.R");
+        let tracked = project_classes(db)
+            .s3_dispatch_at(path, &root, model, &value)
+            .unwrap();
+        let live = db
+            .snapshot()
+            .class_index_in(path, &file_class_defs(model, &root), &root, model)
+            .s3_dispatch_at(path, &root, model, &value)
+            .unwrap();
+        assert_eq!(tracked, live);
+        tracked
+    };
+    let selected = |result: S3Dispatch| match result.selected.unwrap().implementation.unwrap() {
+        MethodImplementationSource::Binding { name, .. } => name,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(selected(probe(&db)), "first");
+    db.clear_query_log();
+    db.set_file_text(a, "# Shift every declaration.\ng <- function(x) UseMethod('g')\nfirst <- function(x) { print(x); x }\nsecond <- function(x) x\n");
+    let _ = project_classes(&db);
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+    assert_eq!(selected(probe(&db)), "first");
+    db.set_file_text(
+        b,
+        "f <- function() probe(g(structure(list(), class = c('D', 'C'))))\n",
+    );
+    assert_eq!(selected(probe(&db)), "second");
+    db.set_file_text(
+        b,
+        "f <- function() probe(g(structure(list(), class = c('C', 'D'))))\n",
+    );
+    db.set_package_metadata(metadata("Changed"));
+    assert_eq!(selected(probe(&db)), "second");
+    db.set_file_text(a, "g <- function(x) { object <- structure(list(), class = 'Changed'); UseMethod('g', object) }\nfirst <- function(x) x\nsecond <- function(x) x\n");
+    assert_eq!(selected(probe(&db)), "first");
+}
+
+#[test]
+fn s3_implicit_dispatch_refreshes_reference_effects_across_files() {
+    use arity::ast::CallExpr;
+    use arity::project::classes::{MethodImplementationSource, S3DispatchUncertainty};
+    use rowan::ast::AstNode as _;
+
+    let methods = "g.A <- function(x) x; g.B <- function(x) x";
+    let (mut db, a, b) = package_ab(
+        &format!("g <- function(x) UseMethod('g'); {methods}"),
+        "f <- function() probe(g(structure(new.env(), class = 'A')))",
+    );
+    let probe = |db: &IncrementalDatabase| {
+        let root = db.parsed_tree(b);
+        let model = db.semantic_model(b);
+        let value = root
+            .descendants()
+            .filter_map(CallExpr::cast)
+            .find(|call| call.callee_name().as_deref() == Some("g"))
+            .unwrap()
+            .syntax()
+            .clone()
+            .into();
+        project_classes(db)
+            .s3_dispatch_at(Path::new("/pkg/R/b.R"), &root, model, &value)
+            .unwrap()
+    };
+    let first = probe(&db);
+    assert!(matches!(first.selected.unwrap().implementation,
+        Some(MethodImplementationSource::Binding { name, .. }) if name == "g.A"));
+
+    db.clear_query_log();
+    db.set_file_text(
+        a,
+        format!("g <- function(x) {{ class(x) <- 'B'; UseMethod('g') }}; {methods}"),
+    );
+    let mutated = probe(&db);
+    assert!(mutated.selected.is_none(), "{mutated:#?}");
+    assert!(
+        mutated
+            .uncertainty
+            .contains(&S3DispatchUncertainty::UnknownClass)
+    );
+    assert!(count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+
+    db.clear_query_log();
+    db.set_file_text(a, format!("# Shift the generic.\ng <- function(x) {{ class(x) <- 'B'; UseMethod('g') }}; {methods}"));
+    assert_eq!(probe(&db), mutated);
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::ProjectClasses));
+
+    db.set_file_text(
+        a,
+        format!(
+            "g <- function(x) {{ x <- structure(list(), class = 'B'); UseMethod('g') }}; {methods}"
+        ),
+    );
+    let rebound = probe(&db);
+    assert!(matches!(rebound.selected.unwrap().implementation,
+        Some(MethodImplementationSource::Binding { name, .. }) if name == "g.A"));
+}

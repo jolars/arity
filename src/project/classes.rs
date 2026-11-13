@@ -37,6 +37,8 @@ mod reference;
 pub use reference::{ReferenceApi, ReferenceMember, ReferenceMembers};
 mod s3;
 pub use s3::{S3ClassEvidence, S3Constructor, S3Facts};
+mod s3_dispatch;
+pub use s3_dispatch::*;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
@@ -356,6 +358,7 @@ pub enum ClassOccurrence {
 }
 
 struct Extracted {
+    owners: HashMap<TextRange, ClassOwner>,
     facts: FileClassFacts,
     locations: Vec<ClassLocation>,
     occurrences: Vec<(TextRange, ClassOccurrence)>,
@@ -518,6 +521,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         .map(|(call, _, _, key)| (call.syntax().text_range(), key.clone()))
         .collect();
     let mut result = Extracted {
+        owners: owners.clone(),
         facts: FileClassFacts::default(),
         locations: Vec::new(),
         occurrences: Vec::new(),

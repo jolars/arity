@@ -36,6 +36,93 @@ pub struct S3Facts {
 }
 
 impl ClassIndex {
+    pub(super) fn s3_argument_evidence(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        call: &SyntaxElement,
+        value: &SyntaxElement,
+    ) -> S3ClassEvidence {
+        self.s3_arguments_evidence(path, root, model, call, &[Some(value.clone())])
+            .pop()
+            .unwrap_or_default()
+    }
+
+    pub(super) fn s3_arguments_evidence(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        call: &SyntaxElement,
+        values: &[Option<SyntaxElement>],
+    ) -> Vec<S3ClassEvidence> {
+        let mut lookup = Lookup::new(model, root, Some((self, path)));
+        let mut env = Environment::default();
+        let container = call
+            .parent()
+            .and_then(|node| node.ancestors().find_map(FunctionExpr::cast))
+            .and_then(|function| function.body())
+            .unwrap_or_else(|| root.clone().into());
+        // The dispatching call has not forced its actuals yet. Start before
+        // the call so it cannot invalidate evidence about its own arguments.
+        lookup.prefix(&container, call.text_range(), &mut env, 0);
+        // Eager operands share an evaluation environment in source order.
+        for value in values {
+            let operand = match value {
+                Some(value) => lookup.eval(value, &mut env, 0),
+                None => {
+                    env.invalidate();
+                    Value::default()
+                }
+            };
+            env.retained.push(operand);
+        }
+        env.retained
+            .into_iter()
+            .map(|value| value.proof.classes)
+            .collect()
+    }
+
+    pub(super) fn s3_generic_object(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        dispatch: &CallExpr,
+        arguments: &BTreeMap<String, S3ClassEvidence>,
+    ) -> S3ClassEvidence {
+        let Some(object) = matched_args(dispatch, &["generic", "object"])
+            .and_then(|args| argument(&args, "object"))
+        else {
+            return S3ClassEvidence::Unknown;
+        };
+        let Some(body) = dispatch
+            .syntax()
+            .ancestors()
+            .find_map(FunctionExpr::cast)
+            .and_then(|function| function.body())
+        else {
+            return S3ClassEvidence::Unknown;
+        };
+        let mut lookup = Lookup::new(model, root, Some((self, path)));
+        let mut env = Environment::default();
+        for (name, classes) in arguments {
+            env.values.insert(
+                name.clone(),
+                Value {
+                    proof: Proof {
+                        classes: classes.clone(),
+                        helpers: BTreeSet::new(),
+                    },
+                    ..Value::default()
+                },
+            );
+        }
+        lookup.prefix(&body, dispatch.syntax().text_range(), &mut env, 0);
+        lookup.eval(&object, &mut env, 0).proof.classes
+    }
+
     /// Recover only explicit class evidence, without executing R or inferring a
     /// class declaration from a constructor or dotted method binding.
     /// Evidence describes a value on normal return; it does not establish that
@@ -71,22 +158,30 @@ const HELPERS: &[&str] = &[
     "list",
     "character",
     "return",
+    ".S3method",
+    "registerS3method",
 ];
 
 pub(super) fn project(model: &SemanticModel, root: &SyntaxNode) -> S3Facts {
     let calls = factories(model, root);
-    if !calls.iter().any(|(_, _, name)| class_helper(name)) {
-        return S3Facts::default();
-    }
+    let has_class_helpers = calls.iter().any(|(_, _, name)| class_helper(name));
     let helpers = calls
         .into_iter()
-        .filter(|(_, _, name)| HELPERS.contains(&name.as_str()))
+        .filter(|(_, _, name)| {
+            HELPERS.contains(&name.as_str()) || matches!(name.as_str(), "UseMethod" | "NextMethod")
+        })
         .map(|(_, reference, _)| reference)
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
     let mut lookup = Lookup::new(model, root, None);
     let mut constructors = Vec::new();
+    if !has_class_helpers {
+        return S3Facts {
+            helpers,
+            constructors,
+        };
+    }
     for (i, binding) in model.bindings().iter().enumerate() {
         let id = BindingId::from_index(i);
         if !model.binding_is_file_scope(id) {
@@ -126,6 +221,53 @@ fn class_helper(name: &str) -> bool {
         name,
         "structure" | "class" | "class<-" | "oldClass" | "oldClass<-" | "unclass"
     )
+}
+
+pub(super) fn generic_object_evidence(
+    model: &SemanticModel,
+    call: &CallExpr,
+) -> Option<(S3ClassEvidence, Vec<FunctionRef>)> {
+    let root = call.syntax().ancestors().last()?;
+    let body = call
+        .syntax()
+        .ancestors()
+        .find_map(FunctionExpr::cast)?
+        .body()?;
+    let object = argument(&matched_args(call, &["generic", "object"])?, "object")?;
+    let mut lookup = Lookup::new(model, &root, None);
+    let mut env = Environment::default();
+    lookup.prefix(&body, call.syntax().text_range(), &mut env, 0);
+    let proof = lookup.eval(&object, &mut env, 0).proof;
+    (proof.classes != S3ClassEvidence::Unknown)
+        .then(|| (proof.classes, proof.helpers.into_iter().collect()))
+}
+
+pub(super) fn original_object_preservation(
+    model: &SemanticModel,
+    call: &CallExpr,
+    formals: &BTreeSet<String>,
+) -> Option<Vec<FunctionRef>> {
+    let root = call.syntax().ancestors().last()?;
+    let body = call
+        .syntax()
+        .ancestors()
+        .find_map(FunctionExpr::cast)?
+        .body()?;
+    let mut lookup = Lookup::new(model, &root, None);
+    let mut env = Environment::default();
+    // Keep the incoming object separately from formal rebindings. Assume it
+    // can be a reference object, so any possible alias mutation loses evidence.
+    let original = Value {
+        proof: Proof::absent(),
+        ..Value::default()
+    };
+    for formal in formals {
+        env.values.insert(formal.clone(), original.clone());
+    }
+    env.retained.push(original);
+    lookup.prefix(&body, call.syntax().text_range(), &mut env, 0);
+    (env.retained.first()?.proof.classes == S3ClassEvidence::NoExplicitClass)
+        .then(|| lookup.helpers.into_iter().collect())
 }
 
 #[derive(Clone, Default)]
@@ -183,6 +325,8 @@ impl Value {
 #[derive(Default)]
 struct Environment {
     values: BTreeMap<String, Value>,
+    // Evaluated objects survive rebinding, but reference mutations can affect them.
+    retained: Vec<Value>,
     opaque: bool,
 }
 
@@ -190,6 +334,10 @@ impl Environment {
     fn invalidate(&mut self) {
         self.values
             .values_mut()
+            .for_each(|value| *value = Value::default());
+        self.retained
+            .iter_mut()
+            .filter(|value| !value.by_value)
             .for_each(|value| *value = Value::default());
         self.opaque = true;
     }
@@ -200,6 +348,7 @@ struct Lookup<'a> {
     root: &'a SyntaxNode,
     project: Option<(&'a ClassIndex, &'a Path)>,
     visiting: BTreeSet<TextSize>,
+    helpers: BTreeSet<FunctionRef>,
 }
 
 impl<'a> Lookup<'a> {
@@ -213,6 +362,7 @@ impl<'a> Lookup<'a> {
             root,
             project,
             visiting: BTreeSet::new(),
+            helpers: BTreeSet::new(),
         }
     }
 
@@ -272,10 +422,10 @@ impl<'a> Lookup<'a> {
                         | SyntaxKind::WHILE_EXPR
                         | SyntaxKind::REPEAT_EXPR
                 ) {
-                    self.invalidate_writes(&child, env);
+                    self.invalidate_writes_except(&child, env, Some(target));
                 } else {
                     if child.kind() == SyntaxKind::CALL_EXPR {
-                        self.invalidate_writes(&child, env);
+                        self.invalidate_writes_except(&child, env, Some(target));
                     }
                     self.prefix(&child, target, env, depth + 1);
                 }
@@ -375,6 +525,7 @@ impl<'a> Lookup<'a> {
                 .as_token()
                 .filter(|token| token.kind() == SyntaxKind::IDENT)
         {
+            self.helpers.insert(helper.clone());
             let vector = self.eval(&rhs, env, depth + 1);
             let mut proof = class_proof(&name, &vector);
             proof.helpers.insert(helper);
@@ -402,6 +553,7 @@ impl<'a> Lookup<'a> {
 
     fn call(&mut self, call: &CallExpr, env: &mut Environment, depth: usize) -> Value {
         if let Some((name, helper)) = self.helper(call, env) {
+            self.helpers.insert(helper.clone());
             self.invalidate_writes(&call.syntax().clone().into(), env);
             let mut result = self.helper_call(call, &name, env, depth + 1);
             result.proof.helpers.insert(helper);
@@ -455,6 +607,12 @@ impl<'a> Lookup<'a> {
         depth: usize,
     ) -> Value {
         match name {
+            ".S3method" | "registerS3method" => {
+                // Registration updates a dispatch table, not the caller's
+                // object bindings. Argument expressions may still have effects.
+                self.invalidate_writes(&call.syntax().clone().into(), env);
+                Value::absent()
+            }
             "structure" => {
                 let Some(args) = matched_args(call, &[".Data", "..."]) else {
                     return Value::default();
@@ -711,11 +869,22 @@ impl<'a> Lookup<'a> {
     }
 
     fn invalidate_writes(&self, value: &SyntaxElement, env: &mut Environment) {
+        self.invalidate_writes_except(value, env, None);
+    }
+
+    fn invalidate_writes_except(
+        &self,
+        value: &SyntaxElement,
+        env: &mut Environment,
+        exclude: Option<TextRange>,
+    ) {
         let Some(node) = value.as_node() else {
             return;
         };
         for node in node.descendants().filter(|node| {
-            !node
+            !exclude.is_some_and(|range| {
+                range.contains_range(node.text_range()) || node.text_range().contains_range(range)
+            }) && !node
                 .ancestors()
                 .take_while(|parent| parent != value.as_node().unwrap())
                 .any(|parent| parent.kind() == SyntaxKind::FUNCTION_EXPR)
@@ -911,7 +1080,12 @@ fn class_proof(setter: &str, vector: &Value) -> Proof {
 
 fn invalidate_reference_aliases(env: &mut Environment, by_value: bool) {
     if !by_value {
-        for value in env.values.values_mut().filter(|value| !value.by_value) {
+        for value in env
+            .values
+            .values_mut()
+            .chain(&mut env.retained)
+            .filter(|value| !value.by_value)
+        {
             *value = Value::default();
         }
     }

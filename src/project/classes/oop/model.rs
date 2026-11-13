@@ -84,6 +84,7 @@ pub struct GenericDef {
     pub dispatch_arguments: Vec<ClassName>,
     /// A literal vector's helper must be confirmed before its shape is known.
     pub dispatch_factory: Option<FunctionRef>,
+    pub s3_dispatch: Option<super::super::S3GenericDispatch>,
     pub uncertainty: BTreeSet<OopUncertainty>,
 }
 

@@ -263,7 +263,23 @@ S7::method(describe7, list(Alias, Point)) <- function(x, y) x@value
 "#,
     );
     assert_eq!(facts.oop.generics.len(), 2);
-    assert_eq!(facts.oop.methods.len(), 3);
+    assert_eq!(facts.oop.methods.len(), 4);
+    assert!(
+        facts
+            .oop
+            .methods
+            .iter()
+            .any(|method| method.name == ClassName::Known("+.point".into())
+                && method.registration.is_none())
+    );
+    assert!(
+        facts
+            .oop
+            .methods
+            .iter()
+            .any(|method| method.name == ClassName::Known("+".into())
+                && method.registration.is_some())
+    );
     assert_eq!(facts.declarations[0].system(), ClassSystem::S7);
     assert_eq!(facts.oop.members[0].kind, MemberKind::Property);
     let method = facts
@@ -699,14 +715,32 @@ register("+", "C", `+.C`)
 "#,
     );
     assert_eq!(facts.oop.generics.len(), 1);
-    assert_eq!(facts.oop.methods.len(), 3);
+    assert_eq!(facts.oop.methods.len(), 4);
     assert_eq!(facts.oop.methods[0].name, ClassName::Known("[<-".into()));
     assert_eq!(facts.oop.methods[1].name, ClassName::Known("+".into()));
     assert_eq!(
         facts.oop.methods[2].signature.as_ref().unwrap().parameters[0].name,
         "e1"
     );
-    assert!(facts.oop.methods.iter().all(|d| d.uncertainty.is_empty()));
+    assert!(
+        facts
+            .oop
+            .methods
+            .iter()
+            .filter(|method| method.registration.is_some())
+            .all(|method| method.uncertainty.is_empty())
+    );
+    let conventional = facts
+        .oop
+        .methods
+        .iter()
+        .find(|method| method.name == ClassName::Known("+.C".into()))
+        .unwrap();
+    assert!(conventional.registration.is_none());
+    assert_eq!(
+        conventional.uncertainty,
+        [OopUncertainty::UnprovenMethod].into()
+    );
 }
 
 #[test]

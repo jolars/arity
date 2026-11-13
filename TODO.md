@@ -659,7 +659,7 @@ coverage need not block useful workspace support.
   Incremental tests cover namespace and script edits, while unused checks retain
   unresolved possible methods and implementations named through strings.
 
-- [ ] Resolve method candidates using class-vector order, `.default`, and
+- [x] Resolve method candidates using class-vector order, `.default`, and
   registration visibility. Cover `NextMethod()`, internal generics, group
   generics, and operator/replacement methods as separate tested cases rather
   than one dotted-name split. Model `UseMethod()`'s nonreturning control
@@ -668,6 +668,14 @@ coverage need not block useful workspace support.
   signature safety gates. Unknown classes or runtime registration yield
   candidates or unknown results, never a confidently selected
   implementation.
+
+  The shared query ranks candidates using caller and registration visibility,
+  including internal aliases, group generics, operators, and replacements.
+  `NextMethod()` preserves the original class cursor and verifies the method
+  frame. Forwarding distinguishes original promises, current formals, and
+  generic-local variables across R 4.4; `UseMethod()` terminates control flow.
+  Pinned R observations and incremental regressions cover these paths while
+  preserving signature safety and formal-read handling.
 
   Semantic references: [S3
   dispatch](https://stat.ethz.ch/R-manual/R-devel/library/base/html/UseMethod.html),

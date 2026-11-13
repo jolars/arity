@@ -6709,6 +6709,39 @@ fn unreachable_code_flags_after_return_and_stop() {
 }
 
 #[test]
+fn unreachable_code_confirms_use_method_and_keeps_next_method_returning() {
+    for source in [
+        "g <- function(x) { UseMethod('g'); tail() }",
+        "g <- function(x) { base::UseMethod('g'); tail() }",
+        "g <- function(x) { `UseMethod`('g'); tail() }",
+        "g <- function(x) { if (x) UseMethod('g') else stop('bad'); tail() }",
+    ] {
+        let diagnostics = diagnostics_selecting(source, &["unreachable-code"]);
+        assert_eq!(diagnostics.len(), 1, "{source}: {diagnostics:?}");
+        let fixed = apply_fixes(source, &[diagnostics[0].fix.clone().unwrap()], true).output;
+        assert!(
+            arity::parser::parse(&fixed).diagnostics.is_empty(),
+            "{fixed}"
+        );
+        assert_eq!(arity::parser::reconstruct(&fixed), fixed);
+    }
+    for source in [
+        "UseMethod <- function(...) NULL; g <- function(x) { UseMethod('g'); tail() }",
+        "UseMethod <- function(...) NULL; g <- function(x) { `UseMethod`('g'); tail() }",
+        "UseMethod <- function(...) NULL; g <- function(x) { \"UseMethod\"('g'); tail() }",
+        "g <- function(x) { NextMethod(); tail() }",
+        "g <- function(x) { if (x) UseMethod('g'); tail() }",
+        "g <- function(x) { UseMethod <- function(...) NULL; if (x) UseMethod('g') else stop('bad'); tail() }",
+        "{ UseMethod('g'); tail() }",
+    ] {
+        assert!(
+            diagnostics_selecting(source, &["unreachable-code"]).is_empty(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn unreachable_code_covers_all_trailing_statements() {
     // Every statement after the terminator is unreachable; one finding spans them
     // all and the fix removes the lot.
@@ -6773,6 +6806,21 @@ fn unreachable_code_both_branches_negatives() {
             !rules.contains(&"unreachable-code"),
             "{src:?} should not flag, got: {rules:?}"
         );
+    }
+}
+
+#[test]
+fn unreachable_code_rejects_inherited_unreachability() {
+    for terminator in ["UseMethod", "return", "stop"] {
+        for branches in ["if (x) 1 else 2", "if (x) stop('bad') else 2"] {
+            let source = format!(
+                "{terminator} <- function(...) NULL; g <- function(x) {{ {terminator}('g'); {branches}; 3 }}"
+            );
+            assert!(
+                diagnostics_selecting(&source, &["unreachable-code"]).is_empty(),
+                "{source}"
+            );
+        }
     }
 }
 

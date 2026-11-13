@@ -698,7 +698,8 @@ impl RuleContext<'_> {
         let Some(name) = matchers::callee_name(call) else {
             return false;
         };
-        if !self.symbols.is_base(&name) {
+        let name = crate::semantic::symbols::unbacktick(&name);
+        if !self.symbols.is_base(name) {
             return false;
         }
         // A namespace-qualified callee (`pkg::f(...)`) is not a bare-name base
@@ -717,7 +718,7 @@ impl RuleContext<'_> {
             return false;
         }
         // Not masked by an attached non-default package.
-        origin_is_default(self.symbols.origin(&name, self.model.loaded_packages()))
+        origin_is_default(self.symbols.origin(name, self.model.loaded_packages()))
     }
 
     /// Whether the identifier read at `range` resolves to a local binding — the

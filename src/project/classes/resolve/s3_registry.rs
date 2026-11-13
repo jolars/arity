@@ -1,4 +1,4 @@
-//! S3 declaration and registration identities, without simulating dispatch.
+//! S3 declaration and registration identities shared by ordered static lookup.
 
 use super::*;
 
@@ -59,6 +59,140 @@ pub struct S3Method {
 pub struct S3Registry {
     pub generics: Vec<S3Generic>,
     pub methods: Vec<S3Method>,
+}
+
+/// Package membership is shared across files, so a method-body edit need not
+/// rebuild the class graph just to resolve a newly written primitive call.
+#[derive(Debug, Clone, Default, PartialEq, Eq, salsa::SalsaValue)]
+pub(in crate::project::classes) struct S3LookupOrigins {
+    pub package_names: BTreeMap<PathBuf, String>,
+    pub namespaces: BTreeMap<PathBuf, S3NamespaceImports>,
+    pub attached: BTreeMap<PathBuf, BTreeSet<String>>,
+    pub exports: BTreeMap<String, BTreeSet<String>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, salsa::SalsaValue)]
+pub(in crate::project::classes) struct S3NamespaceImports {
+    pub named: BTreeMap<String, BTreeSet<String>>,
+    pub wildcard: BTreeSet<String>,
+    pub loaded: BTreeSet<String>,
+    pub unknown: bool,
+}
+
+impl S3NamespaceImports {
+    fn parse(text: &str) -> Self {
+        use crate::namespace::DirectiveKind::{Import, ImportFrom};
+        let namespace = crate::namespace::parse(text);
+        let mut result = Self {
+            unknown: !namespace.diagnostics.is_empty(),
+            ..Self::default()
+        };
+        for directive in namespace
+            .document()
+            .directives()
+            .filter(|directive| matches!(directive.kind(), Import | ImportFrom))
+        {
+            let Some(args) = directive
+                .arguments()
+                .map(|argument| argument.value().and_then(namespace_name))
+                .collect::<Option<Vec<_>>>()
+            else {
+                result.unknown = true;
+                continue;
+            };
+            if directive
+                .syntax()
+                .ancestors()
+                .any(|node| node.kind() == SyntaxKind::IF_EXPR)
+                || args.is_empty()
+            {
+                result.unknown = true;
+                continue;
+            }
+            match directive.kind() {
+                Import => {
+                    result.loaded.extend(args.iter().cloned());
+                    result.wildcard.extend(args);
+                }
+                ImportFrom => {
+                    let source = &args[0];
+                    result.loaded.insert(source.clone());
+                    for name in args.iter().skip(1) {
+                        result
+                            .named
+                            .entry(name.clone())
+                            .or_default()
+                            .insert(source.clone());
+                    }
+                }
+                _ => unreachable!("only import directives were retained"),
+            }
+        }
+        result
+    }
+}
+
+impl S3LookupOrigins {
+    pub fn build(resolution: &ClassResolution<'_>) -> Self {
+        use crate::rindex::provider::{bundled_exports, bundled_packages};
+        let mut exports = BTreeMap::new();
+        let relevant =
+            |name: &str| super::super::s3_dispatch::known_generic_package(name).is_some();
+        for package in bundled_packages() {
+            if let Some(names) = bundled_exports(package) {
+                exports.insert(
+                    package.to_string(),
+                    names
+                        .filter(|name| relevant(name))
+                        .map(ToString::to_string)
+                        .collect(),
+                );
+            }
+        }
+        for package in resolution.remote.packages() {
+            exports.insert(
+                package.to_string(),
+                resolution
+                    .remote
+                    .package_exports(package)
+                    .into_iter()
+                    .flatten()
+                    .filter(|name| relevant(name))
+                    .map(ToString::to_string)
+                    .collect(),
+            );
+        }
+        for package in resolution.indexed.packages() {
+            // Reading all lazy package files here would put unbounded indexing
+            // on the read pool. Unfilled slots remain unknown until indexed.
+            exports.remove(package.as_str());
+            if let Some(index) = resolution.indexed.package_if_resident(package) {
+                exports.insert(
+                    package.to_string(),
+                    index
+                        .symbols
+                        .iter()
+                        .filter(|entry| entry.exported && relevant(&entry.name))
+                        .map(|entry| entry.name.to_string())
+                        .collect(),
+                );
+            }
+        }
+        Self {
+            package_names: resolution.package_names.clone(),
+            namespaces: resolution
+                .namespaces
+                .iter()
+                .map(|(root, text)| (root.clone(), S3NamespaceImports::parse(text)))
+                .collect(),
+            attached: resolution
+                .packages
+                .iter()
+                .map(|package| (package.root.clone(), package.attached.clone()))
+                .collect(),
+            exports,
+        }
+    }
 }
 
 impl ClassIndex {
@@ -201,6 +335,9 @@ impl ClassIndex {
                         uncertainty.insert(OopUncertainty::UnprovenMethod);
                     } else {
                         uncertainty.remove(&OopUncertainty::UnprovenMethod);
+                        if !registered {
+                            uncertainty.remove(&OopUncertainty::UnresolvedCallee);
+                        }
                     }
                     registry.methods.push(S3Method {
                         source: source.clone(),

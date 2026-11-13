@@ -50,6 +50,7 @@ pub struct ResolvedClass {
 pub struct ClassIndex {
     pub declarations: BTreeMap<ClassId, ResolvedClass>,
     pub s3: S3Registry,
+    pub(super) s3_origins: s3_registry::S3LookupOrigins,
     pub unresolved: BTreeSet<ClassId>,
     pub parent_candidates: BTreeMap<ClassId, Vec<Vec<ClassId>>>,
     pub supertypes: BTreeMap<ClassId, BTreeSet<ClassId>>,
@@ -68,6 +69,9 @@ pub struct ClassIndex {
 }
 
 impl ClassIndex {
+    pub(super) fn sees_file(&self, path: &Path, target: &Path) -> bool {
+        self.scope.sees(path).iter().any(|path| path == target)
+    }
     pub(super) fn class_file_complete(&self, path: &Path) -> bool {
         !self.incomplete.contains(path)
     }
@@ -138,6 +142,7 @@ impl ClassIndex {
                 .collect(),
             scope: Arc::new(resolution.scope.clone()),
             load_orders: resolution.load_orders.clone(),
+            s3_origins: s3_registry::S3LookupOrigins::build(resolution),
             ..Self::default()
         };
         index.namespace = namespace::NamespaceVisibility::build(&index.files, resolution);

@@ -946,6 +946,13 @@ impl Projection<'_> {
                 signature,
                 dispatch_arguments,
                 dispatch_factory,
+                s3_dispatch: (system == OopSystem::S3).then(|| {
+                    super::super::s3_dispatch::generic_dispatch(
+                        self.model,
+                        &call,
+                        function.as_ref(),
+                    )
+                }),
                 uncertainty: issues,
             };
             let binding_possible = def.binding_possible();
@@ -1635,26 +1642,6 @@ impl Projection<'_> {
                     &mut BTreeSet::new(),
                     false,
                 );
-                if self.facts.methods.iter().any(|method| {
-                    method.system == OopSystem::S3
-                        && method.registration.is_some()
-                        && method
-                            .generic
-                            .as_ref()
-                            .is_some_and(|reference| reference.name == generic.name)
-                        && method
-                            .dispatch
-                            .iter()
-                            .any(|argument| argument.class == DispatchClass::S3(class.clone()))
-                        && self.method_implementations.iter().any(|site| {
-                            site.method == method.key
-                                && implementation
-                                    .as_ref()
-                                    .is_some_and(|value| site.function_range == value.text_range())
-                        })
-                }) {
-                    continue;
-                }
                 let key = self.key(assignment.syntax(), OopSystem::S3, OopKind::Method);
                 let mut issues: BTreeSet<_> = self
                     .facts
