@@ -11,62 +11,49 @@
 }
 
 .VPHomeHero {
-  --arity-hero-size: 240px;
+  --vp-home-hero-image-background-image: linear-gradient(
+    -45deg,
+    #b58be0 50%,
+    #70c8e8 50%
+  );
+  --vp-home-hero-image-filter: blur(44px);
 }
 
-.VPHomeHero.has-image .container {
-  flex-direction: column;
-  align-items: center;
-  gap: 24px;
-  text-align: center;
+.dark .VPHomeHero {
+  --vp-home-hero-image-background-image: linear-gradient(
+    -45deg,
+    #9264cc 50%,
+    #36b7bd 50%
+  );
 }
 
-.VPHomeHero.has-image .main {
-  order: 2;
-  width: 100%;
-}
-
-/* Keep the page heading available to screen readers. */
-.VPHomeHero .heading {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  white-space: nowrap;
-  clip-path: inset(50%);
-}
-
-.VPHomeHero .image {
-  order: 1;
-  margin: 0;
-}
-
-.VPHomeHero .image-container {
-  width: var(--arity-hero-size);
-  height: var(--arity-hero-size);
-  transform: none;
-}
-
-/* The wider canvas gives the fade room without shrinking the lettering. */
 .VPHomeHero .image-src {
-  max-width: var(--arity-hero-size);
-  max-height: var(--arity-hero-size);
-}
-
-.VPHomeHero.has-image .main .actions {
-  justify-content: center;
-  padding-top: 0;
+  filter: drop-shadow(-2px 4px 6px rgb(0 0 0 / 20%));
 }
 
 @media (min-width: 640px) {
   .VPHomeHero {
-    --arity-hero-size: 320px;
+    --vp-home-hero-image-filter: blur(56px);
   }
 }
 
 @media (min-width: 960px) {
   .VPHomeHero {
-    --arity-hero-size: 400px;
+    --vp-home-hero-image-filter: blur(68px);
+  }
+
+  .VPHomeHero.has-image .container {
+    display: grid;
+    grid-template-columns: minmax(0, 592px) minmax(320px, 1fr);
+    column-gap: 64px;
+  }
+
+  .VPHomeHero.has-image .main {
+    width: auto;
+  }
+
+  .VPHomeHero .image-container {
+    transform: translateY(-32px);
   }
 }
 
