@@ -179,31 +179,45 @@ pub fn check_paths_with_index(
         return Err(LintError::MissingPaths);
     }
 
-    let (rules, unknown) = ResolvedRules::resolve(config);
+    // Validate even when force-exclude leaves the input set empty.
+    let (_, unknown) = ResolvedRules::resolve(config);
     if let Some(rule) = unknown.into_iter().next() {
         return Err(LintError::UnknownRule { rule });
     }
-
     let discovered = collect_source_files(paths, exclude).map_err(LintError::from)?;
-    let files = discovered.r;
-    // Every package `DESCRIPTION` is an input regardless of which rules are
-    // selected: `syntax-error` is not a rule, and a `DESCRIPTION` that
-    // `read.dcf` would reject must surface under `--select` exactly as a broken
-    // `.R` file does.
-    let descriptions = discovered.description;
-    if files.is_empty() && descriptions.is_empty() {
-        // Under force-exclude every named file may be excluded; that is an
-        // expected clean no-op, not an error.
-        if exclude.force() {
-            return Ok(LintResult {
-                checked_files: 0,
-                total_findings: 0,
-                reports: Vec::new(),
-                skipped: Vec::new(),
-            });
-        }
+    if discovered.r.is_empty() && discovered.description.is_empty() && !exclude.force() {
         return Err(LintError::NoFiles);
     }
+    let indexed = Arc::new(indexed);
+    check_files_with_configs(discovered, &|_| config, &|_| &indexed)
+}
+
+/// Lint an already discovered file set with per-file settings while retaining
+/// one shared project graph. Discovery and config errors are the caller's job.
+pub fn check_files_with_configs<'a>(
+    discovered: crate::file_discovery::DiscoveredFiles,
+    config_for: &(impl Fn(&Path) -> &'a LintConfig + Sync),
+    index_for: &(impl Fn(&Path) -> &'a Arc<IndexedProvider> + Sync),
+) -> Result<LintResult, LintError> {
+    let mut rule_cache = HashMap::new();
+    let mut rules = HashMap::new();
+    for path in discovered.r.iter().chain(&discovered.description) {
+        let config = config_for(path);
+        let key = std::ptr::from_ref(config) as usize;
+        let resolved = match rule_cache.entry(key) {
+            std::collections::hash_map::Entry::Occupied(entry) => Arc::clone(entry.get()),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let (resolved, unknown) = ResolvedRules::resolve(config);
+                if let Some(rule) = unknown.into_iter().next() {
+                    return Err(LintError::UnknownRule { rule });
+                }
+                Arc::clone(entry.insert(Arc::new(resolved)))
+            }
+        };
+        rules.insert(path.clone(), resolved);
+    }
+    let files = discovered.r;
+    let descriptions = discovered.description;
 
     let mut db = IncrementalDatabase::default();
     let mut tracked: HashMap<PathBuf, SourceFile> = HashMap::new();
@@ -259,8 +273,6 @@ pub fn check_paths_with_index(
         }
     }
 
-    let manifest = db.set_library_index(indexed);
-
     // Seed the explicit workspace file-set; `workspace_project` derives the
     // project snapshot from it, filtering to cleanly-parsing members and
     // reading each package's NAMESPACE — the same membership the inline build
@@ -315,51 +327,68 @@ pub fn check_paths_with_index(
     // only the fallback for rules that read static base-R facts (`is_base`).
     let fallback = default_symbol_provider();
 
-    let mut reports: Vec<LintFileReport> = files
-        .into_par_iter()
-        .map_with(db.clone(), |worker, path| {
-            let worker = &*worker;
-            let file = tracked[&path];
-            let (status, diagnostics) = if let Some(&count) = parse_errors.get(&path) {
-                // Parse errors block the rules but are still reported (not
-                // swallowed): surface the parser's side-channel diagnostics as
-                // findings.
-                let diagnostics = syntax_error_diagnostics(worker.parse_diagnostics(file), &path);
-                (LintStatus::ParseDiagnostics { count }, diagnostics)
-            } else {
-                let visibility = visible_symbols(worker, file);
-                let file_scope = visibility.scope();
-                let resolution = external_resolution(worker, manifest, file);
-                let package = package_facts_for(worker, &path);
-                let kept = lint_parsed_file(
-                    worker,
-                    file,
-                    &path,
-                    &rules,
-                    &fallback,
-                    &FileContext {
-                        project: Some(&file_scope),
-                        resolution: Some(resolution),
-                        package,
-                        topics: roxygen_topics_for(worker, &path),
-                    },
-                );
-                let status = if kept.is_empty() {
-                    LintStatus::Clean
+    let mut groups: HashMap<usize, (&Arc<IndexedProvider>, Vec<PathBuf>)> = HashMap::new();
+    for path in files {
+        let index = index_for(&path);
+        groups
+            .entry(std::ptr::from_ref(index) as usize)
+            .or_insert_with(|| (index, Vec::new()))
+            .1
+            .push(path);
+    }
+    let mut reports = Vec::new();
+    // The library index is a salsa singleton. Analyze one index group at a
+    // time, retaining the same workspace and graph across groups.
+    for (index, files) in groups.into_values() {
+        let manifest = db.set_library_index(index.clone());
+        let group_reports: Vec<LintFileReport> = files
+            .into_par_iter()
+            .map_with(db.clone(), |worker, path| {
+                let worker = &*worker;
+                let file = tracked[&path];
+                let (status, diagnostics) = if let Some(&count) = parse_errors.get(&path) {
+                    // Parse errors block the rules but are still reported (not
+                    // swallowed): surface the parser's side-channel diagnostics as
+                    // findings.
+                    let diagnostics =
+                        syntax_error_diagnostics(worker.parse_diagnostics(file), &path);
+                    (LintStatus::ParseDiagnostics { count }, diagnostics)
                 } else {
-                    LintStatus::Findings { count: kept.len() }
+                    let visibility = visible_symbols(worker, file);
+                    let file_scope = visibility.scope();
+                    let resolution = external_resolution(worker, manifest, file);
+                    let package = package_facts_for(worker, &path);
+                    let kept = lint_parsed_file(
+                        worker,
+                        file,
+                        &path,
+                        &rules[&path],
+                        &fallback,
+                        &FileContext {
+                            project: Some(&file_scope),
+                            resolution: Some(resolution),
+                            package,
+                            topics: roxygen_topics_for(worker, &path),
+                        },
+                    );
+                    let status = if kept.is_empty() {
+                        LintStatus::Clean
+                    } else {
+                        LintStatus::Findings { count: kept.len() }
+                    };
+                    (status, kept)
                 };
-                (status, kept)
-            };
-            let source = (!diagnostics.is_empty()).then(|| file.text(worker).clone());
-            LintFileReport {
-                path,
-                status,
-                diagnostics,
-                source,
-            }
-        })
-        .collect();
+                let source = (!diagnostics.is_empty()).then(|| file.text(worker).clone());
+                LintFileReport {
+                    path,
+                    status,
+                    diagnostics,
+                    source,
+                }
+            })
+            .collect();
+        reports.extend(group_reports);
+    }
 
     let description_count = description_sources.len();
     let description_reports: Vec<LintFileReport> = description_sources
@@ -369,7 +398,7 @@ pub fn check_paths_with_index(
             let usage = package_usage_for(worker, &path);
             let sources = path.parent().and_then(PackageSourceInventory::read);
             let (status, diagnostics) =
-                lint_description_source(&path, &content, &rules, usage, sources.as_ref());
+                lint_description_source(&path, &content, &rules[&path], usage, sources.as_ref());
             let source = (!diagnostics.is_empty()).then(|| Arc::<str>::from(content));
             LintFileReport {
                 path,

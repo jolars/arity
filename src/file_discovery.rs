@@ -128,6 +128,28 @@ impl ExcludeFilter {
         }
     }
 
+    /// Match a dynamically configured walk entry, retaining lexical matching
+    /// under the root and resolving aliases only when necessary.
+    pub(crate) fn excludes_entry(&self, path: &Path, is_dir: bool, explicit: bool) -> bool {
+        let canonical;
+        let path = if self.matcher.is_some()
+            && (!self.roots.iter().any(|root| path.starts_with(root))
+                || path
+                    .components()
+                    .any(|component| component == std::path::Component::ParentDir))
+        {
+            canonical = path.canonicalize().ok();
+            canonical.as_deref().unwrap_or(path)
+        } else {
+            path
+        };
+        if explicit {
+            self.force_excludes(path)
+        } else {
+            self.is_excluded(path, is_dir)
+        }
+    }
+
     fn is_excluded(&self, path: &Path, is_dir: bool) -> bool {
         match &self.matcher {
             Some(matcher) => matcher.matched(self.relativize(path), is_dir).is_ignore(),
@@ -242,15 +264,72 @@ fn collect(
     exclude: &ExcludeFilter,
     descriptions: bool,
 ) -> Result<DiscoveredFiles, FileDiscoveryError> {
+    let exclude = exclude.clone();
+    collect_filtered(paths, descriptions, move |root| {
+        let filter = exclude.clone();
+        let canonical_root = if filter.matcher.is_some()
+            && !filter.roots.iter().any(|known| root.starts_with(known))
+        {
+            root.canonicalize().ok()
+        } else {
+            None
+        };
+        let root = root.to_path_buf();
+        Box::new(move |path, is_dir, explicit| {
+            let normalized = canonical_root.as_ref().and_then(|canonical| {
+                path.strip_prefix(&root)
+                    .ok()
+                    .map(|relative| canonical.join(relative))
+            });
+            let path = normalized.as_deref().unwrap_or(path);
+            Ok(if explicit {
+                !filter.force_excludes(path)
+            } else {
+                !filter.is_excluded(path, is_dir)
+            })
+        })
+    })
+}
+
+type EntryFilter = Box<dyn Fn(&Path, bool, bool) -> Result<bool, String> + Send + Sync>;
+
+/// Discover source files with a per-entry filter. Directory entries are tested
+/// before descent, so rejected subtrees (including their configs) are not read.
+pub fn collect_source_files_filtered(
+    paths: &[PathBuf],
+    filter: impl Fn(&Path, bool, bool) -> Result<bool, String> + Send + Sync + 'static,
+) -> Result<DiscoveredFiles, FileDiscoveryError> {
+    let filter = std::sync::Arc::new(filter);
+    collect_filtered(paths, true, move |root| {
+        let filter = filter.clone();
+        let root = root.to_path_buf();
+        Box::new(move |path, is_dir, explicit| {
+            if is_dir && path == root {
+                return Ok(true);
+            }
+            filter(path, is_dir, explicit)
+        })
+    })
+}
+
+fn collect_filtered(
+    paths: &[PathBuf],
+    descriptions: bool,
+    make_filter: impl Fn(&Path) -> EntryFilter,
+) -> Result<DiscoveredFiles, FileDiscoveryError> {
     let mut files = Vec::new();
     let mut found_descriptions = Vec::new();
 
     for path in paths {
+        let filter = make_filter(path);
         if path.is_file() {
             // The force check runs before the extension check so that an
             // excluded non-R file (as a runner like pre-commit may stage) is
             // silently skipped rather than a hard error.
-            if exclude.force_excludes(path) {
+            if !filter(path, false, true).map_err(|message| FileDiscoveryError::WalkError {
+                path: path.clone(),
+                message,
+            })? {
                 continue;
             }
             if is_r_file(path) {
@@ -268,32 +347,18 @@ fn collect(
             let mut builder = WalkBuilder::new(path);
             builder.standard_filters(true);
             builder.hidden(false);
-            // Prune excluded entries during the walk so a matched directory
-            // (e.g. `renv/`) is never descended into, matching gitignore
-            // semantics. The filter is cloned into the `'static` closure.
-            let filter = exclude.clone();
-            // An input such as macOS's `/var/...` can alias the canonical
-            // pattern root. Resolve that spelling once for matching while
-            // keeping the walk's original paths for diagnostics. Paths already
-            // under a known root retain their lexical exclusion semantics.
-            let canonical_root = if filter.matcher.is_some()
-                && !filter.roots.iter().any(|root| path.starts_with(root))
-            {
-                path.canonicalize().ok()
-            } else {
-                None
-            };
-            let walk_root = path.clone();
+            let failure = std::sync::Arc::new(std::sync::Mutex::new(None));
+            let filter_failure = failure.clone();
             builder.filter_entry(move |entry| {
                 let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
-                let normalized = canonical_root.as_ref().and_then(|root| {
-                    entry
-                        .path()
-                        .strip_prefix(&walk_root)
-                        .ok()
-                        .map(|relative| root.join(relative))
-                });
-                !filter.is_excluded(normalized.as_deref().unwrap_or(entry.path()), is_dir)
+                match filter(entry.path(), is_dir, false) {
+                    Ok(include) => include,
+                    Err(message) => {
+                        *filter_failure.lock().unwrap() =
+                            Some((entry.path().to_path_buf(), message));
+                        false
+                    }
+                }
             });
             for entry in builder.build() {
                 match entry {
@@ -318,6 +383,9 @@ fn collect(
                         });
                     }
                 }
+            }
+            if let Some((path, message)) = failure.lock().unwrap().take() {
+                return Err(FileDiscoveryError::WalkError { path, message });
             }
             continue;
         }

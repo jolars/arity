@@ -1986,3 +1986,51 @@ fn defaults_to_utf16_and_reports_code_units() {
     assert_eq!(format_end_character(&mut h, doc_uri(), "x<-\"é\""), 6);
     h.shutdown();
 }
+
+#[test]
+fn nested_config_discovery_matches_cli_formatting_and_lint() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("R")).unwrap();
+    std::fs::write(
+        dir.path().join("arity.toml"),
+        "[format]\nindent-width = 3\n[lint]\nselect = [\"seq\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("R/arity.toml"),
+        "extend = \"../arity.toml\"\n[format]\nindent-width = 4\n[lint]\nignore = [\"seq\"]\n",
+    )
+    .unwrap();
+    let source = "if (TRUE) {\n1:length(x)\n}\n";
+    let mut h = Harness::start_push();
+    for path in ["root.R", "R/f.R"] {
+        let full_path = dir.path().join(path);
+        std::fs::write(&full_path, source).unwrap();
+        let uri = path_uri(&full_path);
+        h.did_open(&uri, source, 1);
+        let diagnostics = h.recv_publish_for(&uri, 1);
+        let cli_lint = std::process::Command::new(env!("CARGO_BIN_EXE_arity"))
+            .args(["lint", "--output", "json", path])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        if path == "root.R" {
+            assert_eq!(rules_in(&diagnostics), vec!["seq"]);
+            assert_eq!(cli_lint.status.code(), Some(1));
+            let findings: Value = serde_json::from_slice(&cli_lint.stdout).unwrap();
+            assert_eq!(findings.as_array().unwrap().len(), 1);
+        } else {
+            assert!(diagnostics.is_empty(), "{diagnostics:?}");
+            assert!(cli_lint.status.success(), "{cli_lint:?}");
+        }
+        let lsp_formatted = h.formatted_buffer(&uri, source);
+        let cli_format = std::process::Command::new(env!("CARGO_BIN_EXE_arity"))
+            .args(["format", path])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(cli_format.status.success(), "{cli_format:?}");
+        assert_eq!(std::fs::read_to_string(full_path).unwrap(), lsp_formatted);
+    }
+    h.shutdown();
+}

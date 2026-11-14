@@ -927,12 +927,12 @@ impl IncrementalDatabase {
     /// singleton's `data` field, at `Durability::HIGH`. The sole writer (CLI
     /// setup, the LSP lint thread) calls this; never a read snapshot. Leaves the
     /// `remote` sidecar field untouched. Returns the singleton input handle.
-    pub fn set_library_index(&mut self, indexed: IndexedProvider) -> LibraryIndex {
+    pub fn set_library_index(&mut self, indexed: impl Into<Arc<IndexedProvider>>) -> LibraryIndex {
         let index = self.library_index_or_empty();
         index
             .set_data(self)
             .with_durability(Durability::HIGH)
-            .to(Arc::new(indexed));
+            .to(indexed.into());
         index
     }
 

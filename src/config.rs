@@ -16,6 +16,9 @@ use serde::Deserialize;
 use crate::file_discovery::{ExcludeError, ExcludeFilter};
 use crate::formatter::{FormatStyle, LineEnding};
 
+mod resolver;
+pub use resolver::{DirectoryConfigs, ResolvedConfig};
+
 pub const CONFIG_FILE_NAME: &str = "arity.toml";
 
 /// The file selected by configuration resolution, if any.

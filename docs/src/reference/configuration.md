@@ -52,6 +52,10 @@ directory through its ancestors, stopping at the first `arity.toml` it finds or
 at a directory containing a `.git` entry (the repository root), whichever comes
 first.
 
+This applies to file arguments and recursive walks. Nested configs replace
+ancestor configs unless they use `extend`. Stdin uses the working directory,
+even with `--stdin-filename`.
+
 If no project config is found, arity loads the file named by the `ARITY_CONFIG`
 environment variable. This lets you keep a user config at a custom location,
 such as a synced drive. Project configs take precedence and replace the user
@@ -126,7 +130,13 @@ command line is always processed, even if it matches an exclude pattern. Pass
 `--force-exclude` (on `format` and `lint`) to apply the patterns to explicitly
 named files too---useful for runners like pre-commit that pass staged files as
 arguments. The CLI flag `--exclude <PATTERN>` (on `format` and `lint`) adds to
-the configured `exclude`/`extend-exclude` for a single run.
+the configured `exclude`/`extend-exclude` for a single run, anchored alongside
+those patterns.
+
+During directory walks, each directory's config controls its entries. Nested
+configs can change exclusions within their directories. Excluded directories are
+not searched, so configs inside them have no effect. Naming a directory
+explicitly starts a walk using that directory's nearest config.
 
 ```toml
 # Keep the built-in defaults and also skip these:

@@ -1054,3 +1054,569 @@ fn cli_cyclomatic_complexity_uses_configured_ceiling_without_fixing() {
         }
     }
 }
+
+const NESTED_INPUT: &str = "if (TRUE) {\nx<-1\n}\n";
+const NESTED_FOUR: &str = "if (TRUE) {\n    x <- 1\n}\n";
+
+#[test]
+fn cli_nested_config_direct_file_and_check() {
+    let dir = tempdir().unwrap();
+    fs::create_dir(dir.path().join("R")).unwrap();
+    fs::write(
+        dir.path().join("R/arity.toml"),
+        "[format]\nindent-width = 4\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("R/f.R"), NESTED_INPUT).unwrap();
+    let output = run_cli_in_no_stdin(dir.path(), ["format", "R/f.R"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("R/f.R")).unwrap(),
+        NESTED_FOUR
+    );
+    let output = run_cli_in_no_stdin(dir.path(), ["format", "--check", "R/f.R"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn cli_nested_configs_recursive_and_mixed_inputs() {
+    for args in [vec!["format", "."], vec!["format", "a/f.R", "b"]] {
+        let dir = tempdir().unwrap();
+        for (sub, indent) in [("a", 3), ("b", 4)] {
+            fs::create_dir(dir.path().join(sub)).unwrap();
+            fs::write(
+                dir.path().join(sub).join("arity.toml"),
+                format!("[format]\nindent-width = {indent}\n"),
+            )
+            .unwrap();
+            fs::write(dir.path().join(sub).join("f.R"), NESTED_INPUT).unwrap();
+        }
+        let output = Command::new(env!("CARGO_BIN_EXE_arity"))
+            .args(args)
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("b/f.R")).unwrap(),
+            NESTED_FOUR
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("a/f.R")).unwrap(),
+            "if (TRUE) {\n   x <- 1\n}\n"
+        );
+    }
+}
+
+#[test]
+fn cli_nested_lint_config_controls_reporting_and_fixes() {
+    let dir = tempdir().unwrap();
+    fs::create_dir(dir.path().join("R")).unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        "[lint]\nselect = [\"seq\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("R/arity.toml"),
+        "extend = \"../arity.toml\"\n[lint]\nignore = [\"seq\"]\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("R/f.R"), "1:length(x)\n").unwrap();
+    for args in [["lint", "R/f.R"], ["lint", "."]] {
+        let output = run_cli_in_no_stdin(dir.path(), args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let output = run_cli_in_no_stdin(dir.path(), ["lint", "--fix", "."]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("R/f.R")).unwrap(),
+        "1:length(x)\n"
+    );
+}
+
+#[test]
+fn cli_nested_excludes_stay_at_their_config_directory() {
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("R/generated")).unwrap();
+    fs::create_dir(dir.path().join("generated")).unwrap();
+    fs::write(
+        dir.path().join("R/arity.toml"),
+        "extend-exclude = [\"/generated/\"]\n",
+    )
+    .unwrap();
+    for path in ["R/generated/skip.R", "generated/keep.R", "R/keep.R"] {
+        fs::write(dir.path().join(path), "x<-1\n").unwrap();
+    }
+    let output = run_cli_in_no_stdin(dir.path(), ["format", "."]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("R/generated/skip.R")).unwrap(),
+        "x<-1\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("generated/keep.R")).unwrap(),
+        "x <- 1\n"
+    );
+}
+
+#[test]
+fn cli_nested_configs_preserve_forced_selection_and_cli_overrides() {
+    let dir = tempdir().unwrap();
+    fs::create_dir(dir.path().join("R")).unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        "[format]\nindent-width = 3\n[lint]\nselect = [\"seq\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("R/arity.toml"),
+        "[format]\nindent-width = 4\n[lint]\nignore = [\"seq\"]\n",
+    )
+    .unwrap();
+    for (flags, expected_indent) in [
+        (vec!["--config", "arity.toml"], 3),
+        (vec!["--no-config"], 2),
+        (vec!["--indent-width", "5"], 5),
+    ] {
+        fs::write(dir.path().join("R/f.R"), NESTED_INPUT).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_arity"))
+            .arg("format")
+            .args(flags)
+            .arg("R/f.R")
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("R/f.R")).unwrap(),
+            format!("if (TRUE) {{\n{}x <- 1\n}}\n", " ".repeat(expected_indent))
+        );
+    }
+    fs::write(dir.path().join("R/f.R"), "1:length(x)\n").unwrap();
+    for flags in [
+        vec!["--config", "arity.toml"],
+        vec!["--no-config"],
+        vec!["--select", "seq", "--ignore", "equals-na"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_arity"))
+            .arg("lint")
+            .args(flags)
+            .arg("R/f.R")
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains("seq"));
+    }
+}
+
+#[test]
+fn cli_nested_lint_mixed_configs_and_fixes_share_the_input_set() {
+    let dir = tempdir().unwrap();
+    for sub in ["a", "b"] {
+        fs::create_dir(dir.path().join(sub)).unwrap();
+    }
+    fs::write(
+        dir.path().join("arity.toml"),
+        "[lint]\nselect = [\"seq\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("b/arity.toml"),
+        "extend = \"../arity.toml\"\n[lint]\nignore = [\"seq\"]\n",
+    )
+    .unwrap();
+    for path in ["a/f.R", "b/f.R"] {
+        fs::write(dir.path().join(path), "1:length(x)\n").unwrap();
+    }
+    let output = run_cli_in_no_stdin(dir.path(), ["lint", "--output", "json", "a", "b/f.R"]);
+    assert_eq!(output.status.code(), Some(1));
+    let findings: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(findings.as_array().unwrap().len(), 1);
+    let output = run_cli_in_no_stdin(dir.path(), ["lint", "--fix", "."]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("a/f.R")).unwrap(),
+        "seq_along(x)\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("b/f.R")).unwrap(),
+        "1:length(x)\n"
+    );
+}
+
+#[test]
+fn cli_nested_exclusions_prune_before_loading_configs() {
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("R/skip")).unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        "extend-exclude = [\"/R/skip/\"]\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("R/skip/arity.toml"), "invalid TOML").unwrap();
+    fs::write(dir.path().join("R/skip/bad.R"), "x<-1\n").unwrap();
+    fs::write(dir.path().join("keep.R"), "print(1)\n").unwrap();
+    for command in ["format", "lint"] {
+        let output = run_cli_in_no_stdin(dir.path(), [command, "."]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    // A nested config replaces ancestor excludes once the directory is admitted.
+    fs::write(dir.path().join("R/arity.toml"), "exclude = []\n").unwrap();
+    let output = run_cli_in_no_stdin(dir.path(), ["format", "."]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("arity.toml"));
+}
+
+#[test]
+fn cli_nested_force_exclude_and_cli_exclude() {
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("R/generated")).unwrap();
+    fs::write(
+        dir.path().join("R/arity.toml"),
+        "extend-exclude = [\"/generated/\"]\n",
+    )
+    .unwrap();
+    for command in ["format", "lint"] {
+        fs::write(dir.path().join("R/generated/f.R"), "1:length(x)\n").unwrap();
+        let output =
+            run_cli_in_no_stdin(dir.path(), [command, "--force-exclude", "R/generated/f.R"]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("R/generated/f.R")).unwrap(),
+            "1:length(x)\n"
+        );
+    }
+    fs::write(dir.path().join("R/f.R"), "x<-1\n").unwrap();
+    fs::write(dir.path().join("R/keep.R"), "print(1)\n").unwrap();
+    let output = run_cli_in_no_stdin(dir.path(), ["format", "--exclude", "/f.R", "R"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("R/f.R")).unwrap(),
+        "x<-1\n"
+    );
+}
+
+#[test]
+fn cli_nested_env_fallback_extend_and_repository_boundary() {
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("outer/repo/R")).unwrap();
+    fs::create_dir(dir.path().join("outer/repo/.git")).unwrap();
+    fs::write(
+        dir.path().join("outer/arity.toml"),
+        "[format]\nindent-width = 8\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("fallback.toml"),
+        "[format]\nindent-width = 3\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("outer/repo/R/f.R"), NESTED_INPUT).unwrap();
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_arity"))
+            .args(["format", "outer/repo/R/f.R"])
+            .env("ARITY_CONFIG", "fallback.toml")
+            .current_dir(dir.path())
+            .output()
+            .unwrap()
+    };
+    let output = run();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("outer/repo/R/f.R")).unwrap(),
+        "if (TRUE) {\n   x <- 1\n}\n"
+    );
+    fs::write(
+        dir.path().join("outer/repo/R/arity.toml"),
+        "extend = \"../../../fallback.toml\"\n[format]\nindent-width = 4\n",
+    )
+    .unwrap();
+    let output = run();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("outer/repo/R/f.R")).unwrap(),
+        NESTED_FOUR
+    );
+}
+
+#[test]
+fn cli_nested_stdin_filename_keeps_cwd_discovery() {
+    let dir = tempdir().unwrap();
+    fs::create_dir(dir.path().join("R")).unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        "[format]\nindent-width = 3\n[lint]\nselect = [\"seq\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("R/arity.toml"),
+        "[format]\nindent-width = 4\n[lint]\nignore = [\"seq\"]\n",
+    )
+    .unwrap();
+    let output = run_cli_in(
+        dir.path(),
+        ["format", "--stdin-filename", "R/f.R", "-"],
+        NESTED_INPUT,
+    );
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "if (TRUE) {\n   x <- 1\n}\n"
+    );
+    let output = run_cli_in(
+        dir.path(),
+        ["lint", "--stdin-filename", "R/f.R", "-"],
+        "1:length(x)\n",
+    );
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn cli_nested_check_cache_uses_each_resolved_style() {
+    let dir = tempdir().unwrap();
+    fs::create_dir(dir.path().join("R")).unwrap();
+    fs::write(
+        dir.path().join("R/arity.toml"),
+        "[format]\nindent-width = 4\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("root.R"), "if (TRUE) {\n  x <- 1\n}\n").unwrap();
+    fs::write(dir.path().join("R/f.R"), NESTED_FOUR).unwrap();
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_arity"))
+            .args(["format", "--check", "."])
+            .env("ARITY_CACHE_DIR", dir.path().join("cache"))
+            .current_dir(dir.path())
+            .output()
+            .unwrap()
+    };
+    for _ in 0..2 {
+        let output = run();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+    if !cfg!(debug_assertions) {
+        let version_dir = dir
+            .path()
+            .join("cache/format")
+            .join(env!("CARGO_PKG_VERSION"));
+        assert_eq!(
+            fs::read_dir(version_dir).unwrap().count(),
+            2,
+            "release checks must persist separate cache files for both styles"
+        );
+    }
+    // These bytes were cached under the nested style. They are dirty at root.
+    fs::write(dir.path().join("root.R"), NESTED_FOUR).unwrap();
+    let output = run();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("root.R"));
+}
+
+#[test]
+fn cli_nested_lint_exclusions_govern_reporting_and_fixes() {
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("R/generated")).unwrap();
+    fs::create_dir(dir.path().join("generated")).unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        "[lint]\nselect = [\"seq\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("R/arity.toml"),
+        "extend = \"../arity.toml\"\nextend-exclude = [\"/generated/\"]\n",
+    )
+    .unwrap();
+    for path in ["R/generated/skip.R", "generated/keep.R"] {
+        fs::write(dir.path().join(path), "1:length(x)\n").unwrap();
+    }
+    let output = run_cli_in_no_stdin(dir.path(), ["lint", "--output", "json", "."]);
+    assert_eq!(output.status.code(), Some(1));
+    let findings: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(findings.as_array().unwrap().len(), 1);
+    let output = run_cli_in_no_stdin(dir.path(), ["lint", "--fix", "."]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("R/generated/skip.R")).unwrap(),
+        "1:length(x)\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("generated/keep.R")).unwrap(),
+        "seq_along(x)\n"
+    );
+}
+
+#[test]
+fn cli_nested_lint_configs_preserve_cross_file_resolution() {
+    let dir = tempdir().unwrap();
+    fs::create_dir(dir.path().join("R")).unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        "[lint]\nselect = [\"unused-binding\", \"undefined-symbol\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("R/arity.toml"),
+        "extend = \"../arity.toml\"\n[format]\nindent-width = 4\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("R/helper.R"), "foo <- function() 42L\n").unwrap();
+    fs::write(
+        dir.path().join("main.R"),
+        "source(\"R/helper.R\")\nprint(foo())\n",
+    )
+    .unwrap();
+    let output = run_cli_in_no_stdin(dir.path(), ["lint", "."]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn cli_nested_lint_configs_use_their_own_package_index() {
+    use arity::rindex::cache::Cache;
+    use arity::rindex::schema::{PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind};
+
+    let dir = tempdir().unwrap();
+    for (sub, name) in [("a", "from_a"), ("b", "from_b")] {
+        fs::create_dir(dir.path().join(sub)).unwrap();
+        let cache_root = dir.path().join(sub).join("cache");
+        Cache::new(cache_root.clone())
+            .write_package(&PackageIndex {
+                schema_version: SCHEMA_VERSION,
+                package: "configfixture".into(),
+                version: "1.0".into(),
+                lib_path: String::new(),
+                title: None,
+                r_version: None,
+                harvested_at: 0,
+                attaches: Vec::new(),
+                symbols: vec![SymbolEntry {
+                    name: name.into(),
+                    kind: SymbolKind::Function,
+                    exported: true,
+                    formals: None,
+                    help: None,
+                }],
+            })
+            .unwrap();
+        fs::write(
+            dir.path().join(sub).join("arity.toml"),
+            format!(
+                "[lint]\nselect = [\"undefined-symbol\"]\n[index]\ncache-dir = {:?}\n",
+                cache_root.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(sub).join("f.R"),
+            format!("library(configfixture)\nprint({name}())\n"),
+        )
+        .unwrap();
+    }
+    let output = run_cli_in_no_stdin(dir.path(), ["lint", "."]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::write(
+        dir.path().join("a/f.R"),
+        "library(configfixture)\nprint(from_b())\n",
+    )
+    .unwrap();
+    let output = run_cli_in_no_stdin(dir.path(), ["lint", "--output", "json", "."]);
+    assert_eq!(output.status.code(), Some(1));
+    let findings: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(findings.as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn cli_nested_exclusions_do_not_hide_invalid_cli_overrides() {
+    let dir = tempdir().unwrap();
+    fs::create_dir(dir.path().join("R")).unwrap();
+    fs::write(dir.path().join("R/arity.toml"), "exclude = [\"f.R\"]\n").unwrap();
+    fs::write(dir.path().join("R/f.R"), "print(1)\n").unwrap();
+    for args in [
+        ["format", "--force-exclude", "--indent-width", "0", "R/f.R"],
+        [
+            "lint",
+            "--force-exclude",
+            "--select",
+            "does-not-exist",
+            "R/f.R",
+        ],
+    ] {
+        let output = run_cli_in_no_stdin(dir.path(), args);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+    }
+}

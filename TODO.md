@@ -35,21 +35,8 @@ output and semantic noise. Rule coverage and style options follow those fixes.
   checks. Three existing fixture layouts also become more compact because their
   call prefixes can hug the function's opening brace.
 
-- [ ] Make CLI config discovery match the documented per-file contract (feedback
-  2). `run_format` and `run_lint` currently resolve one config from
-  `cwd_anchor()` before walking files. With only `R/arity.toml` containing
-  `[format] indent-width = 4`, running `arity format R/f.R` from the root
-  uses two spaces; running from `R/` or passing `--config R/arity.toml` uses
-  four. A nested `[lint] ignore = ["seq"]` is likewise ignored from the
-  root. Resolve/cache configs per input directory and honor nested configs
-  during recursive walks. Define how nested exclusions govern discovery,
-  keep their patterns anchored to their config, and include each resolved
-  style in format cache keys. Preserve explicit `--config`/`--no-config`,
-  CLI overrides, `ARITY_CONFIG`, `extend`, repository boundaries, and
-  cwd-based stdin behavior. Add CLI tests for direct files, mixed
-  directories, recursive walks, lint, format checks, and fixes; verify
-  parity with LSP discovery. Audit the README and configuration docs
-  together with the implementation.
+- [x] Resolve CLI configuration per file, including recursive walks, with
+  nested exclusions and style-specific format caches.
 
 - [ ] Emit `[]` for clean `lint --output json` runs (feedback 6). Confirmed for
   both `arity lint --no-config --select seq --output json clean.R` with

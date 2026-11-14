@@ -1,12 +1,15 @@
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use arity::cli::{Cli, ColorChoice, Commands, LintOutput};
-use arity::config::{Config, ConfigError, ConfigSource, LintConfig};
-use arity::file_discovery::{ExcludeFilter, collect_r_files};
+use arity::config::{
+    Config, ConfigError, ConfigSource, DirectoryConfigs, LintConfig, ResolvedConfig,
+};
+use arity::file_discovery::ExcludeFilter;
 use arity::formatter::{
     FormatCache, FormatStyle, Formatted, check_paths_with_style_cached,
     format_description_with_style, format_file, format_file_verified, format_verified_with_options,
@@ -447,34 +450,22 @@ fn format_style_with_overrides(
     Ok(FormatStyle::from(&format))
 }
 
-/// The persistent-cache settings resolved from config for the `format` command.
-/// `enabled` reflects the config `cache` key (before the `--no-cache` override);
-/// `dir` is the optional `[index] cache-dir` override.
-struct FormatCacheSetup {
-    enabled: bool,
-    dir: Option<PathBuf>,
-}
-
 /// Everything the `format` command resolves from one config load.
 struct FormatSetup {
     style: FormatStyle,
-    exclude: ExcludeFilter,
-    cache: FormatCacheSetup,
     /// The `[format] description` key: whether a package `DESCRIPTION` is one of
     /// the files this run is about.
     descriptions: bool,
 }
 
-/// Resolve the formatter style, exclude filter, cache settings, and grammar
-/// scope for the `format` command from a single config load. Prints and returns
+/// Resolve the stdin formatter style and grammar scope from the cwd config. Prints and returns
 /// an exit code on error.
 fn resolve_format_setup(
     source: &ConfigOptions,
     overrides: &FormatOverrides,
-    cli_excludes: &[String],
     anchor: &Path,
 ) -> Result<FormatSetup, ExitCode> {
-    let (config, resolved_source) = load_config_with_source(source, anchor).map_err(|err| {
+    let (config, _) = load_config_with_source(source, anchor).map_err(|err| {
         eprintln!("error: {err}");
         ExitCode::from(2)
     })?;
@@ -482,15 +473,8 @@ fn resolve_format_setup(
         eprintln!("error: {err}");
         ExitCode::from(2)
     })?;
-    let exclude = build_exclude_filter(&config, &resolved_source, anchor, cli_excludes)?;
-    let cache = FormatCacheSetup {
-        enabled: config.cache,
-        dir: config.index.cache_dir.clone(),
-    };
     Ok(FormatSetup {
         style,
-        exclude,
-        cache,
         descriptions: config.format.description,
     })
 }
@@ -663,6 +647,175 @@ const CACHE_SUPPORTED: bool = false;
 #[cfg(not(debug_assertions))]
 const CACHE_SUPPORTED: bool = true;
 
+type FileConfigs = HashMap<PathBuf, Arc<ResolvedConfig>>;
+
+/// Discover once, then retain the exact selected config for both processing
+/// passes. The walker prunes exclusions before it ever loads child configs.
+fn discover_configured(
+    paths: &[PathBuf],
+    source: &ConfigOptions,
+    excludes: &ExcludeOptions,
+    anchor: &Path,
+) -> Result<
+    (arity::file_discovery::DiscoveredFiles, FileConfigs),
+    arity::file_discovery::FileDiscoveryError,
+> {
+    let resolver = Arc::new(Mutex::new(DirectoryConfigs::new(
+        anchor.to_path_buf(),
+        source.explicit.clone(),
+        source.no_config,
+        excludes.patterns.clone(),
+        excludes.force,
+    )));
+    let walk_resolver = resolver.clone();
+    let cwd = anchor.to_path_buf();
+    let files = arity::file_discovery::collect_source_files_filtered(
+        paths,
+        move |path, is_dir, explicit| {
+            let absolute = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                cwd.join(path)
+            };
+            walk_resolver
+                .lock()
+                .unwrap()
+                .includes(&absolute, is_dir, explicit)
+        },
+    )?;
+    let mut configs = HashMap::new();
+    let mut resolver = resolver.lock().unwrap();
+    for path in files.r.iter().chain(&files.description) {
+        let directory = path.parent().unwrap_or(anchor);
+        let resolved = resolver.resolve(directory).map_err(|message| {
+            arity::file_discovery::FileDiscoveryError::WalkError {
+                path: directory.to_path_buf(),
+                message,
+            }
+        })?;
+        configs.insert(path.clone(), resolved);
+    }
+    Ok((files, configs))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_format_files(
+    paths: &[PathBuf],
+    modes: FormatModes,
+    overrides: &FormatOverrides,
+    excludes: &ExcludeOptions,
+    source: &ConfigOptions,
+    anchor: &Path,
+    out: OutputOptions,
+) -> ExitCode {
+    if modes.check && modes.verify {
+        eprintln!("error: --verify cannot be combined with --check");
+        return ExitCode::from(2);
+    }
+    // Invalid flags remain errors even when exclusions leave no files.
+    if let Err(err) = format_style_with_overrides(&Config::default(), overrides) {
+        eprintln!("error: {err}");
+        return ExitCode::from(2);
+    }
+    let (mut discovered, configs) = match discover_configured(paths, source, excludes, anchor) {
+        Ok(files) => files,
+        Err(arity::file_discovery::FileDiscoveryError::UnsupportedFilePath { path })
+            if !modes.check =>
+        {
+            eprintln!(
+                "error: input file {} is not formattable; format supports .R files and DESCRIPTION",
+                path.display()
+            );
+            return ExitCode::from(2);
+        }
+        Err(err) => return run_format_check(Err(err.into()), out),
+    };
+    // Explicit DESCRIPTION requests retain the existing refusal when formatting
+    // is disabled. Walked descriptions are simply outside the formatter scope.
+    for path in &discovered.description {
+        if !configs[path].config.format.description && paths.contains(path) {
+            eprintln!(
+                "error: input file {} is not formattable (DESCRIPTION formatting is off: `[format] description = false`)",
+                path.display()
+            );
+            return ExitCode::from(2);
+        }
+    }
+    discovered
+        .description
+        .retain(|path| configs[path].config.format.description);
+    let files = arity::formatter::merge(discovered);
+    if files.is_empty() {
+        if excludes.force {
+            return ExitCode::SUCCESS;
+        }
+        eprintln!("error: no .R files or DESCRIPTION files found under the provided input paths");
+        return ExitCode::from(2);
+    }
+    let mut styles = HashMap::new();
+    let mut groups: HashMap<usize, (Arc<ResolvedConfig>, Vec<PathBuf>)> = HashMap::new();
+    for path in &files {
+        let resolved = &configs[path];
+        let style = match format_style_with_overrides(&resolved.config, overrides) {
+            Ok(style) => style,
+            Err(err) => {
+                eprintln!("error: {err}");
+                return ExitCode::from(2);
+            }
+        };
+        styles.insert(path.clone(), style);
+        groups
+            .entry(Arc::as_ptr(resolved) as usize)
+            .or_insert_with(|| (resolved.clone(), Vec::new()))
+            .1
+            .push(path.clone());
+    }
+    if !modes.check {
+        return run_format_write_paths(&files, modes.verify, &styles, out);
+    }
+    let mut combined = arity::formatter::CheckResult {
+        checked_files: 0,
+        changed_files: Vec::new(),
+        outdated_directives: Vec::new(),
+        failed_files: Vec::new(),
+        skipped: Vec::new(),
+    };
+    for (resolved, group) in groups.into_values() {
+        let style = styles[&group[0]];
+        // Each group loads the cache for its resolved style, including CLI
+        // overrides, so identical bytes under different styles cannot collide.
+        let mut cache = (resolved.config.cache && !modes.no_cache && CACHE_SUPPORTED)
+            .then(|| resolve_cache_root(None, resolved.config.index.cache_dir.as_deref()).ok())
+            .flatten()
+            .map(|root| FormatCache::load(&root, &style));
+        match check_paths_with_style_cached(
+            &group,
+            style,
+            &ExcludeFilter::none(),
+            true,
+            cache.as_mut(),
+        ) {
+            Ok(result) => {
+                combined.checked_files += result.checked_files;
+                combined.changed_files.extend(result.changed_files);
+                combined
+                    .outdated_directives
+                    .extend(result.outdated_directives);
+                combined.failed_files.extend(result.failed_files);
+                combined.skipped.extend(result.skipped);
+            }
+            Err(err) => return run_format_check(Err(err), out),
+        }
+    }
+    combined.changed_files.sort_by(|a, b| a.path.cmp(&b.path));
+    combined
+        .outdated_directives
+        .sort_by(|a, b| (&a.path, a.line, a.column).cmp(&(&b.path, b.line, b.column)));
+    combined.failed_files.sort_by(|a, b| a.path.cmp(&b.path));
+    combined.skipped.sort();
+    run_format_check(Ok(combined), out)
+}
+
 fn run_format(
     paths: Vec<PathBuf>,
     stdin_filename: Option<PathBuf>,
@@ -676,17 +829,25 @@ fn run_format(
         Ok(anchor) => anchor,
         Err(code) => return code,
     };
-    let setup = match resolve_format_setup(config_source, &overrides, &excludes.patterns, &anchor) {
+    if !paths.is_empty() && !paths.iter().any(|path| is_stdin_path(path)) {
+        return run_format_files(
+            &paths,
+            modes,
+            &overrides,
+            &excludes,
+            config_source,
+            &anchor,
+            out,
+        );
+    }
+    let setup = match resolve_format_setup(config_source, &overrides, &anchor) {
         Ok(setup) => setup,
         Err(code) => return code,
     };
     let FormatSetup {
         style,
-        exclude,
-        cache: cache_setup,
         descriptions,
     } = setup;
-    let exclude = exclude.with_force_exclude(excludes.force);
 
     if modes.check {
         if modes.verify {
@@ -702,72 +863,56 @@ fn run_format(
                 "`--check` reports on files and cannot read from stdin",
             );
         }
-        let cache_enabled = cache_setup.enabled && !modes.no_cache && CACHE_SUPPORTED;
-        return run_format_check(
-            &paths,
-            style,
-            &exclude,
-            descriptions,
-            cache_enabled,
-            cache_setup.dir,
-            out,
-        );
+        return run_format_check(Err(arity::formatter::CheckError::MissingPaths), out);
     }
 
-    let paths = match inputs_or_exit(&paths, "format", FORMAT_MISSING_INPUT) {
-        Inputs::Stdin => None,
-        Inputs::Paths(paths) => Some(paths),
-    };
-    let Some(paths) = paths else {
-        let input = match read_input(None) {
-            Ok(input) => input,
-            Err(err) => {
-                eprintln!("error: {err}");
-                return ExitCode::from(2);
-            }
-        };
-
-        // A buffer with no path is R unless `--stdin-filename` says otherwise.
-        // Without that flag, `cat DESCRIPTION | arity format -` would reflow DCF
-        // as R — the one door into the formatter with no path to classify on.
-        if stdin_filename
-            .as_deref()
-            .is_some_and(arity::file_discovery::is_description_file)
-        {
-            // `[format] description = false` reaches stdin too. Falling through
-            // would reflow DCF as R, which is the corruption the key exists to
-            // prevent, and stdin is the shape an editor or pre-commit hook uses
-            // — the integrations most likely to need the off switch.
-            if !descriptions {
-                print!("{input}");
-                return ExitCode::SUCCESS;
-            }
-            return format_description_stdin(&input, style, modes.verify);
+    inputs_or_exit(&paths, "format", FORMAT_MISSING_INPUT);
+    let input = match read_input(None) {
+        Ok(input) => input,
+        Err(err) => {
+            eprintln!("error: {err}");
+            return ExitCode::from(2);
         }
-
-        // Stdin carries no path; resolve the package-wide roxygen markdown
-        // default from the working directory, the same anchor config
-        // discovery uses.
-        let options = ParseOptions::default().with_roxygen_markdown_default(
-            arity::project::description::roxygen_markdown_default_for_dir(&anchor),
-        );
-        let formatted = match if modes.verify {
-            format_verified_with_options(&input, style, &options).map_err(|err| err.to_string())
-        } else {
-            format_with_options(&input, style, &options).map_err(|err| err.to_string())
-        } {
-            Ok(formatted) => formatted,
-            Err(err) => {
-                eprintln!("error: {err}");
-                return ExitCode::from(1);
-            }
-        };
-
-        print!("{formatted}");
-        return ExitCode::SUCCESS;
     };
 
-    run_format_write_paths(paths, modes.verify, style, &exclude, descriptions, out)
+    // A buffer with no path is R unless `--stdin-filename` says otherwise.
+    // Without that flag, `cat DESCRIPTION | arity format -` would reflow DCF
+    // as R — the one door into the formatter with no path to classify on.
+    if stdin_filename
+        .as_deref()
+        .is_some_and(arity::file_discovery::is_description_file)
+    {
+        // `[format] description = false` reaches stdin too. Falling through
+        // would reflow DCF as R, which is the corruption the key exists to
+        // prevent, and stdin is the shape an editor or pre-commit hook uses
+        // — the integrations most likely to need the off switch.
+        if !descriptions {
+            print!("{input}");
+            return ExitCode::SUCCESS;
+        }
+        return format_description_stdin(&input, style, modes.verify);
+    }
+
+    // Stdin carries no path; resolve the package-wide roxygen markdown
+    // default from the working directory, the same anchor config
+    // discovery uses.
+    let options = ParseOptions::default().with_roxygen_markdown_default(
+        arity::project::description::roxygen_markdown_default_for_dir(&anchor),
+    );
+    let formatted = match if modes.verify {
+        format_verified_with_options(&input, style, &options).map_err(|err| err.to_string())
+    } else {
+        format_with_options(&input, style, &options).map_err(|err| err.to_string())
+    } {
+        Ok(formatted) => formatted,
+        Err(err) => {
+            eprintln!("error: {err}");
+            return ExitCode::from(1);
+        }
+    };
+
+    print!("{formatted}");
+    ExitCode::SUCCESS
 }
 
 /// The stdin path for a buffer `--stdin-filename` identified as a
@@ -807,24 +952,11 @@ fn format_description_stdin(input: &str, style: FormatStyle, verify: bool) -> Ex
     ExitCode::SUCCESS
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_format_check(
-    paths: &[PathBuf],
-    style: FormatStyle,
-    exclude: &ExcludeFilter,
-    descriptions: bool,
-    cache_enabled: bool,
-    cache_dir: Option<PathBuf>,
+    result: Result<arity::formatter::CheckResult, arity::formatter::CheckError>,
     out: OutputOptions,
 ) -> ExitCode {
-    // Load the persistent already-formatted cache when enabled and a cache root
-    // is resolvable; an unresolvable root just skips caching (never an error).
-    let mut cache = cache_enabled
-        .then(|| resolve_cache_root(None, cache_dir.as_deref()).ok())
-        .flatten()
-        .map(|root| FormatCache::load(&root, &style));
-
-    match check_paths_with_style_cached(paths, style, exclude, descriptions, cache.as_mut()) {
+    match result {
         Ok(result) => {
             report_unchecked(&result.failed_files, &result.skipped, out.quiet);
             if result.changed_files.is_empty() && result.outdated_directives.is_empty() {
@@ -899,51 +1031,11 @@ fn report_unchecked(failed: &[arity::formatter::FailedFile], skipped: &[PathBuf]
 }
 
 fn run_format_write_paths(
-    paths: &[PathBuf],
+    files: &[PathBuf],
     verify: bool,
-    style: FormatStyle,
-    exclude: &ExcludeFilter,
-    descriptions: bool,
+    styles: &HashMap<PathBuf, FormatStyle>,
     out: OutputOptions,
 ) -> ExitCode {
-    let discovered = if descriptions {
-        arity::file_discovery::collect_source_files(paths, exclude)
-    } else {
-        arity::file_discovery::collect_r_files(paths, exclude).map(|r| {
-            arity::file_discovery::DiscoveredFiles {
-                r,
-                description: Vec::new(),
-            }
-        })
-    };
-    let files = match discovered {
-        Ok(files) => arity::formatter::merge(files),
-        Err(arity::file_discovery::FileDiscoveryError::UnsupportedFilePath { path }) => {
-            eprint!(
-                "error: input file {} is not formattable; format supports .R files and DESCRIPTION",
-                path.display()
-            );
-            if !descriptions && arity::file_discovery::is_description_file(&path) {
-                eprint!(" (DESCRIPTION formatting is off: `[format] description = false`)");
-            }
-            eprintln!();
-            return ExitCode::from(2);
-        }
-        Err(arity::file_discovery::FileDiscoveryError::WalkError { path, message }) => {
-            eprintln!("error: failed while scanning {}: {message}", path.display());
-            return ExitCode::from(2);
-        }
-    };
-    if files.is_empty() {
-        // Under --force-exclude every named file may be excluded; that is an
-        // expected clean no-op, not a usage error.
-        if exclude.force() {
-            return ExitCode::SUCCESS;
-        }
-        eprintln!("error: no .R files or DESCRIPTION files found under the provided input paths");
-        return ExitCode::from(2);
-    }
-
     let total = files.len();
     let mut reformatted_count = 0usize;
     // A per-file problem is reported and the walk carries on. Returning here
@@ -953,7 +1045,8 @@ fn run_format_write_paths(
     let mut failed = 0usize;
     let mut markdown = arity::project::description::MarkdownDefaultResolver::new();
     for path in files {
-        let input = match fs::read_to_string(&path) {
+        let style = styles[path];
+        let input = match fs::read_to_string(path) {
             Ok(input) => input,
             // Not UTF-8: skipped, the same answer `arity lint` gives.
             Err(err) if err.kind() == io::ErrorKind::InvalidData => {
@@ -972,9 +1065,9 @@ fn run_format_write_paths(
             }
         };
         let formatted = match if verify {
-            format_file_verified(&path, &input, style, &mut markdown)
+            format_file_verified(path, &input, style, &mut markdown)
         } else {
-            format_file(&path, &input, style, &mut markdown)
+            format_file(path, &input, style, &mut markdown)
         } {
             Ok(Formatted::Text(formatted)) => formatted,
             Ok(Formatted::Declined(reason)) => {
@@ -993,7 +1086,7 @@ fn run_format_write_paths(
             continue;
         }
         if formatted != input {
-            if let Err(err) = fs::write(&path, formatted) {
+            if let Err(err) = fs::write(path, formatted) {
                 eprintln!("error: failed to write {}: {err}", path.display());
                 failed += 1;
                 continue;
@@ -1043,46 +1136,79 @@ fn run_lint(
         Ok(anchor) => anchor,
         Err(code) => return code,
     };
-    let (mut config, resolved_source) = match load_config_with_source(config_source, &anchor) {
-        Ok(loaded) => loaded,
-        Err(err) => {
-            eprintln!("error: {err}");
-            return ExitCode::from(2);
-        }
-    };
-
-    // CLI flags override the configured rule selection when provided.
-    if !overrides.select.is_empty() {
-        config.lint.select = Some(overrides.select);
-    }
-    config.lint.extend_select.extend(overrides.extend_select);
-    if !overrides.ignore.is_empty() {
-        config.lint.ignore = overrides.ignore;
-    }
-
-    // No paths (or `-`): lint a single document read from stdin.
     let paths = match inputs_or_exit(&paths, "lint", LINT_MISSING_INPUT) {
         Inputs::Stdin => {
+            let (mut config, _) = match load_config_with_source(config_source, &anchor) {
+                Ok(config) => config,
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    return ExitCode::from(2);
+                }
+            };
+            apply_lint_overrides(&mut config.lint, &overrides);
             return run_lint_stdin(&config.lint, fix_opts, stdin_filename, output, out);
         }
         Inputs::Paths(paths) => paths,
     };
-
-    let exclude = match build_exclude_filter(&config, &resolved_source, &anchor, &excludes.patterns)
+    let mut cli_config = LintConfig::default();
+    apply_lint_overrides(&mut cli_config, &overrides);
+    let (_, unknown) = arity::linter::rules::ResolvedRules::resolve(&cli_config);
+    if let Some(rule) = unknown.into_iter().next() {
+        eprintln!("error: {}", arity::linter::LintError::UnknownRule { rule });
+        return ExitCode::from(2);
+    }
+    let (discovered, configs) = match discover_configured(paths, config_source, &excludes, &anchor)
     {
-        Ok(exclude) => exclude.with_force_exclude(excludes.force),
-        Err(code) => return code,
+        Ok(files) => files,
+        Err(err) => {
+            eprintln!("error: {}", arity::linter::LintError::from(err));
+            return ExitCode::from(2);
+        }
     };
-
+    if discovered.r.is_empty() && discovered.description.is_empty() && !excludes.force {
+        eprintln!("error: {}", arity::linter::LintError::NoFiles);
+        return ExitCode::from(2);
+    }
+    let mut lint_configs = HashMap::new();
+    for resolved in configs.values() {
+        let key = Arc::as_ptr(resolved) as usize;
+        if lint_configs.contains_key(&key) {
+            continue;
+        }
+        let mut config = resolved.config.lint.clone();
+        apply_lint_overrides(&mut config, &overrides);
+        let (_, unknown) = arity::linter::rules::ResolvedRules::resolve(&config);
+        if let Some(rule) = unknown.first() {
+            eprintln!(
+                "error: {}",
+                arity::linter::LintError::UnknownRule { rule: rule.clone() }
+            );
+            return ExitCode::from(2);
+        }
+        lint_configs.insert(key, config);
+    }
     if fix_opts.fix
-        && let Some(code) =
-            apply_fixes_to_paths(paths, &config, fix_opts.unsafe_fixes, &exclude, out)
+        && let Some(code) = apply_fixes_to_paths(
+            &discovered.r,
+            &configs,
+            &lint_configs,
+            fix_opts.unsafe_fixes,
+            out,
+        )
     {
         return code;
     }
-
-    let index = lint_index(&config);
-    match arity::linter::check_paths_with_index(paths, &config.lint, &exclude, index) {
+    let mut indexes = HashMap::new();
+    for resolved in configs.values() {
+        indexes
+            .entry(resolved.config.index.cache_dir.clone())
+            .or_insert_with(|| Arc::new(lint_index(&resolved.config)));
+    }
+    match arity::linter::check::check_files_with_configs(
+        discovered,
+        &|path| &lint_configs[&(Arc::as_ptr(&configs[path]) as usize)],
+        &|path| &indexes[&configs[path].config.index.cache_dir],
+    ) {
         Ok(result) => {
             // Files that couldn't be decoded as UTF-8 are skipped rather than
             // aborting the run; warn about each so they aren't silently ignored.
@@ -1135,35 +1261,36 @@ fn run_lint(
     }
 }
 
-/// Discover `.R` files under `paths` and apply autofixes in place. Returns
-/// `Some(exit_code)` only on a hard error (discovery / IO); on success returns
-/// `None` so the caller falls through to the normal reporting pass.
-///
-/// Deliberately `collect_r_files`, not `collect_source_files`: no `DESCRIPTION`
-/// rule ships a fix, and reading one here would only invite feeding it to the R
-/// parser. The day a DCF fix lands, this has to widen.
+fn apply_lint_overrides(config: &mut LintConfig, overrides: &LintOverrides) {
+    if !overrides.select.is_empty() {
+        config.select = Some(overrides.select.clone());
+    }
+    config
+        .extend_select
+        .extend(overrides.extend_select.iter().cloned());
+    if !overrides.ignore.is_empty() {
+        config.ignore = overrides.ignore.clone();
+    }
+}
+
+/// Apply fixes to the same discovered set used by the reporting pass.
 fn apply_fixes_to_paths(
-    paths: &[PathBuf],
-    config: &Config,
+    files: &[PathBuf],
+    configs: &FileConfigs,
+    lint_configs: &HashMap<usize, LintConfig>,
     include_unsafe: bool,
-    exclude: &ExcludeFilter,
     out: OutputOptions,
 ) -> Option<ExitCode> {
-    let files = match collect_r_files(paths, exclude) {
-        Ok(files) => files,
-        Err(err) => {
-            eprintln!("error: {}", arity::linter::LintError::from(err));
-            return Some(ExitCode::from(2));
-        }
-    };
-    // The fix loop must see the same cross-file scope the reporting pass does.
-    // On the single-file path a NAMESPACE export or a sibling's call is
-    // invisible, so every top-level binding reads as unused and `--unsafe-fixes`
-    // deletes the package.
-    let provider = CompositeProvider::with_index(lint_index(config));
     let mut db = IncrementalDatabase::default();
     for path in files {
-        match fix_file(&mut db, &provider, &path, &config.lint, include_unsafe) {
+        let provider = CompositeProvider::with_index(lint_index(&configs[path].config));
+        match fix_file(
+            &mut db,
+            &provider,
+            path,
+            &lint_configs[&(Arc::as_ptr(&configs[path]) as usize)],
+            include_unsafe,
+        ) {
             Ok(0) => {}
             Ok(n) => {
                 if !out.quiet {
