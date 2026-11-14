@@ -14,9 +14,9 @@ comparisons with Air, Jarl, and lintr were not remeasured.
 Prioritize formatter idempotence and config discovery, then machine-readable
 output and semantic noise. Rule coverage and style options follow those fixes.
 
-- [ ] Fix the confirmed formatter idempotence failure (feedback 1). At width 80
-  and indent 2, this input expands the outer `lapply()` on pass one and hugs
-  its arguments on pass two; `format --verify` rejects it:
+- [x] Fix the formatter idempotence failure (feedback 1). Previously, at width
+  80 and indent 2, this input expanded the outer `lapply()` on pass one and
+  hugged its arguments on pass two; `format --verify` rejected it:
 
   ```r
   saved <- lapply(fields, function(name) {
@@ -25,15 +25,15 @@ output and semantic noise. Rule coverage and style options follow those fixes.
   })
   ```
 
-  The inner `if` acquires braces on pass one. Investigate how that changes
-  `try_flatten_function_block`, `function_body_choice`, and the enclosing call's
-  hug fit in `formatter/rules/functions.rs` and `expressions.rs`. The likely
-  cause is a different IR choice once the generated braces become CST, rather
-  than preserved input whitespace. Add a registered formatter fixture that fails
-  before the fix, plus width-80/100/120 and indent-2/4 coverage. Require
-  one-pass idempotence, losslessness, and syntax/comment verification. This
-  exact reduced input already passes at width 100/indent 2 and 120/indent 4. Fix
-  candidate selection in native IR, without repeated formatting passes.
+  The inner `if` acquired braces on pass one, changing the function's IR on pass
+  two. `Ir::FlatChoice` now exposes the function's braced fallback to the
+  enclosing call's hug measurement, so the call chooses the stable layout
+  immediately. No repeated formatting pass is needed. The registered
+  `call_trailing_function_conditional_body` fixture pins the output; a style
+  matrix covers widths 80/100/120 and indents 2/4, including lambdas and
+  comments, with losslessness, syntax/comment preservation, and idempotence
+  checks. Three existing fixture layouts also become more compact because their
+  call prefixes can hug the function's opening brace.
 
 - [ ] Make CLI config discovery match the documented per-file contract (feedback
   2). `run_format` and `run_lint` currently resolve one config from
