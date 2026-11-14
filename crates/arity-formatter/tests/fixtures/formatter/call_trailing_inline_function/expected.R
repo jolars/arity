@@ -48,10 +48,9 @@ map(
   }
 )
 
-map(
-  xs,
-  function(my_long_argument) my_long_argument + my_extra_long_extra_argument
-)
+map(xs, function(my_long_argument) {
+  my_long_argument + my_extra_long_extra_argument
+})
 
 map(xs, function(x, option = "a") x)
 

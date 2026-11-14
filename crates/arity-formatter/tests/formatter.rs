@@ -1,4 +1,6 @@
-use arity_formatter::formatter::{FormatStyle, format, format_verified, format_with_style};
+use arity_formatter::formatter::{
+    FormatStyle, format, format_verified, format_verified_with_style, format_with_style,
+};
 use arity_formatter::parser::{parse, reconstruct};
 use insta::assert_snapshot;
 use std::{fs, path::Path};
@@ -120,6 +122,7 @@ fn fixture_names() -> &'static [&'static str] {
         "call_arg_comment_before_unary",
         "call_trailing_braced_expression",
         "call_trailing_inline_function",
+        "call_trailing_function_conditional_body",
         "call_comments_trailing_braced_expression",
         "call_named_args_without_rhs",
         "call_trailing_curly_curly",
@@ -426,6 +429,59 @@ fn formats_user_operator_binary_expr() {
     let formatted =
         format(input).expect("user operators should be formatted as binary expressions");
     assert_eq!(formatted, expected);
+}
+
+#[test]
+fn trailing_function_conditional_body_is_stable_across_styles() {
+    let input = fixture_text("call_trailing_function_conditional_body", "input.R");
+    let inputs = [
+        input.clone(),
+        input.replace("function(name)", "\\(name)"),
+        input.replace(
+            "list(exists =",
+            "list(\n    # Preserve the saved binding.\n    exists =",
+        ),
+    ];
+    for line_width in [80, 100, 120] {
+        for indent_width in [2, 4] {
+            let style = FormatStyle {
+                line_width,
+                indent_width,
+                ..FormatStyle::default()
+            };
+            for input in &inputs {
+                assert_eq!(reconstruct(input), *input);
+                let formatted = format_verified_with_style(input, style).unwrap_or_else(|err| {
+                    panic!("width {line_width}, indent {indent_width}: {err}\n{input}");
+                });
+                assert_eq!(reconstruct(&formatted), formatted);
+                assert!(
+                    formatted.starts_with("saved <- lapply(fields, "),
+                    "the fitting call prefix should hug the function: {formatted}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn leading_function_conditional_body_expands_the_argument_list() {
+    let input = fixture_text("call_trailing_function_conditional_body", "input.R");
+    let function = input
+        .strip_prefix("saved <- lapply(fields, ")
+        .unwrap()
+        .strip_suffix(")\n")
+        .unwrap();
+    for last in ["function(x) x", "{ x }"] {
+        for name in ["", "first = "] {
+            let input = format!("f({name}{function}, {last})\n");
+            let formatted = format_verified(&input).unwrap();
+            assert!(
+                formatted.starts_with("f(\n"),
+                "a leading function that needs braces must expand the call: {formatted}"
+            );
+        }
+    }
 }
 
 #[test]

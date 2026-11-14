@@ -1,11 +1,8 @@
 f <- function(x, cls) {
   if (all(cls %in% c("LINESTRING", "MULTILINESTRING"))) {
-    x <- lapply(
-      x,
-      function(x) {
-        if (inherits(x, "LINESTRING")) LINESTRING2MULTILINESTRING(x) else x
-      }
-    )
+    x <- lapply(x, function(x) {
+      if (inherits(x, "LINESTRING")) LINESTRING2MULTILINESTRING(x) else x
+    })
     class(x) <- c("sfc_MULTILINESTRING", "sfc")
   }
 }

@@ -404,10 +404,9 @@ map(
 # Best fitting is used to choose the middle variant over the current most flat
 # form. The middle variant fits within the line length, so is preferred over
 # the most expanded form.
-map(
-  xs,
-  function(my_long_argument) my_long_argument + my_extra_long_extra_argument
-)
+map(xs, function(my_long_argument) {
+  my_long_argument + my_extra_long_extra_argument
+})
 
 # Best fitting is used to choose the middle variant. The line break forces
 # autobracing, which means the function definition breaks. That rules out

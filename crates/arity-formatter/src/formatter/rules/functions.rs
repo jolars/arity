@@ -1311,8 +1311,8 @@ pub(crate) fn ir_function_expr(
         // build serves both the bare splice and the braced fallback: the brace
         // wrapper supplies its own `Ir::indent`, re-indenting the body
         // structurally. The bare/braced choice routes through
-        // `function_body_choice`, which measures all lines for forced-break
-        // bodies (the IR port of legacy `fits_with_newlines`).
+        // `function_body_choice`, which keeps the bare body only when the
+        // whole definition fits on one line.
         let body_ir = ir_expr_segment(&body_core, "function body", indent, ctx)?;
         if !param_has_comment && body_leading_comments.is_empty() {
             function_body_choice(
@@ -1448,16 +1448,10 @@ fn function_param_lines(raw: &str, comments: &[(usize, usize)]) -> Vec<Ir> {
 }
 
 /// The conditional choice between bare inline body and braced-block hug.
-/// Two selectors, matched to the bare body's shape:
-///
-/// * **No forced break in the bare body** — use a single-pass group: bare
-///   wins exactly when `head(params) bare_body` fits flat as one line,
-///   otherwise the braced hug takes over (matching the legacy
-///   `Ir::group(Ir::if_break(...))` shape from before commit 410dd48).
-/// * **Forced break in the bare body** (control flow with braced arms) —
-///   route through [`Ir::conditional_group_all_lines`]: the bare form wins
-///   when every rendered line fits, mirroring legacy's `fits_with_newlines`
-///   check.
+/// A bare body must fit entirely on one line. Keep the braced fallback visible
+/// to an enclosing hug's fit check, so a body that needs braces does not force
+/// the call prefix to expand before its opening brace. A body with a forced
+/// break always uses the braced form.
 fn function_body_choice(head: Ir, params: Ir, bare_body: Ir, braced_body: Ir) -> Ir {
     if bare_body.contains_forced_break() {
         // A multi-line control-flow body (`function(p) if (cond) {…}`,
@@ -1468,7 +1462,7 @@ fn function_body_choice(head: Ir, params: Ir, bare_body: Ir, braced_body: Ir) ->
     } else {
         let bare = Ir::concat([head.clone(), params.clone(), Ir::text(" "), bare_body]);
         let braced = function_braced_hug(head, params, braced_body);
-        Ir::group(Ir::if_break(bare, braced))
+        Ir::flat_choice(bare, braced)
     }
 }
 

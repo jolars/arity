@@ -310,6 +310,13 @@ impl Printer {
                     let chosen = if mode == Mode::Break { broken } else { flat };
                     stack.push((indent, mode, chosen));
                 }
+                Ir::FlatChoice { flat, fallback } => {
+                    if self.group_fits(w.fit_col(), flat, &stack) {
+                        stack.push((indent, Mode::Flat, flat));
+                    } else {
+                        stack.push((indent, Mode::Break, fallback));
+                    }
+                }
                 Ir::Group {
                     inner,
                     expand,
@@ -411,6 +418,8 @@ impl Printer {
 
     /// Simulate `node` flat, starting at column `start_col`. Returns false on the
     /// first forced break or as soon as the running width exceeds the line.
+    /// A `FlatChoice` selects its fallback during a hug measurement when the
+    /// flat alternative cannot fit, exposing the fallback's forced break.
     ///
     /// When `hug` is set, a forced line break (`HardLine`/`EmptyLine`) instead
     /// stops the measurement *successfully*: only the prefix up to a trailing
@@ -427,9 +436,12 @@ impl Printer {
     }
 
     fn fits(&self, start_col: usize, node: &Ir, hug: bool, excuse_overflow: bool) -> bool {
-        let mut remaining = self.line_width.saturating_sub(start_col);
-        let mut stack: Vec<&Ir> = vec![node];
-        while let Some(node) = stack.pop() {
+        let available = self.line_width.saturating_sub(start_col);
+        let mut remaining = available;
+        // Ordinary nested groups still have to fit flat. Only a chain of hug
+        // groups may expose a FlatChoice fallback while measuring a prefix.
+        let mut stack: Vec<(bool, &Ir)> = vec![(hug, node)];
+        while let Some((choose_fallback, node)) = stack.pop() {
             match node {
                 // A line suffix (trailing comment) is zero width for fit.
                 Ir::Nil | Ir::SoftLine | Ir::LineSuffix { .. } => {}
@@ -470,25 +482,40 @@ impl Printer {
                 }
                 Ir::Concat(items) => {
                     for item in items.iter().rev() {
-                        stack.push(item);
+                        stack.push((choose_fallback, item));
                     }
                 }
                 // Transparent to the flat simulation: a forced break inside still
                 // ends measurement via `HardLine`/`EmptyLine` (success under `hug`,
                 // failure otherwise), exactly as if the body were not wrapped.
-                Ir::Indent(inner) | Ir::BreakBody(inner) => stack.push(inner),
+                Ir::Indent(inner) | Ir::BreakBody(inner) => {
+                    stack.push((choose_fallback, inner));
+                }
                 Ir::Line => {
                     if remaining == 0 {
                         return false;
                     }
                     remaining -= 1;
                 }
-                Ir::IfBreak { flat, .. } => stack.push(flat),
-                Ir::Group { inner, expand, .. } => {
+                Ir::IfBreak { flat, .. } => stack.push((choose_fallback, flat)),
+                Ir::FlatChoice { flat, fallback } => {
+                    let col = start_col + available - remaining;
+                    if choose_fallback && !self.fits(col, flat, false, false) {
+                        stack.push((choose_fallback, fallback));
+                    } else {
+                        stack.push((choose_fallback, flat));
+                    }
+                }
+                Ir::Group {
+                    inner,
+                    expand,
+                    hug: nested_hug,
+                    ..
+                } => {
                     if *expand {
                         return false;
                     }
-                    stack.push(inner);
+                    stack.push((choose_fallback && *nested_hug, inner));
                 }
                 // Conservative: measure as the flat-most candidate. A nested
                 // conditional group inside a flat measurement is rare today
@@ -496,7 +523,7 @@ impl Printer {
                 // and when one nests, this matches the most permissive layout.
                 Ir::ConditionalGroup(cands) | Ir::ConditionalGroupAllLines(cands) => {
                     if let Some(first) = cands.first() {
-                        stack.push(first);
+                        stack.push((choose_fallback, first));
                     }
                 }
             }
@@ -547,7 +574,7 @@ impl Printer {
                         return false;
                     }
                 }
-                Ir::IfBreak { flat, .. } => stack.push(flat),
+                Ir::IfBreak { flat, .. } | Ir::FlatChoice { flat, .. } => stack.push(flat),
                 Ir::Group {
                     inner: gi, expand, ..
                 } => {
@@ -624,6 +651,13 @@ impl Printer {
                 Ir::BreakBody(inner) => work.push((Mode::Break, inner)),
                 Ir::IfBreak { flat, broken } => {
                     work.push((mode, if mode == Mode::Break { broken } else { flat }));
+                }
+                Ir::FlatChoice { flat, fallback } => {
+                    if self.fits(col, flat, false, false) {
+                        work.push((Mode::Flat, flat));
+                    } else {
+                        work.push((Mode::Break, fallback));
+                    }
                 }
                 Ir::Group { inner, expand, .. } => {
                     // An undecided group inherits the surrounding mode: when the
@@ -719,6 +753,13 @@ impl Printer {
                     let chosen = if mode == Mode::Break { broken } else { flat };
                     stack.push((mode, chosen));
                 }
+                Ir::FlatChoice { flat, fallback } => {
+                    if self.fits(col, flat, false, false) {
+                        stack.push((Mode::Flat, flat));
+                    } else {
+                        stack.push((Mode::Break, fallback));
+                    }
+                }
                 Ir::Group {
                     inner,
                     expand,
@@ -759,6 +800,10 @@ mod tests {
 
     /// `f(a, {block})` as a hug group: prefix `f(a, ` then a trailing block.
     fn hug_call() -> Ir {
+        hug_call_with_tail(block())
+    }
+
+    fn hug_call_with_tail(tail: Ir) -> Ir {
         Ir::group_hug(Ir::concat([
             Ir::text("f("),
             Ir::indent(Ir::concat([
@@ -766,7 +811,10 @@ mod tests {
                 Ir::text("a"),
                 Ir::if_break(Ir::text(", "), Ir::text(",")),
             ])),
-            Ir::if_break(block(), Ir::indent(Ir::concat([Ir::soft_line(), block()]))),
+            Ir::if_break(
+                tail.clone(),
+                Ir::indent(Ir::concat([Ir::soft_line(), tail])),
+            ),
             Ir::soft_line(),
             Ir::text(")"),
         ]))
@@ -776,6 +824,29 @@ mod tests {
     fn hug_group_keeps_prefix_flat_when_it_fits() {
         let printer = Printer::new(FormatStyle::default());
         assert_eq!(printer.print(&hug_call()), "f(a, {\n  body\n})");
+    }
+
+    #[test]
+    fn hug_group_measures_the_selected_flat_choice() {
+        let printer = Printer::new(FormatStyle::default());
+        let fitting = Ir::flat_choice(Ir::text("short"), block());
+        assert_eq!(printer.print(&hug_call_with_tail(fitting)), "f(a, short)");
+
+        let overflowing = Ir::flat_choice(Ir::text("x".repeat(80)), block());
+        assert_eq!(
+            printer.print(&hug_call_with_tail(overflowing)),
+            "f(a, {\n  body\n})"
+        );
+    }
+
+    #[test]
+    fn flat_choice_counts_the_rest_of_the_line() {
+        let printer = Printer::new(FormatStyle {
+            line_width: 7,
+            ..FormatStyle::default()
+        });
+        let ir = Ir::concat([Ir::flat_choice(Ir::text("short"), block()), Ir::text("123")]);
+        assert_eq!(printer.print(&ir), "{\n  body\n}123");
     }
 
     #[test]

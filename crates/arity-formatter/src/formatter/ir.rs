@@ -82,6 +82,12 @@ pub(crate) enum Ir {
     },
     /// Emit `flat` when the enclosing group is flat, `broken` when it is broken.
     IfBreak { flat: Rc<Ir>, broken: Rc<Ir> },
+    /// Use `flat` only when its entire flat rendering fits the remaining line;
+    /// otherwise lay out `fallback` independently. Unlike `IfBreak`, this
+    /// decision does not inherit an enclosing group's mode. A hugging parent's
+    /// fit check can therefore see a fallback's opening brace and hard break
+    /// without first requiring the rejected flat alternative to fit.
+    FlatChoice { flat: Rc<Ir>, fallback: Rc<Ir> },
     /// Pre-rendered text (comments, or not-yet-migrated constructs) spliced
     /// through untouched. When `force_break` is set the enclosing group cannot
     /// stay flat (used for comments and for multi-line bridged renderings);
@@ -241,6 +247,13 @@ impl Ir {
         }
     }
 
+    pub(crate) fn flat_choice(flat: Ir, fallback: Ir) -> Ir {
+        Ir::FlatChoice {
+            flat: Rc::new(flat),
+            fallback: Rc::new(fallback),
+        }
+    }
+
     /// A bridged/inline verbatim chunk. It forces a break only if it spans
     /// multiple lines (i.e. its own layout cannot be collapsed).
     pub(crate) fn verbatim(s: impl Into<Rc<str>>) -> Ir {
@@ -290,13 +303,16 @@ impl Ir {
         Ir::SoftLine
     }
 
-    /// Whether this tree contains a nested breakable group (`Group` or either
-    /// `ConditionalGroup` variant). Used by the arg-hug rule to decide whether a
+    /// Whether this tree contains a nested breakable group or layout choice.
+    /// Used by the arg-hug rule to decide whether a
     /// leading argument is a bare atom: if it holds a breakable group, its
     /// overflow may be rescuable by breaking, so the hug must not excuse it.
     pub(crate) fn contains_group(&self) -> bool {
         match self {
-            Ir::Group { .. } | Ir::ConditionalGroup(_) | Ir::ConditionalGroupAllLines(_) => true,
+            Ir::Group { .. }
+            | Ir::FlatChoice { .. }
+            | Ir::ConditionalGroup(_)
+            | Ir::ConditionalGroupAllLines(_) => true,
             Ir::Concat(items) => items.iter().any(Ir::contains_group),
             Ir::Indent(inner) | Ir::BreakBody(inner) => inner.contains_group(),
             Ir::IfBreak { flat, broken } => flat.contains_group() || broken.contains_group(),
@@ -337,6 +353,7 @@ impl Ir {
             Ir::Concat(items) => items.iter().any(Ir::contains_forced_break),
             Ir::Indent(inner) | Ir::BreakBody(inner) => inner.contains_forced_break(),
             Ir::Group { inner, expand, .. } => *expand || inner.contains_forced_break(),
+            Ir::FlatChoice { flat, .. } => flat.contains_forced_break(),
             // The flat-most candidate decides: if even it forces a break, the
             // conditional group always breaks; otherwise some layout is flat-able.
             Ir::ConditionalGroup(cands) | Ir::ConditionalGroupAllLines(cands) => {
@@ -376,6 +393,9 @@ impl Ir {
             }
             Ir::IfBreak { flat, broken } => {
                 flat.ends_with_line_suffix() || broken.ends_with_line_suffix()
+            }
+            Ir::FlatChoice { flat, fallback } => {
+                flat.ends_with_line_suffix() || fallback.ends_with_line_suffix()
             }
             Ir::ConditionalGroup(cands) | Ir::ConditionalGroupAllLines(cands) => {
                 cands.iter().any(Ir::ends_with_line_suffix)

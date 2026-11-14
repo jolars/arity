@@ -1240,7 +1240,9 @@ fn build_arg_hug_inner(
     // prefix; each is followed by its comma.
     let mut leading: Vec<Ir> = vec![Ir::soft_line()];
     for idx in 0..last {
-        leading.push(slots[idx].content());
+        // A leading argument must fit flat even if it offers a braced fallback.
+        // Only the trailing argument may supply the hug's first hard break.
+        leading.push(Ir::group(slots[idx].content()));
         if slots[idx].ends_with_eq() {
             leading.push(Ir::if_break(Ir::text(" , "), Ir::text(" ,")));
         } else {
