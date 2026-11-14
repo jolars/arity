@@ -36,6 +36,9 @@ arity lint --output concise .
 arity lint --output json .
 ```
 
+JSON diagnostics go to stdout, including `[]` when there are no findings.
+Human-readable diagnostics and informational messages go to stderr.
+
 ## Choose rules
 
 The [Lint rules](../reference/rules.md) reference explains each rule and its
@@ -73,6 +76,11 @@ arity format .
 The linter reports findings that remain after fixing. Some findings need manual
 changes, so review that output even when files were updated. Fixes change source
 code; the formatter handles its layout in the second command.
+
+With stdin, `--fix` writes the fixed source to stdout and reports remaining
+findings to stderr. Combining stdin `--fix` with `--output json` is a usage
+error because both outputs require stdout. For files, `--fix --output json`
+reports the diagnostics that remain after fixing, including `[]` when clean.
 
 To include fixes that may change behavior, explicitly opt in with
 `arity lint --fix --unsafe-fixes .` and review the resulting diff. The rule

@@ -1,9 +1,10 @@
-//! CLI-level tests for `arity lint --fix`, exercising the built binary.
+//! CLI-level tests for lint output and `arity lint --fix`, exercising the built binary.
 //!
 //! The fix loop must see the same project scope the reporting pass does.
 //! Anything less lets `--fix` delete a binding that `lint` deliberately never
 //! reported — silent data loss, not a formatting difference.
 
+use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use tempfile::tempdir;
@@ -25,6 +26,183 @@ fn run_lint<const N: usize>(args: [&str; N]) -> std::process::Output {
         .stderr(Stdio::piped())
         .output()
         .expect("failed to run cli")
+}
+
+fn run_lint_stdin(args: &[&str], input: &str) -> std::process::Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_arity"))
+        .arg("lint")
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to run cli");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn clean_json_files_and_directories_emit_empty_array() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("clean.R");
+    std::fs::write(&path, "print(1)\n").unwrap();
+    for target in [path.as_path(), dir.path()] {
+        for verbosity in ["--quiet", "--verbose"] {
+            let output = run_lint([
+                "--no-config",
+                "--select",
+                "seq",
+                "--output",
+                "json",
+                verbosity,
+                target.to_str().unwrap(),
+            ]);
+            assert_eq!(output.status.code(), Some(0), "{output:?}");
+            assert_eq!(output.stdout, b"[]\n", "{output:?}");
+            if verbosity == "--verbose" {
+                assert!(
+                    String::from_utf8_lossy(&output.stderr).contains("no findings"),
+                    "{output:?}"
+                );
+            } else {
+                assert!(output.stderr.is_empty(), "{output:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn clean_json_stdin_emits_empty_array() {
+    // Both explicit and implicit stdin, including an empty buffer.
+    for input in ["print(1)\n", ""] {
+        for explicit in [false, true] {
+            let mut args = vec!["--no-config", "--select", "seq", "--output", "json"];
+            if explicit {
+                args.push("-");
+            }
+            let output = run_lint_stdin(&args, input);
+            assert_eq!(output.status.code(), Some(0), "{output:?}");
+            assert_eq!(output.stdout, b"[]\n", "{output:?}");
+            assert!(output.stderr.is_empty(), "{output:?}");
+        }
+    }
+}
+
+#[test]
+fn json_stdin_findings_preserve_exit_code_and_routing() {
+    let output = run_lint_stdin(
+        &["--no-config", "--select", "seq", "--output", "json", "-"],
+        "1:length(x)\n",
+    );
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let findings: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(findings.as_array().unwrap().len(), 1);
+    assert_eq!(findings[0]["rule"], "seq");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}
+
+#[test]
+fn json_fix_reports_empty_array_after_clearing_last_finding() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("fix.R");
+    std::fs::write(&path, "1:length(x)\n").unwrap();
+    let args = [
+        "--no-config",
+        "--select",
+        "seq",
+        "--output",
+        "json",
+        path.to_str().unwrap(),
+    ];
+    let before = run_lint(args);
+    assert_eq!(before.status.code(), Some(1), "{before:?}");
+    let findings: serde_json::Value = serde_json::from_slice(&before.stdout).unwrap();
+    assert_eq!(findings.as_array().unwrap().len(), 1);
+    assert_eq!(findings[0]["rule"], "seq");
+    assert!(before.stderr.is_empty(), "{before:?}");
+
+    let output = run_lint([
+        "--no-config",
+        "--select",
+        "seq",
+        "--output",
+        "json",
+        "--fix",
+        path.to_str().unwrap(),
+    ]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(output.stdout, b"[]\n", "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("1 fix applied"),
+        "{output:?}"
+    );
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "seq_along(x)\n");
+}
+
+#[test]
+fn stdin_fix_rejects_json_output() {
+    for explicit in [false, true] {
+        // Reject both clean input and input with findings.
+        for input in ["print(1)\n", "1:length(x)\n"] {
+            let mut args = vec![
+                "--no-config",
+                "--select",
+                "seq",
+                "--fix",
+                "--output",
+                "json",
+            ];
+            if explicit {
+                args.push("-");
+            }
+            let output = run_lint_stdin(&args, input);
+            assert_eq!(output.status.code(), Some(2), "{output:?}");
+            assert!(output.stdout.is_empty(), "{output:?}");
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .contains("--fix cannot be combined with --output json when reading stdin"),
+                "{output:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn human_stdin_output_preserves_source_and_diagnostic_routing() {
+    for format in ["pretty", "concise"] {
+        for fix in [false, true] {
+            let mut args = vec!["--no-config", "--select", "seq", "--output", format, "-"];
+            if fix {
+                args.push("--fix");
+            }
+            let output = run_lint_stdin(&args, "1:length(x)\n");
+            if fix {
+                assert_eq!(output.status.code(), Some(0), "{output:?}");
+                assert_eq!(output.stdout, b"seq_along(x)\n", "{output:?}");
+                assert!(output.stderr.is_empty(), "{output:?}");
+            } else {
+                assert_eq!(output.status.code(), Some(1), "{output:?}");
+                assert!(output.stdout.is_empty(), "{output:?}");
+                assert!(
+                    String::from_utf8_lossy(&output.stderr).contains("seq"),
+                    "{output:?}"
+                );
+            }
+            let clean = run_lint_stdin(&args, "print(1)\n");
+            assert_eq!(clean.status.code(), Some(0), "{clean:?}");
+            assert_eq!(
+                clean.stdout,
+                if fix { b"print(1)\n".as_slice() } else { b"" },
+                "{clean:?}"
+            );
+            assert!(clean.stderr.is_empty(), "{clean:?}");
+        }
+    }
 }
 
 #[test]

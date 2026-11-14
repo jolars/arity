@@ -107,7 +107,7 @@ Reads stdin when given `-`, or when paths are omitted and stdin is not a termina
 :   Filename to report for stdin input (for diagnostics)
 
 `--fix`
-:   Apply safe autofixes in place and report what remains
+:   Apply safe autofixes in place and report what remains. With stdin, write fixed source to stdout; cannot combine with --output json
 
 `--unsafe-fixes`
 :   Also apply fixes that may change behavior (requires --fix)

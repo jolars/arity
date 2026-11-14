@@ -1235,7 +1235,7 @@ fn run_lint(
                 }
             }
 
-            if !all_findings.is_empty() {
+            if !all_findings.is_empty() || output == LintOutput::Json {
                 let source_for = |path: &PathBuf| {
                     result
                         .reports
@@ -1244,7 +1244,8 @@ fn run_lint(
                         .and_then(|report| report.source.clone())
                 };
                 emit_findings(&all_findings, output, out.color, &source_for);
-            } else if out.verbose {
+            }
+            if all_findings.is_empty() && out.verbose {
                 eprintln!("{} file(s) checked, no findings", result.reports.len());
             }
 
@@ -1423,7 +1424,8 @@ fn emit_findings(
 /// Lint a single document read from stdin. With `--fix`, the fixed source is
 /// written to stdout (mirroring `format`'s stdin behavior) and remaining
 /// findings are reported; otherwise findings are reported and the source is not
-/// echoed. Returns exit 1 when findings remain.
+/// echoed. JSON with `--fix` is rejected because both outputs require stdout.
+/// Returns exit 1 when findings remain.
 fn run_lint_stdin(
     config: &LintConfig,
     fix_opts: FixOptions,
@@ -1431,6 +1433,10 @@ fn run_lint_stdin(
     output: LintOutput,
     out: OutputOptions,
 ) -> ExitCode {
+    if fix_opts.fix && output == LintOutput::Json {
+        eprintln!("error: --fix cannot be combined with --output json when reading stdin");
+        return ExitCode::from(2);
+    }
     let input = match read_input(None) {
         Ok(input) => input,
         Err(err) => {
@@ -1455,13 +1461,17 @@ fn run_lint_stdin(
             return ExitCode::from(2);
         }
     };
-    if findings.is_empty() {
+    if findings.is_empty() && output != LintOutput::Json {
         return ExitCode::SUCCESS;
     }
     let content = Arc::<str>::from(content);
     let source_for = |p: &PathBuf| (p == &path).then(|| content.clone());
     emit_findings(&findings, output, out.color, &source_for);
-    ExitCode::from(1)
+    if findings.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
 }
 
 fn plural(n: usize) -> &'static str {

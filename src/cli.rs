@@ -138,7 +138,8 @@ pub enum Commands {
         #[arg(long, value_name = "PATH")]
         stdin_filename: Option<PathBuf>,
 
-        /// Apply safe autofixes in place and report what remains
+        /// Apply safe autofixes in place and report what remains. With stdin,
+        /// write fixed source to stdout; cannot combine with --output json
         #[arg(long)]
         fix: bool,
 

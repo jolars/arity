@@ -38,16 +38,14 @@ output and semantic noise. Rule coverage and style options follow those fixes.
 - [x] Resolve CLI configuration per file, including recursive walks, with
   nested exclusions and style-specific format caches.
 
-- [ ] Emit `[]` for clean `lint --output json` runs (feedback 6). Confirmed for
-  both `arity lint --no-config --select seq --output json clean.R` with
-  `print(1)` and the same input on stdin: exit 0, empty stdout. The renderer
-  already supports empty arrays; `run_lint` and `run_lint_stdin` skip it.
-  Render JSON even with zero findings and add CLI tests for files,
-  directories, stdin, and a `--fix` run that clears the last finding.
-  Preserve exit codes and stderr routing. Define or reject stdin
-  `--fix --output json`, which currently combines rewritten R and diagnostic
-  JSON on stdout when findings remain, before making the empty-result path
-  emit JSON there too.
+- [x] Emit `[]` for clean `lint --output json` runs (feedback 6). Both file and
+  stdin paths now render JSON with zero findings, including after file fixes
+  clear the last finding. CLI tests cover files, directories, explicit and
+  implicit stdin, empty buffers, exit codes, and stdout/stderr routing.
+  Stdin `--fix --output json` is a documented usage error (exit 2),
+  preventing rewritten R and diagnostic JSON from sharing stdout. File fixes
+  still support JSON, and human-readable stdin fixes still write source to
+  stdout.
 
 - [ ] Model tinytest's runner-supplied expectations (feedback 3). Default lint
   reproduces 759 `undefined-symbol` findings, 749 under
