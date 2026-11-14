@@ -1491,6 +1491,46 @@ fn index_pkg(name: &str, exports: &[&str]) -> PackageIndex {
 }
 
 #[test]
+fn tinytest_runner_resolution_backdates_and_stays_file_local() {
+    let mut db = IncrementalDatabase::default();
+    let source = "f <- function() { `expect_true`(TRUE); checkEqual_to_reference(1); at_home(); bogus() }\nrun_test_file('x.R')\n";
+    let test = db.upsert_file(Path::new("/pkg/inst/tinytest/test-x.R"), source.to_string());
+    let ordinary = db.upsert_file(Path::new("/pkg/R/x.R"), source.to_string());
+    db.set_workspace_members(vec![test, ordinary], Vec::new());
+    let manifest = db.set_library_index(IndexedProvider::empty());
+    let expected = BTreeSet::from(["bogus".to_string(), "run_test_file".to_string()]);
+    assert_eq!(
+        external_resolution(&db, manifest, test).unresolved,
+        expected
+    );
+    assert_eq!(
+        external_resolution(&db, manifest, ordinary).unresolved,
+        BTreeSet::from(
+            [
+                "`expect_true`",
+                "checkEqual_to_reference",
+                "at_home",
+                "bogus",
+                "run_test_file"
+            ]
+            .map(str::to_string)
+        )
+    );
+    // Runner injection must not masquerade as package attachment.
+    assert!(arity::incremental::loaded_names(&db, test).is_empty());
+    db.clear_query_log();
+    db.set_file_text(test, source.replace("TRUE", "FALSE"));
+    assert_eq!(
+        external_resolution(&db, manifest, test).unresolved,
+        expected
+    );
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ExternalResolution),
+        None
+    );
+}
+
+#[test]
 fn body_edit_does_not_rerun_external_resolution() {
     // The library firewall: editing a function *body* changes the model but not
     // the free-read / loaded-package sets, so `external_resolution` — whose only

@@ -2734,6 +2734,137 @@ fn undefined_symbol_standalone_attaches_testthat_for_test_files() {
 }
 
 #[test]
+fn tinytest_runner_bindings_resolve_without_an_index() {
+    // Pinned from tinytest 1.4.3's run_test_file evaluation environment, with
+    // its default tt.RUnitStyle = TRUE. The runner also masks base options and
+    // Sys.setenv, which already resolve through the default packages.
+    let injected = "\
+expect_equal, expect_equivalent, expect_length, expect_true, expect_false,
+expect_inherits, expect_null, expect_message, expect_warning, expect_error,
+expect_stdout, expect_identical, expect_silent, expect_equal_to_reference,
+expect_equivalent_to_reference, expect_match, exit_file, exit_if_not, ignore,
+at_home, using, report_side_effects,
+checkEqual, checkEquivalent, checkLength, checkTrue, checkFalse, checkInherits,
+checkNull, checkMessage, checkWarning, checkError, checkStdout, checkIdentical,
+checkSilent, checkEqual_to_reference, checkEquivalent_to_reference, checkMatch";
+    let source = format!(
+        "invisible(list({injected}))\nexpect_made_up(TRUE)\nbogus()\nrun_test_file('x.R')\nget_call_wd()\n"
+    );
+    // Even a base-only provider must know the runner bindings. Pretending the
+    // package is attached would gate off every undefined-symbol diagnostic.
+    let base = arity::semantic::StaticBaseR::new();
+    let composite = CompositeProvider::base_only();
+    for provider in [&base as &dyn arity::semantic::SymbolProvider, &composite] {
+        for path in ["inst/tinytest/test-x.R", "/pkg/inst/tinytest/test-x.R"] {
+            let findings = check_document_with_provider(
+                Path::new(path),
+                &source,
+                &LintConfig::default(),
+                provider,
+            )
+            .unwrap();
+            let names: Vec<_> = findings
+                .iter()
+                .filter(|d| d.rule == "undefined-symbol")
+                .map(|d| &source[usize::from(d.range.start())..usize::from(d.range.end())])
+                .collect();
+            assert_eq!(
+                names,
+                ["expect_made_up", "bogus", "run_test_file", "get_call_wd"],
+                "{path}: {findings:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn tinytest_runner_bindings_supply_spelling_suggestions() {
+    let source = "expect_tru(TRUE)\ncheckTru(TRUE)\n";
+    let findings = check_document_with_provider(
+        Path::new("inst/tinytest/test-x.R"),
+        source,
+        &LintConfig::default(),
+        &arity::semantic::StaticBaseR::new(),
+    )
+    .unwrap();
+    let hints: Vec<_> = findings
+        .iter()
+        .filter(|d| d.rule == "undefined-symbol")
+        .map(|d| d.message.suggestion.as_deref())
+        .collect();
+    assert_eq!(
+        hints,
+        [
+            Some("did you mean `expect_true`?"),
+            Some("did you mean `checkTrue`?")
+        ]
+    );
+}
+
+#[test]
+fn tinytest_runner_bindings_are_scoped_to_direct_test_files() {
+    for path in [
+        "R/test-x.R",
+        "tests/test-x.R",
+        "tests/tinytest/test-x.R",
+        "tinytest/test-x.R",
+        "inst/other/test-x.R",
+        "inst/tinytest/fixtures/helper.R",
+    ] {
+        let findings = check_document_with_provider(
+            Path::new(path),
+            "expect_true(TRUE)\ncheckTrue(TRUE)\nat_home()\n",
+            &LintConfig::default(),
+            &CompositeProvider::base_only(),
+        )
+        .unwrap();
+        assert_eq!(
+            findings
+                .iter()
+                .filter(|d| d.rule == "undefined-symbol")
+                .count(),
+            3,
+            "{path}: {findings:?}"
+        );
+    }
+}
+
+#[test]
+fn tinytest_runner_bindings_preserve_local_shadowing_and_other_rules() {
+    let source = "\
+expect_true <- function(x) x
+expect_true(TRUE)
+f <- function(expect_equal) expect_equal(1)
+f(identity)
+local({ checkTrue <- identity; checkTrue(TRUE) })
+`expect_equal`(1, 1)
+unused <- 1
+bogus()
+";
+    let findings = check_document_with_provider(
+        Path::new("inst/tinytest/test-x.R"),
+        source,
+        &LintConfig::default(),
+        &CompositeProvider::base_only(),
+    )
+    .unwrap();
+    let relevant: Vec<_> = findings
+        .iter()
+        .filter(|d| matches!(d.rule, "undefined-symbol" | "unused-binding"))
+        .map(|d| {
+            (
+                d.rule,
+                &source[usize::from(d.range.start())..usize::from(d.range.end())],
+            )
+        })
+        .collect();
+    assert_eq!(
+        relevant,
+        [("unused-binding", "unused"), ("undefined-symbol", "bogus")]
+    );
+}
+
+#[test]
 fn undefined_symbol_skips_data_masked_columns() {
     // Inside dplyr's data-masking `mutate()`, a bare name like `a` is a column
     // reference evaluated in the data mask, not an undefined symbol. The rule

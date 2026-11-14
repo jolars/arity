@@ -41,7 +41,8 @@ use crate::project::roxygen::TopicMember;
 use crate::project::scope::{FileFacts, FileScope, LayeredSet, ProjectScope, package_root_of_dir};
 use crate::project::source::{SourceEdgeKey, SourceTarget};
 use crate::rindex::provider::{attach_members, package_indexed, resolve_origin};
-use crate::semantic::symbols::{LoadedPackage, PackageOrigin};
+use crate::semantic::symbols::{LoadedPackage, PackageOrigin, unbacktick};
+use crate::semantic::test_runner::implicit_bindings;
 
 /// One member of a project: its tracked input, on-disk path, and enclosing
 /// package root (if any). Disk-derived — assembled in the lint write-phase and
@@ -1116,9 +1117,19 @@ pub fn external_resolution(
         })
         .collect();
 
+    let runner_bindings = file
+        .path(db)
+        .as_deref()
+        .map(implicit_bindings)
+        .unwrap_or_default();
     let unresolved: BTreeSet<String> = file_free_reads(db, file)
         .iter()
         .filter(|name| !visibility.visible.contains(name.as_str()))
+        .filter(|name| {
+            !runner_bindings
+                .iter()
+                .any(|binding| binding == unbacktick(name))
+        })
         .filter(|name| {
             matches!(
                 resolve_origin(index, remote, name, &loaded_pkgs),
@@ -1142,11 +1153,10 @@ pub fn external_resolution(
         suggestion_exports: if unresolved.is_empty() {
             Some(BTreeSet::new())
         } else {
-            crate::semantic::spelling::candidate_names(crate::rindex::provider::known_export_names(
-                index,
-                remote,
-                &loaded_pkgs,
-            ))
+            crate::semantic::spelling::candidate_names(
+                crate::rindex::provider::known_export_names(index, remote, &loaded_pkgs)
+                    .chain(runner_bindings.iter()),
+            )
         },
         unresolved,
         local_functions,

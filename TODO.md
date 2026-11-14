@@ -47,21 +47,20 @@ output and semantic noise. Rule coverage and style options follow those fixes.
   still support JSON, and human-readable stdin fixes still write source to
   stdout.
 
-- [ ] Model tinytest's runner-supplied expectations (feedback 3). Default lint
-  reproduces 759 `undefined-symbol` findings, 749 under
-  `sess/inst/tinytest/`. Of those, 746 are expectation calls; the other
-  three are `.Random.seed` reads, covered separately below.
-  `tinytest::run_test_file()` successfully runs a file containing
-  `expect_true(TRUE)` without attaching tinytest: it injects expectation
-  functions into the test environment. Add narrow support for this
-  convention in shared semantic/project resolution for package
-  `inst/tinytest/` files, reusing bundled exports where appropriate and
-  checking exactly which names the runner supplies.
-  `implicit_attached_packages` in `src/semantic/symbols.rs` already handles
-  `tests/testthat/`; testthat support is not entirely missing. Cover CLI,
-  standalone, and salsa/LSP paths, local shadowing, and a real unknown
-  symbol that must still be reported. Avoid suppressing arbitrary `expect_*`
-  spellings or all diagnostics in tests.
+- [x] Model tinytest's runner-supplied expectations (feedback 3). Shared
+  semantic/project resolution now recognizes the runner environment for
+  direct `inst/tinytest/` files: 16 expectations, six helpers, and 16
+  RUnit-style aliases, checked against tinytest 1.4.3 in R. The aliases
+  assume tinytest's default `tt.RUnitStyle = TRUE`; external R options are
+  not available to static analysis. This models injected bindings without
+  attaching all tinytest exports or requiring an installed index. Tests
+  cover CLI files, recursive walks and stdin, standalone checks, salsa
+  backdating, editor diagnostics, local shadowing, spelling suggestions, and
+  unknown names and uninjected exports that must still be reported. Ordinary
+  sources and nested fixtures do not inherit the runner bindings. The
+  original reproduction had 746 affected expectation calls under
+  `sess/inst/tinytest/`; its three `.Random.seed` reads remain a separate
+  issue below. Existing testthat attachment support is unchanged.
 
 - [ ] Recognize `.Random.seed` after statically resolved RNG initialization.
   This is an additional confirmed false positive behind the tinytest count:

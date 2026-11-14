@@ -47,6 +47,58 @@ fn run_lint_stdin(args: &[&str], input: &str) -> std::process::Output {
 }
 
 #[test]
+fn tinytest_runner_bindings_resolve_in_files_walks_and_stdin() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
+    std::fs::create_dir(root.join("R")).unwrap();
+    let tests = root.join("inst/tinytest");
+    std::fs::create_dir_all(&tests).unwrap();
+    let file = tests.join("test-runner.R");
+    let source = "expect_true(TRUE)\ncheckTrue(TRUE)\nat_home()\nexpect_made_up(TRUE)\nrun_test_file('x.R')\n";
+    std::fs::write(&file, source).unwrap();
+    let assert_findings = |output: std::process::Output| {
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+        let findings: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let names: Vec<_> = findings
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                let start = d["range"]["start"].as_u64().unwrap() as usize;
+                let end = d["range"]["end"].as_u64().unwrap() as usize;
+                &source[start..end]
+            })
+            .collect();
+        assert_eq!(names, ["expect_made_up", "run_test_file"]);
+    };
+    for target in [file.as_path(), root] {
+        assert_findings(run_lint([
+            "--no-config",
+            "--select",
+            "undefined-symbol",
+            "--output",
+            "json",
+            target.to_str().unwrap(),
+        ]));
+    }
+    assert_findings(run_lint_stdin(
+        &[
+            "--no-config",
+            "--select",
+            "undefined-symbol",
+            "--output",
+            "json",
+            "--stdin-filename",
+            file.to_str().unwrap(),
+            "-",
+        ],
+        source,
+    ));
+}
+
+#[test]
 fn clean_json_files_and_directories_emit_empty_array() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("clean.R");

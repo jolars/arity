@@ -13,6 +13,7 @@ mod interpolation;
 pub mod scope;
 pub(crate) mod spelling;
 pub mod symbols;
+pub(crate) mod test_runner;
 
 use std::collections::{HashMap, HashSet};
 

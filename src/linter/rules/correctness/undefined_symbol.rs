@@ -20,6 +20,7 @@ use crate::linter::diagnostic::{Diagnostic, Severity, ViolationData};
 use crate::linter::rules::{Example, Rule, RuleContext};
 use crate::semantic::spelling::{bounded_chars, candidate_names, one_edit};
 use crate::semantic::symbols::unbacktick;
+use crate::semantic::test_runner::implicit_bindings;
 use crate::semantic::{
     IdentRef, LoadedPackage, PackageOrigin, ScopeId, implicit_attached_packages,
 };
@@ -222,6 +223,7 @@ impl UndefinedSymbol {
             return;
         }
         let exports = OnceLock::new();
+        let runner_bindings = implicit_bindings(ctx.path);
         let mut suggestions = Suggestions::default();
         for ident in ctx.model.idents() {
             // A data-masked read may be a data-frame column, not an undefined
@@ -243,6 +245,12 @@ impl UndefinedSymbol {
             if ctx.project.is_some_and(|p| p.resolves(&ident.name)) {
                 continue;
             }
+            if runner_bindings
+                .iter()
+                .any(|name| name == unbacktick(&ident.name))
+            {
+                continue;
+            }
             // Skip if the symbol provider can place it.
             if !matches!(
                 ctx.symbols.origin(&ident.name, loaded),
@@ -250,7 +258,13 @@ impl UndefinedSymbol {
             ) {
                 continue;
             }
-            let exports = exports.get_or_init(|| candidate_names(ctx.symbols.export_names(loaded)));
+            let exports = exports.get_or_init(|| {
+                candidate_names(
+                    ctx.symbols
+                        .export_names(loaded)
+                        .chain(runner_bindings.iter()),
+                )
+            });
             sink.push(undefined(
                 &ident.name,
                 ident.range,

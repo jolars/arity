@@ -1253,6 +1253,37 @@ fn did_open_buggy_publishes_diagnostics() {
 }
 
 #[test]
+fn tinytest_runner_bindings_resolve_in_editor_buffers() {
+    let (dir, _, _) = package_fixture(COMPLETE_DESCRIPTION, "");
+    let tests = dir.path().join("inst/tinytest");
+    std::fs::create_dir_all(&tests).unwrap();
+    let path = tests.join("test-runner.R");
+    let uri = path_uri(&path);
+    std::fs::write(
+        dir.path().join("arity.toml"),
+        "[lint]\nselect = ['undefined-symbol']\n",
+    )
+    .unwrap();
+    let mut h = Harness::start_push();
+    h.did_open(
+        &uri,
+        "expect_true(TRUE)\ncheckTrue(TRUE)\nat_home()\nexpect_tru(TRUE)\n",
+        1,
+    );
+    let findings = h.recv_publish_for(&uri, 1);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["code"], "undefined-symbol");
+    assert!(
+        findings[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("did you mean `expect_true`?")
+    );
+    assert_eq!(findings[0]["range"]["start"]["line"], 3);
+    h.shutdown();
+}
+
+#[test]
 fn undefined_symbol_spelling_hint_reaches_editor_diagnostics() {
     let mut h = Harness::start_push();
     let uri = doc_uri();
