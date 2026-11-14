@@ -1,6 +1,8 @@
 ---
-source: tests/formatter.rs
+source: crates/arity-formatter/tests/formatter.rs
 expression: formatted
 ---
 #' @param x short desc
-f <- function(x) x
+f <- function(x) {
+  x
+}

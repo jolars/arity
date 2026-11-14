@@ -3,4 +3,6 @@
 #'   of the four sides by setting
 #'   \code{strip.position = c("top", "bottom", "left", "right")}
 #' @param dir Direction: either `"h"` for horizontal or `"v"` for vertical.
-f <- function(strip.position, dir) NULL
+f <- function(strip.position, dir) {
+  NULL
+}

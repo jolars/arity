@@ -1,9 +1,11 @@
 ---
-source: tests/formatter.rs
+source: crates/arity-formatter/tests/formatter.rs
 expression: formatted
 ---
 #' @details
 #' First paragraph short.
 #'
 #' Second paragraph short.
-f <- function() NULL
+f <- function() {
+  NULL
+}

@@ -3,4 +3,6 @@
 #'
 #' The second paragraph is separate and is likewise long enough that it also
 #' wraps independently of the first one above it.
-f <- function(x) x
+f <- function(x) {
+  x
+}

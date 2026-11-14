@@ -5,4 +5,6 @@
 #' @param x A tag.
 #' @return A tab is a tag.
 #' @details No space is a tag.
-f <- function(x) x
+f <- function(x) {
+  x
+}

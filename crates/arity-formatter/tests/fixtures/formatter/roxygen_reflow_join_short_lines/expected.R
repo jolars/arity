@@ -1,2 +1,4 @@
 #' One two three four five six
-f <- function(x) x
+f <- function(x) {
+  x
+}

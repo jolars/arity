@@ -4,4 +4,6 @@
 #' @param x A value.
 #' @return The value.
 #' @export
-f <- function(x) x
+f <- function(x) {
+  x
+}

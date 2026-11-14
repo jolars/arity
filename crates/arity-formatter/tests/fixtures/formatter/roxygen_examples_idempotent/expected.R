@@ -3,4 +3,6 @@
 #' if (x > 0) {
 #'   print(x)
 #' }
-f <- function() NULL
+f <- function() {
+  NULL
+}

@@ -1,7 +1,9 @@
 ---
-source: tests/formatter.rs
+source: crates/arity-formatter/tests/formatter.rs
 expression: formatted
 ---
 #' @examplesIf interactive()
 #' run_thing()
-f <- function() NULL
+f <- function() {
+  NULL
+}

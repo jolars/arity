@@ -1,2 +1,4 @@
 #' @return A value.
-f <- function() NULL
+f <- function() {
+  NULL
+}

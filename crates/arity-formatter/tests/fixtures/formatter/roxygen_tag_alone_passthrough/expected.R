@@ -4,4 +4,6 @@
 #'
 #' @section Tidy data:
 #' When applied to a data frame here.
-f <- function() NULL
+f <- function() {
+  NULL
+}

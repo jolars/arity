@@ -1,3 +1,5 @@
 #' The survey concluded in the winter and the results were finally tabulated by
 #' 2008. Researchers worldwide then cited the figures.
-f <- function(x) x
+f <- function(x) {
+  x
+}

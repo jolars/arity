@@ -5,4 +5,6 @@
 #' that should rewrap across lines while keeping every `a + b` markup span
 #' atomic.
 #' @md
-f <- function() NULL
+f <- function() {
+  NULL
+}

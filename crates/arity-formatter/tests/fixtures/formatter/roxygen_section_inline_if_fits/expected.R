@@ -1,2 +1,4 @@
 #' @details Short note.
-f <- function() NULL
+f <- function() {
+  NULL
+}

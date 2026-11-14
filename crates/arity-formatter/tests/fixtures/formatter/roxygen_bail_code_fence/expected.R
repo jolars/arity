@@ -4,4 +4,6 @@
 #' y <- x + 1
 #' ```
 #' End.
-f <- function(x) x
+f <- function(x) {
+  x
+}

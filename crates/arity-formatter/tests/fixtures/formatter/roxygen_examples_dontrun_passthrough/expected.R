@@ -2,4 +2,6 @@
 #' \dontrun{
 #' run_thing()
 #' }
-f <- function() NULL
+f <- function() {
+  NULL
+}

@@ -2,4 +2,6 @@
 #'
 #'
 #' b
-f <- function(x) x
+f <- function(x) {
+  x
+}

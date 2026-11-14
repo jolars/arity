@@ -1,6 +1,5 @@
 ---
 source: crates/arity-formatter/tests/formatter.rs
-assertion_line: 376
 expression: formatted
 ---
 #' @details
@@ -10,4 +9,6 @@ expression: formatted
 #'   c \tab d
 #' }
 #' and nothing else.
-f <- function() NULL
+f <- function() {
+  NULL
+}

@@ -1,2 +1,4 @@
 #' @param x The x value.
-f <- function(x) x
+f <- function(x) {
+  x
+}

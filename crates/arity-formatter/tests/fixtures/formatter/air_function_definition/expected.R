@@ -140,23 +140,37 @@ function(
 # A line break before the first parameter forces expansion
 
 # So this function definition stays expanded even though it fits on one line
-fn <- function(a, b) body
+fn <- function(a, b) {
+  body
+}
 
 # This flattens to one line
-fn <- function(a, b) body
+fn <- function(a, b) {
+  body
+}
 
 # This flattens to one line
-fn <- function(a, b) body
+fn <- function(a, b) {
+  body
+}
 
 # Expansion doesn't propagate to the `c(1, 2, 3)`
-fn <- function(a, b = c(1, 2, 3)) body
+fn <- function(a, b = c(1, 2, 3)) {
+  body
+}
 
 # Dots - this expands
-fn <- function(..., a, b) body
+fn <- function(..., a, b) {
+  body
+}
 
 # Dots - this flattens
-fn <- function(..., a, b) body
+fn <- function(..., a, b) {
+  body
+}
 
 # User requested expansion of the `c()` call forces expansion of
 # the entire function definition
-fn <- function(a, b = c(1, 2, 3)) body
+fn <- function(a, b = c(1, 2, 3)) {
+  body
+}

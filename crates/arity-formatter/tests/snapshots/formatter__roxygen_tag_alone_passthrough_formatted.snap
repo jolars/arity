@@ -1,5 +1,5 @@
 ---
-source: tests/formatter.rs
+source: crates/arity-formatter/tests/formatter.rs
 expression: formatted
 ---
 #' @description
@@ -8,4 +8,6 @@ expression: formatted
 #'
 #' @section Tidy data:
 #' When applied to a data frame here.
-f <- function() NULL
+f <- function() {
+  NULL
+}

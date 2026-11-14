@@ -4,4 +4,6 @@
 #' @examples
 #' f(1)
 #' @export
-f <- function(x) x
+f <- function(x) {
+  x
+}

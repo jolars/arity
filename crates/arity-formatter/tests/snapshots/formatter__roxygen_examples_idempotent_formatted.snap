@@ -1,5 +1,5 @@
 ---
-source: tests/formatter.rs
+source: crates/arity-formatter/tests/formatter.rs
 expression: formatted
 ---
 #' @examples
@@ -7,4 +7,6 @@ expression: formatted
 #' if (x > 0) {
 #'   print(x)
 #' }
-f <- function() NULL
+f <- function() {
+  NULL
+}

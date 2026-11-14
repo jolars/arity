@@ -1,5 +1,7 @@
 x <- if (a) 1
-f <- function() if (a) 1 else 2
+f <- function() {
+  if (a) 1 else 2
+}
 list(x = if (a) 1 else 2)
 function(p) if (cond) 1
 z <- f(if (a) 1 else b)

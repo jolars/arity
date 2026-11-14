@@ -1,9 +1,11 @@
 ---
-source: tests/formatter.rs
+source: crates/arity-formatter/tests/formatter.rs
 expression: formatted
 ---
 #' @examples
 #' a <- 1
 #' b <- a + 1
 #' print(b)
-f <- function(x) x
+f <- function(x) {
+  x
+}

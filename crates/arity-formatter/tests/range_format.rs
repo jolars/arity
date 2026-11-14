@@ -43,6 +43,22 @@ fn range_format(marked: &str) -> String {
 }
 
 #[test]
+fn expands_selected_named_function_and_keeps_anonymous_callback_compact() {
+    assert_eq!(
+        range_format("before<-1\n<<f<-function(x) { x+1 }>>\nafter<-2\n"),
+        "before<-1\nf <- function(x) {\n  x + 1\n}\nafter<-2\n"
+    );
+    assert_eq!(
+        range_format("outer <- function() {\n  <<inner<-function(x) x+1>>\n}\n"),
+        "outer <- function() {\n  inner <- function(x) {\n    x + 1\n  }\n}\n"
+    );
+    assert_eq!(
+        range_format("before<-1\n<<map(xs, function(x) { x+1 })>>\nafter<-2\n"),
+        "before<-1\nmap(xs, function(x) x + 1)\nafter<-2\n"
+    );
+}
+
+#[test]
 fn preserves_first_line_indentation() {
     // air's `test_format_range_mismatched_indent`: the expression is formatted
     // but its existing 2-space indent is left untouched.

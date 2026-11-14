@@ -5,4 +5,6 @@
 #'   c \tab d
 #' }
 #' and nothing else.
-f <- function() NULL
+f <- function() {
+  NULL
+}

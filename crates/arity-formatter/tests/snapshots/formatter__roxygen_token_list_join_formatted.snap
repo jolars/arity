@@ -1,6 +1,8 @@
 ---
-source: tests/formatter.rs
+source: crates/arity-formatter/tests/formatter.rs
 expression: formatted
 ---
 #' @keywords internal utils
-f <- function() NULL
+f <- function() {
+  NULL
+}

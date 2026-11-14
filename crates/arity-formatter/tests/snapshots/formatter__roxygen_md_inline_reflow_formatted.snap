@@ -1,5 +1,5 @@
 ---
-source: tests/formatter.rs
+source: crates/arity-formatter/tests/formatter.rs
 expression: formatted
 ---
 #' Title
@@ -9,4 +9,6 @@ expression: formatted
 #' that should rewrap across lines while keeping every `a + b` markup span
 #' atomic.
 #' @md
-f <- function() NULL
+f <- function() {
+  NULL
+}

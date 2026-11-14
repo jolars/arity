@@ -1,2 +1,4 @@
 #' @keywords internal utils
-f <- function() NULL
+f <- function() {
+  NULL
+}

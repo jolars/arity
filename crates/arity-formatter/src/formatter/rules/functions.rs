@@ -10,6 +10,7 @@ use super::super::trivia::{ir_inline_trailing_comment, is_quarto_code_annotation
 use super::expressions::{
     ArgSlot, build_arg_group, build_arg_hug, expr_ends_in_block, should_force_leading_hole_expand,
 };
+use crate::ast::{AssignmentExpr, AstNode};
 use crate::parser::parse;
 use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
 
@@ -1266,6 +1267,7 @@ pub(crate) fn ir_function_expr(
 
     let head_ir = Ir::text(head);
     let body_node = single_node(&body_core);
+    let named = is_assigned_function(node);
 
     let core = if let Some(block) = body_node
         .as_ref()
@@ -1282,21 +1284,22 @@ pub(crate) fn ir_function_expr(
         // The flat curly-curly is the bare form, the nested-block `block_ir` the
         // braced fallback.
         let in_call_arg = node.parent().is_some_and(|p| p.kind() == SyntaxKind::ARG);
-        let curly_inline = if in_call_arg && !param_has_comment && body_leading_comments.is_empty()
-        {
-            ir_curly_curly(&body_core, indent, ctx)?
-        } else {
-            None
-        };
+        let curly_inline =
+            if !named && in_call_arg && !param_has_comment && body_leading_comments.is_empty() {
+                ir_curly_curly(&body_core, indent, ctx)?
+            } else {
+                None
+            };
         if let Some(curly) = curly_inline {
             function_body_choice(head_ir, params_ir, curly, block_ir)
         }
-        // A flattenable block (`function(p) { stmt }` → `function(p) stmt`) only
-        // applies with no comments forcing the layout open *and* when the
-        // single statement renders flat — a multi-line inner statement (a
+        // A flattenable anonymous body (`function(p) { stmt }` →
+        // `function(p) stmt`) only applies with no comments forcing it open
+        // and when the single statement renders flat — a multi-line inner statement (a
         // nested block, an `if` with braced arms) keeps the outer braces, so
         // the user sees the structure they wrote.
-        else if !param_has_comment
+        else if !named
+            && !param_has_comment
             && body_leading_comments.is_empty()
             && let Some(stmt_ir) = try_flatten_function_block(block, indent, ctx)?
             && !stmt_ir.contains_forced_break()
@@ -1314,7 +1317,7 @@ pub(crate) fn ir_function_expr(
         // `function_body_choice`, which keeps the bare body only when the
         // whole definition fits on one line.
         let body_ir = ir_expr_segment(&body_core, "function body", indent, ctx)?;
-        if !param_has_comment && body_leading_comments.is_empty() {
+        if !named && !param_has_comment && body_leading_comments.is_empty() {
             function_body_choice(
                 head_ir,
                 params_ir,
@@ -1331,6 +1334,23 @@ pub(crate) fn ir_function_expr(
     };
 
     Ok(prepend_comment_lines(&leading_fn_comments, core))
+}
+
+/// An assignment gives a function a name or target. Parentheses around the
+/// definition are transparent; named call arguments and parameter defaults are
+/// still anonymous functions, rather than assignments.
+fn is_assigned_function(node: &SyntaxNode) -> bool {
+    let mut value = node.clone();
+    while let Some(parent) = value.parent() {
+        if parent.kind() == SyntaxKind::PAREN_EXPR {
+            value = parent;
+        } else {
+            return AssignmentExpr::cast(parent)
+                .and_then(|assignment| assignment.value_element())
+                .is_some_and(|element| element.as_node() == Some(&value));
+        }
+    }
+    false
 }
 
 /// Wrap a bare body in a block, prefixing `comments` on their own lines before

@@ -254,6 +254,91 @@ fn fixture_names() -> &'static [&'static str] {
 }
 
 #[test]
+fn named_function_bodies_are_braced_and_expanded() {
+    for input in [
+        "f <- function(x) x + 1\n",
+        "f <- function(x) { x + 1 }\n",
+        "f <- function(x)\n  x + 1\n",
+        "f <- function(\n  x\n) x + 1\n",
+    ] {
+        assert_eq!(
+            format_verified(input).unwrap(),
+            "f <- function(x) {\n  x + 1\n}\n"
+        );
+    }
+    for (input, expected) in [
+        ("f = function(x) x\n", "f = function(x) {\n  x\n}\n"),
+        ("f <<- function(x) x\n", "f <<- function(x) {\n  x\n}\n"),
+        ("(function(x) x) -> f\n", "(function(x) {\n  x\n}) -> f\n"),
+        ("(function(x) x) ->> f\n", "(function(x) {\n  x\n}) ->> f\n"),
+        ("f <- (function(x) x)\n", "f <- (function(x) {\n  x\n})\n"),
+        (
+            "obj$f <- function(x) x\n",
+            "obj$f <- function(x) {\n  x\n}\n",
+        ),
+        (
+            "method(g, cls) <- function(x) x\n",
+            "method(g, cls) <- function(x) {\n  x\n}\n",
+        ),
+        ("f <- \\(x) x\n", "f <- \\(x) {\n  x\n}\n"),
+        ("f <- function() {}\n", "f <- function() {}\n"),
+    ] {
+        assert_eq!(format_verified(input).unwrap(), expected, "{input}");
+    }
+}
+
+#[test]
+fn anonymous_function_bodies_can_stay_compact() {
+    for input in [
+        "map(xs, function(x) x + 1)\n",
+        "map(xs, function(x) { x + 1 })\n",
+        "map(xs, function(x)\n  x + 1)\n",
+    ] {
+        assert_eq!(
+            format_verified(input).unwrap(),
+            "map(xs, function(x) x + 1)\n"
+        );
+    }
+    for input in [
+        "map(xs, \\(x) x + 1)\n",
+        "map(xs, .f = function(x) x + 1)\n",
+        "function(x) x + 1\n",
+        "factory <- function() {\n  function(x) x + 1\n}\n",
+        "outer <- function(f = function(x) x) {\n  f\n}\n",
+    ] {
+        assert_eq!(format_verified(input).unwrap(), input);
+    }
+}
+
+#[test]
+fn function_body_style_is_stable_across_widths_and_indentation() {
+    for line_width in [20, 80, 120] {
+        for indent_width in [2, 4] {
+            let style = FormatStyle {
+                line_width,
+                indent_width,
+                ..FormatStyle::default()
+            };
+            let pad = " ".repeat(indent_width);
+            for input in ["f <- function(x) x + 1\n", "f <- function(x) { x + 1 }\n"] {
+                assert_eq!(reconstruct(input), input);
+                let formatted = format_verified_with_style(input, style).unwrap();
+                assert_eq!(formatted, format!("f <- function(x) {{\n{pad}x + 1\n}}\n"));
+                assert_eq!(reconstruct(&formatted), formatted);
+            }
+            let bare = "map(xs, function(x) x + 1)\n";
+            let braced = "map(xs, function(x) { x + 1 })\n";
+            assert_eq!(
+                format_verified_with_style(bare, style).unwrap(),
+                format_verified_with_style(braced, style).unwrap()
+            );
+            format_verified_with_style("f <- function(x) {\n# keep\nx + 1 # tail\n}\n", style)
+                .unwrap();
+        }
+    }
+}
+
+#[test]
 fn formats_assignment_binary_and_paren_stably() {
     let input = "x<-(1+2)*3^4\n";
     let expected = "x <- (1 + 2) * 3^4\n";
@@ -329,15 +414,15 @@ fn reflows_around_line_spanning_verbatim_chunks() {
     let cases = [
         (
             "#' lead \\verb{abcdefghij\n#' klmnopqrst} after some words\nf <- function() NULL\n",
-            "#' lead \\verb{abcdefghij\n#' klmnopqrst} after some words\nf <- function() NULL\n",
+            "#' lead \\verb{abcdefghij\n#' klmnopqrst} after some words\nf <- function() {\n  NULL\n}\n",
         ),
         (
             "#' @param x lead \\verb{abcde\n#' fghij} after some words\nf <- function(x) x\n",
-            "#' @param x lead \\verb{abcde\n#' fghij} after some words\nf <- function(x) x\n",
+            "#' @param x lead \\verb{abcde\n#' fghij} after some words\nf <- function(x) {\n  x\n}\n",
         ),
         (
             "#' @details lead \\verb{abcde\n#' fghij} after\nf <- function() NULL\n",
-            "#' @details lead \\verb{abcde\n#' fghij} after\nf <- function() NULL\n",
+            "#' @details lead \\verb{abcde\n#' fghij} after\nf <- function() {\n  NULL\n}\n",
         ),
     ];
     for (input, expected) in cases {

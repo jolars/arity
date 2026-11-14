@@ -1,6 +1,5 @@
 ---
 source: crates/arity-formatter/tests/formatter.rs
-assertion_line: 376
 expression: formatted
 ---
 #' @param strip.position By default, the labels are displayed on the top of the
@@ -8,4 +7,6 @@ expression: formatted
 #'   of the four sides by setting
 #'   \code{strip.position = c("top", "bottom", "left", "right")}
 #' @param dir Direction: either `"h"` for horizontal or `"v"` for vertical.
-f <- function(strip.position, dir) NULL
+f <- function(strip.position, dir) {
+  NULL
+}

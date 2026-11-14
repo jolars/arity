@@ -8,4 +8,6 @@
 #'   can be used.
 #' * A `Geom` ggproto subclass, for example `GeomPoint`.
 #' * A string naming the geom, stripped of the `geom_` prefix.
-f <- function(data, geom) data
+f <- function(data, geom) {
+  data
+}
