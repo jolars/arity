@@ -323,6 +323,29 @@ fn reformats_unformatted_input() {
 }
 
 #[test]
+fn formatting_expands_named_functions_and_keeps_callbacks_compact() {
+    let input = "f <- function(x) x + 1\n";
+    let style = FormatStyle::default();
+    let edits = compute_format_edits(input, style, PositionEncoding::Utf16, &Default::default())
+        .expect("formats assigned function");
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].range, line_range(0, 0, 1, 0));
+    assert_eq!(edits[0].new_text, "f <- function(x) {\n  x + 1\n}\n");
+
+    let callback = "map(xs, function(x) x + 1)\n";
+    assert!(
+        compute_format_edits(
+            callback,
+            style,
+            PositionEncoding::Utf16,
+            &Default::default()
+        )
+        .expect("formats anonymous callback")
+        .is_empty()
+    );
+}
+
+#[test]
 fn no_edits_when_input_already_formatted() {
     let style = FormatStyle::default();
     let formatted = format_with_style("x <- 1\n", style).expect("formats");

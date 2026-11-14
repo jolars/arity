@@ -125,16 +125,14 @@ output and semantic noise. Rule coverage and style options follow those fixes.
   varies solely with whitespace, reduce that case before recording it as a
   formatter defect.
 
-- [ ] Decide whether to offer an always-braced function-body style (feedback 7,
-  an adoption request). Confirmed current behavior:
-  `f <- function(x) { x + 1 }` becomes `f <- function(x) x + 1`, and there
-  is no option to prevent it. Evaluate a deterministic always-brace mode,
-  including functions whose input was already bare, rather than preserving
-  source line breaks. If adopted, plumb it through `FormatStyle`,
-  config/schema, CLI/LSP, docs, and cache identity; pin named/anonymous
-  functions, lambdas, comments, width boundaries, range formatting, and
-  idempotence. Otherwise document the deliberate difference from Air and the
-  available format directives.
+- [x] Adopt braced, expanded bodies for assigned functions (feedback 7). Named
+  definitions now expand even when their input body was bare. Anonymous
+  `function(...)` callbacks and `\(...)` lambdas retain compact layout when
+  they fit; empty bodies stay `{}`. The rule is deterministic and
+  independent of input line breaks, with no new configuration option. Pinned
+  assignments, callbacks, lambdas, comments, width boundaries, range
+  formatting, and idempotence, and documented the deliberate difference from
+  Air.
 
 ## Parser
 

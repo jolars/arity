@@ -68,6 +68,32 @@ setting, including line endings and the switches for roxygen and `DESCRIPTION`
 formatting. `DESCRIPTION` continuation lines use four spaces regardless of the R
 indentation setting.
 
+## Function bodies
+
+Functions assigned to a name or target always use braces and an expanded body,
+even when the body is a single expression:
+
+```r
+f <- function(x) {
+  x + 1
+}
+```
+
+Anonymous functions can stay compact when the whole definition fits on one line.
+This applies to both `function(...)` callbacks and `\(...)` lambdas, including
+callbacks passed through named arguments:
+
+```r
+map(xs, function(x) x + 1)
+map(xs, \(x) x + 1)
+map(xs, .f = function(x) x + 1)
+```
+
+These rules do not depend on input line breaks or existing braces. Anonymous
+functions expand when needed for width or comments. Empty bodies stay `{}`.
+Unlike Air, Arity always expands assigned functions and can collapse a short,
+braced anonymous function to its compact form.
+
 ## Preserve selected layout
 
 Use a formatter directive when a particular statement needs hand-written layout:

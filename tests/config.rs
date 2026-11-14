@@ -61,8 +61,8 @@ fn run_cli_in_no_stdin<const N: usize>(cwd: &Path, args: [&str; N]) -> std::proc
 }
 
 #[test]
-fn cli_line_width_default_keeps_input_inline() {
-    // At the default 80, the input fits on one line as a bare function body.
+fn cli_line_width_default_keeps_function_parameters_inline() {
+    // At the default 80, the parameters fit on one line; the body still expands.
     let output = run_cli(["format"], LONG_FN_INPUT);
     assert!(
         output.status.success(),
@@ -70,7 +70,10 @@ fn cli_line_width_default_keeps_input_inline() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).expect("utf-8");
-    assert_eq!(stdout, "x <- function(aaaaa, bbbbb, ccccc, ddddd) 1\n");
+    assert_eq!(
+        stdout,
+        "x <- function(aaaaa, bbbbb, ccccc, ddddd) {\n  1\n}\n"
+    );
 }
 
 #[test]
@@ -168,7 +171,7 @@ fn cli_no_config_ignores_discovered_arity_toml() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).expect("utf-8");
-    // With defaults the call fits inline; no break.
+    // With defaults the parameters fit inline.
     assert!(!stdout.contains("function(\n"), "got:\n{stdout}");
 }
 
@@ -224,14 +227,17 @@ fn cli_env_config_fallback_and_precedence() {
         assert!(stdout.contains("function(\n    aaaaa,"), "{stdout}");
     }
 
-    let inline = "x <- function(aaaaa, bbbbb, ccccc, ddddd) 1\n";
-    for args in [
-        vec!["format", "--no-config"],
-        vec!["format", "--line-width", "80"],
+    let inline = "x <- function(aaaaa, bbbbb, ccccc, ddddd) {\n  1\n}\n";
+    for (args, expected) in [
+        (vec!["format", "--no-config"], inline),
+        (
+            vec!["format", "--line-width", "80"],
+            "x <- function(aaaaa, bbbbb, ccccc, ddddd) {\n    1\n}\n",
+        ),
     ] {
         let output = run_cli_with_env_config(&project, &config, &args, LONG_FN_INPUT);
         assert!(output.status.success(), "{output:?}");
-        assert_eq!(String::from_utf8(output.stdout).unwrap(), inline);
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
     }
 
     // An empty value is the same as leaving the fallback unset.
@@ -435,9 +441,13 @@ fn cli_format_check_honors_configured_line_width() {
     let dir = tempdir().unwrap();
     fs::write(dir.path().join("arity.toml"), "[format]\nline-width = 30\n").unwrap();
     let r_file = dir.path().join("a.R");
-    // Already formatted for the default 80 (bare body); the configured
+    // Already formatted for the default 80 (inline parameters); the configured
     // line-width = 30 should force a reformat.
-    fs::write(&r_file, "x <- function(aaaaa, bbbbb, ccccc, ddddd) 1\n").unwrap();
+    fs::write(
+        &r_file,
+        "x <- function(aaaaa, bbbbb, ccccc, ddddd) {\n  1\n}\n",
+    )
+    .unwrap();
 
     let output = run_cli_in_no_stdin(dir.path(), ["format", "--check", r_file.to_str().unwrap()]);
     assert!(
