@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.30.1](https://github.com/jolars/arity/compare/v0.30.0...v0.30.1) (2026-11-14)
+
+### Bug Fixes
+
+- **cli:** resolve configuration per input directory ([`fbcf8f1`](https://github.com/jolars/arity/commit/fbcf8f142323fb33f15d4ae374ea5a0449d5b8bd))
+- **deps:** update rustix for sound xattr handling ([`9e34347`](https://github.com/jolars/arity/commit/9e343478e159682cfbb3786829dc204047508ca5)), fixes [#184](https://github.com/jolars/arity/issues/184)
+- **ci:** build musl releases with Zig ([`d836100`](https://github.com/jolars/arity/commit/d836100ce2628e977246bd78972653be3ba102ee))
+
+### Dependencies
+
+- updated crates/arity-formatter to v0.8.5
+
 ## [0.30.0](https://github.com/jolars/arity/compare/v0.29.0...v0.30.0) (2026-11-10)
 
 ### Features

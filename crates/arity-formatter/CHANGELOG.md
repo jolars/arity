@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.5](https://github.com/jolars/arity/compare/arity-formatter-v0.8.4...arity-formatter-v0.8.5) (2026-11-14)
+
+### Bug Fixes
+
+- **formatter:** stabilize calls with braced function bodies ([`2654f93`](https://github.com/jolars/arity/commit/2654f9316c9a84407769144fba1336f78fe271b3))
+
 ## [0.8.4](https://github.com/jolars/arity/compare/arity-formatter-v0.8.3...arity-formatter-v0.8.4) (2026-11-10)
 
 ### Dependencies
