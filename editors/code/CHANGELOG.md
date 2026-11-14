@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.30.1](https://github.com/jolars/arity/compare/arity-code-v0.30.0...arity-code-v0.30.1) (2026-11-14)
+
+### Bug Fixes
+
+- **code:** use compatible patched minimatch ([`d9c5e9b`](https://github.com/jolars/arity/commit/d9c5e9b9954bfc377b61841b80dccba3d44bf2eb))
+
+### Dependencies
+
+- updated arity to v0.30.1
+
 ## [0.30.0](https://github.com/jolars/arity/compare/arity-code-v0.29.0...arity-code-v0.30.0) (2026-11-10)
 
 ### Dependencies

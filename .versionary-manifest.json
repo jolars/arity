@@ -1,23 +1,19 @@
 {
   "manifest-version": 1,
-  "baseline-sha": "12b81917696b49453e5e9ff06449ab9e465aa9c8",
+  "baseline-sha": "fbcf8f142323fb33f15d4ae374ea5a0449d5b8bd",
   "release-targets": [
     {
       "path": ".",
-      "version": "0.30.0",
-      "tag": "v0.30.0",
+      "version": "0.30.1",
+      "tag": "v0.30.1",
       "dependencies": [
-        "crates/arity-formatter",
-        "crates/arity-parser"
+        "crates/arity-formatter"
       ]
     },
     {
       "path": "crates/arity-formatter",
-      "version": "0.8.4",
-      "tag": "arity-formatter-v0.8.4",
-      "dependencies": [
-        "crates/arity-parser"
-      ]
+      "version": "0.8.5",
+      "tag": "arity-formatter-v0.8.5"
     },
     {
       "path": "crates/arity-parser",
@@ -26,8 +22,8 @@
     },
     {
       "path": "editors/code",
-      "version": "0.30.0",
-      "tag": "arity-code-v0.30.0",
+      "version": "0.30.1",
+      "tag": "arity-code-v0.30.1",
       "dependencies": [
         "."
       ]
@@ -41,30 +37,21 @@
   "pending-release-targets": [
     {
       "path": ".",
-      "version": "0.30.0",
-      "tag": "v0.30.0",
+      "version": "0.30.1",
+      "tag": "v0.30.1",
       "dependencies": [
-        "crates/arity-formatter",
-        "crates/arity-parser"
+        "crates/arity-formatter"
       ]
     },
     {
       "path": "crates/arity-formatter",
-      "version": "0.8.4",
-      "tag": "arity-formatter-v0.8.4",
-      "dependencies": [
-        "crates/arity-parser"
-      ]
-    },
-    {
-      "path": "crates/arity-parser",
-      "version": "0.8.0",
-      "tag": "arity-parser-v0.8.0"
+      "version": "0.8.5",
+      "tag": "arity-formatter-v0.8.5"
     },
     {
       "path": "editors/code",
-      "version": "0.30.0",
-      "tag": "arity-code-v0.30.0",
+      "version": "0.30.1",
+      "tag": "arity-code-v0.30.1",
       "dependencies": [
         "."
       ]
