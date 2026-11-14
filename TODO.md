@@ -104,17 +104,16 @@ output and semantic noise. Rule coverage and style options follow those fixes.
   environments as separate semantic inputs, not as a reason to mark
   arbitrary names defined everywhere.
 
-- [ ] Extend `seq` to base-resolved `seq(length(x))` (feedback 4). Confirmed
-  missed finding: `seq` currently subscribes only to `BINARY_EXPR` and
-  checks colon ranges. R returns `c(1L, 0L)` for `seq(length(numeric(0)))`,
-  while `seq_along(numeric(0))` returns `integer(0)`; nonempty ordinary
-  vectors agree. Add call interests to the existing shared dispatch and
-  report the narrow one-argument shape. Verify both callees resolve to base,
-  preserve trivia, and test shadowing, qualified/named forms, extra
-  arguments, dispatch, and empty input before deciding fix applicability. Do
-  not rewrite arbitrary `seq(x)`, whose behavior depends on the argument.
-  Add executable examples, parse-clean fix coverage, and regenerate rule
-  docs.
+- [x] Extend `seq` to base-resolved `seq(length(x))` (feedback 4). The shared
+  dispatch now checks calls with exactly one positional argument in both
+  `seq` and `length`. R confirms the empty-input bug and agreement for
+  nonempty ordinary vectors. The fix requires `--unsafe-fixes`: a custom
+  `length` method can return a classed count that dispatches a `seq` method.
+  Shadowing, package masks, qualified/named forms, extra or missing arguments,
+  pipe stages, and arbitrary `seq(x)` are covered. Fixes preserve operand
+  trivia and are withheld when comments would be dropped or `seq_along`
+  could be shadowed. Added executable examples and parse-clean fix coverage,
+  and regenerated and reviewed the rule docs.
 
 - [ ] Pin the evidence for feedback 5 before changing conditional layout. The
   claimed whitespace dependence did not reproduce: both

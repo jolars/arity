@@ -1,12 +1,14 @@
 ---
 source: tests/rule_docs.rs
-expression: render_rule_doc(rule.as_ref())
+expression: render_rule_doc(&rule)
 ---
 ### `seq`
 
 Flag colon ranges from `1` up to a length—`1:length(x)`, `1:nrow(x)`, or `1:n`—which silently count *down* when that length is zero (`1:0` is `c(1L, 0L)`, not an empty sequence), a classic off-by-one bug for loops over possibly-empty input. `seq_along(x)` and `seq_len(n)` return a zero-length sequence instead, and agree with the colon form everywhere else.
 
 The `length`/`nrow`/`ncol`/`NROW`/`NCOL` forms fire only when the callee resolves to base R; a redefinition is left alone. Literal ranges (`1:10`) and computed bounds (`1:(n - 1)`) are not flagged.
+
+Also flag `seq(length(x))` when both callees resolve to base R and each call has exactly one positional argument. For ordinary vectors, `seq_along(x)` agrees on nonempty input and returns `integer(0)` on empty input instead of `c(1L, 0L)`. This fix is unsafe because a custom `length` method can return a classed count that dispatches a `seq` method. It requires `--unsafe-fixes` and is withheld when `seq_along` could be shadowed or comments would be lost. Qualified calls, named arguments, extra or missing arguments, pipe stages, and arbitrary `seq(x)` are left alone.
 
 This rule is **enabled by default**.
 
@@ -37,4 +39,19 @@ After applying the fix:
 ```r
 for (i in seq_along(x)) print(x[i])
 for (j in seq_len(n)) f(j)
+```
+
+A seq call over a possibly-empty vector's length:
+
+```r
+seq(length(numeric(0)))
+```
+
+```text
+warning: seq
+ --> example.R:1:1
+  |
+1 | seq(length(numeric(0)))
+  | ^^^^^^^^^^^^^^^^^^^^^^^ `seq(length(numeric(0)))` counts down (`1:0`) when the length is zero; `seq_along(numeric(0))` handles empty input
+  = help: Use `seq_along(numeric(0))`.
 ```

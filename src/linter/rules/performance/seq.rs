@@ -25,6 +25,12 @@
 //! expression it replaces), so no precedence guard is needed. The fix is
 //! withheld when a comment outside the preserved operand would be dropped.
 //!
+//! Also flag `seq(length(x))` when both calls resolve to base R and each has
+//! exactly one positional argument. This fix is `Unsafe`: `length` can return
+//! a classed count that dispatches a `seq` method, unlike `seq_along(x)`.
+//! Withhold it if the introduced `seq_along` could be shadowed. Arbitrary
+//! `seq(x)`, qualified/named calls, and pipe stages are left alone.
+//!
 //! The message quotes the range and its rewrite as they appear in the file, so
 //! it reads as advice about *this* code rather than about a stand-in shape.
 
@@ -38,10 +44,16 @@ use crate::syntax::{SyntaxElement, SyntaxKind};
 
 pub struct Seq;
 
-const EXAMPLES: &[Example] = &[Example {
-    caption: "Ranges over a vector's indices and up to a count:",
-    source: "for (i in 1:length(x)) print(x[i])\nfor (j in 1:n) f(j)\n",
-}];
+const EXAMPLES: &[Example] = &[
+    Example {
+        caption: "Ranges over a vector's indices and up to a count:",
+        source: "for (i in 1:length(x)) print(x[i])\nfor (j in 1:n) f(j)\n",
+    },
+    Example {
+        caption: "A seq call over a possibly-empty vector's length:",
+        source: "seq(length(numeric(0)))\n",
+    },
+];
 
 /// The callees whose count the range runs up to. `length` gets the dedicated
 /// `seq_along(x)`; the dimension counts keep the call inside `seq_len(...)`.
@@ -68,7 +80,16 @@ impl Rule for Seq {
          the colon form everywhere else.\n\nThe `length`/`nrow`/`ncol`/`NROW`/\
          `NCOL` forms fire only when the callee resolves to base R; a \
          redefinition is left alone. Literal ranges (`1:10`) and computed \
-         bounds (`1:(n - 1)`) are not flagged."
+         bounds (`1:(n - 1)`) are not flagged.\n\n\
+         Also flag `seq(length(x))` when both callees resolve to base R and \
+         each call has exactly one positional argument. For ordinary vectors, \
+         `seq_along(x)` agrees on nonempty input and returns `integer(0)` on \
+         empty input instead of `c(1L, 0L)`. This fix is unsafe because a \
+         custom `length` method can return a classed count that dispatches a \
+         `seq` method. It requires `--unsafe-fixes` and is withheld when \
+         `seq_along` could be shadowed or comments would be lost. Qualified \
+         calls, named arguments, extra or missing arguments, pipe stages, and \
+         arbitrary `seq(x)` are left alone."
     }
 
     fn examples(&self) -> &'static [Example] {
@@ -76,13 +97,17 @@ impl Rule for Seq {
     }
 
     fn interests(&self) -> &'static [SyntaxKind] {
-        &[SyntaxKind::BINARY_EXPR]
+        &[SyntaxKind::BINARY_EXPR, SyntaxKind::CALL_EXPR]
     }
 
     fn check(&self, el: &SyntaxElement, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         let Some(node) = el.as_node() else {
             return;
         };
+        if let Some(call) = matchers::call_named(node, "seq") {
+            check_length_call(&call, ctx, sink);
+            return;
+        }
         let Some((lhs, op, rhs)) = matchers::binary_parts(node) else {
             return;
         };
@@ -172,4 +197,84 @@ impl Rule for Seq {
             fix,
         });
     }
+}
+
+/// Keep the single-argument match strict: `sole_positional` ignores empty
+/// slots, but `seq(length(x),)` is outside this rule's narrow call shape.
+/// Comments can create value-less ARG nodes, so count separators, not nodes.
+fn single_argument(call: &CallExpr) -> Option<SyntaxElement> {
+    if call
+        .arg_list()?
+        .syntax()
+        .children_with_tokens()
+        .any(|el| el.kind() == SyntaxKind::COMMA)
+    {
+        return None;
+    }
+    let arg = matchers::sole_positional(call)?;
+    if arg
+        .as_token()
+        .and_then(|token| Ident::cast(token.clone()))
+        .is_some_and(|ident| ident.is_dots())
+    {
+        return None;
+    }
+    Some(arg)
+}
+
+fn check_length_call(call: &CallExpr, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
+    // A pipe stage receives an implicit argument, so the written arguments do
+    // not establish that seq is called with just a length.
+    if call.syntax().parent().is_some_and(|parent| {
+        matchers::binary_parts(&parent).is_some_and(|(_, op, rhs)| {
+            rhs.as_node() == Some(call.syntax())
+                && (op.kind() == SyntaxKind::PIPE
+                    || (op.kind() == SyntaxKind::USER_OP
+                        && matches!(op.text(), "%>%" | "%T>%" | "%<>%" | "%$%")))
+        })
+    }) {
+        return;
+    }
+    let Some(inner) = single_argument(call)
+        .and_then(SyntaxElement::into_node)
+        .and_then(|node| matchers::call_named(&node, "length"))
+    else {
+        return;
+    };
+    let Some(arg) = single_argument(&inner) else {
+        return;
+    };
+    if !ctx.resolves_to_base(call) || !ctx.resolves_to_base(&inner) {
+        return;
+    }
+
+    let content = format!("seq_along({})", matchers::element_text(&arg));
+    let shape = compact(&call.syntax().text().to_string());
+    let replacement = compact(&content);
+    let range = call.syntax().text_range();
+    let drops_comment = call.syntax().descendants_with_tokens().any(|el| {
+        el.kind() == SyntaxKind::COMMENT && !arg.text_range().contains_range(el.text_range())
+    });
+    let fix = (!drops_comment && ctx.introduced_call_resolves_to_base("seq_along")).then(|| {
+        Fix::unsafe_(
+            usize::from(range.start()),
+            usize::from(range.end()),
+            content,
+            format!("Replace `{shape}` with `{replacement}`"),
+        )
+    });
+    sink.push(Diagnostic {
+        rule: "seq",
+        severity: Default::default(),
+        path: Default::default(),
+        range,
+        message: ViolationData::new(
+            "seq",
+            format!(
+                "`{shape}` counts down (`1:0`) when the length is zero; `{replacement}` handles empty input"
+            ),
+        )
+        .with_suggestion(format!("Use `{replacement}`.")),
+        fix,
+    });
 }

@@ -5937,6 +5937,155 @@ fn nzchar_withholds_fix_for_dropped_comment() {
 }
 
 #[test]
+fn seq_rewrites_single_length_calls_with_an_unsafe_fix() {
+    for (src, expected) in [
+        ("seq(length(x))\n", "seq_along(x)\n"),
+        ("idx <- seq(length(df$col))\n", "idx <- seq_along(df$col)\n"),
+        ("seq(length(numeric(0)))\n", "seq_along(numeric(0))\n"),
+        ("seq(length(x + y))\n", "seq_along(x + y)\n"),
+    ] {
+        let findings = rule_diags(src, "seq");
+        assert_eq!(findings.len(), 1, "{src}: {findings:?}");
+        let d = &findings[0];
+        assert_eq!(
+            &src[usize::from(d.range.start())..usize::from(d.range.end())],
+            src.trim().strip_prefix("idx <- ").unwrap_or(src.trim()),
+        );
+        assert!(d.message.body.contains("empty input"), "{d:?}");
+        let fix = d.fix.as_ref().expect("expected a fix");
+        assert_eq!(fix.applicability, Applicability::Unsafe);
+        assert_eq!(
+            apply_fixes(src, std::slice::from_ref(fix), false).output,
+            src
+        );
+        assert_eq!(unsafe_fixed_output(src, "seq"), expected);
+    }
+}
+
+#[test]
+fn seq_length_calls_require_the_narrow_positional_shape() {
+    for src in [
+        "seq(x)\n",
+        "seq(0)\n",
+        "seq(3)\n",
+        "seq(numeric(0))\n",
+        "seq(length())\n",
+        "seq(length(...))\n",
+        "seq(length(x, y))\n",
+        "seq(length(x,))\n",
+        "seq(length(,x))\n",
+        "seq(length(x), 5)\n",
+        "seq(length(x),)\n",
+        "seq(,length(x))\n",
+        "seq(from = length(x))\n",
+        "seq(to = length(x))\n",
+        "seq(along.with = length(x))\n",
+        "seq(length(x = x))\n",
+        "seq(length(x), by = 2)\n",
+        "seq(length(x), length.out = 2)\n",
+        "base::seq(length(x))\n",
+        "other::seq(length(x))\n",
+        "seq(base::length(x))\n",
+        "seq(other::length(x))\n",
+        "base:::seq(length(x))\n",
+        "seq(base:::length(x))\n",
+        "obj$seq(length(x))\n",
+        "seq(obj$length(x))\n",
+        "seq((length(x)))\n",
+        "`seq`(`length`(x))\n",
+        "x |> seq(length(y))\n",
+        "x %>% seq(length(y))\n",
+    ] {
+        assert!(arity::parser::parse(src).diagnostics.is_empty(), "{src}");
+        assert!(rule_diags(src, "seq").is_empty(), "{src}");
+    }
+}
+
+#[test]
+fn seq_length_calls_skip_shadowed_callees() {
+    for src in [
+        "seq <- function(x) x\nseq(length(x))\n",
+        "length <- function(x) 2\nseq(length(x))\n",
+        "f <- function(x, seq) seq(length(x))\n",
+        "f <- function(x, length) seq(length(x))\n",
+        "f <- function(x) { seq <- identity; seq(length(x)) }\n",
+        "f <- function(x) { length <- identity; seq(length(x)) }\n",
+    ] {
+        assert!(rule_diags(src, "seq").is_empty(), "{src}");
+    }
+}
+
+#[test]
+fn seq_length_calls_respect_package_masks_and_replacement_shadowing() {
+    let config = LintConfig {
+        select: Some(vec!["seq".into()]),
+        ..Default::default()
+    };
+    for name in ["seq", "length", "seq_along"] {
+        let provider = CompositeProvider::with_index(IndexedProvider::from_indices([indexed_pkg(
+            "custompkg",
+            &[name],
+        )]));
+        let findings = check_document_with_provider(
+            Path::new("t.R"),
+            "library(custompkg)\nseq(length(x))\n",
+            &config,
+            &provider,
+        )
+        .expect("lint should succeed");
+        if name == "seq_along" {
+            assert_eq!(findings.len(), 1);
+            assert!(findings[0].fix.is_none());
+        } else {
+            assert!(findings.is_empty(), "{name}: {findings:?}");
+        }
+    }
+    for src in [
+        "seq_along <- function(x) 42\nseq(length(x))\n",
+        "f <- function(x, seq_along) seq(length(x))\n",
+    ] {
+        let findings = rule_diags(src, "seq");
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].fix.is_none(), "{src}: {findings:?}");
+    }
+}
+
+#[test]
+fn seq_length_calls_account_for_s3_dispatch() {
+    // Verified with R: the original returns 99L, but seq_along(x) returns 1:3.
+    // Both callees resolve to base; dispatch still makes this an unsafe fix.
+    let src = "length.counted <- function(x) structure(3L, class = 'count')\n\
+               seq.count <- function(...) 99L\n\
+               x <- structure(1:3, class = 'counted')\n\
+               seq(length(x))\n";
+    let findings = rule_diags(src, "seq");
+    assert_eq!(findings.len(), 1);
+    assert_eq!(
+        findings[0].fix.as_ref().expect("fix").applicability,
+        Applicability::Unsafe,
+    );
+}
+
+#[test]
+fn seq_length_calls_preserve_trivia_or_withhold_the_fix() {
+    let src = "# before\nseq(length(f( # keep\n  x))) # after\n";
+    let fixed = unsafe_fixed_output(src, "seq");
+    assert_eq!(fixed, "# before\nseq_along(f( # keep\n  x)) # after\n");
+    assert!(arity::parser::parse(&fixed).diagnostics.is_empty());
+    assert_eq!(arity::parser::reconstruct(&fixed), fixed);
+
+    for src in [
+        "seq( # outer\n  length(x))\n",
+        "seq(length( # inner\n  x))\n",
+        "seq(length(x # trailing\n))\n",
+    ] {
+        let findings = rule_diags(src, "seq");
+        assert_eq!(findings.len(), 1, "{src}: {findings:?}");
+        assert!(findings[0].fix.is_none(), "{src}: {findings:?}");
+    }
+}
+
+#[test]
 fn seq_rewrites_colon_length_to_seq_along() {
     assert_eq!(
         fixed_output("for (i in 1:length(x)) print(i)\n", "seq"),
@@ -7027,6 +7176,10 @@ fn fixed_output_is_parseable_and_clean() {
         "for (i in 1:length(x)) print(i)\n",
         "for (i in 1:n) f(i)\n",
         "idx <- 1:nrow(df)\n",
+        // seq(length(x)) -> seq_along(x), unsafe because of S3 dispatch.
+        "seq(length(x))\n",
+        "seq(length(numeric(0)))\n",
+        "seq(length(df$col))\n",
         // nzchar (`nchar(x) > 0` → `nzchar(x)`; unsafe)
         "flag <- nchar(x) > 0\n",
         "flag <- nchar(x) == 0\n",
