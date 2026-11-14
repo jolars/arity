@@ -1,5 +1,157 @@
 # TODOs
 
+## vscode-R adoption feedback (2026-11-14)
+
+Investigated the seven Arity-specific points in [vscode-R PR
+#1946](https://github.com/REditorSupport/vscode-R/pull/1946) against Arity
+0.30.0 at `39014aa` and the PR head at `3c54a6e` (58 R files). Built the release
+binary, checked reduced examples, and reran default lint and formatter
+verification on `R/`, `sess/`, `scripts/`, and `src/test/examples/`. R behavior
+below was checked with R 4.6.1, including tinytest 1.4.3's runner. The PR head
+passes `format --verify` with its width-100 config. The reported timings and
+comparisons with Air, Jarl, and lintr were not remeasured.
+
+Prioritize formatter idempotence and config discovery, then machine-readable
+output and semantic noise. Rule coverage and style options follow those fixes.
+
+- [ ] Fix the confirmed formatter idempotence failure (feedback 1). At width 80
+  and indent 2, this input expands the outer `lapply()` on pass one and hugs
+  its arguments on pass two; `format --verify` rejects it:
+
+  ```r
+  saved <- lapply(fields, function(name) {
+    list(exists = exists(name, envir = state, inherits = FALSE),
+         value = if (exists(name, envir = state, inherits = FALSE)) get(name, state) else NULL)
+  })
+  ```
+
+  The inner `if` acquires braces on pass one. Investigate how that changes
+  `try_flatten_function_block`, `function_body_choice`, and the enclosing call's
+  hug fit in `formatter/rules/functions.rs` and `expressions.rs`. The likely
+  cause is a different IR choice once the generated braces become CST, rather
+  than preserved input whitespace. Add a registered formatter fixture that fails
+  before the fix, plus width-80/100/120 and indent-2/4 coverage. Require
+  one-pass idempotence, losslessness, and syntax/comment verification. This
+  exact reduced input already passes at width 100/indent 2 and 120/indent 4. Fix
+  candidate selection in native IR, without repeated formatting passes.
+
+- [ ] Make CLI config discovery match the documented per-file contract (feedback
+  2). `run_format` and `run_lint` currently resolve one config from
+  `cwd_anchor()` before walking files. With only `R/arity.toml` containing
+  `[format] indent-width = 4`, running `arity format R/f.R` from the root
+  uses two spaces; running from `R/` or passing `--config R/arity.toml` uses
+  four. A nested `[lint] ignore = ["seq"]` is likewise ignored from the
+  root. Resolve/cache configs per input directory and honor nested configs
+  during recursive walks. Define how nested exclusions govern discovery,
+  keep their patterns anchored to their config, and include each resolved
+  style in format cache keys. Preserve explicit `--config`/`--no-config`,
+  CLI overrides, `ARITY_CONFIG`, `extend`, repository boundaries, and
+  cwd-based stdin behavior. Add CLI tests for direct files, mixed
+  directories, recursive walks, lint, format checks, and fixes; verify
+  parity with LSP discovery. Audit the README and configuration docs
+  together with the implementation.
+
+- [ ] Emit `[]` for clean `lint --output json` runs (feedback 6). Confirmed for
+  both `arity lint --no-config --select seq --output json clean.R` with
+  `print(1)` and the same input on stdin: exit 0, empty stdout. The renderer
+  already supports empty arrays; `run_lint` and `run_lint_stdin` skip it.
+  Render JSON even with zero findings and add CLI tests for files,
+  directories, stdin, and a `--fix` run that clears the last finding.
+  Preserve exit codes and stderr routing. Define or reject stdin
+  `--fix --output json`, which currently combines rewritten R and diagnostic
+  JSON on stdout when findings remain, before making the empty-result path
+  emit JSON there too.
+
+- [ ] Model tinytest's runner-supplied expectations (feedback 3). Default lint
+  reproduces 759 `undefined-symbol` findings, 749 under
+  `sess/inst/tinytest/`. Of those, 746 are expectation calls; the other
+  three are `.Random.seed` reads, covered separately below.
+  `tinytest::run_test_file()` successfully runs a file containing
+  `expect_true(TRUE)` without attaching tinytest: it injects expectation
+  functions into the test environment. Add narrow support for this
+  convention in shared semantic/project resolution for package
+  `inst/tinytest/` files, reusing bundled exports where appropriate and
+  checking exactly which names the runner supplies.
+  `implicit_attached_packages` in `src/semantic/symbols.rs` already handles
+  `tests/testthat/`; testthat support is not entirely missing. Cover CLI,
+  standalone, and salsa/LSP paths, local shadowing, and a real unknown
+  symbol that must still be reported. Avoid suppressing arbitrary `expect_*`
+  spellings or all diagnostics in tests.
+
+- [ ] Recognize `.Random.seed` after statically resolved RNG initialization.
+  This is an additional confirmed false positive behind the tinytest count:
+  `set.seed(2026); print(.Random.seed)` succeeds in R but triggers
+  `undefined-symbol`. The PR's `test-dataview-reproducibility.R` has three
+  such reads after `set.seed(2026)`. Model this runtime-provided global
+  conservatively in semantic analysis, with tests for ordering, scope, and
+  shadowed `set.seed`; do not blindly assume the binding exists before RNG
+  initialization or execute R in production.
+
+- [ ] Separate script loading and entry-point gaps from actual unused code (the
+  semantic-noise discussion). The 27 `unused-binding` reports reproduce, but
+  they are not all proven false positives: `namespace_has` is an unused
+  helper, and some reports are test-local assignments. Existing package and
+  literal `source()` resolution already handles cross-file uses, so the
+  report's blanket statement that these cannot be resolved statically is too
+  broad. One confirmed gap is relative source paths: with `R/helper.R`
+  defining `foo <- function() 42L` and `R/tests/test-helper.R` containing
+  `source("R/helper.R"); stopifnot(foo() == 42L)`, R succeeds from the
+  project root, but linting both files reports `foo` unused. The extractor
+  anchors the path at the sourcing file's directory; R defaults to the
+  working directory. Define an explicit script execution root/context and
+  handle `chdir` rather than guessing a new root for every edge. Add
+  regression coverage for both cwd-relative paths and the already-working
+  sibling-source case. Separately triage injected helper environments,
+  nested/dynamic `source()` and `sys.source()` calls, and externally invoked
+  script entry points in the PR. Support declared entry points or
+  environments where static evidence is insufficient, instead of disabling
+  `unused-binding` globally.
+
+- [ ] Add glob-scoped lint ignores or overrides (feedback 3). Rule selection is
+  global today; `exclude` skips the entire file and directives require
+  editing each source. Define config-relative matching and override
+  precedence so a project can ignore `undefined-symbol` under
+  `sess/inst/tinytest/**` while retaining it in production code. Keep
+  syntax-error reporting and other selected rules active in those tests.
+  Wire resolution through the shared CLI/LSP configuration path, update the
+  schema and config docs, and test recursive walks, directly named files,
+  stdin filenames, and inherited config. Treat declared globals/framework
+  environments as separate semantic inputs, not as a reason to mark
+  arbitrary names defined everywhere.
+
+- [ ] Extend `seq` to base-resolved `seq(length(x))` (feedback 4). Confirmed
+  missed finding: `seq` currently subscribes only to `BINARY_EXPR` and
+  checks colon ranges. R returns `c(1L, 0L)` for `seq(length(numeric(0)))`,
+  while `seq_along(numeric(0))` returns `integer(0)`; nonempty ordinary
+  vectors agree. Add call interests to the existing shared dispatch and
+  report the narrow one-argument shape. Verify both callees resolve to base,
+  preserve trivia, and test shadowing, qualified/named forms, extra
+  arguments, dispatch, and empty input before deciding fix applicability. Do
+  not rewrite arbitrary `seq(x)`, whose behavior depends on the argument.
+  Add executable examples, parse-clean fix coverage, and regenerate rule
+  docs.
+
+- [ ] Pin the evidence for feedback 5 before changing conditional layout. The
+  claimed whitespace dependence did not reproduce: both
+  `x <- if (a) b else c` and `x <- if (a)\n  b else\n  c` format
+  identically, and R confirms their parsed expressions match. The braced
+  form `x <- if (a) { b } else { c }` stays expanded, but has different
+  syntax. Add paired fixtures for the equivalent unbraced layouts and
+  document the intentional brace distinction. If a different case still
+  varies solely with whitespace, reduce that case before recording it as a
+  formatter defect.
+
+- [ ] Decide whether to offer an always-braced function-body style (feedback 7,
+  an adoption request). Confirmed current behavior:
+  `f <- function(x) { x + 1 }` becomes `f <- function(x) x + 1`, and there
+  is no option to prevent it. Evaluate a deterministic always-brace mode,
+  including functions whose input was already bare, rather than preserving
+  source line breaks. If adopted, plumb it through `FormatStyle`,
+  config/schema, CLI/LSP, docs, and cache identity; pin named/anonymous
+  functions, lambdas, comments, width boundaries, range formatting, and
+  idempotence. Otherwise document the deliberate difference from Air and the
+  available format directives.
+
 ## Parser
 
 ## Formatter
