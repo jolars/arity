@@ -201,17 +201,17 @@ mod tests {
 
     #[test]
     fn will_rename_recomputes_relative_path_across_directories() {
-        // Move R/a.R into R/sub/; b.R's relative literal becomes "sub/a.R".
+        // Move R/a.R into R/sub/; paths stay relative to the package root.
         let (_dir, snapshot, a_path, b_path) = rename_package(
             "foo <- function() 1\n",
-            "source(\"a.R\")\nbar <- function() foo()\n",
+            "source(\"R/a.R\")\nbar <- function() foo()\n",
         );
         let uri_b = uri::from_path(&b_path).unwrap();
         let new_a = a_path.parent().unwrap().join("sub").join("a.R");
 
         let edit = will_rename_via_db(&snapshot, &[(a_path, new_a)], PositionEncoding::Utf16)
             .expect("rewritten");
-        assert_eq!(sole_edit(&edit, &uri_b).1, "\"sub/a.R\"");
+        assert_eq!(sole_edit(&edit, &uri_b).1, "\"R/sub/a.R\"");
     }
 
     #[test]

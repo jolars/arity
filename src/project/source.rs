@@ -24,7 +24,7 @@ type SyntaxElement = NodeOrToken<SyntaxNode, SyntaxToken>;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum SourceTarget {
     /// A statically-resolved path: the literal string argument, joined onto the
-    /// sourcing file's directory when relative and a base directory is known.
+    /// assumed working directory when relative and a base directory is known.
     Path(PathBuf),
     /// A non-literal argument we cannot resolve without evaluating R.
     Dynamic,
@@ -39,6 +39,10 @@ pub enum SourceTarget {
 pub struct SourceEdgeKey {
     pub target: SourceTarget,
     pub local: bool,
+    /// Original relative spelling, retained to resolve an inherited directory.
+    pub relative_path: Option<PathBuf>,
+    /// Temporarily execute the target in its containing directory.
+    pub chdir: bool,
 }
 
 /// A top-level `source(...)` dependency edge extracted from a file.
@@ -48,6 +52,8 @@ pub struct SourceEdge {
     /// `source(..., local = TRUE)` evaluates in the calling environment, so it
     /// does not contribute the target's top-level bindings to the global scope.
     pub local: bool,
+    pub relative_path: Option<PathBuf>,
+    pub chdir: bool,
     /// Range of the `source(...)` call, for diagnostics.
     pub range: TextRange,
 }
@@ -64,6 +70,8 @@ impl SourceEdge {
         SourceEdgeKey {
             target: self.target.clone(),
             local: self.local,
+            relative_path: self.relative_path.clone(),
+            chdir: self.chdir,
         }
     }
 }
@@ -107,13 +115,15 @@ pub fn top_level_source_edge_key(
         "sys.source" => Some(SourceEdgeKey {
             target: SourceTarget::Dynamic,
             local: false,
+            relative_path: None,
+            chdir: false,
         }),
         _ => None,
     }
 }
 
 /// Collect top-level `source(...)` calls in `root`. `base_dir` is the directory
-/// of the file being scanned; relative literal targets are resolved against it.
+/// assumed for execution; relative literal targets are resolved against it.
 ///
 /// Only direct children of the root are scanned: a `source()` nested inside a
 /// function or block runs at call time into a non-global environment, so it is
@@ -314,7 +324,7 @@ fn is_relative_spelling(spelling: &str) -> bool {
 }
 
 fn source_literal_edge(call: &CallExpr, base_dir: Option<&Path>) -> Option<SourceLiteralEdge> {
-    let (file_value, _local) = source_file_value(call);
+    let (file_value, _local, _chdir) = source_file_value(call);
     let NodeOrToken::Token(token) = file_value? else {
         return None;
     };
@@ -382,42 +392,104 @@ fn source_call(node: &SyntaxNode) -> Option<CallExpr> {
 }
 
 /// Walk a `source(...)` call's arguments, returning the element that supplies
-/// the `file` (first positional or named `file=`) and whether `local = TRUE` is
-/// set. Shared by [`source_edge`] and [`collect_source_literal_edges`].
-fn source_file_value(call: &CallExpr) -> (Option<SyntaxElement>, bool) {
-    let mut file_value: Option<SyntaxElement> = None;
-    let mut local = false;
-    let mut seen_positional = false;
-
+/// `file`, `local`, and `chdir` arguments. Match named (including unique partial)
+/// arguments before positional arguments, as R does. Shared by [`source_edge`]
+/// and [`collect_source_literal_edges`].
+fn source_file_value(call: &CallExpr) -> (Option<SyntaxElement>, bool, Option<bool>) {
+    // `chdir` is the twelfth formal. Include the later formals so partial
+    // matching doesn't confuse it with `catch.aborts` or `continue.echo`.
+    const FORMALS: [&str; 17] = [
+        "file",
+        "local",
+        "echo",
+        "print.eval",
+        "exprs",
+        "spaced",
+        "verbose",
+        "prompt.echo",
+        "max.deparse.length",
+        "width.cutoff",
+        "deparseCtrl",
+        "chdir",
+        "catch.aborts",
+        "encoding",
+        "continue.echo",
+        "skip.echo",
+        "keep.source",
+    ];
+    let mut values: Vec<Option<SyntaxElement>> = vec![None; FORMALS.len()];
+    let mut assigned = [false; FORMALS.len()];
+    let mut positional = Vec::new();
     if let Some(arg_list) = call.arg_list() {
         for arg in arg_list.args() {
             let (name, value) = arg_parts(arg.syntax());
-            match name.as_deref() {
-                // R's first formal is `file`; honor it whether named or positional.
-                Some("file") => file_value = file_value.or(value),
-                Some("local") => local = value.as_ref().is_some_and(is_true_literal),
-                Some(_) => {}
-                None => {
-                    if !seen_positional {
-                        file_value = file_value.or(value);
-                        seen_positional = true;
-                    }
-                }
+            let Some(name) = name else {
+                positional.push(value);
+                continue;
+            };
+            let index = FORMALS
+                .iter()
+                .position(|formal| *formal == name)
+                .or_else(|| {
+                    let mut matches = FORMALS
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, formal)| formal.starts_with(&name));
+                    let (index, _) = matches.next()?;
+                    matches.next().is_none().then_some(index)
+                });
+            let Some(index) = index else {
+                return (None, false, None);
+            };
+            if assigned[index] {
+                return (None, false, None);
             }
+            assigned[index] = true;
+            values[index] = value;
         }
     }
-    (file_value, local)
+    let mut unassigned = assigned
+        .iter()
+        .enumerate()
+        .filter_map(|(index, assigned)| (!assigned).then_some(index));
+    for value in positional {
+        let Some(index) = unassigned.next() else {
+            return (None, false, None);
+        };
+        values[index] = value;
+    }
+    let local = values[1].as_ref().is_some_and(is_true_literal);
+    let chdir = match values[11].as_ref() {
+        None => Some(false),
+        Some(NodeOrToken::Token(token)) if token.kind() == SyntaxKind::IDENT => {
+            match token.text() {
+                "TRUE" => Some(true),
+                "FALSE" => Some(false),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    (values[0].take(), local, chdir)
 }
 
 fn source_edge(call: &CallExpr, base_dir: Option<&Path>) -> SourceEdge {
-    let (file_value, local) = source_file_value(call);
-    let target = match file_value {
-        Some(value) => target_from_value(&value, base_dir),
-        None => SourceTarget::Dynamic,
+    let (file_value, local, chdir) = source_file_value(call);
+    let target = match (&file_value, chdir) {
+        (Some(value), Some(_)) => target_from_value(value, base_dir),
+        _ => SourceTarget::Dynamic,
+    };
+    let relative_path = match (&file_value, &target) {
+        (Some(NodeOrToken::Token(token)), SourceTarget::Path(_)) => strip_quotes(token.text())
+            .filter(|path| is_relative_spelling(path))
+            .map(PathBuf::from),
+        _ => None,
     };
     SourceEdge {
         target,
         local,
+        relative_path,
+        chdir: chdir.unwrap_or(false),
         range: call.syntax().text_range(),
     }
 }

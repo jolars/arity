@@ -573,6 +573,7 @@ pub fn project_graph(db: &dyn IncrementalDb) -> ProjectScope {
         // afterward, so an owned `FileFacts` copied every name twice per member.
         .map(|m| FileFacts {
             path: m.path.clone(),
+            execution_directory: m.file.execution_directory(db).map(Path::to_path_buf),
             exports: Arc::clone(file_exports(db, m.file)),
             free_reads: Arc::clone(file_free_reads(db, m.file)),
             qualified_reads: Arc::clone(file_qualified_reads(db, m.file)),
@@ -648,23 +649,22 @@ pub struct ReverseSources {
 }
 
 /// Invert per-file forward `source()` edges into a [`ReverseSources`] map. Pure
-/// over `(path, edges)` pairs so it is unit-testable without a salsa db.
+/// over paths, execution directories, and edges, without a salsa db.
 fn invert_source_edges<'a>(
-    members: impl IntoIterator<Item = (&'a Path, &'a [SourceEdgeKey])>,
+    members: impl IntoIterator<Item = (&'a Path, Option<&'a Path>, &'a [SourceEdgeKey])>,
 ) -> ReverseSources {
     let mut rev = ReverseSources::default();
-    for (path, edges) in members {
-        for edge in edges {
-            match &edge.target {
-                SourceTarget::Dynamic => {
-                    rev.dynamic_sources.insert(path.to_path_buf());
-                }
-                SourceTarget::Path(target) => {
-                    rev.sourced_by
-                        .entry(target.clone())
-                        .or_default()
-                        .insert(path.to_path_buf());
-                }
+    let sources = super::source_context::SourceGraph::build(members);
+    for (path, edge) in sources.direct_edges() {
+        match &edge.target {
+            SourceTarget::Dynamic => {
+                rev.dynamic_sources.insert(path.to_path_buf());
+            }
+            SourceTarget::Path(target) => {
+                rev.sourced_by
+                    .entry(target.clone())
+                    .or_default()
+                    .insert(path.to_path_buf());
             }
         }
     }
@@ -681,12 +681,13 @@ pub fn reverse_source_edges(db: &dyn IncrementalDb) -> ReverseSources {
         kind: QueryKind::ReverseSourceEdges,
         file: None,
     });
-    invert_source_edges(
-        workspace_project(db)
-            .members
-            .iter()
-            .map(|m| (m.path.as_path(), source_edges(db, m.file).as_slice())),
-    )
+    invert_source_edges(workspace_project(db).members.iter().map(|m| {
+        (
+            m.path.as_path(),
+            m.file.execution_directory(db),
+            source_edges(db, m.file).as_slice(),
+        )
+    }))
 }
 
 /// A project-wide name → definition-site index: for each top-level binding name,
@@ -1172,6 +1173,8 @@ mod tests {
         SourceEdgeKey {
             target: SourceTarget::Path(PathBuf::from(target)),
             local,
+            relative_path: None,
+            chdir: false,
         }
     }
 
@@ -1216,6 +1219,8 @@ mod tests {
         SourceEdgeKey {
             target: SourceTarget::Dynamic,
             local: false,
+            relative_path: None,
+            chdir: false,
         }
     }
 
@@ -1223,7 +1228,7 @@ mod tests {
         invert_source_edges(
             members
                 .iter()
-                .map(|(p, edges)| (Path::new(*p), edges.as_slice())),
+                .map(|(p, edges)| (Path::new(*p), None, edges.as_slice())),
         )
     }
 

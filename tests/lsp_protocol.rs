@@ -1284,6 +1284,94 @@ fn tinytest_runner_bindings_resolve_in_editor_buffers() {
 }
 
 #[test]
+fn source_paths_use_the_git_root_in_editor_diagnostics_and_definition() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("tests")).unwrap();
+    std::fs::write(dir.path().join(".git"), "gitdir: /external/worktree\n").unwrap();
+    std::fs::write(
+        dir.path().join("arity.toml"),
+        "[lint]\nselect = ['unused-binding', 'undefined-symbol']\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("tests/arity.toml"), "").unwrap();
+    let helper = "foo <- function() 42L\n";
+    let entry = "source('helper.R')\nfoo()\n";
+    std::fs::write(dir.path().join("helper.R"), helper).unwrap();
+    std::fs::write(dir.path().join("tests/entry.R"), entry).unwrap();
+    let helper_uri = path_uri(&dir.path().join("helper.R"));
+    let entry_uri = path_uri(&dir.path().join("tests/entry.R"));
+    let mut h = Harness::start_in_workspace(json!({}), Some(&path_uri(dir.path())));
+    h.did_open(&helper_uri, helper, 1);
+    assert!(h.recv_publish_for(&helper_uri, 1).is_empty());
+    h.did_open(&entry_uri, entry, 1);
+    assert!(h.recv_publish_for(&entry_uri, 1).is_empty());
+    let id = h.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": entry_uri },
+            "position": { "line": 1, "character": 1 }
+        }),
+    );
+    let definition = h.recv_response(&id).response_result.unwrap();
+    assert_eq!(definition["uri"], helper_uri, "{definition}");
+    h.shutdown();
+}
+
+#[test]
+fn source_root_marker_changes_refresh_editor_diagnostics() {
+    for marker in ["arity.toml", ".git"] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("tests")).unwrap();
+        std::fs::write(dir.path().join("tests/arity.toml"), "").unwrap();
+        let helper = "foo <- function() 42L\n";
+        std::fs::write(dir.path().join("helper.R"), helper).unwrap();
+        std::fs::write(
+            dir.path().join("tests/entry.R"),
+            "source('helper.R')\nfoo()\n",
+        )
+        .unwrap();
+        let uri = path_uri(&dir.path().join("helper.R"));
+        let mut h = Harness::start_in_workspace(json!({}), Some(&path_uri(dir.path())));
+        h.did_open(&uri, helper, 1);
+        let findings = h.recv_publish_for(&uri, 1);
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding["code"] == "unused-binding")
+        );
+
+        // For arity.toml, remove the nearer config so the newly created root
+        // becomes the closest config. Git outranks that nearer config directly.
+        if marker == "arity.toml" {
+            std::fs::remove_file(dir.path().join("tests/arity.toml")).unwrap();
+        }
+        std::fs::write(dir.path().join(marker), "").unwrap();
+        h.notify(
+            "workspace/didChangeWatchedFiles",
+            json!({
+                "changes": [{ "uri": path_uri(&dir.path().join(marker)), "type": 1 }]
+            }),
+        );
+        assert!(h.recv_publish_for(&uri, 1).is_empty(), "{marker}");
+        std::fs::remove_file(dir.path().join(marker)).unwrap();
+        h.notify(
+            "workspace/didChangeWatchedFiles",
+            json!({
+                "changes": [{ "uri": path_uri(&dir.path().join(marker)), "type": 3 }]
+            }),
+        );
+        let findings = h.recv_publish_for(&uri, 1);
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding["code"] == "unused-binding"),
+            "{marker}"
+        );
+        h.shutdown();
+    }
+}
+
+#[test]
 fn undefined_symbol_spelling_hint_reaches_editor_diagnostics() {
     let mut h = Harness::start_push();
     let uri = doc_uri();
@@ -1920,6 +2008,7 @@ fn registers_file_watchers_when_client_supports_dynamic_registration() {
         "**/arity.toml",
         "**/DESCRIPTION",
         "**/NAMESPACE",
+        "**/.git",
     ] {
         assert!(globs.contains(&want), "watches {want}: {globs:?}");
     }

@@ -37,6 +37,7 @@ use std::sync::{Arc, LazyLock};
 use rowan::TextRange;
 
 use crate::project::source::{SourceEdgeKey, SourceTarget, TopLevelEvent};
+use crate::project::source_context::{SourceContext, SourceGraph};
 use crate::rindex::harvest::parse_namespace;
 use crate::semantic::symbols::unbacktick;
 
@@ -167,6 +168,8 @@ impl<'a> PathSetView<'a> {
 #[derive(Debug, Clone)]
 pub struct FileFacts {
     pub path: PathBuf,
+    /// Default working directory when this file is an entry script.
+    pub execution_directory: Option<PathBuf>,
     /// Top-level binding names this file defines
     /// (see [`crate::project::file_exports`]).
     pub exports: Arc<BTreeSet<String>>,
@@ -238,6 +241,7 @@ pub struct ProjectScope {
     /// Per file: the range-free per-file facts the load-order replay needs,
     /// held as one entry rather than three parallel maps.
     retained: HashMap<PathBuf, Retained>,
+    sources: SourceGraph,
 }
 
 /// The per-file facts [`ProjectScope`] keeps after `build` returns, for the
@@ -249,12 +253,11 @@ pub struct ProjectScope {
 /// A handle here can legitimately be a revision behind the live query: a
 /// backdated re-execution installs an equal-but-distinct `Arc`. Contents are
 /// what matter, so never identify one of these sets by `Arc::ptr_eq` against a
-/// fresh `file_exports`/`source_edges`/`top_level_events` result.
+/// fresh `file_exports`/`top_level_events` result.
 #[derive(Debug)]
 struct Retained {
     top_level_events: Arc<Vec<TopLevelEvent>>,
     exports: Arc<BTreeSet<String>>,
-    source_edges: Arc<Vec<SourceEdgeKey>>,
 }
 
 /// Where a file's top-level reads of a name bind under sequential load order —
@@ -483,7 +486,7 @@ impl ProjectScope {
             .collect();
 
         // Per-file data retained for the load-order replay (`source()` position),
-        // as handles: these are the same three memos [`FileFacts`] already
+        // as handles: these are the same per-file memos [`FileFacts`] already
         // borrows, so a copy here would be the second deep clone of each.
         let retained: HashMap<PathBuf, Retained> = files
             .iter()
@@ -493,7 +496,6 @@ impl ProjectScope {
                     Retained {
                         top_level_events: Arc::clone(&f.top_level_events),
                         exports: Arc::clone(&f.exports),
-                        source_edges: Arc::clone(&f.source_edges),
                     },
                 )
             })
@@ -504,31 +506,21 @@ impl ProjectScope {
         let mut sourced: Vec<Vec<&Path>> = Vec::with_capacity(files.len());
         let mut dynamic: HashSet<PathBuf> = HashSet::new();
         let mut wildcard_imports: HashMap<PathBuf, Arc<BTreeSet<String>>> = HashMap::new();
+        let sources = SourceGraph::build(files.iter().map(|file| {
+            (
+                file.path.as_path(),
+                file.execution_directory.as_deref(),
+                file.source_edges.as_slice(),
+            )
+        }));
         for f in files {
-            let mut via_source: Vec<&Path> = Vec::new();
-            let mut unresolved = false;
-            let mut visited: HashSet<&Path> = HashSet::from([f.path.as_path()]);
-            let mut queue: Vec<&FileFacts> = vec![f];
-            while let Some(cur) = queue.pop() {
-                for edge in cur.source_edges.iter() {
-                    match source_dependency(edge) {
-                        Dependency::Skip => {}
-                        Dependency::Unresolved => unresolved = true,
-                        Dependency::Path(p) => match by_path.get(p) {
-                            Some(target) if visited.insert(target.path.as_path()) => {
-                                via_source.push(target.path.as_path());
-                                queue.push(target);
-                            }
-                            Some(_) => {}
-                            // A resolved path to a file we didn't analyze is just
-                            // as opaque as a dynamic source.
-                            None => unresolved = true,
-                        },
-                    }
-                }
-            }
-
-            if unresolved {
+            let closure = sources.sourced_from(&f.path);
+            let via_source: Vec<&Path> = closure
+                .paths
+                .iter()
+                .filter_map(|path| by_path.get(path.as_path()).map(|file| file.path.as_path()))
+                .collect();
+            if closure.incomplete {
                 dynamic.insert(f.path.clone());
             }
             // Keep the closure disjoint from the root's member set: a member
@@ -750,6 +742,7 @@ impl ProjectScope {
             seen_by_extra,
             package_complete,
             retained,
+            sources,
         }
     }
 
@@ -831,6 +824,23 @@ impl ProjectScope {
     /// ambiguous. Function-body reads aren't in the sequence (they run against the
     /// final scope), so a file with only those is [`ReadBinding::NoTopLevelRead`].
     pub fn top_level_read_binding(&self, from_file: &Path, name: &str) -> ReadBinding {
+        if !self.retained.contains_key(from_file) {
+            return ReadBinding::NoTopLevelRead;
+        }
+        agree(
+            self.sources
+                .directories(from_file)
+                .map(|directory| self.top_level_read_binding_in(from_file, name, directory)),
+            ReadBinding::OrderUnknown,
+        )
+    }
+
+    fn top_level_read_binding_in(
+        &self,
+        from_file: &Path,
+        name: &str,
+        directory: Option<&Path>,
+    ) -> ReadBinding {
         let Some(events) = self.retained.get(from_file).map(|r| &r.top_level_events) else {
             return ReadBinding::NoTopLevelRead;
         };
@@ -847,11 +857,14 @@ impl ProjectScope {
                     live = Some(from_file.to_path_buf());
                     name_ambiguous = false;
                 }
-                TopLevelEvent::SourceEdge(key) => match source_dependency(key) {
+                TopLevelEvent::SourceEdge(key) => match source_dependency(key, directory) {
                     Dependency::Skip => {}
                     Dependency::Unresolved => poisoned = true,
-                    Dependency::Path(p) => {
-                        let mut definers = self.closure_definers(p, name);
+                    Dependency::Path(context) => {
+                        let Some(mut definers) = self.closure_definers(context, name) else {
+                            poisoned = true;
+                            continue;
+                        };
                         match definers.len() {
                             0 => {}
                             1 => {
@@ -909,6 +922,29 @@ impl ProjectScope {
         name: &str,
         spanned: &[(TopLevelEvent, Option<TextRange>)],
     ) -> Vec<(TextRange, ReadSite)> {
+        let mut contexts = self.sources.directories(from_file).map(|directory| {
+            self.top_level_read_provenance_in(from_file, name, spanned, directory)
+        });
+        let Some(mut sites) = contexts.next() else {
+            return self.top_level_read_provenance_in(from_file, name, spanned, None);
+        };
+        for other in contexts {
+            for ((_, site), (_, other)) in sites.iter_mut().zip(other) {
+                if *site != other {
+                    *site = ReadSite::Unknown;
+                }
+            }
+        }
+        sites
+    }
+
+    fn top_level_read_provenance_in(
+        &self,
+        from_file: &Path,
+        name: &str,
+        spanned: &[(TopLevelEvent, Option<TextRange>)],
+        directory: Option<&Path>,
+    ) -> Vec<(TextRange, ReadSite)> {
         let mut live: Option<PathBuf> = None;
         let mut name_ambiguous = false;
         let mut poisoned = false;
@@ -919,11 +955,14 @@ impl ProjectScope {
                     live = Some(from_file.to_path_buf());
                     name_ambiguous = false;
                 }
-                TopLevelEvent::SourceEdge(key) => match source_dependency(key) {
+                TopLevelEvent::SourceEdge(key) => match source_dependency(key, directory) {
                     Dependency::Skip => {}
                     Dependency::Unresolved => poisoned = true,
-                    Dependency::Path(p) => {
-                        let mut definers = self.closure_definers(p, name);
+                    Dependency::Path(context) => {
+                        let Some(mut definers) = self.closure_definers(context, name) else {
+                            poisoned = true;
+                            continue;
+                        };
                         match definers.len() {
                             0 => {}
                             1 => {
@@ -967,6 +1006,23 @@ impl ProjectScope {
     /// stored `top_level_events`), so it backdates across body edits like the
     /// other replays.
     pub fn final_scope_binding(&self, from_file: &Path, name: &str) -> ReadSite {
+        if !self.retained.contains_key(from_file) {
+            return ReadSite::Unbound;
+        }
+        agree(
+            self.sources
+                .directories(from_file)
+                .map(|directory| self.final_scope_binding_in(from_file, name, directory)),
+            ReadSite::Unknown,
+        )
+    }
+
+    fn final_scope_binding_in(
+        &self,
+        from_file: &Path,
+        name: &str,
+        directory: Option<&Path>,
+    ) -> ReadSite {
         let Some(events) = self.retained.get(from_file).map(|r| &r.top_level_events) else {
             return ReadSite::Unbound;
         };
@@ -979,11 +1035,14 @@ impl ProjectScope {
                     live = Some(from_file.to_path_buf());
                     name_ambiguous = false;
                 }
-                TopLevelEvent::SourceEdge(key) => match source_dependency(key) {
+                TopLevelEvent::SourceEdge(key) => match source_dependency(key, directory) {
                     Dependency::Skip => {}
                     Dependency::Unresolved => poisoned = true,
-                    Dependency::Path(p) => {
-                        let mut definers = self.closure_definers(p, name);
+                    Dependency::Path(context) => {
+                        let Some(mut definers) = self.closure_definers(context, name) else {
+                            poisoned = true;
+                            continue;
+                        };
                         match definers.len() {
                             0 => {}
                             1 => {
@@ -1009,48 +1068,54 @@ impl ProjectScope {
     /// The analyzed files in the transitive, non-local `source()` closure rooted
     /// at `start` (including `start` itself) whose top-level exports include
     /// `name`. Cycle-guarded with a `visited` set like [`ProjectScope::build`].
-    fn closure_definers(&self, start: &Path, name: &str) -> Vec<PathBuf> {
-        let mut definers: Vec<PathBuf> = Vec::new();
-        let mut visited: HashSet<PathBuf> = HashSet::new();
-        let mut stack: Vec<PathBuf> = vec![start.to_path_buf()];
-        while let Some(cur) = stack.pop() {
-            if !visited.insert(cur.clone()) {
-                continue;
-            }
-            let Some(retained) = self.retained.get(&cur) else {
-                continue;
-            };
-            if retained.exports.contains(name) {
-                definers.push(cur.clone());
-            }
-            {
-                for edge in retained.source_edges.iter() {
-                    if let SourceTarget::Path(target) = &edge.target
-                        && !edge.local
-                    {
-                        stack.push(target.clone());
-                    }
-                }
-            }
+    fn closure_definers(&self, start: SourceContext, name: &str) -> Option<Vec<PathBuf>> {
+        let closure = self.sources.closure(start);
+        if closure.incomplete {
+            return None;
         }
-        definers
+        Some(
+            closure
+                .paths
+                .into_iter()
+                .filter(|path| {
+                    self.retained
+                        .get(path)
+                        .is_some_and(|file| file.exports.contains(name))
+                })
+                .collect(),
+        )
     }
 }
 
-enum Dependency<'a> {
+enum Dependency {
     /// Contributes the target file's top-level bindings to global scope.
-    Path(&'a Path),
+    Path(SourceContext),
     /// Unresolvable (dynamic argument); visibility is incomplete.
     Unresolved,
     /// `local = TRUE`: loads into the calling env, never global scope.
     Skip,
 }
 
-fn source_dependency(edge: &SourceEdgeKey) -> Dependency<'_> {
-    match &edge.target {
+fn source_dependency(edge: &SourceEdgeKey, directory: Option<&Path>) -> Dependency {
+    let edge = edge.resolve(directory);
+    match edge.target {
         SourceTarget::Dynamic => Dependency::Unresolved,
         SourceTarget::Path(_) if edge.local => Dependency::Skip,
-        SourceTarget::Path(p) => Dependency::Path(p.as_path()),
+        SourceTarget::Path(path) => Dependency::Path(SourceContext {
+            path,
+            directory: edge.directory,
+        }),
+    }
+}
+
+fn agree<T: PartialEq>(mut values: impl Iterator<Item = T>, unknown: T) -> T {
+    let Some(first) = values.next() else {
+        return unknown;
+    };
+    if values.all(|value| value == first) {
+        first
+    } else {
+        unknown
     }
 }
 
@@ -1100,6 +1165,8 @@ mod tests {
         SourceEdgeKey {
             target: SourceTarget::Path(PathBuf::from(target)),
             local,
+            relative_path: None,
+            chdir: false,
         }
     }
 
@@ -1107,6 +1174,8 @@ mod tests {
         SourceEdgeKey {
             target: SourceTarget::Dynamic,
             local: false,
+            relative_path: None,
+            chdir: false,
         }
     }
 
@@ -1120,6 +1189,7 @@ mod tests {
     ) -> FileFacts {
         FileFacts {
             path: PathBuf::from(path),
+            execution_directory: None,
             exports: Arc::new(set(exp)),
             free_reads: Arc::new(set(reads)),
             qualified_reads: Arc::new(BTreeSet::new()),
@@ -1159,6 +1229,7 @@ mod tests {
     ) -> FileFacts {
         FileFacts {
             path: PathBuf::from(path),
+            execution_directory: None,
             exports: Arc::new(set(exp)),
             free_reads: Arc::new(BTreeSet::new()),
             qualified_reads: Arc::new(BTreeSet::new()),

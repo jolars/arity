@@ -37,7 +37,8 @@ pub struct FileId(pub u32);
 pub struct SourceFile {
     /// Stable identity allocated by [`FileSourceMap`].
     pub id: FileId,
-    /// Normalized path, or `None` for an in-memory document.
+    /// First-seen path spelling, or `None` for an in-memory document. Identity
+    /// and source-target matching use normalized aliases of this path.
     #[returns(ref)]
     pub path: Option<PathBuf>,
     /// Document text shared with live buffers and [`PrevParse`].
@@ -45,6 +46,20 @@ pub struct SourceFile {
     pub text: Arc<str>,
     /// Package-wide default for directive-less roxygen blocks.
     pub roxygen_markdown: bool,
+    /// Package, Git, or config root, discovered in the write phase. `None`
+    /// falls back to the script's directory. Separate from text so a marker
+    /// change never invalidates the parse.
+    #[returns(ref)]
+    pub execution_root: Option<PathBuf>,
+}
+
+impl SourceFile {
+    /// The default working directory when this file is an entry script.
+    pub fn execution_directory(self, db: &dyn IncrementalDb) -> Option<&Path> {
+        self.execution_root(db)
+            .as_deref()
+            .or_else(|| self.path(db).as_deref().and_then(Path::parent))
+    }
 }
 
 /// Absolutize and lexically normalize a path without filesystem access.
@@ -135,6 +150,7 @@ fn to_forward_slash(path: &Path) -> String {
 struct FileSourceMap {
     by_path: HashMap<PathBuf, SourceFile>,
     next_id: u32,
+    execution_roots: HashMap<PathBuf, Option<PathBuf>>,
 }
 
 impl FileSourceMap {
@@ -696,9 +712,8 @@ pub fn description_facts(db: &dyn IncrementalDb, file: DescriptionFile) -> Descr
 
 /// The file's top-level `source()` edges, range-free
 /// ([`crate::project::collect_source_edge_keys`]), as a tracked query. Resolves
-/// relative targets against the file's own directory (`path.parent()`); the
-/// path is an input field set once, so this re-runs only on a text edit and
-/// backdates when the edges are unchanged.
+/// relative targets against the assumed execution directory, refreshed only in
+/// the write phase. Backdates when the edges are unchanged.
 #[salsa::tracked(returns(ref))]
 pub fn source_edges(db: &dyn IncrementalDb, file: SourceFile) -> Arc<Vec<SourceEdgeKey>> {
     db.record_query(QueryLogEntry {
@@ -706,7 +721,7 @@ pub fn source_edges(db: &dyn IncrementalDb, file: SourceFile) -> Arc<Vec<SourceE
         file: Some(file),
     });
     let root = parsed_tree_root(db, file);
-    let base_dir = file.path(db).as_deref().and_then(Path::parent);
+    let base_dir = file.execution_directory(db);
     Arc::new(crate::project::collect_source_edge_keys(&root, base_dir))
 }
 
@@ -724,7 +739,7 @@ pub fn top_level_events(db: &dyn IncrementalDb, file: SourceFile) -> Arc<Vec<Top
         file: Some(file),
     });
     let root = parsed_tree_root(db, file);
-    let base_dir = file.path(db).as_deref().and_then(Path::parent);
+    let base_dir = file.execution_directory(db);
     Arc::new(collect_top_level_events(
         &root,
         base_dir,
@@ -844,7 +859,7 @@ impl IncrementalDatabase {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .alloc_id();
-        SourceFile::new(self, id, None, text.into(), false)
+        SourceFile::new(self, id, None, text.into(), false, None)
     }
 
     pub fn set_file_text(&mut self, file: SourceFile, text: impl Into<Arc<str>>) {
@@ -1036,7 +1051,8 @@ impl IncrementalDatabase {
         // `PackageInfo`s name roots that `workspace_project` resolves to these
         // handles, so writing it first would open a window where it points at
         // stale bytes.
-        let mut wrote = self.refresh_descriptions(packages.iter().map(|p| p.root.clone()));
+        let mut wrote = self.refresh_execution_directories();
+        wrote |= self.refresh_descriptions(packages.iter().map(|p| p.root.clone()));
         match PackageGraph::try_get(self) {
             Some(graph) => {
                 if graph.packages(self) != &packages {
@@ -1059,6 +1075,42 @@ impl IncrementalDatabase {
             }
         }
         wrote
+    }
+
+    /// Re-discover script working directories after root markers change. Skip
+    /// equal inputs so a config content edit does not rebuild the source graph.
+    pub fn refresh_execution_directories(&mut self) -> bool {
+        let files: Vec<SourceFile> = self
+            .source_map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .by_path
+            .values()
+            .copied()
+            .collect();
+        let mut directories = HashMap::new();
+        let mut changed = false;
+        for file in files {
+            let Some(path) = file.path(self).as_deref() else {
+                continue;
+            };
+            let path = normalize_path(path);
+            let parent = path.parent().unwrap_or(&path).to_path_buf();
+            let directory = directories
+                .entry(parent)
+                .or_insert_with(|| crate::project::source_context::discover_execution_root(&path));
+            if file.execution_root(self) != &*directory {
+                file.set_execution_root(self)
+                    .with_durability(Durability::MEDIUM)
+                    .to(directory.clone());
+                changed = true;
+            }
+        }
+        self.source_map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .execution_roots = directories;
+        changed
     }
 
     /// Re-read each root's `DESCRIPTION` from disk into its [`DescriptionFile`]
@@ -1247,10 +1299,28 @@ impl IncrementalDatabase {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .resolve(path);
-                // Store the first-seen spelling as the file's path; the index is
-                // keyed by the normalized form, so later equivalent spellings
-                // resolve to this same input and its first-seen path.
-                let file = SourceFile::new(self, id, Some(path.to_path_buf()), text, markdown);
+                // Preserve the caller's spelling; the source graph matches
+                // targets through normalized aliases of its member paths.
+                let directory = {
+                    let mut map = self
+                        .source_map
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    map.execution_roots
+                        .entry(key.parent().unwrap_or(&key).to_path_buf())
+                        .or_insert_with(|| {
+                            crate::project::source_context::discover_execution_root(&key)
+                        })
+                        .clone()
+                };
+                let file = SourceFile::new(
+                    self,
+                    id,
+                    Some(path.to_path_buf()),
+                    text,
+                    markdown,
+                    directory,
+                );
                 self.source_map
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1804,7 +1874,7 @@ impl Analysis {
         // text; the replay reuses the graph's range-free closure data.
         let root = self.parsed_tree(file);
         let model = self.semantic_model(file);
-        let base_dir = reader.parent();
+        let base_dir = file.execution_directory(&self.0);
         let spanned = collect_top_level_events_spanned(&root, base_dir, model);
         let provenance = graph.top_level_read_provenance(reader, name, &spanned);
 
@@ -1878,8 +1948,8 @@ impl Analysis {
     /// Two sets of candidates are considered: files that *depend on* something
     /// renamed, and the renamed files themselves — a file that moves must rebase
     /// its own literals even when its targets stayed put. For each, literals are
-    /// resolved against the sourcer's **old** parent (that is what they currently
-    /// mean) but respelled against its **new** one. An edit is emitted only when
+    /// resolved against each possible execution directory and respelled against
+    /// that directory after the move. An edit is emitted only when
     /// the literal as written would no longer resolve to the right file from the
     /// new location, so a folder rename that moves sourcer and target together
     /// produces nothing rather than flooding the client with no-op edits.
@@ -1920,6 +1990,21 @@ impl Analysis {
         if map.is_empty() {
             return Vec::new();
         }
+        let sources = crate::project::source_context::SourceGraph::build(
+            ws.members(&self.0).iter().filter_map(|&file| {
+                Some((
+                    file.path(&self.0).as_deref()?,
+                    file.execution_directory(&self.0),
+                    source_edges(&self.0, file).as_slice(),
+                ))
+            }),
+        );
+        let directory_map = expand_dir_renames(
+            renames,
+            members
+                .iter()
+                .flat_map(|path| sources.directories(path).flatten()),
+        );
 
         // Candidates: dependents of anything renamed, plus the renamed files
         // themselves (they rebase their own literals).
@@ -1941,57 +2026,68 @@ impl Analysis {
                 continue;
             };
             let root = self.parsed_tree(file);
-            let base_old = sourcer.parent();
             let norm_sourcer = normalize_path(&sourcer);
-            let base_new = map
-                .get(&norm_sourcer)
-                .unwrap_or(&norm_sourcer)
-                .parent()
-                .map(Path::to_path_buf);
-
-            for edge in collect_source_literal_edges(&root, base_old) {
-                let edge_norm = normalize_path(&edge.target);
-                let target_new = map.get(&edge_norm).unwrap_or(&edge_norm);
-
-                // Would the literal, exactly as written, still reach the target
-                // from the sourcer's new home? Then leave it alone — this is what
-                // keeps `./b.R` and other non-canonical spellings from churning.
-                let resolved_from_new = if edge.was_relative {
-                    base_new
-                        .as_ref()
-                        .map(|dir| normalize_path(&dir.join(&edge.spelling)))
+            let sourcer_new = map.get(&norm_sourcer).unwrap_or(&norm_sourcer);
+            let mut replacements: BTreeMap<(u32, u32), Option<String>> = BTreeMap::new();
+            for base_old in sources.directories(&sourcer) {
+                let base_new = if file.execution_root(&self.0).is_none()
+                    && base_old == sourcer.parent()
+                    && !rev.sourced_by.contains_key(&sourcer)
+                {
+                    // A standalone loose script's fallback follows its move.
+                    // Inherited directories remain attached to their caller.
+                    sourcer_new.parent()
                 } else {
-                    Some(normalize_path(Path::new(&edge.spelling)))
+                    base_old.map(|directory| {
+                        directory_map
+                            .get(directory)
+                            .map_or(directory, PathBuf::as_path)
+                    })
                 };
-                if resolved_from_new.as_ref() == Some(target_new) {
-                    continue;
+                for edge in collect_source_literal_edges(&root, base_old) {
+                    let edge_norm = normalize_path(&edge.target);
+                    let target_new = map.get(&edge_norm).unwrap_or(&edge_norm);
+                    let resolved_from_new = if edge.was_relative {
+                        base_new.map(|directory| normalize_path(&directory.join(&edge.spelling)))
+                    } else {
+                        Some(normalize_path(Path::new(&edge.spelling)))
+                    };
+                    let spelling = if resolved_from_new.as_ref() == Some(target_new) {
+                        edge.spelling.clone()
+                    } else if edge.was_relative {
+                        base_new
+                            .and_then(|directory| relative_path(directory, target_new))
+                            .map(|relative| to_forward_slash(&relative))
+                            .unwrap_or_else(|| to_forward_slash(target_new))
+                    } else {
+                        to_forward_slash(target_new)
+                    };
+                    // Every possible execution must agree on the new literal.
+                    // An unchanged execution also participates in that check.
+                    let quote = edge.quote as char;
+                    let replacement = (!spelling.as_bytes().contains(&edge.quote))
+                        .then(|| format!("{quote}{spelling}{quote}"));
+                    replacements
+                        .entry((
+                            edge.literal_range.start().into(),
+                            edge.literal_range.end().into(),
+                        ))
+                        .and_modify(|existing| {
+                            if *existing != replacement {
+                                *existing = None;
+                            }
+                        })
+                        .or_insert(replacement);
                 }
-
-                // Preserve the original quote; recompute the spelling, keeping the
-                // relative/absolute shape the author wrote.
-                let new_spelling = if edge.was_relative {
-                    base_new
-                        .as_ref()
-                        .and_then(|dir| relative_path(dir, target_new))
-                        .map(|rel| to_forward_slash(&rel))
-                        .unwrap_or_else(|| to_forward_slash(target_new))
-                } else {
-                    to_forward_slash(target_new)
-                };
-                if new_spelling == edge.spelling {
-                    continue;
+            }
+            for ((start, end), replacement) in replacements {
+                let range = TextRange::new(start.into(), end.into());
+                if let Some(replacement) = replacement
+                    && file.text(&self.0)[usize::from(range.start())..usize::from(range.end())]
+                        != replacement
+                {
+                    edits.push((sourcer.clone(), range, replacement));
                 }
-                let quote = edge.quote as char;
-                // No escaping: skip rather than corrupt if the path carries the
-                // quote byte (vanishingly rare for R source paths).
-                if new_spelling.as_bytes().contains(&edge.quote) {
-                    continue;
-                }
-                edits.push((
-                    sourcer.clone(),
-                    edge.literal_range,
-                    format!("{quote}{new_spelling}{quote}"),
-                ));
             }
         }
         edits

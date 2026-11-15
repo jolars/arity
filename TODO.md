@@ -74,17 +74,22 @@ output and semantic noise. Rule coverage and style options follow those fixes.
   zero findings; removing `set.seed(2026)` restores all three RNG findings.
   Production analysis remains static and does not invoke R.
 
-- [ ] Fix relative `source()` path resolution. With `R/helper.R` defining
-  `foo <- function() 42L` and `R/tests/test-helper.R` containing
-  `source("R/helper.R"); stopifnot(foo() == 42L)`, R succeeds from the
-  project root, but linting both files reports `foo` unused. The extractor
-  anchors the path at the sourcing file's directory; R defaults to the
-  working directory. Define how Arity obtains the assumed R working
-  directory and carries it through source calls. Model `chdir = TRUE` as a
-  temporary change while executing the target, including nested source
-  paths. Add regression coverage for cwd-relative paths, `chdir`, and the
-  already-working sibling-source case. Keep this fix separate from support
-  for dynamic loading and external entry points.
+- [x] Fix relative `source()` path resolution. CLI and LSP now assume the
+  nearest enclosing package root (`DESCRIPTION` plus `R/`), nearest Git root
+  (`.git` directory or file), nearest directory containing `arity.toml`,
+  then the script's directory, in that order. Nested configs inside a Git
+  repo do not change the execution directory. Source calls inherit their
+  caller's directory; `chdir = TRUE` temporarily changes it while the target
+  executes. Relative spellings and `chdir` survive in range-free source
+  edges, keeping incremental graph reuse intact. Visibility, use tracking,
+  definition lookup, and rename share the same directory model; ambiguous
+  executions cannot produce conflicting rename edits. Tests cover every
+  fallback, nested configs, inherited directories, named and positional
+  `chdir`, CLI walks and explicit paths, editor diagnostics and navigation,
+  root-marker changes, and the existing sibling-source case. R confirms
+  directory inheritance, restoration, and argument matching.
+  Execution-directory configuration remains a follow-up; dynamic loading and
+  external entry points remain in the separate triage item below.
 
 - [ ] Triage the adoption PR's `unused-binding` reports and external entry
   points (the semantic-noise discussion). The original investigation

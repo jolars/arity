@@ -2,19 +2,22 @@ use super::*;
 
 /// The glob patterns registered with the client for `didChangeWatchedFiles`. R
 /// sources drive workspace membership; `arity.toml` and inherited TOML files
-/// reshape config; `DESCRIPTION` and `NAMESPACE` reshape package metadata.
-pub(crate) const WATCHED_GLOBS: [&str; 5] = [
+/// reshape config; `DESCRIPTION` and `NAMESPACE` reshape package metadata;
+/// `.git` marks a boundary for config and script-directory discovery.
+pub(crate) const WATCHED_GLOBS: [&str; 6] = [
     "**/*.{R,r}",
     "**/arity.toml",
     "**/*.toml",
     "**/DESCRIPTION",
     "**/NAMESPACE",
+    "**/.git",
 ];
 
 /// A batch of on-disk changes from `workspace/didChangeWatchedFiles`, already
 /// converted to filesystem paths and split by what each one forces the lint
-/// thread (the sole db writer) to redo. `arity.toml` changes are handled on the
-/// main loop — it owns the config cache — so they never reach here (see
+/// thread (the sole db writer) to redo. Config and `.git` changes are handled on
+/// the main loop, which owns the config cache and requests a separate directory
+/// refresh, so they never reach here (see
 /// [`WatchedClassification::config_changed`]).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct WatchedFilesBatch {
@@ -73,7 +76,7 @@ pub(crate) enum WatchedKind {
     Namespace,
     /// `man/roxygen/meta.R` — roxygen2 *options*, not source.
     RoxygenMeta,
-    /// `arity.toml` (configuration).
+    /// `arity.toml` or `.git` (configuration or a discovery boundary).
     Config,
     /// Anything else (ignored — a watcher glob may over-match).
     Other,
@@ -83,7 +86,7 @@ fn classify_path(path: &Path) -> WatchedKind {
     // `arity.toml`/`DESCRIPTION`/`NAMESPACE` match by exact file name; R sources
     // by extension. Name wins (a file literally named `NAMESPACE` has no ext).
     match path.file_name().and_then(|n| n.to_str()) {
-        Some("arity.toml") => return WatchedKind::Config,
+        Some("arity.toml" | ".git") => return WatchedKind::Config,
         Some("DESCRIPTION") => return WatchedKind::Description,
         Some("NAMESPACE") => return WatchedKind::Namespace,
         _ => {}

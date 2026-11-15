@@ -17,6 +17,7 @@ pub mod roxygen;
 pub mod scope;
 pub mod sequence;
 pub mod source;
+pub(crate) mod source_context;
 
 pub use classes::{
     ClassDef, ClassLocation, ClassSystem, class_name_at_offset, file_class_defs, locate_class_def,

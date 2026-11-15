@@ -1631,6 +1631,7 @@ impl GlobalState {
             // A selected or inherited config moved; drop cached resolutions so the next
             // lint/format re-reads it, then re-lint every open document.
             self.config_cache.clear();
+            let _ = self.lint_tx.send(LintMsg::RefreshExecutionDirectories);
             self.request_relint_all();
         }
         if !batch.is_empty() {

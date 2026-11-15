@@ -39,6 +39,19 @@ arity lint --output json .
 JSON diagnostics go to stdout, including `[]` when there are no findings.
 Human-readable diagnostics and informational messages go to stderr.
 
+## Resolve script dependencies
+
+Arity follows literal, top-level `source()` calls between analyzed files. For
+relative source paths, it assumes R starts in the nearest enclosing package root
+(a directory with `DESCRIPTION` and `R/`). Outside a package, it uses the
+nearest Git root, then the nearest directory containing `arity.toml`, then the
+script's own directory. Nested configs inside a Git repository do not change
+this working directory.
+
+Sourced files inherit their caller's working directory. With `chdir = TRUE`, the
+target executes in its containing directory, and the caller's directory is
+restored afterward. The CLI and language server use the same defaults.
+
 ## Choose rules
 
 The [Lint rules](../reference/rules.md) reference explains each rule and its

@@ -49,6 +49,9 @@ pub(crate) enum LintMsg {
     WatchedFiles {
         batch: WatchedFilesBatch,
     },
+    /// Config or Git root markers changed. The main loop refreshes config and
+    /// schedules the re-lint after this write has refreshed script directories.
+    RefreshExecutionDirectories,
 }
 
 /// Spawn the dedicated lint thread that owns the persistent salsa database.
@@ -331,6 +334,9 @@ impl LintWorker {
             LintMsg::SeedWorkspace { roots } => self.seed_workspace(roots),
             LintMsg::RenameFiles { renames } => self.rename_files(renames),
             LintMsg::WatchedFiles { batch } => self.on_watched_files(batch),
+            LintMsg::RefreshExecutionDirectories => {
+                self.db.refresh_execution_directories();
+            }
         }
     }
 
