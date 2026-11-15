@@ -22,6 +22,7 @@
 //! one namespace of rule IDs. [`run_dcf_rules`] is that grammar's twin of
 //! [`run_rules`], with the same single-shared-walk discipline.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -29,7 +30,7 @@ use std::sync::OnceLock;
 use rowan::ast::AstNode as _;
 
 use crate::ast::{BinaryExpr, CallExpr};
-use crate::config::{CompatConfig, CompatVersion, LintConfig, RulesConfig};
+use crate::config::{CompatConfig, CompatVersion, LintConfig, PerFileIgnores, RulesConfig};
 use crate::dcf;
 use crate::linter::rules::roxygen::RoxygenTopics;
 use crate::project::collate::PackageSourceInventory;
@@ -838,6 +839,8 @@ pub struct ResolvedRules {
     /// time), handed to rules via [`RuleContext::compat`] — same per-run
     /// rationale as `rules_config`.
     compat: CompatConfig,
+    /// Compiled file globs, shared across the batch and editor lint passes.
+    per_file_ignores: PerFileIgnores,
 }
 
 impl ResolvedRules {
@@ -891,6 +894,7 @@ impl ResolvedRules {
             enabled,
             rules_config,
             compat,
+            per_file_ignores: PerFileIgnores::default(),
         }
     }
 
@@ -899,15 +903,32 @@ impl ResolvedRules {
         &self.enabled
     }
 
-    /// Build the rule set honoring `select`, `extend-select`, and `ignore`.
+    fn enabled_except(&self, ignored: &HashSet<&str>) -> Cow<'_, EnabledRules> {
+        if ignored.is_empty() {
+            Cow::Borrowed(&self.enabled)
+        } else {
+            Cow::Owned(EnabledRules(
+                self.enabled
+                    .0
+                    .iter()
+                    .copied()
+                    .filter(|id| !ignored.contains(id))
+                    .collect(),
+            ))
+        }
+    }
+
+    /// Build the rule set honoring global selection and per-file ignores.
     ///
     /// Resolution order:
     /// 1. Start with all rules whose `default_enabled()` is `true`, unless
     ///    `select` is set (then start with the listed rules instead).
     /// 2. Add anything in `extend-select`.
     /// 3. Subtract anything in `ignore`.
-    /// 4. Unknown rule IDs in any of these lists are returned via the second
-    ///    element of the tuple so the caller can surface them.
+    /// 4. Carry compiled `per-file-ignores` into dispatch, where each file's
+    ///    matches disable rules without rebuilding this shared state.
+    /// 5. Unknown rule IDs in any list, including unmatched file ignores, are
+    ///    returned via the second element so the caller can surface them.
     ///
     /// `config.rules` (the `[lint.rules.<id>]` tables) is carried through onto
     /// the result, reaching rules via [`RuleContext::config`]. Unknown *rule
@@ -925,6 +946,7 @@ impl ResolvedRules {
             .flat_map(|v| v.iter())
             .chain(&config.extend_select)
             .chain(ignore)
+            .chain(config.per_file_ignores.rule_ids())
         {
             if !all.iter().any(|r| r.id() == id.as_str()) && !unknown.contains(id) {
                 unknown.push(id.clone());
@@ -940,10 +962,9 @@ impl ResolvedRules {
                 selected && !ignore.iter().any(|id| id == rule.id())
             })
             .collect();
-        (
-            Self::with_config(chosen, config.rules.clone(), config.compat.clone()),
-            unknown,
-        )
+        let mut resolved = Self::with_config(chosen, config.rules.clone(), config.compat.clone());
+        resolved.per_file_ignores = config.per_file_ignores.clone();
+        (resolved, unknown)
     }
 
     pub fn default_set() -> Self {
@@ -973,6 +994,8 @@ pub fn run_rules(
     symbols: &dyn SymbolProvider,
     file: &FileContext<'_>,
 ) -> Vec<Diagnostic> {
+    let ignored = resolved.per_file_ignores.ignored_rules(path);
+    let enabled = resolved.enabled_except(&ignored);
     let suppressions = SuppressionMap::build(root);
     let ctx = RuleContext {
         path,
@@ -986,7 +1009,7 @@ pub fn run_rules(
         topics: file.topics,
         config: &resolved.rules_config,
         suppressions: &suppressions,
-        enabled_rules: &resolved.enabled,
+        enabled_rules: &enabled,
         own_package: OnceLock::new(),
         compat: &resolved.compat,
         description_compat: OnceLock::new(),
@@ -1001,14 +1024,18 @@ pub fn run_rules(
     if resolved.any_node_rules {
         for el in root.descendants_with_tokens() {
             for &i in &resolved.by_kind[el.kind() as usize] {
-                rules[i].check(&el, &ctx, &mut all);
+                if !ignored.contains(rules[i].id()) {
+                    rules[i].check(&el, &ctx, &mut all);
+                }
             }
         }
     }
 
     // Whole-file pass for model-/comment-driven rules.
     for rule in rules {
-        rule.check_file(&ctx, &mut all);
+        if !ignored.contains(rule.id()) {
+            rule.check_file(&ctx, &mut all);
+        }
     }
 
     // Drop the suppressed findings, recording which directives did the work.
@@ -1019,7 +1046,9 @@ pub fn run_rules(
     // `outdated-suppression` finding is not thereby "used".
     let mut post = Vec::new();
     for rule in rules {
-        rule.check_suppressions(&ctx, &used, &mut post);
+        if !ignored.contains(rule.id()) {
+            rule.check_suppressions(&ctx, &used, &mut post);
+        }
     }
     if !post.is_empty() {
         post.retain(|d| !suppressions.is_suppressed(d.rule, d.range));
@@ -1111,6 +1140,8 @@ pub fn run_dcf_rules(
     usage: Option<&PackageUsage>,
     sources: Option<&PackageSourceInventory>,
 ) -> Vec<Diagnostic> {
+    let ignored = resolved.per_file_ignores.ignored_rules(path);
+    let enabled = resolved.enabled_except(&ignored);
     let suppressions = SuppressionMap::build_dcf(root);
     let ctx = DcfRuleContext {
         path,
@@ -1121,7 +1152,7 @@ pub fn run_dcf_rules(
         sources,
         config: &resolved.rules_config,
         suppressions: &suppressions,
-        enabled_rules: &resolved.enabled,
+        enabled_rules: &enabled,
     };
     let rules = &resolved.dcf_rules;
     let mut all = Vec::new();
@@ -1129,13 +1160,17 @@ pub fn run_dcf_rules(
     if resolved.dcf_any_node_rules {
         for el in root.descendants_with_tokens() {
             for &i in &resolved.dcf_by_kind[el.kind() as usize] {
-                rules[i].check(&el, &ctx, &mut all);
+                if !ignored.contains(rules[i].id()) {
+                    rules[i].check(&el, &ctx, &mut all);
+                }
             }
         }
     }
 
     for rule in rules {
-        rule.check_file(&ctx, &mut all);
+        if !ignored.contains(rule.id()) {
+            rule.check_file(&ctx, &mut all);
+        }
     }
 
     suppressions.filter(&mut all);

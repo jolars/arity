@@ -159,6 +159,16 @@
           },
           "type": "array"
         },
+        "per-file-ignores": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description": "File globs mapped to rule IDs to disable. Patterns containing `/` are\nrelative to the selected config file's directory; other patterns match\nbasenames anywhere. `*` matches within a directory, `**` crosses\ndirectories, and a leading `!` matches files outside the pattern.\nEvery matching entry contributes ignores, regardless of table order.\nSyntax errors are always reported. Unknown IDs are lint-time errors.",
+          "type": "object"
+        },
         "rules": {
           "allOf": [
             {

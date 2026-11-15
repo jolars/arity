@@ -188,7 +188,7 @@ impl ExcludeFilter {
 /// Every spelling of `root` a candidate path might arrive written with: as
 /// given, canonicalized (symlinks resolved), and each with any Windows verbatim
 /// prefix removed. Computed once, at construction, so matching stays syscall-free.
-fn root_spellings(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn root_spellings(root: &Path) -> Vec<PathBuf> {
     let mut roots = vec![root.to_path_buf()];
     if let Ok(canonical) = root.canonicalize() {
         roots.push(canonical);

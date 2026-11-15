@@ -30,6 +30,44 @@ License: MIT + file LICENSE
 Authors@R: person(\"Test\", \"User\", email = \"test@example.com\", role = c(\"aut\", \"cre\"))
 ";
 
+#[test]
+fn per_file_ignores_apply_to_description_without_hiding_parse_errors() {
+    let config: LintConfig = toml::from_str(
+        r#"
+select = ["description-title-case", "description-duplicate-field"]
+[per-file-ignores]
+"DESCRIPTION" = ["description-title-case"]
+"#,
+    )
+    .unwrap();
+    let source = format!(
+        "{}Version: 0.2.0\n",
+        COMPLETE_DESCRIPTION.replace("A Test Package", "statistical methods")
+    );
+    let findings = check_description_document(Path::new("DESCRIPTION"), &source, &config).unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].rule, "description-duplicate-field");
+    let baseline = LintConfig {
+        per_file_ignores: Default::default(),
+        ..config.clone()
+    };
+    let findings =
+        check_description_document(Path::new("DESCRIPTION"), &source, &baseline).unwrap();
+    assert!(
+        findings
+            .iter()
+            .any(|diagnostic| diagnostic.rule == "description-title-case")
+    );
+    let findings =
+        check_description_document(Path::new("DESCRIPTION"), "invalid field\n", &config).unwrap();
+    assert!(!findings.is_empty());
+    assert!(
+        findings
+            .iter()
+            .all(|diagnostic| diagnostic.rule == "syntax-error")
+    );
+}
+
 /// Write a package rooted at a fresh temp dir: `DESCRIPTION`, `NAMESPACE`, and
 /// one `R/` source per entry. Returns the dir (kept alive by the caller) and
 /// its path.

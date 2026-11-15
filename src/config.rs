@@ -19,6 +19,9 @@ use crate::formatter::{FormatStyle, LineEnding};
 mod resolver;
 pub use resolver::{DirectoryConfigs, ResolvedConfig};
 
+mod per_file_ignores;
+pub use per_file_ignores::PerFileIgnores;
+
 pub const CONFIG_FILE_NAME: &str = "arity.toml";
 
 /// The file selected by configuration resolution, if any.
@@ -251,6 +254,15 @@ pub struct LintConfig {
     /// Rule IDs to disable, including those in `extend-select`.
     #[serde(default)]
     pub ignore: Vec<String>,
+    /// File globs mapped to rule IDs to disable. Patterns containing `/` are
+    /// relative to the selected config file's directory; other patterns match
+    /// basenames anywhere. `*` matches within a directory, `**` crosses
+    /// directories, and a leading `!` matches files outside the pattern.
+    /// Every matching entry contributes ignores, regardless of table order.
+    /// Syntax errors are always reported. Unknown IDs are lint-time errors.
+    #[serde(default)]
+    #[cfg_attr(test, schemars(with = "BTreeMap<String, Vec<String>>"))]
+    pub per_file_ignores: PerFileIgnores,
     /// Per-rule option tables (`[lint.rules.<id>]`).
     #[serde(default)]
     pub rules: RulesConfig,
@@ -683,6 +695,10 @@ impl Config {
                 })?;
         config.validate(Some(path))?;
         config.lint.compat = config.compat.clone();
+        config
+            .lint
+            .per_file_ignores
+            .set_root(path.parent().unwrap_or(Path::new(".")));
         Ok(config)
     }
 
@@ -711,6 +727,10 @@ impl Config {
         // Mirror the top-level `[compat]` onto the lint section (see
         // `LintConfig::compat`).
         config.lint.compat = config.compat.clone();
+        config
+            .lint
+            .per_file_ignores
+            .set_root(path.parent().unwrap_or(Path::new(".")));
         Ok(config)
     }
 

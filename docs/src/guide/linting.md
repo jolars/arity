@@ -77,6 +77,17 @@ extend-select = ["undesirable-function"]
 
 For one run, use `arity lint --extend-select undesirable-function .`.
 
+To disable a rule only in matching files, use a glob in `arity.toml`:
+
+```toml
+[lint.per-file-ignores]
+"sess/inst/tinytest/**" = ["undefined-symbol"]
+```
+
+Other rules and parse-error reporting remain active. See the [configuration
+reference](../reference/configuration.md#lint-per-file-ignores) for matching and
+inheritance rules.
+
 ## Apply fixes
 
 Apply safe fixes in place, then format the rewritten code:

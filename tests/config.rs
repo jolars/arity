@@ -1440,6 +1440,458 @@ fn cli_nested_stdin_filename_keeps_cwd_discovery() {
     assert_eq!(output.status.code(), Some(1));
 }
 
+const PER_FILE_IGNORE_CONFIG: &str = r##"
+[lint]
+select = ["undefined-symbol", "equals-na"]
+
+[lint.per-file-ignores]
+"sess/inst/tinytest/**" = ["undefined-symbol", "undefined-symbol"]
+"**/quiet.R" = ["equals-na"]
+"##;
+
+fn lint_rules(output: &std::process::Output) -> Vec<String> {
+    let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("expected JSON diagnostics: {output:?}"));
+    let mut rules: Vec<_> = diagnostics
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|diagnostic| diagnostic["rule"].as_str().unwrap().to_string())
+        .collect();
+    rules.sort();
+    rules
+}
+
+#[test]
+fn cli_per_file_ignores_union_for_walks_and_explicit_paths() {
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("sess/inst/tinytest/nested")).unwrap();
+    fs::write(dir.path().join("arity.toml"), PER_FILE_IGNORE_CONFIG).unwrap();
+    let source = "ghost == NA\n";
+    for (path, expected) in [
+        ("main.R", vec!["equals-na", "undefined-symbol"]),
+        ("sess/inst/tinytest/test.R", vec!["equals-na"]),
+        ("sess/inst/tinytest/nested/quiet.R", vec![]),
+    ] {
+        fs::write(dir.path().join(path), source).unwrap();
+        let absolute = dir.path().join(path);
+        for argument in [path, absolute.to_str().unwrap()] {
+            let output = run_cli_in_no_stdin(dir.path(), ["lint", "--output", "json", argument]);
+            assert_eq!(
+                output.status.code(),
+                Some(i32::from(!expected.is_empty())),
+                "{output:?}"
+            );
+            assert_eq!(lint_rules(&output), expected, "{argument}");
+        }
+    }
+    let output = run_cli_in_no_stdin(dir.path(), ["lint", "--output", "json", "."]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert_eq!(
+        lint_rules(&output),
+        ["equals-na", "equals-na", "undefined-symbol"]
+    );
+
+    // Matching stays relative to the config when invoked below its directory.
+    let output = run_cli_in_no_stdin(
+        &dir.path().join("sess"),
+        ["lint", "--output", "json", "inst/tinytest"],
+    );
+    assert_eq!(lint_rules(&output), ["equals-na"]);
+}
+
+#[test]
+fn cli_per_file_ignores_use_stdin_filename_with_cwd_discovery() {
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("sess/inst/tinytest")).unwrap();
+    fs::write(dir.path().join("arity.toml"), PER_FILE_IGNORE_CONFIG).unwrap();
+    // The filename governs matching, but must not change config discovery.
+    fs::write(dir.path().join("sess/arity.toml"), "[lint]\nselect = []\n").unwrap();
+    let absolute = dir.path().join("sess/inst/tinytest/new.R");
+    for filename in ["sess/inst/tinytest/new.R", absolute.to_str().unwrap()] {
+        let output = run_cli_in(
+            dir.path(),
+            [
+                "lint",
+                "--output",
+                "json",
+                "--stdin-filename",
+                filename,
+                "-",
+            ],
+            "ghost == NA\n",
+        );
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        assert_eq!(lint_rules(&output), ["equals-na"]);
+    }
+    let output = run_cli_in(
+        dir.path(),
+        ["lint", "--output", "json", "-"],
+        "ghost == NA\n",
+    );
+    assert_eq!(lint_rules(&output), ["equals-na", "undefined-symbol"]);
+}
+
+#[test]
+fn cli_per_file_ignores_support_basenames_negation_and_single_directory_globs() {
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("tests/nested")).unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        r##"
+[lint]
+select = ["undefined-symbol", "equals-na"]
+[lint.per-file-ignores]
+"quiet.R" = ["equals-na"]
+"#literal.R" = ["undefined-symbol"]
+"tests/*.R" = ["equals-na"]
+"!tests/**" = ["undefined-symbol"]
+"tests/also-ignored.R" = ["undefined-symbol"]
+"##,
+    )
+    .unwrap();
+    for (path, expected) in [
+        ("main.R", vec!["equals-na"]),
+        ("#literal.R", vec!["equals-na"]),
+        ("tests/test.R", vec!["undefined-symbol"]),
+        ("tests/also-ignored.R", vec![]),
+        ("tests/nested/test.R", vec!["equals-na", "undefined-symbol"]),
+        ("tests/nested/quiet.R", vec!["undefined-symbol"]),
+    ] {
+        let output = run_cli_in(
+            dir.path(),
+            ["lint", "--output", "json", "--stdin-filename", path, "-"],
+            "ghost == NA\n",
+        );
+        assert_eq!(lint_rules(&output), expected, "{path}: {output:?}");
+    }
+}
+
+#[test]
+fn cli_per_file_ignores_normalize_dot_components() {
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("sess/inst/tinytest")).unwrap();
+    fs::write(dir.path().join("arity.toml"), PER_FILE_IGNORE_CONFIG).unwrap();
+    fs::write(
+        dir.path().join("sess/inst/tinytest/test.R"),
+        "ghost == NA\n",
+    )
+    .unwrap();
+    let output = run_cli_in_no_stdin(
+        &dir.path().join("sess"),
+        [
+            "lint",
+            "--output",
+            "json",
+            "./../sess/inst/tinytest/./test.R",
+        ],
+    );
+    assert_eq!(lint_rules(&output), ["equals-na"]);
+    let output = run_cli_in(
+        &dir.path().join("sess"),
+        [
+            "lint",
+            "--output",
+            "json",
+            "--stdin-filename",
+            "./../sess/inst/tinytest/new.R",
+            "-",
+        ],
+        "ghost == NA\n",
+    );
+    assert_eq!(lint_rules(&output), ["equals-na"]);
+}
+
+#[test]
+fn cli_per_file_ignores_keep_slash_globs_under_config_directory() {
+    let dir = tempdir().unwrap();
+    fs::create_dir(dir.path().join("project")).unwrap();
+    fs::write(dir.path().join("project/arity.toml"), "[lint]\nselect = [\"undefined-symbol\", \"equals-na\"]\n[lint.per-file-ignores]\n\"**/*.R\" = [\"undefined-symbol\"]\n").unwrap();
+    for (filename, expected) in [
+        ("project/test.R", vec!["equals-na"]),
+        ("outside.R", vec!["equals-na", "undefined-symbol"]),
+    ] {
+        let output = run_cli_in(
+            dir.path(),
+            [
+                "lint",
+                "--config",
+                "project/arity.toml",
+                "--output",
+                "json",
+                "--stdin-filename",
+                filename,
+                "-",
+            ],
+            "ghost == NA\n",
+        );
+        assert_eq!(lint_rules(&output), expected, "{filename}: {output:?}");
+    }
+}
+
+#[test]
+fn cli_per_file_ignores_anchor_user_fallback_to_its_config_directory() {
+    let dir = tempdir().unwrap();
+    let project = dir.path().join("project");
+    fs::create_dir_all(project.join(".git")).unwrap();
+    fs::create_dir(project.join("tests")).unwrap();
+    fs::write(project.join("tests/test.R"), "ghost == NA\n").unwrap();
+    fs::write(dir.path().join("user.toml"), "[lint]\nselect = [\"undefined-symbol\", \"equals-na\"]\n[lint.per-file-ignores]\n\"project/tests/**\" = [\"undefined-symbol\"]\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_arity"))
+        .args(["lint", "--output", "json", "tests/test.R"])
+        .current_dir(&project)
+        .env("ARITY_CONFIG", "../user.toml")
+        .output()
+        .unwrap();
+    assert_eq!(lint_rules(&output), ["equals-na"]);
+    let output = Command::new(env!("CARGO_BIN_EXE_arity"))
+        .args([
+            "lint",
+            "--no-config",
+            "--select",
+            "undefined-symbol,equals-na",
+            "--output",
+            "json",
+            "tests/test.R",
+        ])
+        .current_dir(&project)
+        .env("ARITY_CONFIG", "../user.toml")
+        .output()
+        .unwrap();
+    assert_eq!(lint_rules(&output), ["equals-na", "undefined-symbol"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_per_file_ignores_match_symlink_aliases_and_unsaved_files() {
+    let dir = tempdir().unwrap();
+    let project = dir.path().join("project[1]");
+    fs::create_dir_all(project.join("sess/inst/tinytest")).unwrap();
+    fs::write(project.join("arity.toml"), PER_FILE_IGNORE_CONFIG).unwrap();
+    fs::write(project.join("sess/inst/tinytest/test.R"), "ghost == NA\n").unwrap();
+    std::os::unix::fs::symlink(&project, dir.path().join("alias")).unwrap();
+    let output = run_cli_in_no_stdin(
+        dir.path(),
+        [
+            "lint",
+            "--output",
+            "json",
+            "alias/sess/inst/tinytest/test.R",
+        ],
+    );
+    assert_eq!(lint_rules(&output), ["equals-na"]);
+    let output = run_cli_in(
+        &project,
+        [
+            "lint",
+            "--output",
+            "json",
+            "--stdin-filename",
+            "../alias/sess/inst/tinytest/new.R",
+            "-",
+        ],
+        "ghost == NA\n",
+    );
+    assert_eq!(lint_rules(&output), ["equals-na"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_per_file_ignores_resolve_symlinks_before_parent_components() {
+    let dir = tempdir().unwrap();
+    let project = dir.path().join("real/project");
+    fs::create_dir_all(project.join("sub")).unwrap();
+    fs::create_dir(project.join("tests")).unwrap();
+    fs::write(
+        project.join("arity.toml"),
+        "[lint]\nselect = [\"seq\"]\n[lint.per-file-ignores]\n\"tests/**\" = [\"seq\"]\n",
+    )
+    .unwrap();
+    let source = "1:length(x)\n";
+    let file = project.join("tests/test.R");
+    fs::write(&file, source).unwrap();
+    // The inner alias also exercises paths whose lexical spelling is already
+    // under the config root, where alias resolution previously never ran.
+    for alias in [dir.path().join("alias"), project.join("sub/alias")] {
+        std::os::unix::fs::symlink(project.join("sub"), alias).unwrap();
+    }
+    for path in [
+        "real/project/tests/test.R",
+        "alias/../tests/test.R",
+        "real/project/sub/alias/../tests/test.R",
+    ] {
+        let absolute = dir.path().join(path);
+        for path in [path, absolute.to_str().unwrap()] {
+            let output = run_cli_in_no_stdin(dir.path(), ["lint", "--output", "json", path]);
+            assert!(output.status.success(), "{path}: {output:?}");
+            assert!(lint_rules(&output).is_empty(), "{path}: {output:?}");
+
+            let output = run_cli_in_no_stdin(dir.path(), ["lint", "--fix", path]);
+            assert!(output.status.success(), "{path}: {output:?}");
+            assert_eq!(fs::read_to_string(&file).unwrap(), source, "{path}");
+        }
+    }
+    for filename in [
+        "alias/../tests/new/nested.R",
+        "real/project/sub/alias/../tests/new/nested.R",
+        "alias/../tests/new/../new.R",
+    ] {
+        let absolute = dir.path().join(filename);
+        for filename in [filename, absolute.to_str().unwrap()] {
+            let output = run_cli_in(
+                dir.path(),
+                [
+                    "lint",
+                    "--config",
+                    "real/project/arity.toml",
+                    "--output",
+                    "json",
+                    "--stdin-filename",
+                    filename,
+                    "-",
+                ],
+                source,
+            );
+            assert!(output.status.success(), "{filename}: {output:?}");
+            assert!(lint_rules(&output).is_empty(), "{filename}: {output:?}");
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_per_file_ignores_resolve_symlink_parent_components_in_config_root() {
+    let dir = tempdir().unwrap();
+    let project = dir.path().join("real/project");
+    fs::create_dir_all(project.join("sub")).unwrap();
+    fs::create_dir(project.join("tests")).unwrap();
+    fs::write(
+        project.join("arity.toml"),
+        "[lint]\nselect = [\"seq\"]\n[lint.per-file-ignores]\n\"tests/**\" = [\"seq\"]\n",
+    )
+    .unwrap();
+    fs::write(project.join("tests/test.R"), "1:length(x)\n").unwrap();
+    std::os::unix::fs::symlink(project.join("sub"), dir.path().join("alias")).unwrap();
+    let absolute = dir.path().join("alias/../arity.toml");
+    for config in ["alias/../arity.toml", absolute.to_str().unwrap()] {
+        let output = run_cli_in_no_stdin(
+            dir.path(),
+            [
+                "lint",
+                "--config",
+                config,
+                "--output",
+                "json",
+                "real/project/tests/test.R",
+            ],
+        );
+        assert!(output.status.success(), "{config}: {output:?}");
+        assert!(lint_rules(&output).is_empty(), "{config}: {output:?}");
+    }
+}
+
+#[test]
+fn cli_per_file_ignores_preserve_parse_errors() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        "[lint]\nselect = [\"seq\"]\n[lint.per-file-ignores]\n\"*.R\" = [\"seq\"]\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("broken.R"), "function(\n").unwrap();
+    let output = run_cli_in_no_stdin(dir.path(), ["lint", "--output", "json", "."]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let rules = lint_rules(&output);
+    assert!(!rules.is_empty());
+    assert!(rules.iter().all(|rule| rule == "syntax-error"));
+}
+
+#[test]
+fn cli_per_file_ignores_prevent_fixes_for_ignored_rules() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        "[lint]\nselect = [\"seq\", \"equals-na\"]\n[lint.per-file-ignores]\n\"*.R\" = [\"seq\"]\n",
+    )
+    .unwrap();
+    let path = dir.path().join("test.R");
+    let source = "1:length(x)\nx == NA\n";
+    fs::write(&path, source).unwrap();
+    let output = run_cli_in_no_stdin(dir.path(), ["lint", "--fix", "test.R"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "1:length(x)\nis.na(x)\n"
+    );
+
+    let output = run_cli_in(
+        dir.path(),
+        ["lint", "--fix", "--stdin-filename", "test.R", "-"],
+        source,
+    );
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"1:length(x)\nis.na(x)\n");
+}
+
+#[test]
+fn cli_per_file_ignores_validate_unmatched_rule_ids_and_globs() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("main.R"), "NULL\n").unwrap();
+    for (pattern, rule, message) in [
+        ("unmatched/**", "unknown-rule", "unknown-rule"),
+        ("unmatched/**", "syntax-error", "syntax-error"),
+        ("[", "seq", "per-file-ignores"),
+    ] {
+        fs::write(
+            dir.path().join("arity.toml"),
+            format!("[lint.per-file-ignores]\n\"{pattern}\" = [\"{rule}\"]\n"),
+        )
+        .unwrap();
+        let output = run_cli_in_no_stdin(dir.path(), ["lint", "main.R"]);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(message),
+            "{output:?}"
+        );
+    }
+}
+
+#[test]
+fn cli_per_file_ignores_merge_by_glob_and_use_selected_config_directory() {
+    let dir = tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("project/tests")).unwrap();
+    fs::write(dir.path().join("base.toml"), "[lint]\nselect = [\"undefined-symbol\", \"equals-na\"]\n[lint.per-file-ignores]\n\"tests/**\" = [\"undefined-symbol\"]\n\"tests/inherited.R\" = [\"undefined-symbol\"]\n").unwrap();
+    fs::write(
+        dir.path().join("project/arity.toml"),
+        "extend = \"../base.toml\"\n[lint.per-file-ignores]\n\"tests/**\" = [\"equals-na\"]\n",
+    )
+    .unwrap();
+    for (path, expected) in [
+        ("project/tests/replace.R", vec!["undefined-symbol"]),
+        ("project/tests/inherited.R", vec![]),
+    ] {
+        fs::write(dir.path().join(path), "ghost == NA\n").unwrap();
+        for explicit in [false, true] {
+            let output = if explicit {
+                run_cli_in_no_stdin(
+                    dir.path(),
+                    [
+                        "lint",
+                        "--config",
+                        "project/arity.toml",
+                        "--output",
+                        "json",
+                        path,
+                    ],
+                )
+            } else {
+                run_cli_in_no_stdin(dir.path(), ["lint", "--output", "json", path])
+            };
+            assert_eq!(lint_rules(&output), expected, "{output:?}");
+        }
+    }
+}
+
 #[test]
 fn cli_nested_check_cache_uses_each_resolved_style() {
     let dir = tempdir().unwrap();

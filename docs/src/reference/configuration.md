@@ -189,11 +189,12 @@ to formatting at all.
 
 ## `[lint]`
 
-  | Key             | Type             | Default | Description                                                   |
-  | --------------- | ---------------- | ------- | ------------------------------------------------------------- |
-  | `select`        | array of strings | unset   | Base rule IDs to enable; replaces the default selection.      |
-  | `extend-select` | array of strings | `[]`    | Additional rule IDs to enable alongside `select` or defaults. |
-  | `ignore`        | array of strings | `[]`    | Rule IDs to disable, including those in `extend-select`.      |
+  | Key                | Type                     | Default | Description                                                   |
+  | ------------------ | ------------------------ | ------- | ------------------------------------------------------------- |
+  | `select`           | array of strings         | unset   | Base rule IDs to enable; replaces the default selection.      |
+  | `extend-select`    | array of strings         | `[]`    | Additional rule IDs to enable alongside `select` or defaults. |
+  | `ignore`           | array of strings         | `[]`    | Rule IDs to disable, including those in `extend-select`.      |
+  | `per-file-ignores` | table of glob → rule IDs | `{}`    | Rule IDs to disable in matching files.                        |
 
 Rule IDs are the kebab-case names from the [rule reference](rules.md). Unknown
 IDs are reported when linting runs, not when the config is parsed. The
@@ -210,6 +211,50 @@ then removes anything in `ignore`. An empty `select = []` disables the defaults;
 extend-select = ["undesirable-function"]
 ignore = ["unused-binding"]
 ```
+
+### `[lint.per-file-ignores]`
+
+Disable selected rules for matching files while keeping other checks active:
+
+```toml
+[lint.per-file-ignores]
+"sess/inst/tinytest/**" = ["undefined-symbol"]
+"**/helpers.R" = ["unused-binding"]
+```
+
+Keys are file globs and values are arrays of exact rule IDs. Unknown IDs are
+lint-time errors, even when no file matches the pattern. Invalid globs are
+configuration errors.
+
+Use forward slashes on every platform. Patterns without a slash, such as
+`helpers.R` or `*.R`, match basenames in any directory. Relative patterns with a
+slash match from the selected config file's directory, including an explicit
+`--config` or an `ARITY_CONFIG` fallback. `*` and `?` match within one path
+component; `**` crosses directories. For example, `tests/*.R` matches direct
+children and `tests/**` includes nested files.
+
+All matching entries contribute ignores. Their order and specificity do not
+affect the result. A leading `!` complements that entry's pattern:
+
+```toml
+[lint.per-file-ignores]
+"!R/**" = ["unused-binding"] # ignore this rule outside R/
+```
+
+Negation never re-enables a rule ignored by another entry. With `extend`, the
+tables merge by glob: a child's array replaces the inherited array for the same
+glob, while other entries remain. An empty array clears that entry. The selected
+config file anchors inherited globs, just as it anchors inherited excludes.
+
+File ignores apply to recursive walks, explicitly named files, CLI fixes, and
+language-server diagnostics and fixes. With stdin, `--stdin-filename` supplies
+the matching path; omitting it applies no file ignores. Config discovery still
+starts from the working directory for stdin.
+
+Both R and `DESCRIPTION` rules support file ignores. Files remain part of
+project analysis, and parse errors are always reported. `syntax-error` is not a
+selectable rule and cannot appear in this table. Declared globals and framework
+environments are separate semantic inputs.
 
 ### `[lint.rules.<id>]`
 

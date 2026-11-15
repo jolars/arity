@@ -1239,6 +1239,72 @@ fn lint_extend_select_preserves_defaults_and_honors_ignore() {
 }
 
 #[test]
+fn lint_per_file_ignores_apply_per_buffer_and_reload_inherited_config() {
+    let source = "ghost == NA\n";
+    let (dir, _, uri) = package_fixture(COMPLETE_DESCRIPTION, source);
+    let base = dir.path().join("base.toml");
+    std::fs::write(&base, "[lint]\nselect = [\"undefined-symbol\", \"equals-na\"]\n[lint.per-file-ignores]\n\"R/**\" = [\"undefined-symbol\"]\n").unwrap();
+    std::fs::write(dir.path().join("arity.toml"), "extend = \"base.toml\"\n").unwrap();
+    let mut h = Harness::start_push();
+    for (path, expected) in [
+        ("R/a.R", vec!["equals-na"]),
+        ("main.R", vec!["equals-na", "undefined-symbol"]),
+        ("R/new.R", vec!["equals-na"]),
+    ] {
+        let path = dir.path().join(path);
+        let uri = path_uri(&path);
+        h.did_open(&uri, source, 1);
+        let diagnostics = h.recv_publish_for(&uri, 1);
+        let mut rules: Vec<_> = diagnostics
+            .iter()
+            .map(|d| d["code"].as_str().unwrap())
+            .collect();
+        rules.sort();
+        assert_eq!(rules, expected, "{path:?}: {diagnostics:?}");
+    }
+
+    // An inherited config edit must invalidate the shared cached rule set.
+    std::fs::write(
+        &base,
+        "[lint]\nselect = [\"undefined-symbol\", \"equals-na\"]\n",
+    )
+    .unwrap();
+    h.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({"changes": [{"uri": path_uri(&base), "type": 2}]}),
+    );
+    let diagnostics = h.recv_publish_for(&uri, 1);
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+    assert!(diagnostics.iter().any(|d| d["code"] == "undefined-symbol"));
+
+    // Disabling a fixable rule removes its cached quick fix too.
+    std::fs::write(&base, "[lint]\nselect = [\"undefined-symbol\", \"equals-na\"]\n[lint.per-file-ignores]\n\"R/**\" = [\"equals-na\"]\n").unwrap();
+    h.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({"changes": [{"uri": path_uri(&base), "type": 2}]}),
+    );
+    let diagnostics = h.recv_publish_for(&uri, 1);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0]["code"], "undefined-symbol");
+    let id = h.request(
+        "textDocument/codeAction",
+        json!({
+            "textDocument": {"uri": uri},
+            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 11}},
+            "context": {"diagnostics": diagnostics}
+        }),
+    );
+    let response = h.recv_response(&id);
+    assert_eq!(response.response_result.unwrap(), json!([]));
+
+    h.did_change(&uri, "function(\n", 2);
+    let diagnostics = h.recv_publish_for(&uri, 2);
+    assert!(!diagnostics.is_empty());
+    assert!(diagnostics.iter().all(|d| d["code"] == "syntax-error"));
+    h.shutdown();
+}
+
+#[test]
 fn did_open_buggy_publishes_diagnostics() {
     let mut h = Harness::start_push();
     let uri = doc_uri();

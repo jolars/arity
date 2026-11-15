@@ -86,6 +86,22 @@ arity format --force-exclude generated/example.R
 Set `exclude` only when you want to replace the default list. For a local
 exception within a source file, use [directives](../reference/directives.md).
 
+## Ignore rules for selected files
+
+Use `lint.per-file-ignores` to disable individual rules in part of a project:
+
+```toml
+[lint.per-file-ignores]
+"sess/inst/tinytest/**" = ["undefined-symbol"]
+```
+
+This keeps other rules and parse-error reporting active in those tests. Patterns
+are relative to the selected config file, and every matching entry contributes
+ignores. The CLI and language server apply the same settings, including fixes
+and explicitly named files. See [file
+ignores](../reference/configuration.md#lint-per-file-ignores) for glob syntax
+and inheritance.
+
 ## Adjust formatting and linting
 
 Use `[format]` for layout settings and `[lint]` for rule selection. Start with

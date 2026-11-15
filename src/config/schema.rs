@@ -144,6 +144,10 @@ select = ["undesirable-function"]
 extend-select = ["implicit-assignment", "future-rule"]
 ignore = ["unused-binding"]
 
+[lint.per-file-ignores]
+"tests/**" = ["undefined-symbol"]
+"*.R" = ["future-rule"]
+
 [lint.rules.cyclomatic-complexity]
 max-complexity = 25
 
@@ -193,6 +197,9 @@ fn config_schema_rejects_runtime_invalid_configuration() {
         "[lint]\nextend-select = \"implicit-assignment\"",
         "[lint]\nextend-select = [1]",
         "[lint]\nextend_select = []",
+        "[lint]\nper-file-ignores = []",
+        "[lint.per-file-ignores]\n\"tests/**\" = \"undefined-symbol\"",
+        "[lint.per-file-ignores]\n\"tests/**\" = [1]",
         "[compat]\nr = \"version four\"",
         "[index]\nremote-url = \"https://example.com\"",
         "[lint.compat]\nr = \"4.1\"",

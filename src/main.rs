@@ -337,6 +337,10 @@ const STARTER_CONFIG: &str = "\
 # extend-select = [] # adds rules to the selection
 # ignore = []        # rules to disable
 
+# Disable individual rules for matching files; globs are config-relative.
+# [lint.per-file-ignores]
+# \"inst/tinytest/**\" = [\"undefined-symbol\"]
+
 # A few rules take options of their own, in a table named after the rule ID.
 # `functions` replaces the rule's built-in set; `extend-functions` adds to it.
 # [lint.rules.undesirable-function]

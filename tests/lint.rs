@@ -10,6 +10,40 @@ use arity::linter::{
 use tempfile::tempdir;
 
 #[test]
+fn per_file_ignores_leave_named_suppressions_dormant() {
+    let config: LintConfig = toml::from_str(
+        r#"
+select = ["unused-binding", "outdated-suppression"]
+[per-file-ignores]
+"*.R" = ["unused-binding"]
+"#,
+    )
+    .unwrap();
+    for source in [
+        "# arity-lint skip unused-binding: intentional\nx <- 1\n",
+        "# arity-lint skip unused-binding: intentional\nx <- 1\nprint(x)\n",
+    ] {
+        let findings = check_document(Path::new("test.R"), source, &config).unwrap();
+        assert!(findings.is_empty(), "{findings:?}");
+    }
+}
+
+#[test]
+fn per_file_ignores_disable_post_suppression_rules() {
+    let config: LintConfig = toml::from_str(
+        r#"
+select = ["unused-binding", "outdated-suppression"]
+[per-file-ignores]
+"*.R" = ["outdated-suppression"]
+"#,
+    )
+    .unwrap();
+    let source = "# arity-lint skip unused-binding: intentional\nx <- 1\nprint(x)\n";
+    let findings = check_document(Path::new("test.R"), source, &config).unwrap();
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
 fn terminal_close_reports_function_tails_without_a_fix() {
     for (src, tail) in [
         (

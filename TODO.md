@@ -104,17 +104,17 @@ output and semantic noise. Rule coverage and style options follow those fixes.
   points or runner environments where static evidence is insufficient,
   while retaining `unused-binding` for actual unused code.
 
-- [ ] Add glob-scoped lint ignores or overrides (feedback 3). Rule selection is
-  global today; `exclude` skips the entire file and directives require
-  editing each source. Define config-relative matching and override
-  precedence so a project can ignore `undefined-symbol` under
-  `sess/inst/tinytest/**` while retaining it in production code. Keep
-  syntax-error reporting and other selected rules active in those tests.
-  Wire resolution through the shared CLI/LSP configuration path, update the
-  schema and config docs, and test recursive walks, directly named files,
-  stdin filenames, and inherited config. Treat declared globals/framework
-  environments as separate semantic inputs, not as a reason to mark
-  arbitrary names defined everywhere.
+- [x] Add glob-scoped lint ignores (feedback 3). `[lint.per-file-ignores]` maps
+  config-relative globs to exact rule IDs. Matching entries accumulate
+  ignores; inherited tables merge by glob with child arrays replacing the
+  same inherited key. The selected config anchors inherited patterns.
+  Basename globs, negation, recursive paths, and unsaved filenames use the
+  same shared CLI/LSP rule dispatch. Other selected rules and syntax-error
+  reporting stay active, and ignored rules offer no fixes. Tests cover
+  walks, explicit paths, stdin filenames, dot components, symlink aliases,
+  inherited config reloads, DESCRIPTION, and dormant suppression comments.
+  Updated the schema, starter config, and configuration docs. Declared
+  globals and framework environments remain separate semantic inputs.
 
 - [x] Extend `seq` to base-resolved `seq(length(x))` (feedback 4). The shared
   dispatch now checks calls with exactly one positional argument in both
