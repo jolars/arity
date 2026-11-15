@@ -9694,3 +9694,202 @@ fn list_comparison_is_default_enabled_and_suppressible() {
         .is_empty()
     );
 }
+
+#[test]
+fn random_seed_requires_prior_unshadowed_initialization() {
+    for (src, count) in [
+        ("set.seed(2026); print(.Random.seed)", 0),
+        ("set.seed(2026); print(`.Random.seed`)", 0),
+        ("print(.Random.seed); set.seed(2026)", 1),
+        ("f <- function() { set.seed(1); print(.Random.seed) }", 0),
+        ("f <- function() set.seed(1); print(.Random.seed)", 1),
+        ("if (TRUE) set.seed(1); print(.Random.seed)", 1),
+        (
+            "set.seed <- function(x) x; set.seed(1); print(.Random.seed)",
+            1,
+        ),
+        (
+            "f <- function(set.seed) { set.seed(1); print(.Random.seed) }",
+            1,
+        ),
+        ("base::set.seed(1); print(.Random.seed)", 0),
+    ] {
+        let findings = diagnostics_selecting(src, &["undefined-symbol"]);
+        let seeds = findings
+            .iter()
+            .filter(|d| d.message.body.contains(".Random.seed"))
+            .count();
+        assert_eq!(seeds, count, "{src}: {findings:?}");
+    }
+}
+
+#[test]
+fn random_seed_survives_ordinary_statements_but_not_removal() {
+    for (src, count) in [
+        (
+            "set.seed(1); before <- .Random.seed; print(1); identical(.Random.seed, before); print(.Random.seed)",
+            0,
+        ),
+        (
+            "local({ set.seed(1); before <- .Random.seed; print(1); identical(.Random.seed, before); print(.Random.seed) })",
+            0,
+        ),
+        ("{ set.seed(1) }; print(.Random.seed)", 0),
+        ("set.seed(1); { print(.Random.seed) }", 0),
+        ("set.seed(1); if (TRUE) print(.Random.seed)", 0),
+        (
+            "set.seed(1); rm('.Random.seed', envir = .GlobalEnv); print(.Random.seed)",
+            1,
+        ),
+        (
+            "set.seed(1); if (TRUE) rm('.Random.seed', envir = .GlobalEnv); print(.Random.seed)",
+            1,
+        ),
+        (
+            "set.seed(1); eval(quote(rm('.Random.seed', envir = .GlobalEnv))); print(.Random.seed)",
+            1,
+        ),
+        (
+            "set.seed(1); f <- function() rm('.Random.seed', envir = .GlobalEnv); print(.Random.seed)",
+            0,
+        ),
+        ("set.seed(1); f <- function() print(.Random.seed)", 1),
+        ("f <- function() set.seed(1); f(); print(.Random.seed)", 1),
+        ("print(set.seed(1)); print(.Random.seed)", 1),
+        ("f <- function() { print(.Random.seed); set.seed(1) }", 1),
+        (
+            "f <- function(set.seed) NULL; set.seed(1); print(.Random.seed)",
+            0,
+        ),
+        (
+            "set.seed(1); print(.Random.seed); set.seed <- function(x) x",
+            1,
+        ),
+        (
+            "set.seed <- function(x) x; base :: `set.seed`(1); print(.Random.seed)",
+            0,
+        ),
+        ("other::set.seed(1); print(.Random.seed)", 1),
+        (
+            "set.seed(1); if (rm('.Random.seed', envir = .GlobalEnv)) print(.Random.seed)",
+            1,
+        ),
+        (
+            "set.seed(1); list(rm('.Random.seed', envir = .GlobalEnv), .Random.seed)",
+            1,
+        ),
+    ] {
+        assert!(arity::parser::parse(src).diagnostics.is_empty(), "{src}");
+        assert_eq!(arity::parser::reconstruct(src), src);
+        let findings = diagnostics_selecting(src, &["undefined-symbol"]);
+        let seeds = findings
+            .iter()
+            .filter(|d| d.message.body.contains(".Random.seed"))
+            .count();
+        assert_eq!(seeds, count, "{src}: {findings:?}");
+    }
+}
+
+#[test]
+fn random_seed_initializer_respects_package_sibling_masks() {
+    for (initializer, count) in [("set.seed(1)", 1), ("base::set.seed(1)", 0)] {
+        let result = lint_package_files(
+            "export(f)\n",
+            &[
+                (
+                    "a.R",
+                    &format!("f <- function() {{ {initializer}; print(.Random.seed) }}\n"),
+                ),
+                ("b.R", "set.seed <- function(...) NULL\n"),
+            ],
+            &LintConfig::default(),
+        );
+        let seeds = result
+            .reports
+            .iter()
+            .flat_map(|r| &r.diagnostics)
+            .filter(|d| d.rule == "undefined-symbol" && d.message.body.contains(".Random.seed"))
+            .count();
+        assert_eq!(seeds, count, "{initializer}");
+    }
+}
+
+#[test]
+fn random_seed_initializer_respects_attached_package_masks() {
+    let provider = CompositeProvider::with_index(IndexedProvider::from_indices([indexed_pkg(
+        "custompkg",
+        &["set.seed"],
+    )]));
+    for (initializer, count) in [("set.seed(1)", 1), ("base::set.seed(1)", 0)] {
+        let source = format!("library(custompkg); {initializer}; print(.Random.seed)");
+        let findings = check_document_with_provider(
+            Path::new("t.R"),
+            &source,
+            &LintConfig::default(),
+            &provider,
+        )
+        .unwrap();
+        assert_eq!(
+            findings
+                .iter()
+                .filter(|d| d.rule == "undefined-symbol" && d.message.body.contains(".Random.seed"))
+                .count(),
+            count
+        );
+    }
+}
+
+#[test]
+fn random_seed_reads_remain_occurrence_specific_in_project_analysis() {
+    let source = "f <- function() { print(.Random.seed); set.seed(2026); before <- .Random.seed; print(1); identical(.Random.seed, before); print(.Random.seed) }\n";
+    let result = lint_package_files("export(f)\n", &[("a.R", source)], &LintConfig::default());
+    let seeds: Vec<_> = result
+        .reports
+        .iter()
+        .flat_map(|r| &r.diagnostics)
+        .filter(|d| d.rule == "undefined-symbol" && d.message.body.contains(".Random.seed"))
+        .collect();
+    assert_eq!(seeds.len(), 1, "{seeds:?}");
+    assert_eq!(
+        usize::from(seeds[0].range.start()),
+        source.find(".Random.seed").unwrap()
+    );
+}
+
+#[test]
+fn random_seed_initializer_respects_namespace_and_dependency_masks() {
+    for (namespace, dependency, count) in [
+        ("importFrom(custompkg, set.seed)\n", "Imports", 1),
+        ("import(custompkg)\n", "Imports", 1),
+        ("", "Depends", 1),
+        ("", "Imports", 0),
+    ] {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("R")).unwrap();
+        std::fs::write(
+            dir.path().join("DESCRIPTION"),
+            format!("{TEST_DESCRIPTION}{dependency}: custompkg\n"),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("NAMESPACE"), namespace).unwrap();
+        std::fs::write(
+            dir.path().join("R/use.R"),
+            "f <- function() { set.seed(1); print(.Random.seed) }\n",
+        )
+        .unwrap();
+        let result = check_paths_with_index(
+            &[dir.path().to_owned()],
+            &LintConfig::default(),
+            &ExcludeFilter::none(),
+            IndexedProvider::from_indices([indexed_pkg("custompkg", &["set.seed"])]),
+        )
+        .unwrap();
+        let seeds = result
+            .reports
+            .iter()
+            .flat_map(|r| &r.diagnostics)
+            .filter(|d| d.rule == "undefined-symbol" && d.message.body.contains(".Random.seed"))
+            .count();
+        assert_eq!(seeds, count, "{namespace} {dependency}");
+    }
+}

@@ -62,14 +62,17 @@ output and semantic noise. Rule coverage and style options follow those fixes.
   `sess/inst/tinytest/`; its three `.Random.seed` reads remain a separate
   issue below. Existing testthat attachment support is unchanged.
 
-- [ ] Recognize `.Random.seed` after statically resolved RNG initialization.
-  This is an additional confirmed false positive behind the tinytest count:
-  `set.seed(2026); print(.Random.seed)` succeeds in R but triggers
-  `undefined-symbol`. The PR's `test-dataview-reproducibility.R` has three
-  such reads after `set.seed(2026)`. Model this runtime-provided global
-  conservatively in semantic analysis, with tests for ordering, scope, and
-  shadowed `set.seed`; do not blindly assume the binding exists before RNG
-  initialization or execute R in production.
+- [x] Recognize `.Random.seed` after statically resolved RNG initialization.
+  Semantic analysis recognizes a completed base `set.seed()` statement in the
+  current execution frame, including explicit namespace qualification. The
+  fact survives ordinary statements and blocks, but known dynamic environment
+  changes invalidate it. Conditional initialization, lazy arguments, and
+  initialization in another function do not establish the binding. Bare calls
+  must pass local, project, and package masking checks. Tests cover ordering,
+  scope, removal, masks, individual read spans, and editor changes with the
+  same free-name set. The original `test-dataview-reproducibility.R` now has
+  zero findings; removing `set.seed(2026)` restores all three RNG findings.
+  Production analysis remains static and does not invoke R.
 
 - [ ] Separate script loading and entry-point gaps from actual unused code (the
   semantic-noise discussion). The 27 `unused-binding` reports reproduce, but
@@ -476,10 +479,10 @@ remains needs broader modeling rather than a name-shaped exemption:
   `detach(package:datasets)`, but arity reports `package` undefined. Mask only
   the first argument's exact `package:<name>` shape; ordinary `:` expressions
   still contain real reads.
-- [ ] **Track `.Random.seed` after a known RNG initializer.** `set.seed(1); x <-
-  .Random.seed` is valid and produces an integer vector, accounting for two
-  false `undefined-symbol` findings. A blanket exemption is wrong because a
-  fresh-session read of `.Random.seed` errors before any RNG call.
+- [x] **Track `.Random.seed` after a known RNG initializer.** A statically
+  resolved, completed base `set.seed()` statement establishes the runtime
+  global for subsequent reads in its execution frame. Reads before initialization
+  remain flagged. See the vscode-R RNG item above for scope and masking limits.
 
 Deliberately unchanged: 225 `roxygen-unknown-tag` findings on `inst/testme/`
 all name the custom test-runner marker `@tags`. roxygen2 also reports it as

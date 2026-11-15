@@ -2065,3 +2065,52 @@ fn nested_config_discovery_matches_cli_formatting_and_lint() {
     }
     h.shutdown();
 }
+
+#[test]
+fn random_seed_initialization_updates_with_editor_statement_order() {
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    let source = "f <- function() {\n  print(.Random.seed)\n  set.seed(2026)\n  before <- .Random.seed\n  print(1)\n  identical(.Random.seed, before)\n}\n";
+    h.did_open(uri, source, 1);
+    let findings = h.recv_publish_for(uri, 1);
+    let seeds: Vec<_> = findings
+        .iter()
+        .filter(|d| {
+            d["code"] == "undefined-symbol"
+                && d["message"].as_str().unwrap().contains(".Random.seed")
+        })
+        .collect();
+    assert_eq!(seeds.len(), 1, "{findings:?}");
+    assert_eq!(seeds[0]["range"]["start"]["line"], 1);
+
+    // The free-name set is identical; the per-occurrence result must still
+    // reflect the fresh semantic model when external resolution backdates.
+    let reordered = source.replace(
+        "  print(.Random.seed)\n  set.seed(2026)",
+        "  set.seed(2026)\n  print(.Random.seed)",
+    );
+    h.did_change(uri, &reordered, 2);
+    let findings = h.recv_publish_for(uri, 2);
+    assert!(
+        !findings.iter().any(|d| {
+            d["code"] == "undefined-symbol"
+                && d["message"].as_str().unwrap().contains(".Random.seed")
+        }),
+        "{findings:?}"
+    );
+
+    h.did_change(uri, source, 3);
+    let findings = h.recv_publish_for(uri, 3);
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|d| {
+                d["code"] == "undefined-symbol"
+                    && d["message"].as_str().unwrap().contains(".Random.seed")
+            })
+            .count(),
+        1,
+        "{findings:?}"
+    );
+    h.shutdown();
+}

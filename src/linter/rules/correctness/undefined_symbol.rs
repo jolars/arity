@@ -86,6 +86,7 @@ impl Rule for UndefinedSymbol {
                     // A data-masked read may be a data-frame column, not an
                     // undefined symbol — never flag it (see the builder).
                     .filter(|ident| !ident.data_masked)
+                    .filter(|ident| !rng_initialized_before(ctx, ident))
                     .filter(|ident| ctx.model.resolve_local(ident).is_none())
                     .filter(|ident| ident.name != ".packageName" || !ctx.is_package_r_source())
                     .filter(|ident| resolution.unresolved.contains(ident.name.as_str()))
@@ -111,6 +112,39 @@ impl Rule for UndefinedSymbol {
             None => self.run_standalone(ctx, sink),
         }
     }
+}
+
+/// Resolve initialization callees using the same environments as other rules.
+fn rng_initialized_before(ctx: &RuleContext<'_>, ident: &crate::semantic::IdentRef) -> bool {
+    ctx.model.rng_initialized_before(ctx.root, ident, |call| {
+        if ctx.project.is_some_and(|project| project.resolves("set.seed"))
+            || !ctx.resolves_to_base(call)
+        {
+            return false;
+        }
+        // Package imports and Depends can mask the bare callee without an
+        // explicit library() in this file. Keep the pure semantic walk unaware
+        // of package discovery and the installed symbol index.
+        let mut loaded = ctx.model.loaded_packages().to_vec();
+        let imports = ctx.project.into_iter().flat_map(|project| {
+            project.wildcard_import_packages().iter().map(String::as_str)
+        });
+        let dependencies = ctx.package.into_iter().flat_map(|package| {
+            package.dependencies.iter().filter(|dependency| {
+                dependency.field == crate::project::description::DependencyField::Depends
+            }).map(|dependency| dependency.name.as_str())
+        });
+        loaded.extend(imports.chain(dependencies).map(|name| LoadedPackage {
+            name: SmolStr::new(name),
+            range: TextRange::default(),
+        }));
+        loaded.iter().all(|package| {
+            ctx.symbols.package_indexed(&package.name)
+                && ctx.symbols.attached_packages(&package.name).iter().all(|member| {
+                    ctx.symbols.package_indexed(member)
+                })
+        }) && matches!(ctx.symbols.origin("set.seed", &loaded), PackageOrigin::Resolved(package) if package == "base")
+    })
 }
 
 fn inside_non_eager_local_argument(
@@ -228,7 +262,7 @@ impl UndefinedSymbol {
         for ident in ctx.model.idents() {
             // A data-masked read may be a data-frame column, not an undefined
             // symbol — never flag it (see the builder's `mask_depth`).
-            if ident.data_masked {
+            if ident.data_masked || rng_initialized_before(ctx, ident) {
                 continue;
             }
             // R injects this binding into every package namespace while its

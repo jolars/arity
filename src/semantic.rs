@@ -10,6 +10,7 @@ pub mod builder;
 pub(crate) mod calls;
 pub mod cfg;
 mod interpolation;
+mod rng;
 pub mod scope;
 pub(crate) mod spelling;
 pub mod symbols;
