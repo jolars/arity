@@ -74,25 +74,30 @@ output and semantic noise. Rule coverage and style options follow those fixes.
   zero findings; removing `set.seed(2026)` restores all three RNG findings.
   Production analysis remains static and does not invoke R.
 
-- [ ] Separate script loading and entry-point gaps from actual unused code (the
-  semantic-noise discussion). The 27 `unused-binding` reports reproduce, but
-  they are not all proven false positives: `namespace_has` is an unused
-  helper, and some reports are test-local assignments. Existing package and
-  literal `source()` resolution already handles cross-file uses, so the
-  report's blanket statement that these cannot be resolved statically is too
-  broad. One confirmed gap is relative source paths: with `R/helper.R`
-  defining `foo <- function() 42L` and `R/tests/test-helper.R` containing
+- [ ] Fix relative `source()` path resolution. With `R/helper.R` defining
+  `foo <- function() 42L` and `R/tests/test-helper.R` containing
   `source("R/helper.R"); stopifnot(foo() == 42L)`, R succeeds from the
   project root, but linting both files reports `foo` unused. The extractor
   anchors the path at the sourcing file's directory; R defaults to the
-  working directory. Define an explicit script execution root/context and
-  handle `chdir` rather than guessing a new root for every edge. Add
-  regression coverage for both cwd-relative paths and the already-working
-  sibling-source case. Separately triage injected helper environments,
-  nested/dynamic `source()` and `sys.source()` calls, and externally invoked
-  script entry points in the PR. Support declared entry points or
-  environments where static evidence is insufficient, instead of disabling
-  `unused-binding` globally.
+  working directory. Define how Arity obtains the assumed R working
+  directory and carries it through source calls. Model `chdir = TRUE` as a
+  temporary change while executing the target, including nested source
+  paths. Add regression coverage for cwd-relative paths, `chdir`, and the
+  already-working sibling-source case. Keep this fix separate from support
+  for dynamic loading and external entry points.
+
+- [ ] Triage the adoption PR's `unused-binding` reports and external entry
+  points (the semantic-noise discussion). The original investigation
+  reproduced 27 findings, but did not establish that all were false
+  positives: `namespace_has` is an unused helper, and some reports are
+  test-local assignments. Rerun after the source-path fix and classify each
+  remaining finding as actual unused code or a confirmed analysis gap.
+  Existing package and literal `source()` resolution already handles
+  cross-file uses. Investigate injected helper environments, nested or
+  dynamic `source()` and `sys.source()` calls, and externally invoked script
+  entry points separately. Support narrowly scoped declarations of entry
+  points or runner environments where static evidence is insufficient,
+  while retaining `unused-binding` for actual unused code.
 
 - [ ] Add glob-scoped lint ignores or overrides (feedback 3). Rule selection is
   global today; `exclude` skips the entire file and directives require
