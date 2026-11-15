@@ -75,7 +75,7 @@ criterion = { version = "0.8.2", default-features = false, features = [
   "cargo_bench_support",
 ] }
 insta = "1.48.0"
-jsonschema = { version = "0.60.2", default-features = false }
+jsonschema = { version = "0.61.1", default-features = false }
 schemars = "1.2.2"
 similar-asserts = "2.0.0"
 
