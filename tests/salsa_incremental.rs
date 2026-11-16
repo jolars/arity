@@ -639,9 +639,12 @@ fn adding_source_call_rebuilds_reverse_edges() {
     // The complement: adding a top-level `source()` changes a.R's source edges,
     // so the reverse map *must* rebuild and gain the new edge.
     let (mut db, a, _b) = scripts_ab("source(\"b.R\")\n", "bar <- 1\n");
+    // Nonmember targets use absolute paths; `/s/c.R` lacks a drive on Windows.
+    let c_path = std::path::absolute("/s/c.R").unwrap();
 
     {
-        let _ = reverse_source_edges(&db);
+        let rev = reverse_source_edges(&db);
+        assert!(!rev.sourced_by.contains_key(&c_path));
     }
 
     db.clear_query_log();
@@ -656,7 +659,7 @@ fn adding_source_call_rebuilds_reverse_edges() {
     );
     assert!(
         rev.sourced_by
-            .get(Path::new("/s/c.R"))
+            .get(&c_path)
             .is_some_and(|s| s.contains(Path::new("/s/a.R"))),
         "the new edge a.R -> c.R must appear in the reverse map"
     );
