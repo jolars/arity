@@ -2,7 +2,7 @@
 # Bundled CRAN package set: the union of the top-N-by-downloads rankings
 # (RStudio/Posit CRAN logs, http://cran-logs.rstudio.com) accumulated over time. Additive ---
 # a package enters when it reaches the top N and is never removed by
-# ranking (only by disappearing from CRAN). Sorted; one package per line.
+# ranking (only when confirmed archived on CRAN). Sorted; one package per line.
 # Regenerate with: scripts/rank_cran_downloads.sh
 
 AER
