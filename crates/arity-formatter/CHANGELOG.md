@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.0](https://github.com/jolars/arity/compare/arity-formatter-v0.8.4...arity-formatter-v0.9.0) (2026-11-16)
+
+### Features
+
+- **formatter:** brace and expand assigned function bodies ([`38be918`](https://github.com/jolars/arity/commit/38be9185409fd9b574df0580d5837cb0c15a9dea))
+
+### Bug Fixes
+
+- **formatter:** stabilize calls with braced function bodies ([`2654f93`](https://github.com/jolars/arity/commit/2654f9316c9a84407769144fba1336f78fe271b3))
+
 ## [0.8.4](https://github.com/jolars/arity/compare/arity-formatter-v0.8.3...arity-formatter-v0.8.4) (2026-11-10)
 
 ### Dependencies

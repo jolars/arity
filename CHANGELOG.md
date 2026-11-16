@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.31.0](https://github.com/jolars/arity/compare/v0.30.0...v0.31.0) (2026-11-16)
+
+### Features
+
+- **lint:** add `per-file-ignores` configuration ([`c672776`](https://github.com/jolars/arity/commit/c672776a9458b62f1f74ba386a495fe4c98dc0b4))
+
+### Bug Fixes
+
+- **project:** model source destination environments ([`41d02be`](https://github.com/jolars/arity/commit/41d02be9cbf0cabd1bd539bc7eac3b7a0ac0f9f2))
+- **project:** count qualified uses across packages ([`c3f49f7`](https://github.com/jolars/arity/commit/c3f49f7919c5cac115e5b3809dd1070cbd5401c6))
+- **project:** resolve `source()` paths from execution roots ([`9faade3`](https://github.com/jolars/arity/commit/9faade3239d05c049751fa9c41a58f2cd767c9c5))
+- **semantic:** recognize `.Random.seed` after RNG initialization ([`ffab761`](https://github.com/jolars/arity/commit/ffab761ed215e5a75d4791ac428855ac2136a845))
+- **lint:** resolve tinytest runner bindings ([`dd15985`](https://github.com/jolars/arity/commit/dd15985375885a113f27c9292eaa0f88e26f3106))
+- **format:** align integrations with expanded function bodies ([`e2524fe`](https://github.com/jolars/arity/commit/e2524feb02dc9dc0ca753563c41413ea332690d6))
+- **lint:** flag `seq(length(x))` for possibly empty input ([`3f5036d`](https://github.com/jolars/arity/commit/3f5036d021628d3a269ce7783092b58de95f3f67))
+- **cli:** emit empty JSON arrays for clean lint runs ([`fee3435`](https://github.com/jolars/arity/commit/fee3435fd1253b67a88be3503f83c2a772943e6e))
+- **cli:** resolve configuration per input directory ([`fbcf8f1`](https://github.com/jolars/arity/commit/fbcf8f142323fb33f15d4ae374ea5a0449d5b8bd))
+- **deps:** update rustix for sound xattr handling ([`9e34347`](https://github.com/jolars/arity/commit/9e343478e159682cfbb3786829dc204047508ca5)), fixes [#184](https://github.com/jolars/arity/issues/184)
+- **ci:** build musl releases with Zig ([`d836100`](https://github.com/jolars/arity/commit/d836100ce2628e977246bd78972653be3ba102ee))
+
+### Dependencies
+
+- updated crates/arity-formatter to v0.9.0
+
 ## [0.30.0](https://github.com/jolars/arity/compare/v0.29.0...v0.30.0) (2026-11-10)
 
 ### Features
