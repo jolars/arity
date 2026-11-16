@@ -2033,6 +2033,68 @@ const DESCRIPTION_BASE: &str = "Package: foo\n\
      Imports: dplyr\n\
      Collate: foo.R\n";
 
+fn package_with_external_qualified_caller() -> (
+    IncrementalDatabase,
+    SourceFile,
+    SourceFile,
+    tempfile::TempDir,
+) {
+    let (mut db, member, dir) = description_package(DESCRIPTION_BASE);
+    let caller = db.upsert_file(
+        &dir.path().with_extension("R"),
+        "foo:::foo(1)\n".to_string(),
+    );
+    db.set_workspace_members(vec![member, caller], vec![dir.path().to_path_buf()]);
+    (db, member, caller, dir)
+}
+
+#[test]
+fn qualified_reads_backdate_across_offset_and_argument_edits() {
+    let (mut db, member, caller, _dir) = package_with_external_qualified_caller();
+    assert!(visible_symbols(&db, member).scope().read_elsewhere("foo"));
+    assert!(!visible_symbols(&db, caller).scope().resolves("foo"));
+
+    db.clear_query_log();
+    db.set_file_text(caller, "# A longer header.\nfoo:::foo(2)\n");
+    assert!(visible_symbols(&db, member).scope().read_elsewhere("foo"));
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(counts.get(&QueryKind::FileQualifiedReads), Some(&1));
+    assert_eq!(counts.get(&QueryKind::ProjectGraph), None);
+    assert_eq!(counts.get(&QueryKind::VisibleSymbols), None);
+}
+
+#[test]
+fn changing_only_the_qualified_package_invalidates_use_tracking() {
+    let (mut db, member, caller, _dir) = package_with_external_qualified_caller();
+    assert!(visible_symbols(&db, member).scope().read_elsewhere("foo"));
+
+    db.clear_query_log();
+    db.set_file_text(caller, "other:::foo(1)\n");
+    assert!(!visible_symbols(&db, member).scope().read_elsewhere("foo"));
+    let counts = count_by_kind(&db.query_log());
+    assert_eq!(counts.get(&QueryKind::FileQualifiedReads), Some(&1));
+    assert_eq!(counts.get(&QueryKind::ProjectGraph), Some(&1));
+}
+
+#[test]
+fn description_package_rename_invalidates_qualified_use_tracking() {
+    let (mut db, member, caller, dir) = package_with_external_qualified_caller();
+    assert!(visible_symbols(&db, member).scope().read_elsewhere("foo"));
+
+    db.clear_query_log();
+    db.upsert_description(
+        dir.path(),
+        DESCRIPTION_BASE.replace("Package: foo", "Package: renamed"),
+    );
+    assert!(!visible_symbols(&db, member).scope().read_elsewhere("foo"));
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ProjectGraph),
+        Some(&1)
+    );
+    db.set_file_text(caller, "renamed:::foo(1)\n");
+    assert!(visible_symbols(&db, member).scope().read_elsewhere("foo"));
+}
+
 #[test]
 fn description_prose_edit_backdates_and_spares_the_project() {
     // THE headline guarantee of making DESCRIPTION a text input with an `Eq`

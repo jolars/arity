@@ -34,6 +34,13 @@ pub use symbols::{
 
 use crate::syntax::SyntaxNode;
 
+/// A namespace member read, with both names unquoted and no source position.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
+pub struct QualifiedRead {
+    pub package: SmolStr,
+    pub name: SmolStr,
+}
+
 /// A reference to an identifier read site, paired with its enclosing scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdentRef {
@@ -98,11 +105,11 @@ pub struct SemanticModel {
     /// index should harvest and which ones a package's code can be said to
     /// reach.
     referenced_packages: Vec<SmolStr>,
-    /// Names accessed on the right of `::` / `:::` (`pkg::name` -> `name`). Kept
+    /// Package/member pairs accessed through `::` / `:::`. Kept
     /// out of [`idents`](Self::idents) so they never resolve locally or reach
-    /// `undefined-symbol`; they exist only to mark a same-package binding *used*
-    /// across files (e.g. `pkg:::helper()` in a test reads `helper`).
-    qualified_reads: Vec<SmolStr>,
+    /// `undefined-symbol`; they exist only to mark the named package's binding
+    /// used, even when the caller is outside that package.
+    qualified_reads: Vec<QualifiedRead>,
     /// Each scope's directly-declared bindings keyed by unbackticked name, in
     /// [`Scope::bindings`] order — the constant-time backend for
     /// [`resolve_local`](Self::resolve_local) and the builder's read marking
@@ -205,9 +212,9 @@ impl SemanticModel {
         &self.referenced_packages
     }
 
-    /// Names accessed via `pkg::name` / `pkg:::name` (the right operand), in
+    /// Package/member pairs accessed via `pkg::name` / `pkg:::name`, in
     /// source order. Feeds cross-file *use* detection only (see the field doc).
-    pub fn qualified_reads(&self) -> &[SmolStr] {
+    pub fn qualified_reads(&self) -> &[QualifiedRead] {
         &self.qualified_reads
     }
 
@@ -522,14 +529,20 @@ mod tests {
     }
 
     #[test]
-    fn colon_reference_records_qualified_read_name() {
+    fn colon_reference_records_qualified_read_identity() {
         // The accessed name (right of `::`/`:::`) is captured as a qualified read
         // for cross-file use detection, but stays out of `idents` so it never
         // resolves locally or reaches `undefined-symbol`.
-        let m = model_of("dplyr::filter(x)\nrlang:::abort");
-        let qr: Vec<&str> = m.qualified_reads().iter().map(|s| s.as_str()).collect();
-        assert!(qr.contains(&"filter"), "qualified_reads: {qr:?}");
-        assert!(qr.contains(&"abort"), "qualified_reads: {qr:?}");
+        let m = model_of("dplyr::filter(x)\nrlang:::abort\n`dplyr`::`filter`");
+        let qr: Vec<_> = m
+            .qualified_reads()
+            .iter()
+            .map(|read| (read.package.as_str(), read.name.as_str()))
+            .collect();
+        assert_eq!(
+            qr,
+            [("dplyr", "filter"), ("rlang", "abort"), ("dplyr", "filter")]
+        );
         assert!(!m.idents().iter().any(|i| i.name == "filter"));
         assert!(!m.idents().iter().any(|i| i.name == "abort"));
         // The call argument still resolves as a normal read.

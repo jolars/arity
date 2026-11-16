@@ -25,11 +25,13 @@ use rowan::ast::AstNode as _;
 use rowan::{NodeOrToken, SyntaxToken, TextRange};
 use smol_str::SmolStr;
 
-use crate::ast::{Arg, AssignmentExpr, AstToken as _, CallExpr, FunctionExpr, Ident, SubsetExpr};
+use crate::ast::{
+    Arg, AssignmentExpr, AstToken as _, BinaryExpr, CallExpr, FunctionExpr, Ident, SubsetExpr,
+};
 use crate::semantic::binding::{Binding, BindingId, BindingKind};
 use crate::semantic::scope::{Scope, ScopeId, ScopeKind};
-use crate::semantic::symbols::LoadedPackage;
-use crate::semantic::{IdentRef, SemanticModel, UseOnlyRead, binding_name_key};
+use crate::semantic::symbols::{LoadedPackage, unbacktick};
+use crate::semantic::{IdentRef, QualifiedRead, SemanticModel, UseOnlyRead, binding_name_key};
 use crate::syntax::{RLanguage, SyntaxElement, SyntaxKind, SyntaxNode};
 
 /// Build a fresh semantic model from a root CST node.
@@ -1227,22 +1229,32 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
             let op_idx = elements
                 .iter()
                 .position(|e| matches!(e.kind(), SyntaxKind::COLON2 | SyntaxKind::COLON3));
-            // The LHS names a referenced (not attached) package; record it.
-            if let Some(op) = op_idx
-                && let Some(pkg) = lhs_package_name(&elements[..op])
+            if let Some(access) =
+                BinaryExpr::cast(node.clone()).and_then(|binary| binary.namespace_access())
             {
-                ctx.model.referenced_packages.push(pkg);
+                // Identifier tokens retain backticks; lookup identities must
+                // match DESCRIPTION and export names without that spelling.
+                let package = if access.package_token.kind() == SyntaxKind::IDENT {
+                    unbacktick(&access.package).into()
+                } else {
+                    access.package
+                };
+                let name = if access.name_token.kind() == SyntaxKind::IDENT {
+                    unbacktick(&access.name).into()
+                } else {
+                    access.name
+                };
+                ctx.model.referenced_packages.push(package.clone());
+                ctx.model
+                    .qualified_reads
+                    .push(QualifiedRead { package, name });
             }
             if let Some(op) = op_idx {
                 for el in &elements[op + 1..] {
                     match el {
-                        // Bare `pkg::name`: the RHS IDENT is the accessed name.
-                        NodeOrToken::Token(t) if t.kind() == SyntaxKind::IDENT => {
-                            ctx.model.qualified_reads.push(t.text().into());
-                        }
                         NodeOrToken::Token(_) => {}
                         NodeOrToken::Node(child) if child.kind() == SyntaxKind::CALL_EXPR => {
-                            // Skip the first IDENT (callee); recurse into everything else.
+                            // The namespace member is not a local callee read.
                             // Mask the arguments when the qualified callee is a
                             // data-masking verb (`dplyr::mutate(...)`) or a
                             // quoting callee (`base::quote(...)`); mask just the
@@ -1259,11 +1271,11 @@ fn handle_binary(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
                             for cel in child.children_with_tokens() {
                                 match cel {
                                     NodeOrToken::Token(t)
-                                        if t.kind() == SyntaxKind::IDENT && !skipped_callee =>
+                                        if matches!(
+                                            t.kind(),
+                                            SyntaxKind::IDENT | SyntaxKind::STRING
+                                        ) && !skipped_callee =>
                                     {
-                                        // `pkg::name(args)`: the callee is the
-                                        // accessed name — a cross-file use.
-                                        ctx.model.qualified_reads.push(t.text().into());
                                         skipped_callee = true;
                                     }
                                     NodeOrToken::Node(grandchild)
@@ -1503,22 +1515,6 @@ fn first_string_or_ident_arg(call: &CallExpr) -> Option<(SmolStr, TextRange)> {
                 return Some((SmolStr::new(stripped), t.text_range()));
             }
             _ => return None,
-        }
-    }
-    None
-}
-
-/// The package named on the left of `::` / `:::`: the last `IDENT`/`STRING`
-/// token in the left-hand-side elements (ignoring trivia).
-fn lhs_package_name(lhs: &[NodeOrToken<SyntaxNode, SyntaxToken<RLanguage>>]) -> Option<SmolStr> {
-    for el in lhs.iter().rev() {
-        if let NodeOrToken::Token(t) = el {
-            match t.kind() {
-                SyntaxKind::WHITESPACE | SyntaxKind::NEWLINE | SyntaxKind::COMMENT => continue,
-                SyntaxKind::IDENT => return Some(SmolStr::new(t.text())),
-                SyntaxKind::STRING => return strip_quotes(t.text()).map(SmolStr::new),
-                _ => return None,
-            }
         }
     }
     None

@@ -39,6 +39,7 @@ use rowan::TextRange;
 use crate::project::source::{SourceEdgeKey, SourceTarget, TopLevelEvent};
 use crate::project::source_context::{SourceContext, SourceGraph};
 use crate::rindex::harvest::parse_namespace;
+use crate::semantic::QualifiedRead;
 use crate::semantic::symbols::unbacktick;
 
 // Neither `HashSet::new` nor `Arc::new` is `const`, so these need lazy init.
@@ -176,12 +177,10 @@ pub struct FileFacts {
     /// Names this file reads but does not bind locally
     /// (see [`crate::project::exports::file_free_reads`]).
     pub free_reads: Arc<BTreeSet<String>>,
-    /// Names this file reads via `pkg::name` / `pkg:::name`
-    /// (see [`crate::project::exports::file_qualified_reads`]). Folded into a
-    /// same-package binding's "used by others" set so `pkg:::helper()` in a
-    /// sibling counts as a use, but kept out of `free_reads` so it never feeds
-    /// name resolution.
-    pub qualified_reads: Arc<BTreeSet<String>>,
+    /// Package/member pairs read via `pkg::name` / `pkg:::name`
+    /// (see [`crate::project::exports::file_qualified_reads`]). These mark uses
+    /// in the named package without contributing to bare-name resolution.
+    pub qualified_reads: Arc<BTreeSet<QualifiedRead>>,
     /// Names read through runtime syntax. These mark definitions used but do
     /// not participate in name resolution.
     pub use_only_reads: Arc<BTreeSet<String>>,
@@ -434,11 +433,13 @@ impl ProjectScope {
     /// as complete. `native_routines` maps a package root to the names its
     /// `useDynLib()` binds ([`crate::project::native`]); resolved by the caller,
     /// which is what keeps this builder pure.
+    /// `package_names` supplies the identities declared in DESCRIPTION.
     pub fn build(
         files: &[FileFacts],
         namespaces: &HashMap<PathBuf, String>,
         package_complete: &HashMap<PathBuf, bool>,
         native_routines: &HashMap<PathBuf, BTreeSet<String>>,
+        package_names: &HashMap<PathBuf, String>,
     ) -> Self {
         let by_path: HashMap<&Path, &FileFacts> =
             files.iter().map(|f| (f.path.as_path(), f)).collect();
@@ -543,19 +544,45 @@ impl ProjectScope {
             sourced.push(via_source);
         }
 
+        // Namespace access does not depend on the caller's package or source
+        // closure. Duplicate local package identities leave the target unknown.
+        let mut roots_by_name: HashMap<&str, Option<&Path>> = HashMap::new();
+        for (root, name) in package_names {
+            if package_members.contains_key(root.as_path()) {
+                roots_by_name
+                    .entry(name.as_str())
+                    .and_modify(|root| *root = None)
+                    .or_insert(Some(root.as_path()));
+            }
+        }
+        let mut qualified_in_package = vec![BTreeSet::new(); files.len()];
+        let mut qualified_from_outside: HashMap<&Path, BTreeSet<&str>> = HashMap::new();
+        for (i, file) in files.iter().enumerate() {
+            for read in file.qualified_reads.iter() {
+                let Some(&Some(root)) = roots_by_name.get(read.package.as_str()) else {
+                    continue;
+                };
+                if file.package_root.as_deref() == Some(root) {
+                    qualified_in_package[i].insert(read.name.as_str());
+                } else {
+                    qualified_from_outside
+                        .entry(root)
+                        .or_default()
+                        .insert(read.name.as_str());
+                }
+            }
+        }
+
         // A file's reads, normalized once here rather than once per file that
         // sees it. Backticking is a *spelling*, not a different name: `foo` and
         // `` `foo` `` are one binding. Reads are recorded as spelled, so
-        // normalize here — the accessors strip the queried name to match. A
-        // `pkg::name` / `pkg:::name` access counts as a use too (e.g.
-        // `pkg:::helper()` in a test): fold in the qualified reads, which resolve
-        // to a same-package sibling's binding.
+        // normalize here — the accessors strip the queried name to match.
+        // Qualified reads never flow along source edges to unrelated bindings.
         let reads: Vec<BTreeSet<String>> = files
             .iter()
             .map(|f| {
                 f.free_reads
                     .iter()
-                    .chain(f.qualified_reads.iter())
                     .chain(f.use_only_reads.iter())
                     .map(|n| unbacktick(n).to_string())
                     .collect()
@@ -566,7 +593,7 @@ impl ProjectScope {
         // of the members' exports, and per read name how many members read it.
         let mut package_exports: HashMap<&Path, BTreeSet<String>> = HashMap::new();
         let mut package_read_counts: HashMap<&Path, HashMap<&str, usize>> = HashMap::new();
-        for (f, reads) in files.iter().zip(&reads) {
+        for (i, (f, reads)) in files.iter().zip(&reads).enumerate() {
             let Some(root) = f.package_root.as_deref() else {
                 continue;
             };
@@ -575,8 +602,13 @@ impl ProjectScope {
                 .or_default()
                 .extend(f.exports.iter().cloned());
             let counts = package_read_counts.entry(root).or_default();
-            for name in reads {
-                *counts.entry(name.as_str()).or_default() += 1;
+            for name in reads.iter().map(String::as_str).chain(
+                qualified_in_package[i]
+                    .iter()
+                    .copied()
+                    .filter(|name| !reads.contains(*name)),
+            ) {
+                *counts.entry(name).or_default() += 1;
             }
         }
 
@@ -684,7 +716,19 @@ impl ProjectScope {
             .map(|(&root, counts)| {
                 (
                     root,
-                    Arc::new(counts.keys().map(|n| (*n).to_string()).collect()),
+                    Arc::new(
+                        counts
+                            .keys()
+                            .copied()
+                            .chain(
+                                qualified_from_outside
+                                    .get(root)
+                                    .into_iter()
+                                    .flat_map(|names| names.iter().copied()),
+                            )
+                            .map(str::to_string)
+                            .collect(),
+                    ),
                 )
             })
             .collect();
@@ -697,6 +741,7 @@ impl ProjectScope {
                 .unwrap_or(&empty_shared)
                 .clone();
             let added = read_added.remove(f.path.as_path()).unwrap_or_default();
+            let external = root.and_then(|r| qualified_from_outside.get(r));
             // A name with two or more readers survives the exclusion of any
             // single one; a name with one reader survives unless that reader is
             // us — and even then, a file that `source()`s us may read it, which
@@ -704,8 +749,14 @@ impl ProjectScope {
             let removed: BTreeSet<String> = match root.and_then(|r| package_read_counts.get(r)) {
                 Some(counts) => reads[i]
                     .iter()
-                    .filter(|n| counts.get(n.as_str()) == Some(&1) && !added.contains(*n))
-                    .cloned()
+                    .map(String::as_str)
+                    .chain(qualified_in_package[i].iter().copied())
+                    .filter(|name| {
+                        counts.get(*name) == Some(&1)
+                            && !added.contains(*name)
+                            && !external.is_some_and(|names| names.contains(*name))
+                    })
+                    .map(str::to_string)
                     .collect(),
                 None => BTreeSet::new(),
             };
@@ -1240,9 +1291,32 @@ mod tests {
         }
     }
 
-    /// Build a scope with no NAMESPACE data.
+    fn qualified(reads: &[(&str, &str)]) -> BTreeSet<QualifiedRead> {
+        reads
+            .iter()
+            .map(|&(package, name)| QualifiedRead {
+                package: package.into(),
+                name: name.into(),
+            })
+            .collect()
+    }
+
+    /// Build a scope with synthetic package names and no NAMESPACE data.
     fn build_scope(files: &[FileFacts]) -> ProjectScope {
-        ProjectScope::build(files, &HashMap::new(), &HashMap::new(), &HashMap::new())
+        let names = files
+            .iter()
+            .filter_map(|file| {
+                let root = file.package_root.as_ref()?;
+                Some((root.clone(), root.file_name()?.to_str()?.to_string()))
+            })
+            .collect();
+        ProjectScope::build(
+            files,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &names,
+        )
     }
 
     #[test]
@@ -1268,6 +1342,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn qualified_reads_require_an_unambiguous_declared_package_identity() {
+        let mut caller = facts("/runner.R", &[], &[], vec![], None);
+        caller.qualified_reads = Arc::new(qualified(&[("pkg", "foo")]));
+        let files = [
+            caller,
+            facts("/one/R/a.R", &["foo"], &[], vec![], Some("/one")),
+            facts("/two/R/a.R", &["foo"], &[], vec![], Some("/two")),
+        ];
+        for names in [
+            HashMap::new(),
+            HashMap::from([
+                (PathBuf::from("/one"), "pkg".to_string()),
+                (PathBuf::from("/two"), "pkg".to_string()),
+            ]),
+        ] {
+            let scope = ProjectScope::build(
+                &files,
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+                &names,
+            );
+            for path in ["/one/R/a.R", "/two/R/a.R"] {
+                assert!(!scope.for_file(Path::new(path)).read_elsewhere("foo"));
+            }
+        }
+    }
+
     /// A package member's *own* reads must never land in its own
     /// "used by others" set. `sees` excludes self, and the clique fold that
     /// replaces the per-pair walk has to reproduce that exclusion: a name only
@@ -1280,7 +1383,7 @@ mod tests {
     #[test]
     fn a_members_own_qualified_read_is_not_a_use_by_others() {
         let mut a = facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg"));
-        a.qualified_reads = Arc::new(set(&["foo"]));
+        a.qualified_reads = Arc::new(qualified(&[("pkg", "foo")]));
         let b = facts("/pkg/R/b.R", &["bar"], &[], vec![], Some("/pkg"));
         let scope = build_scope(&[a.clone(), b.clone()]);
         // Only a references `foo`, and a is a's own file.
@@ -1298,7 +1401,7 @@ mod tests {
 
         // A second referencing member makes it a use for a too.
         let mut c = facts("/pkg/R/c.R", &["baz"], &[], vec![], Some("/pkg"));
-        c.qualified_reads = Arc::new(set(&["foo"]));
+        c.qualified_reads = Arc::new(qualified(&[("pkg", "foo")]));
         let scope = build_scope(&[a, b, c]);
         assert!(
             scope
@@ -1545,7 +1648,13 @@ mod tests {
         // `foo` is exported, so it isn't unused even though no file reads it.
         let files = [facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg"))];
         let ns = namespaces(&[("/pkg", "export(foo)\n")]);
-        let scope = ProjectScope::build(&files, &ns, &HashMap::new(), &HashMap::new());
+        let scope = ProjectScope::build(
+            &files,
+            &ns,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
         assert!(
             scope
                 .for_file(Path::new("/pkg/R/a.R"))
@@ -1557,7 +1666,13 @@ mod tests {
     fn namespace_import_from_resolves_name() {
         let files = [facts("/pkg/R/a.R", &[], &["filter"], vec![], Some("/pkg"))];
         let ns = namespaces(&[("/pkg", "importFrom(dplyr, filter)\n")]);
-        let scope = ProjectScope::build(&files, &ns, &HashMap::new(), &HashMap::new());
+        let scope = ProjectScope::build(
+            &files,
+            &ns,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
         let a = scope.for_file(Path::new("/pkg/R/a.R"));
         assert!(a.resolves("filter"));
         assert!(!a.resolution_incomplete);
@@ -1567,7 +1682,13 @@ mod tests {
     fn namespace_wholesale_import_is_recorded_not_poisoned() {
         let files = [facts("/pkg/R/a.R", &[], &["abort"], vec![], Some("/pkg"))];
         let ns = namespaces(&[("/pkg", "import(rlang)\n")]);
-        let scope = ProjectScope::build(&files, &ns, &HashMap::new(), &HashMap::new());
+        let scope = ProjectScope::build(
+            &files,
+            &ns,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
         let a = scope.for_file(Path::new("/pkg/R/a.R"));
         assert_eq!(
             a.wildcard_import_packages(),
@@ -1593,7 +1714,13 @@ mod tests {
     fn own_export_that_is_also_importfrom_stays_visible() {
         let files = [facts("/pkg/R/a.R", &["filter"], &[], vec![], Some("/pkg"))];
         let ns = namespaces(&[("/pkg", "importFrom(dplyr, filter)\n")]);
-        let scope = ProjectScope::build(&files, &ns, &HashMap::new(), &HashMap::new());
+        let scope = ProjectScope::build(
+            &files,
+            &ns,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
         assert!(scope.for_file(Path::new("/pkg/R/a.R")).resolves("filter"));
     }
 
@@ -1603,7 +1730,13 @@ mod tests {
     fn own_export_that_is_also_a_native_routine_stays_visible() {
         let files = [facts("/pkg/R/a.R", &["c_foo"], &[], vec![], Some("/pkg"))];
         let native = routines(&[("/pkg", &["c_foo"])]);
-        let scope = ProjectScope::build(&files, &HashMap::new(), &HashMap::new(), &native);
+        let scope = ProjectScope::build(
+            &files,
+            &HashMap::new(),
+            &HashMap::new(),
+            &native,
+            &HashMap::new(),
+        );
         assert!(scope.for_file(Path::new("/pkg/R/a.R")).resolves("c_foo"));
     }
 
@@ -1614,7 +1747,13 @@ mod tests {
             facts("/pkg/R/b.R", &["bar"], &[], vec![], Some("/pkg")),
         ];
         let native = routines(&[("/pkg", &["c_foo"])]);
-        let scope = ProjectScope::build(&files, &HashMap::new(), &HashMap::new(), &native);
+        let scope = ProjectScope::build(
+            &files,
+            &HashMap::new(),
+            &HashMap::new(),
+            &native,
+            &HashMap::new(),
+        );
         assert!(scope.for_file(Path::new("/pkg/R/a.R")).resolves("c_foo"));
         assert!(scope.for_file(Path::new("/pkg/R/b.R")).resolves("c_foo"));
     }
@@ -1662,7 +1801,7 @@ mod tests {
             ("/p2", "S3method(print, two)\n"),
         ]);
         let native = routines(&[("/p1", &["c_one"])]);
-        let scope = ProjectScope::build(&files, &ns, &HashMap::new(), &native);
+        let scope = ProjectScope::build(&files, &ns, &HashMap::new(), &native, &HashMap::new());
         let p2 = scope.for_file(Path::new("/p2/R/a.R"));
         assert!(!p2.resolves("one"));
         assert!(!p2.resolves("filter"));
@@ -1682,7 +1821,7 @@ mod tests {
         let files = [facts("/s/a.R", &[], &["filter"], vec![], None)];
         let ns = namespaces(&[("/pkg", "importFrom(dplyr, filter)\nexport(foo)\n")]);
         let native = routines(&[("/pkg", &["c_foo"])]);
-        let scope = ProjectScope::build(&files, &ns, &HashMap::new(), &native);
+        let scope = ProjectScope::build(&files, &ns, &HashMap::new(), &native, &HashMap::new());
         let a = scope.for_file(Path::new("/s/a.R"));
         assert!(!a.resolves("filter"));
         assert!(!a.resolves("c_foo"));
@@ -1695,7 +1834,7 @@ mod tests {
     #[test]
     fn sourcer_read_beats_the_solo_reader_exclusion() {
         let mut a = facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg"));
-        a.qualified_reads = Arc::new(set(&["foo"]));
+        a.qualified_reads = Arc::new(qualified(&[("pkg", "foo")]));
         let files = [
             a,
             facts("/pkg/R/b.R", &["bar"], &[], vec![], Some("/pkg")),
@@ -1720,7 +1859,7 @@ mod tests {
     #[test]
     fn sourcer_that_does_not_read_the_name_leaves_it_excluded() {
         let mut a = facts("/pkg/R/a.R", &["foo"], &[], vec![], Some("/pkg"));
-        a.qualified_reads = Arc::new(set(&["foo"]));
+        a.qualified_reads = Arc::new(qualified(&[("pkg", "foo")]));
         let files = [
             a,
             facts("/pkg/R/b.R", &["bar"], &[], vec![], Some("/pkg")),
@@ -1773,7 +1912,7 @@ mod tests {
             vec![source_path("/pkg/R/b.R", false)],
             Some("/pkg"),
         );
-        a.qualified_reads = Arc::new(set(&["foo"]));
+        a.qualified_reads = Arc::new(qualified(&[("pkg", "foo")]));
         let files = [
             a,
             facts(

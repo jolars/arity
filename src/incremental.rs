@@ -23,7 +23,7 @@ use crate::project::{
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::rindex::remote::RemoteExports;
-use crate::semantic::{BindingKind, FileControlFlow, ScopeKind, SemanticModel};
+use crate::semantic::{BindingKind, FileControlFlow, QualifiedRead, ScopeKind, SemanticModel};
 use crate::syntax::{NodePtr, SyntaxNode};
 use crate::text::LineIndex;
 
@@ -555,11 +555,14 @@ pub fn file_free_reads(db: &dyn IncrementalDb, file: SourceFile) -> Arc<BTreeSet
     Arc::new(crate::project::file_free_reads(semantic_model(db, file)))
 }
 
-/// The names the file reads via `pkg::name` / `pkg:::name`
+/// The package/member pairs the file reads via `pkg::name` / `pkg:::name`
 /// ([`crate::project::file_qualified_reads`]), as a tracked query. A cross-file
 /// *use* signal that, unlike [`file_free_reads`], never feeds name resolution.
 #[salsa::tracked(returns(ref))]
-pub fn file_qualified_reads(db: &dyn IncrementalDb, file: SourceFile) -> Arc<BTreeSet<String>> {
+pub fn file_qualified_reads(
+    db: &dyn IncrementalDb,
+    file: SourceFile,
+) -> Arc<BTreeSet<QualifiedRead>> {
     db.record_query(QueryLogEntry {
         kind: QueryKind::FileQualifiedReads,
         file: Some(file),

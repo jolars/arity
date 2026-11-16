@@ -1649,6 +1649,105 @@ fn self_qualified_internal_use_is_not_unused() {
 }
 
 #[test]
+fn qualified_reads_from_outside_a_package_mark_only_that_package_used() {
+    for entry_read in [
+        "testpkg:::entry()",
+        "testpkg:::entry",
+        "`testpkg`:::`entry`()",
+        "\"testpkg\":::entry()",
+        "\"testpkg\":::\"entry\"()",
+        "\"testpkg\":::\"entry\"",
+        "function() testpkg:::entry()",
+    ] {
+        let dir = tempdir().unwrap();
+        for (directory, package) in [("bundled", "testpkg"), ("other", "otherpkg")] {
+            let root = dir.path().join(directory);
+            std::fs::create_dir_all(root.join("R")).unwrap();
+            std::fs::write(
+                root.join("DESCRIPTION"),
+                TEST_DESCRIPTION.replace("Package: testpkg", &format!("Package: {package}")),
+            )
+            .unwrap();
+            std::fs::write(root.join("NAMESPACE"), "export(public)\n").unwrap();
+            std::fs::write(
+                root.join("R").join(format!("{package}.R")),
+                "entry <- function() 1\npublic <- function() 2\nunused <- function() 3\n",
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            dir.path().join("runner.R"),
+            format!("{entry_read}\ntestpkg::public()\nentry()\n"),
+        )
+        .unwrap();
+        let config = LintConfig {
+            select: Some(
+                ["unused-binding", "unused-function", "undefined-symbol"]
+                    .map(str::to_string)
+                    .to_vec(),
+            ),
+            ..LintConfig::default()
+        };
+        let result = check_paths_with_config(&[dir.path().to_path_buf()], &config).unwrap();
+        let unused_names = |file_name| {
+            let report = result
+                .reports
+                .iter()
+                .find(|report| report.path.file_name().unwrap() == file_name)
+                .unwrap();
+            let text = std::fs::read_to_string(&report.path).unwrap();
+            report
+                .diagnostics
+                .iter()
+                .map(|diagnostic| (diagnostic.rule, text[diagnostic.range].to_string()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            unused_names("testpkg.R"),
+            [("unused-binding", "unused".to_string())],
+            "caller: {entry_read}"
+        );
+        assert_eq!(
+            unused_names("otherpkg.R"),
+            [
+                ("unused-binding", "entry".to_string()),
+                ("unused-function", "public".to_string()),
+                ("unused-binding", "unused".to_string()),
+            ]
+        );
+        assert_eq!(rules_for(&result, "runner.R"), ["undefined-symbol"]);
+    }
+}
+
+#[test]
+fn qualified_reads_do_not_mark_unrelated_siblings_or_sourced_bindings_used() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().join("package");
+    std::fs::create_dir_all(root.join("R")).unwrap();
+    std::fs::create_dir(root.join("tests")).unwrap();
+    std::fs::write(root.join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
+    std::fs::write(root.join("NAMESPACE"), "").unwrap();
+    std::fs::write(root.join("R/member.R"), "entry <- function() 1\n").unwrap();
+    let sourced = dir.path().join("unrelated.R");
+    std::fs::write(&sourced, "entry <- function() 2\n").unwrap();
+    std::fs::write(
+        root.join("tests/caller.R"),
+        format!(
+            "source({:?})\notherpkg:::entry()\n",
+            sourced.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    let config = LintConfig {
+        select: Some(vec!["unused-binding".to_string()]),
+        ..LintConfig::default()
+    };
+    let result = check_paths_with_config(&[dir.path().to_path_buf()], &config).unwrap();
+    assert_eq!(rules_for(&result, "member.R"), ["unused-binding"]);
+    assert_eq!(rules_for(&result, "unrelated.R"), ["unused-binding"]);
+}
+
+#[test]
 fn namespace_import_from_resolves_symbol() {
     // `filter` is imported from dplyr, so it resolves.
     let result = lint_package(

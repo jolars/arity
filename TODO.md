@@ -91,18 +91,45 @@ output and semantic noise. Rule coverage and style options follow those fixes.
   Execution-directory configuration remains a follow-up; dynamic loading and
   external entry points remain in the separate triage item below.
 
-- [ ] Triage the adoption PR's `unused-binding` reports and external entry
-  points (the semantic-noise discussion). The original investigation
-  reproduced 27 findings, but did not establish that all were false
-  positives: `namespace_has` is an unused helper, and some reports are
-  test-local assignments. Rerun after the source-path fix and classify each
-  remaining finding as actual unused code or a confirmed analysis gap.
-  Existing package and literal `source()` resolution already handles
-  cross-file uses. Investigate injected helper environments, nested or
-  dynamic `source()` and `sys.source()` calls, and externally invoked script
-  entry points separately. Support narrowly scoped declarations of entry
-  points or runner environments where static evidence is insufficient,
-  while retaining `unused-binding` for actual unused code.
+- [x] Triage the adoption PR's `unused-binding` reports and external entry
+  points. At `5eeae42b`, the same 58 files produce 19 findings: 10 correct
+  reports and nine confirmed analysis gaps. Arity 0.29.0 reproduces the
+  original 27; the source-path fix clears eight helper reports. The correct
+  reports include unused result variables and the unused `namespace_has` and
+  `page_viewer` helpers. The gaps cover three helper-environment members,
+  one nested dynamic source, one explicit cross-package `:::` use, two entry
+  points called by TypeScript-generated R, and two test-local variables read
+  through `eval(parse(...))`. R 4.6.1 confirms the reduced cases. [The
+  investigation report](docs/reports/vscode-r-unused-bindings.md) classifies
+  every finding and records the source-environment cases, the remaining 10
+  undefined-symbol findings, and implementation boundaries.
+
+- [x] Count explicit qualified uses from scripts outside a local package.
+  Qualified reads retain both the package and member names and target the
+  identity declared in DESCRIPTION, including callers outside that package.
+  Other packages' same-name members and unrelated sourced bindings do not
+  count; bare-name visibility stays unchanged. Missing or ambiguous package
+  identities remain unresolved. Tests cover calls and values, quoted names,
+  unused-binding and unused-function, namespace isolation, and incremental
+  reuse across offset and argument edits. Changing the qualifier or a live
+  DESCRIPTION's package name refreshes use tracking. The pinned vscode-R
+  checkout now has 18 findings instead of 19: only the false unused-binding
+  report on `interactive_start` disappears.
+
+- [ ] Model source destination environments separately from execution
+  directories. Cover literal calls inside file-scope blocks, function-local
+  loading, explicit helper environments, and `sys.source()` without guessing
+  computed paths or unconditional execution. A block does not create an R
+  evaluation environment, and `source(..., local = helpers)` does not load
+  globals. Preserve source ordering and incremental graph reuse.
+
+- [ ] Add narrowly scoped declarations of external entry points and runner
+  environments where static evidence is insufficient. Exact entry-point
+  names should affect use tracking; injected names or declared helper
+  providers should affect resolution. Share these range-free facts between
+  CLI and LSP while retaining `unused-binding` for actual unused code.
+  Generated local reads such as the two `eval(parse(...))` test cases remain
+  separate; statement-level suppressions are a narrow existing workaround.
 
 - [x] Add glob-scoped lint ignores (feedback 3). `[lint.per-file-ignores]` maps
   config-relative globs to exact rule IDs. Matching entries accumulate

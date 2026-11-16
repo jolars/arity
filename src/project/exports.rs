@@ -7,7 +7,7 @@ use rowan::NodeOrToken;
 use rowan::ast::AstNode as _;
 
 use crate::ast::{AssignmentExpr, FunctionExpr};
-use crate::semantic::{BindingKind, ScopeKind, SemanticModel};
+use crate::semantic::{BindingKind, QualifiedRead, ScopeKind, SemanticModel};
 use crate::syntax::SyntaxNode;
 
 /// The names bound at file (top) level — the symbols another file in the same
@@ -40,17 +40,13 @@ pub fn file_free_reads(model: &SemanticModel) -> BTreeSet<String> {
         .collect()
 }
 
-/// The names a file reads via a `pkg::name` / `pkg:::name` access (the right
-/// operand). A cross-file *use* signal only: unlike [`file_free_reads`], these
+/// The package/member pairs a file reads via `pkg::name` / `pkg:::name`.
+/// A cross-file *use* signal only: unlike [`file_free_reads`], these
 /// never feed name resolution (`undefined-symbol`) — an external `utils::foo`
 /// must not become an unresolved `foo` — so they are kept in their own channel
-/// that only marks a same-package binding used (see [`crate::project::scope`]).
-pub fn file_qualified_reads(model: &SemanticModel) -> BTreeSet<String> {
-    model
-        .qualified_reads()
-        .iter()
-        .map(|name| name.to_string())
-        .collect()
+/// that only marks the named package's binding used (see [`crate::project::scope`]).
+pub fn file_qualified_reads(model: &SemanticModel) -> BTreeSet<QualifiedRead> {
+    model.qualified_reads().iter().cloned().collect()
 }
 
 /// Names read through runtime syntax that do not resolve in this file. This is

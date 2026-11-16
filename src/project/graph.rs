@@ -110,6 +110,8 @@ pub struct PackageInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PackageDeclarations {
     pub root: PathBuf,
+    /// The declared package identity; directory names do not identify packages.
+    pub name: Option<String>,
     /// `Depends`, minus `R` — the packages R **attaches** to the search path
     /// when this package loads, so their exports resolve as bare names.
     pub attached: BTreeSet<String>,
@@ -401,6 +403,7 @@ pub fn workspace_project(db: &dyn IncrementalDb) -> Project {
         .filter_map(|c| {
             facts_by_root.get(&c.root).map(|facts| PackageDeclarations {
                 root: c.root.clone(),
+                name: facts.package.clone(),
                 attached: facts.attached_packages(),
                 declared: facts.declared_packages(),
             })
@@ -592,7 +595,18 @@ pub fn project_graph(db: &dyn IncrementalDb) -> ProjectScope {
         .collect();
     let native_routines: HashMap<PathBuf, BTreeSet<String>> =
         project.native_routines.iter().cloned().collect();
-    ProjectScope::build(&facts, &namespaces, &package_complete, &native_routines)
+    let package_names: HashMap<PathBuf, String> = project
+        .declarations
+        .iter()
+        .filter_map(|declaration| Some((declaration.root.clone(), declaration.name.clone()?)))
+        .collect();
+    ProjectScope::build(
+        &facts,
+        &namespaces,
+        &package_complete,
+        &native_routines,
+        &package_names,
+    )
 }
 
 /// One file's [`Visibility`] within `project`. Depends only on [`project_graph`]
