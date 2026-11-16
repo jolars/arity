@@ -2889,7 +2889,6 @@ recall
 resampleHist
 resamples
 resampleSummary
-resampleWrapper
 rfe
 rfeControl
 rfeIter
@@ -2931,6 +2930,7 @@ upSample
 var_seq
 varImp
 well_numbered
+yardstickSummary
 
 [caTools]
 base64decode
@@ -9222,6 +9222,7 @@ dummy_setup
 font_family_exists
 font_google
 font_liberation
+font_line_metrics
 font_set
 font_set_auto
 font_set_liberation
@@ -9239,7 +9240,9 @@ register_gfont
 register_liberationmono
 register_liberationsans
 register_liberationserif
+register_stixmath
 rm_fonts_cache
+stixmath_file
 str_metrics
 strings_sizes
 sys_fonts
@@ -9492,7 +9495,6 @@ ggbivariate
 ggcoef
 ggcoef_compare
 ggcoef_model
-ggcoef_multinom
 ggcoef_plot
 ggcorr
 ggduo
@@ -13202,6 +13204,7 @@ list.tree
 llist
 lm.fit.qr.bare
 Load
+loess.surv
 Lognorm2
 logrank
 lookupSASContents
@@ -13431,6 +13434,7 @@ typstDotchart
 typstFunctions
 typstTranslate
 uncbind
+unicodeSN
 units
 unPaste
 upData
@@ -13446,6 +13450,7 @@ valueUnit<-
 var.inner
 varclus
 vlab
+warn_once
 Weibull2
 whichClosek
 whichClosePW
@@ -16063,6 +16068,7 @@ colsel
 Combine
 commutation
 compare
+complete_visits
 complik
 confband
 confpred
@@ -16262,6 +16268,7 @@ rsq
 scheffe
 score
 Sequence.lvm
+sigma2vec
 sim
 sinks
 spaghetti
@@ -16293,6 +16300,7 @@ variance<-
 variances
 vars
 vec
+vec2sigma
 wait
 weibull.lvm
 Weights
@@ -37465,6 +37473,7 @@ nodeid
 nodelab
 Ntip
 offspring
+offspring_bulk
 parent
 pull
 read.tree
