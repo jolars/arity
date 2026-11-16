@@ -176,6 +176,10 @@ impl SemanticModel {
         &self.free_use_only_reads
     }
 
+    pub(crate) fn use_only_reads(&self) -> &[UseOnlyRead] {
+        &self.use_only_reads
+    }
+
     /// The identifier read sites bound to `id`, in [`idents`](Self::idents)
     /// order. Empty when the binding is never read. The reverse def-use edge —
     /// the concrete read set behind the `read` flag.

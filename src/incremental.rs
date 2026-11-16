@@ -17,9 +17,9 @@ use crate::parser::{
 };
 use crate::project::{
     ClassSystem, DefKind, DescriptionFacts, FilePromiseSeeds, PackageInfo, PackageReferences,
-    ReadBinding, ReadSite, SourceEdgeKey, TopLevelEvent, collect_source_literal_edges,
-    collect_top_level_events, collect_top_level_events_spanned, discover_packages, project_classes,
-    project_defs, project_graph, project_reads, relative_path, reverse_source_edges,
+    ReadBinding, ReadSite, SourceEdgeKey, TopLevelEvent, collect_top_level_events,
+    collect_top_level_events_spanned, discover_packages, project_classes, project_defs,
+    project_graph, project_reads, relative_path, reverse_source_edges,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::rindex::remote::RemoteExports;
@@ -290,6 +290,8 @@ pub enum QueryKind {
     FileRoxygenTopics,
     FilePromiseSeeds,
     SourceEdges,
+    SourceCalls,
+    SourceProgram,
     TopLevelEvents,
     ReverseSourceEdges,
     WorkspaceProject,
@@ -725,7 +727,48 @@ pub fn source_edges(db: &dyn IncrementalDb, file: SourceFile) -> Arc<Vec<SourceE
     });
     let root = parsed_tree_root(db, file);
     let base_dir = file.execution_directory(db);
-    Arc::new(crate::project::collect_source_edge_keys(&root, base_dir))
+    Arc::new(
+        crate::project::source::collect_source_edges_in(&root, base_dir, semantic_model(db, file))
+            .into_iter()
+            .map(|edge| edge.key())
+            .collect(),
+    )
+}
+
+/// Possible loading calls, including deferred bodies. This projection
+/// selects programs for analysis without depending on unrelated body details.
+#[salsa::tracked(returns(ref))]
+pub fn source_calls(db: &dyn IncrementalDb, file: SourceFile) -> Arc<Vec<SourceEdgeKey>> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::SourceCalls,
+        file: Some(file),
+    });
+    Arc::new(
+        crate::project::source::loading_calls(
+            &parsed_tree_root(db, file),
+            semantic_model(db, file),
+            crate::project::source::LoadingCallKind::Possible,
+        )
+        .map(|call| crate::project::source::source_edge(&call, file.execution_directory(db)).key())
+        .collect(),
+    )
+}
+
+/// Range-free source destinations, local effects, and ordered read occurrences.
+#[salsa::tracked(returns(ref))]
+pub fn source_program(
+    db: &dyn IncrementalDb,
+    file: SourceFile,
+) -> Arc<crate::project::source_env::SourceProgram> {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::SourceProgram,
+        file: Some(file),
+    });
+    Arc::new(crate::project::source_env::collect_source_program(
+        &parsed_tree_root(db, file),
+        file.execution_directory(db),
+        semantic_model(db, file),
+    ))
 }
 
 /// The file's top-level execution sequence ([`collect_top_level_events`]): the
@@ -1472,6 +1515,9 @@ pub struct CrossFileBinding {
     /// to *this name*: a dynamic source no file reading the name can reach is
     /// irrelevant and does not block the rename. A sound rename refuses.
     pub dynamic_source_risk: bool,
+    /// Source environment or member reads that the bare-name rename cannot
+    /// rewrite completely. A sound rename refuses.
+    pub source_environment_risk: bool,
 }
 
 pub struct Analysis(IncrementalDatabase);
@@ -1803,6 +1849,7 @@ impl Analysis {
             conflict,
             cohort_incomplete,
             dynamic_source_risk,
+            source_environment_risk: graph.source_environment_rename_risk(def_file, name),
         }
     }
 
@@ -1998,7 +2045,7 @@ impl Analysis {
                 Some((
                     file.path(&self.0).as_deref()?,
                     file.execution_directory(&self.0),
-                    source_edges(&self.0, file).as_slice(),
+                    source_calls(&self.0, file).as_slice(),
                 ))
             }),
         );
@@ -2047,7 +2094,11 @@ impl Analysis {
                             .map_or(directory, PathBuf::as_path)
                     })
                 };
-                for edge in collect_source_literal_edges(&root, base_old) {
+                for edge in crate::project::source::collect_source_literal_edges_in(
+                    &root,
+                    base_old,
+                    semantic_model(&self.0, file),
+                ) {
                     let edge_norm = normalize_path(&edge.target);
                     let target_new = map.get(&edge_norm).unwrap_or(&edge_norm);
                     let resolved_from_new = if edge.was_relative {

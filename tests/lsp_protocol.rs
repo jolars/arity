@@ -1384,6 +1384,38 @@ fn source_paths_use_the_git_root_in_editor_diagnostics_and_definition() {
 }
 
 #[test]
+fn source_destinations_stay_local_in_editor_diagnostics_and_live_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("arity.toml"),
+        "[lint]\nselect = ['unused-binding', 'undefined-symbol']\n",
+    )
+    .unwrap();
+    let helper = "helper <- function() 42L\n";
+    let entry =
+        "run <- function() { source('helper.R', local = TRUE); helper() }\nrun()\nhelper()\n";
+    std::fs::write(dir.path().join("helper.R"), helper).unwrap();
+    std::fs::write(dir.path().join("main.R"), entry).unwrap();
+    let helper_uri = path_uri(&dir.path().join("helper.R"));
+    let entry_uri = path_uri(&dir.path().join("main.R"));
+    let mut h = Harness::start_in_workspace(json!({}), Some(&path_uri(dir.path())));
+    h.did_open(&entry_uri, entry, 1);
+    let diagnostics = h.recv_publish_for(&entry_uri, 1);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0]["code"], "undefined-symbol");
+    assert_eq!(diagnostics[0]["range"]["start"]["line"], 2);
+    h.did_open(&helper_uri, helper, 1);
+    assert!(h.recv_publish_for(&helper_uri, 1).is_empty());
+    let revised =
+        "helpers <- new.env()\nsource('helper.R', local = helpers)\nhelpers$helper()\nhelper()\n";
+    h.did_change(&entry_uri, revised, 2);
+    let diagnostics = h.recv_publish_for(&entry_uri, 2);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0]["range"]["start"]["line"], 3);
+    h.shutdown();
+}
+
+#[test]
 fn source_root_marker_changes_refresh_editor_diagnostics() {
     for marker in ["arity.toml", ".git"] {
         let dir = tempfile::tempdir().unwrap();

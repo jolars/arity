@@ -287,6 +287,81 @@ fn source_file_rename_withholds_conflicting_replacements_across_contexts() {
 }
 
 #[test]
+fn source_file_rename_excludes_lexically_shadowed_loaders() {
+    for main in [
+        "not_loader <- function(source) source('helper.R')\n",
+        "not_loader <- function(sys.source) sys.source('helper.R')\n",
+        "not_loader <- function(source) { inner <- function() source('helper.R'); inner() }\n",
+        "not_loader <- function() { source <- function(file) NULL; source('helper.R') }\n",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let db = workspace(
+            dir.path(),
+            &[("main.R", main), ("helper.R", "helper <- function() 42L\n")],
+        );
+        let helper = dir.path().join("helper.R");
+        assert!(
+            !reverse_source_edges(&db).sourced_by.contains_key(&helper),
+            "{main}"
+        );
+        let edits = db
+            .snapshot()
+            .source_rename_edits(&[(helper, dir.path().join("renamed.R"))]);
+        assert!(edits.is_empty(), "{main}: {edits:?}");
+        let edits = db
+            .snapshot()
+            .source_rename_edits(&[(dir.path().join("main.R"), dir.path().join("sub/main.R"))]);
+        assert!(edits.is_empty(), "{main}: {edits:?}");
+    }
+}
+
+#[test]
+fn source_file_rename_keeps_unshadowed_and_qualified_nested_loaders() {
+    for main in [
+        "loader <- function() source('helper.R')\n",
+        "loader <- function(source) base::source('helper.R')\n",
+        "loader <- function(sys.source) base::sys.source('helper.R', globalenv())\n",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let db = workspace(
+            dir.path(),
+            &[("main.R", main), ("helper.R", "helper <- function() 42L\n")],
+        );
+        let helper = dir.path().join("helper.R");
+        assert!(
+            reverse_source_edges(&db).sourced_by[&helper].contains(&dir.path().join("main.R")),
+            "{main}"
+        );
+        let edits = db
+            .snapshot()
+            .source_rename_edits(&[(helper, dir.path().join("renamed.R"))]);
+        assert_eq!(edits.len(), 1, "{main}: {edits:?}");
+        assert_eq!(edits[0].2, "'renamed.R'", "{main}");
+    }
+}
+
+#[test]
+fn uncertain_loaders_retain_dependencies_but_withhold_file_rename_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = workspace(
+        dir.path(),
+        &[
+            (
+                "main.R",
+                "if (interactive()) source <- function(file) NULL; source('helper.R')\n",
+            ),
+            ("helper.R", "helper <- function() 42L\n"),
+        ],
+    );
+    let helper = dir.path().join("helper.R");
+    assert!(reverse_source_edges(&db).sourced_by[&helper].contains(&dir.path().join("main.R")));
+    let edits = db
+        .snapshot()
+        .source_rename_edits(&[(helper, dir.path().join("renamed.R"))]);
+    assert!(edits.is_empty(), "{edits:?}");
+}
+
+#[test]
 fn source_chdir_uses_r_argument_matching() {
     for arguments in [
         "chdir = TRUE",

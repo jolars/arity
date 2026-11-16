@@ -38,6 +38,7 @@ use rowan::TextRange;
 
 use crate::project::source::{SourceEdgeKey, SourceTarget, TopLevelEvent};
 use crate::project::source_context::{SourceContext, SourceGraph};
+use crate::project::source_env::{SourceEnvironments, SourceProgram, SourceReads};
 use crate::rindex::harvest::parse_namespace;
 use crate::semantic::QualifiedRead;
 use crate::semantic::symbols::unbacktick;
@@ -190,6 +191,9 @@ pub struct FileFacts {
     /// `define`/`source-edge`/`read` events used to resolve reads through
     /// load order. See [`crate::project::collect_top_level_events`].
     pub top_level_events: Arc<Vec<TopLevelEvent>>,
+    /// Only source participants need ordered environment facts, keeping
+    /// unrelated body edits behind the existing projection firewalls.
+    pub source_program: Option<Arc<SourceProgram>>,
     /// The package root this file belongs to, if any. Files sharing a root
     /// share one namespace.
     pub package_root: Option<PathBuf>,
@@ -241,6 +245,7 @@ pub struct ProjectScope {
     /// held as one entry rather than three parallel maps.
     retained: HashMap<PathBuf, Retained>,
     sources: SourceGraph,
+    source_environments: SourceEnvironments,
 }
 
 /// The per-file facts [`ProjectScope`] keeps after `build` returns, for the
@@ -318,6 +323,7 @@ pub struct FileScope<'a> {
     /// not flag them. **No longer set by `import(pkg)`** — see
     /// [`wildcard_import_packages`](Self::wildcard_import_packages).
     pub resolution_incomplete: bool,
+    source_reads: Option<&'a SourceReads>,
 }
 
 impl<'a> FileScope<'a> {
@@ -339,7 +345,17 @@ impl<'a> FileScope<'a> {
             s3_methods,
             wildcard_imports,
             resolution_incomplete,
+            source_reads: None,
         }
+    }
+
+    pub fn with_source_reads(mut self, reads: Option<&'a SourceReads>) -> Self {
+        self.source_reads = reads;
+        self
+    }
+
+    pub fn source_reads(&self) -> Option<&'a SourceReads> {
+        self.source_reads
     }
 
     /// The packages this file's NAMESPACE `import()`s wholesale.
@@ -668,6 +684,35 @@ impl ProjectScope {
         }
 
         let empty_shared: Arc<BTreeSet<String>> = Arc::new(BTreeSet::new());
+        let initial = files
+            .iter()
+            .filter(|file| {
+                file.source_program
+                    .as_ref()
+                    .is_some_and(|program| program.has_sources() || file.package_root.is_some())
+            })
+            .map(|file| {
+                let mut names = std::collections::BTreeMap::new();
+                if let Some(root) = file.package_root.as_deref() {
+                    for sibling in files.iter().filter(|sibling| {
+                        sibling.package_root.as_deref() == Some(root) && sibling.path != file.path
+                    }) {
+                        for name in sibling.exports.iter() {
+                            names.insert(name.clone(), sibling.path.clone());
+                        }
+                    }
+                    if let Some(exempt) = visible_exempt.get(root) {
+                        for name in exempt {
+                            names
+                                .entry(name.clone())
+                                .or_insert_with(|| file.path.clone());
+                        }
+                    }
+                }
+                (file.path.clone(), names)
+            })
+            .collect();
+        let source_environments = SourceEnvironments::build(files, &initial);
         let mut visible: HashMap<PathBuf, LayeredSet> = HashMap::with_capacity(files.len());
         for (i, f) in files.iter().enumerate() {
             let root = f.package_root.as_deref();
@@ -704,12 +749,21 @@ impl ProjectScope {
         // and are computed first because they *win* over that exclusion.
         let mut read_added: HashMap<&Path, BTreeSet<String>> = HashMap::new();
         for i in 0..files.len() {
+            if files[i].source_program.is_some() {
+                continue;
+            }
             for target in &sourced[i] {
                 read_added
                     .entry(*target)
                     .or_default()
                     .extend(reads[i].iter().cloned());
             }
+        }
+        for (path, names) in &source_environments.used {
+            read_added
+                .entry(path)
+                .or_default()
+                .extend(names.iter().cloned());
         }
         let read_shared: HashMap<&Path, Arc<BTreeSet<String>>> = package_read_counts
             .iter()
@@ -794,6 +848,7 @@ impl ProjectScope {
             package_complete,
             retained,
             sources,
+            source_environments,
         }
     }
 
@@ -807,7 +862,27 @@ impl ProjectScope {
             s3_methods: self.s3_methods.get(path).unwrap_or(&EMPTY_NAMES),
             wildcard_imports: self.wildcard_imports.get(path).unwrap_or(&EMPTY_NAMES),
             resolution_incomplete: self.dynamic.contains(path),
+            source_reads: self.source_environments.reads.get(path),
         }
+    }
+
+    /// Decline rename when a source read lies outside the existing bare-name
+    /// rename component, or when rewriting it requires a member/string edit.
+    pub fn source_environment_rename_risk(&self, def_file: &Path, name: &str) -> bool {
+        self.source_environments
+            .member_uses
+            .get(def_file)
+            .is_some_and(|names| names.contains(name))
+            || self
+                .source_environments
+                .readers
+                .get(def_file)
+                .and_then(|names| names.get(name))
+                .is_some_and(|readers| {
+                    readers
+                        .iter()
+                        .any(|reader| !self.sees(reader).contains(def_file))
+                })
     }
 
     /// The members of `path`'s package root, if it has one. The base of every
@@ -1143,15 +1218,15 @@ enum Dependency {
     Path(SourceContext),
     /// Unresolvable (dynamic argument); visibility is incomplete.
     Unresolved,
-    /// `local = TRUE`: loads into the calling env, never global scope.
+    /// An isolated or unknown destination does not supply the file's scope.
     Skip,
 }
 
 fn source_dependency(edge: &SourceEdgeKey, directory: Option<&Path>) -> Dependency {
     let edge = edge.resolve(directory);
     match edge.target {
+        _ if edge.local => Dependency::Skip,
         SourceTarget::Dynamic => Dependency::Unresolved,
-        SourceTarget::Path(_) if edge.local => Dependency::Skip,
         SourceTarget::Path(path) => Dependency::Path(SourceContext {
             path,
             directory: edge.directory,
@@ -1247,6 +1322,7 @@ mod tests {
             use_only_reads: Arc::new(BTreeSet::new()),
             source_edges: Arc::new(edges),
             top_level_events: Arc::new(Vec::new()),
+            source_program: None,
             package_root: root.map(PathBuf::from),
         }
     }
@@ -1287,6 +1363,7 @@ mod tests {
             use_only_reads: Arc::new(BTreeSet::new()),
             source_edges: Arc::new(edges),
             top_level_events: Arc::new(events),
+            source_program: None,
             package_root: None,
         }
     }

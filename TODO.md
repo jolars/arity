@@ -116,12 +116,19 @@ output and semantic noise. Rule coverage and style options follow those fixes.
   checkout now has 18 findings instead of 19: only the false unused-binding
   report on `interactive_start` disappears.
 
-- [ ] Model source destination environments separately from execution
-  directories. Cover literal calls inside file-scope blocks, function-local
-  loading, explicit helper environments, and `sys.source()` without guessing
-  computed paths or unconditional execution. A block does not create an R
-  evaluation environment, and `source(..., local = helpers)` does not load
-  globals. Preserve source ordering and incremental graph reuse.
+- [x] Model source destination environments separately from execution
+  directories. Literal `source()` and `sys.source()` calls now distinguish
+  globals, the current frame, and explicit helper environments. Blocks share
+  their enclosing frame; function-local and helper loads retain their scope.
+  Ordered, range-free facts preserve source ordering and graph reuse, keep
+  conditional loads uncertain, and leave computed paths unresolved. Simple
+  aliases, member reads, and sourced reads of caller-local bindings count
+  against the actual provider. CLI and LSP share these facts, including
+  guards for base-call rewrites and incomplete cross-file renames.
+  Regression tests cover scope isolation, load order, nested `chdir`, live
+  edits, and incremental reuse. R 4.6.1 confirms the reduced execution
+  cases; workspace tests, the build, Clippy with all targets and features,
+  and formatting checks pass.
 
 - [ ] Add narrowly scoped declarations of external entry points and runner
   environments where static evidence is insufficient. Exact entry-point

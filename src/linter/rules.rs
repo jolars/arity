@@ -604,6 +604,8 @@ pub struct RuleContext<'a> {
     /// [`RuleContext::roxygen_topics`]. Same lazy discipline as the two fields
     /// above: a file with no documentation never pays for the walk.
     roxygen_topics: OnceLock<RoxygenTopics>,
+    source_read_bindings:
+        OnceLock<HashMap<rowan::TextRange, crate::project::source_env::SourceRead>>,
 }
 
 impl RuleContext<'_> {
@@ -688,7 +690,7 @@ impl RuleContext<'_> {
 
     /// Whether `call`'s callee is confirmed to invoke a base-R function: a
     /// simple name that is (a) exported by one of R's default packages, (b) not
-    /// shadowed by a local binding, and (c) not masked by an attached
+    /// shadowed by a local or project binding, and (c) not masked by an attached
     /// non-default package. Computed/qualified callees (`pkg::f(...)`,
     /// `x$f(...)`, `(g())(...)`) and anything we can't confirm return `false`,
     /// keeping callers conservative — no rewrite when unsure (Tenets 3/5).
@@ -721,19 +723,58 @@ impl RuleContext<'_> {
         origin_is_default(self.symbols.origin(&name, self.model.loaded_packages()))
     }
 
-    /// Whether the identifier read at `range` resolves to a local binding — the
-    /// name is redefined in this file rather than referring to the package
-    /// function of the same name. The shadow half of [`resolves_to_base`],
+    /// Whether the identifier read at `range` resolves to a local or project
+    /// binding, or an unresolved source leaves its origin uncertain. The shadow
+    /// half of [`resolves_to_base`],
     /// shared with rules that match names arity cannot attribute to a package
     /// (e.g. user-configured `undesirable-function` entries) and so can only
     /// apply this weaker gate.
     ///
     /// [`resolves_to_base`]: RuleContext::resolves_to_base
     pub fn is_locally_shadowed(&self, range: rowan::TextRange) -> bool {
-        self.model
+        let Some(ident) = self
+            .model
             .idents()
             .iter()
-            .any(|i| i.range == range && self.model.resolve_local(i).is_some())
+            .find(|ident| ident.range == range)
+        else {
+            return false;
+        };
+        if self.model.resolve_local(ident).is_some() {
+            return true;
+        }
+        if self
+            .project
+            .is_some_and(|scope| scope.resolution_incomplete)
+        {
+            return true;
+        }
+        match self.source_read_binding(range) {
+            Some(crate::project::source_env::SourceRead::Unbound) => false,
+            Some(_) => true,
+            None => self
+                .project
+                .is_some_and(|scope| scope.resolves(&ident.name)),
+        }
+    }
+
+    pub(crate) fn source_read_binding(
+        &self,
+        range: rowan::TextRange,
+    ) -> Option<&crate::project::source_env::SourceRead> {
+        self.source_read_bindings
+            .get_or_init(|| {
+                let Some(reads) = self.project.and_then(|scope| scope.source_reads()) else {
+                    return HashMap::new();
+                };
+                crate::project::source_env::read_keys(self.model)
+                    .into_iter()
+                    .filter_map(|(range, key)| {
+                        reads.reads.get(&key).cloned().map(|status| (range, status))
+                    })
+                    .collect()
+            })
+            .get(&range)
     }
 
     /// Whether a bare value read (an `IDENT` token used as a value, e.g. a
@@ -756,9 +797,17 @@ impl RuleContext<'_> {
     /// Whether introducing a bare call to `name` is conservatively known to
     /// reach a default-package function. Unlike [`resolves_to_base`], there is
     /// no existing call-site read to resolve, so any same-name binding anywhere
-    /// in the file withholds the rewrite rather than guessing its visibility.
+    /// in the file or its source destinations withholds the rewrite rather than
+    /// guessing its visibility. Isolated helper members do not mask bare calls.
     pub fn introduced_call_resolves_to_base(&self, name: &str) -> bool {
         self.symbols.is_base(name)
+            && !self.project.is_some_and(|scope| {
+                scope.resolution_incomplete
+                    || scope.resolves(name)
+                    || scope.source_reads().is_some_and(|reads| {
+                        reads.introductions_incomplete || reads.introduced_names.contains(name)
+                    })
+            })
             && !self
                 .model
                 .bindings()
@@ -1014,6 +1063,7 @@ pub fn run_rules(
         compat: &resolved.compat,
         description_compat: OnceLock::new(),
         roxygen_topics: OnceLock::new(),
+        source_read_bindings: OnceLock::new(),
     };
     let rules = &resolved.rules;
     let mut all = Vec::new();
@@ -1506,6 +1556,7 @@ mod tests {
             compat: &CompatConfig::default(),
             description_compat: OnceLock::new(),
             roxygen_topics: OnceLock::new(),
+            source_read_bindings: OnceLock::new(),
         };
         let call = root
             .descendants()

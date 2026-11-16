@@ -303,7 +303,7 @@ pub(crate) fn cross_file_rename_edits(
         snapshot.cross_file_binding(def_file, name)
     }))
     .ok()?;
-    if binding.cohort_incomplete || binding.dynamic_source_risk {
+    if binding.cohort_incomplete || binding.dynamic_source_risk || binding.source_environment_risk {
         return None;
     }
     let mut edits = Vec::new();

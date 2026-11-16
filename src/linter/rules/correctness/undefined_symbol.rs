@@ -73,6 +73,7 @@ impl Rule for UndefinedSymbol {
             return;
         }
         let mut suggestions = Suggestions::default();
+        let source_resolved = source_resolved_ranges(ctx);
         match ctx.resolution {
             // Cross-file path: the salsa `external_resolution` query already
             // applied the conservative gates and the project + package masking,
@@ -86,6 +87,7 @@ impl Rule for UndefinedSymbol {
                     // A data-masked read may be a data-frame column, not an
                     // undefined symbol — never flag it (see the builder).
                     .filter(|ident| !ident.data_masked)
+                    .filter(|ident| !source_resolved.contains(&ident.range))
                     .filter(|ident| !rng_initialized_before(ctx, ident))
                     .filter(|ident| ctx.model.resolve_local(ident).is_none())
                     .filter(|ident| ident.name != ".packageName" || !ctx.is_package_r_source())
@@ -259,6 +261,7 @@ impl UndefinedSymbol {
         let exports = OnceLock::new();
         let runner_bindings = implicit_bindings(ctx.path);
         let mut suggestions = Suggestions::default();
+        let source_resolved = source_resolved_ranges(ctx);
         for ident in ctx.model.idents() {
             // A data-masked read may be a data-frame column, not an undefined
             // symbol — never flag it (see the builder's `mask_depth`).
@@ -276,7 +279,11 @@ impl UndefinedSymbol {
             }
             // Skip if a sibling file in the same package or source-closure binds
             // it at top level.
-            if ctx.project.is_some_and(|p| p.resolves(&ident.name)) {
+            if source_resolved.contains(&ident.range)
+                || ctx
+                    .project
+                    .is_some_and(|p| p.source_reads().is_none() && p.resolves(&ident.name))
+            {
                 continue;
             }
             if runner_bindings
@@ -306,6 +313,28 @@ impl UndefinedSymbol {
             ));
         }
     }
+}
+
+fn source_resolved_ranges(ctx: &RuleContext<'_>) -> std::collections::HashSet<TextRange> {
+    let Some(reads) = ctx.project.and_then(|project| project.source_reads()) else {
+        return Default::default();
+    };
+    crate::project::source_env::read_keys(ctx.model)
+        .into_iter()
+        .filter_map(|(range, key)| {
+            reads
+                .reads
+                .get(&key)
+                .map_or_else(
+                    || {
+                        ctx.project
+                            .is_some_and(|project| project.resolves(&key.name))
+                    },
+                    |status| *status != crate::project::source_env::SourceRead::Unbound,
+                )
+                .then_some(range)
+        })
+        .collect()
 }
 
 /// Build an `undefined-symbol` diagnostic for `name` at `range`.

@@ -162,8 +162,8 @@ impl SourceGraph {
             closure.paths.insert(context.path);
             for edge in edges {
                 match &edge.target {
+                    _ if edge.local => {}
                     SourceTarget::Dynamic => closure.incomplete = true,
-                    SourceTarget::Path(_) if edge.local => {}
                     SourceTarget::Path(path) => pending.push(SourceContext {
                         path: path.clone(),
                         directory: edge.directory.clone(),

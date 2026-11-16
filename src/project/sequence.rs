@@ -17,9 +17,13 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use rowan::ast::AstNode as _;
 use rowan::{NodeOrToken, TextRange};
 
-use crate::project::source::{TopLevelEvent, top_level_source_edge_key};
+use crate::project::source::{
+    LoadingCallKind, TopLevelEvent, loading_calls, top_level_source_edge_key,
+    unconditional_statements,
+};
 use crate::semantic::{Binding, BindingKind, IdentRef, ScopeKind, SemanticModel};
 use crate::syntax::{SyntaxKind, SyntaxNode};
 
@@ -67,14 +71,22 @@ pub fn collect_top_level_events_spanned(
     // statement — bucketing the whole model in a single pass each for idents
     // and bindings, instead of rescanning both per statement (which is
     // quadratic in file size).
-    let stmt_ranges: Vec<TextRange> = root.children().map(|n| n.text_range()).collect();
+    let statements = unconditional_statements(root);
+    let loading_calls: std::collections::HashSet<_> =
+        loading_calls(root, model, LoadingCallKind::Unshadowed)
+            .map(|call| call.syntax().text_range())
+            .collect();
+    let stmt_ranges: Vec<TextRange> = statements
+        .iter()
+        .filter_map(|element| element.as_node().map(|node| node.text_range()))
+        .collect();
     let covering = |range: TextRange| -> Option<usize> {
         let idx = stmt_ranges.partition_point(|r| r.start() <= range.start());
         (idx > 0 && stmt_ranges[idx - 1].contains_range(range)).then(|| idx - 1)
     };
 
     // File-scope-direct idents bucketed by covering statement. A read inside a
-    // function/block body has a non-`File` scope and is skipped (it runs at
+    // function body has a non-`File` scope and is skipped (it runs at
     // call time, against the final post-execution scope). An ident covered by
     // no statement is a *bare* top-level identifier — a direct IDENT token of
     // the root, not wrapped in a node — kept aside keyed by its exact span.
@@ -108,7 +120,7 @@ pub fn collect_top_level_events_spanned(
     // Iterate *elements* (nodes and tokens) so bare top-level identifiers are
     // also seen as reads, in document order alongside the statements.
     let mut stmt_idx = 0usize;
-    for element in root.children_with_tokens() {
+    for element in statements {
         match element {
             NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::IDENT => {
                 // A bare top-level identifier is a file-scope free read iff the
@@ -127,7 +139,9 @@ pub fn collect_top_level_events_spanned(
                 stmt_idx += 1;
                 // A `source()`/`sys.source()` call is one edge event; don't
                 // also emit reads for its arguments.
-                if let Some(key) = top_level_source_edge_key(&child, base_dir) {
+                if loading_calls.contains(&child.text_range())
+                    && let Some(key) = top_level_source_edge_key(&child, base_dir)
+                {
                     events.push((TopLevelEvent::SourceEdge(key), None));
                     continue;
                 }
@@ -239,22 +253,23 @@ top2
     }
 
     #[test]
-    fn sys_source_is_a_dynamic_edge() {
+    fn sys_source_keeps_its_path_and_separate_destination() {
         let e = events("sys.source(\"a.R\")\n");
         assert_eq!(e.len(), 1);
         match &e[0] {
             TopLevelEvent::SourceEdge(key) => {
-                assert_eq!(key.target, SourceTarget::Dynamic);
+                assert_eq!(key.target, SourceTarget::Path("a.R".into()));
+                assert!(key.local);
             }
             other => panic!("expected a dynamic source edge, got {other:?}"),
         }
     }
 
     #[test]
-    fn local_true_edge_keeps_its_local_flag() {
+    fn local_true_edge_shares_the_file_environment() {
         let e = events("source(\"a.R\", local = TRUE)\n");
         match &e[0] {
-            TopLevelEvent::SourceEdge(key) => assert!(key.local),
+            TopLevelEvent::SourceEdge(key) => assert!(!key.local),
             other => panic!("expected a source edge, got {other:?}"),
         }
     }

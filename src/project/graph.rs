@@ -154,6 +154,7 @@ pub struct Project {
 /// (and `Eq`) so the salsa memo backdates when a file's visibility is unchanged.
 #[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
 pub struct Visibility {
+    pub source_reads: Option<crate::project::source_env::SourceReads>,
     /// Held as layers, so the package-wide union this file shares with every
     /// sibling is one `Arc` handle rather than a per-member copy.
     pub visible: LayeredSet,
@@ -192,6 +193,7 @@ impl Visibility {
             &self.wildcard_imports,
             self.incomplete,
         )
+        .with_source_reads(self.source_reads.as_ref())
     }
 }
 
@@ -568,6 +570,21 @@ pub fn project_graph(db: &dyn IncrementalDb) -> ProjectScope {
     });
 
     let project = workspace_project(db);
+    let source_contexts =
+        super::source_context::SourceGraph::build(project.members.iter().map(|member| {
+            (
+                member.path.as_path(),
+                member.file.execution_directory(db),
+                crate::incremental::source_calls(db, member.file).as_slice(),
+            )
+        }));
+    let mut source_members = std::collections::HashSet::new();
+    for (caller, edge) in source_contexts.direct_edges() {
+        source_members.insert(crate::incremental::normalize_path(caller));
+        if let SourceTarget::Path(path) = &edge.target {
+            source_members.insert(crate::incremental::normalize_path(path));
+        }
+    }
     let facts: Vec<FileFacts> = project
         .members
         .iter()
@@ -583,6 +600,9 @@ pub fn project_graph(db: &dyn IncrementalDb) -> ProjectScope {
             use_only_reads: Arc::clone(file_use_only_reads(db, m.file)),
             source_edges: Arc::clone(source_edges(db, m.file)),
             top_level_events: Arc::clone(top_level_events(db, m.file)),
+            source_program: source_members
+                .contains(&crate::incremental::normalize_path(&m.path))
+                .then(|| Arc::clone(crate::incremental::source_program(db, m.file))),
             package_root: m.package_root.clone(),
         })
         .collect();
@@ -627,6 +647,7 @@ pub fn visible_symbols(db: &dyn IncrementalDb, file: SourceFile) -> Visibility {
     };
     let scope = graph.for_file(path);
     Visibility {
+        source_reads: scope.source_reads().cloned(),
         visible: scope.visible_layer().clone(),
         read_by_others: scope.read_layer().clone(),
         namespace_exports: Arc::clone(scope.namespace_exports_handle()),
@@ -640,16 +661,16 @@ pub fn visible_symbols(db: &dyn IncrementalDb, file: SourceFile) -> Visibility {
 /// target path, the set of member files that `source()` it ("who sources me").
 ///
 /// Deliberately broader than the forward scope builder ([`ProjectScope::build`])
-/// in two ways, because file-rename and cross-file references care about the
+/// because file-rename and cross-file references care about the
 /// *dependency*, not scope contribution:
-/// - `local = TRUE` edges are **kept** (the forward builder skips them, since
-///   they don't fold bindings into global scope — `src/project/scope.rs`).
+/// - Isolated destination edges and calls inside function bodies are **kept**,
+///   even though they do not supply the caller's bare file-scope names.
 /// - targets **outside** the analyzed member set are **kept** (the forward
 ///   builder treats them as incomplete visibility), so renaming an as-yet-
 ///   unopened file still finds its sourcers.
 ///
 /// `BTreeMap`/`BTreeSet` so the type is `Eq`/`salsa::SalsaValue` and the query
-/// backdates: a body edit leaves every `source_edges` unchanged (it is
+/// backdates: a body edit leaves every `source_calls` unchanged (it is
 /// range-free), so this re-runs only when a `source()` call is actually
 /// added/removed/retargeted.
 #[derive(Debug, Default, Clone, PartialEq, Eq, salsa::SalsaValue)]
@@ -686,8 +707,8 @@ fn invert_source_edges<'a>(
 }
 
 /// The "who sources me" index for the workspace project, inverting every
-/// member's forward `source_edges`. Built on the backdated [`workspace_project`]
-/// snapshot and the per-member (range-free) `source_edges` firewall, so it
+/// member's syntactic loading calls. Built on the backdated [`workspace_project`]
+/// snapshot and the per-member (range-free) `source_calls` firewall, so it
 /// backdates across body edits.
 #[salsa::tracked(returns(ref))]
 pub fn reverse_source_edges(db: &dyn IncrementalDb) -> ReverseSources {
@@ -699,7 +720,7 @@ pub fn reverse_source_edges(db: &dyn IncrementalDb) -> ReverseSources {
         (
             m.path.as_path(),
             m.file.execution_directory(db),
-            source_edges(db, m.file).as_slice(),
+            crate::incremental::source_calls(db, m.file).as_slice(),
         )
     }))
 }
@@ -1137,9 +1158,21 @@ pub fn external_resolution(
         .as_deref()
         .map(implicit_bindings)
         .unwrap_or_default();
+    let mut source_unresolved = BTreeMap::<&str, bool>::new();
+    if let Some(reads) = &visibility.source_reads {
+        for (key, status) in &reads.reads {
+            *source_unresolved.entry(&key.name).or_default() |=
+                *status == crate::project::source_env::SourceRead::Unbound;
+        }
+    }
     let unresolved: BTreeSet<String> = file_free_reads(db, file)
         .iter()
-        .filter(|name| !visibility.visible.contains(name.as_str()))
+        .filter(|name| {
+            source_unresolved
+                .get(name.as_str())
+                .copied()
+                .unwrap_or_else(|| !visibility.visible.contains(name.as_str()))
+        })
         .filter(|name| {
             !runner_bindings
                 .iter()
@@ -1208,6 +1241,7 @@ mod tests {
             )
         };
         let a = Visibility {
+            source_reads: None,
             visible: layer(),
             read_by_others: layer(),
             namespace_exports: Arc::new(names()),
@@ -1218,6 +1252,7 @@ mod tests {
         let b = a.clone();
         // `b` shares `a`'s allocations; `c` is rebuilt from scratch.
         let c = Visibility {
+            source_reads: None,
             visible: layer(),
             read_by_others: layer(),
             namespace_exports: Arc::new(names()),

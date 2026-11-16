@@ -33,7 +33,7 @@ compute run -- /path/to/arity/target/release/arity --no-config lint \
 
 `--no-config` bypasses the PR's global ignores for both semantic rules. Each
 lint command exits 1 because it reports findings; the JSON goes to stdout. The
-current run has 19 unused bindings and 10 undefined-symbol findings.
+investigation run has 19 unused bindings and 10 undefined-symbol findings.
 
 The locally installed Arity 0.29.0 also reproduces the PR's original 27 unused
 bindings on the pinned checkout. Comparing those diagnostics with the current
@@ -114,8 +114,9 @@ source consumer cannot mark the helper used. Put this in `helper.R`:
 helper <- function() 42L
 ```
 
-Each row supplies a separate `main.R`. R evaluates every case successfully and
-obtains 42. Lint both files with
+Each row supplies a separate `main.R`. The Arity results below describe the
+investigation baseline, before the source-destination follow-up. R evaluates
+every case successfully and obtains 42. Lint both files with
 `--no-config --select unused-binding,undefined-symbol`.
 
   | Loading form                             | `main.R`                                                                                                              | Current Arity result                                                                              |
@@ -176,20 +177,34 @@ fresh environment makes both reported functions available. Calling
 running package setup. The ordinary unused-function control still produces an
 unused-binding finding.
 
-## Follow-up scope
+## Source destination follow-up
 
-1. **Count explicit qualified uses across package boundaries.** Preserve the
-   package name with each qualified read, resolve it to the corresponding local
-   package, and mark the actual definition used. A same-name member of a
-   different package must not count. This can address `interactive_start`
-   without configuration or R evaluation.
-2. **Represent source execution environments.** Separate the target path,
-   execution directory, and destination environment. A literal source inside a
-   file-scope block can be handled before function calls, explicit helper
-   environments, and computed paths. Preserve ordering and conditional
-   uncertainty; include `sys.source()` explicitly. Do not infer that a block
-   creates a non-global environment, or that every `source()` call loads
-   globals.
+The literal-path loading cases above now have separate destination environments
+and execution directories. File-scope blocks share their enclosing frame,
+function-local loads stay local to that function, and explicit helper loads
+track member reads without introducing bare global names. The model includes
+`sys.source()`, simple environment aliases, and caller-local reads from sourced
+code. Conditional branches retain their uncertainty, and all projected facts
+remain range-free.
+
+R 4.6.1 confirms the reduced destination, ordering, alias, caller-local, and
+nested `chdir` cases. Computed paths in the adoption checkout remain outside
+this literal-path model; the external contracts described below still need
+explicit declarations. Rename declines when it cannot rewrite all environment or
+member reads.
+
+## Implementation boundaries
+
+1. **Qualified uses across package boundaries.** Implemented: each qualified
+   read retains its package name and targets the corresponding local package's
+   definition. A same-name member of a different package does not count. This
+   addresses `interactive_start` without configuration or R evaluation.
+2. **Source execution environments.** Implemented for literal paths: the target
+   path, execution directory, and destination environment stay separate across
+   blocks, function bodies, and explicit helper environments. The model includes
+   `sys.source()` and preserves ordering and conditional uncertainty. A block
+   does not create a new environment, and a helper load does not introduce bare
+   globals. Computed targets remain unresolved.
 3. **Add narrowly scoped semantic declarations for external contracts.** An
    entry-point declaration should name exact top-level bindings in matched
    files. A runner-environment declaration should name the bindings injected

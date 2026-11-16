@@ -41,16 +41,30 @@ Human-readable diagnostics and informational messages go to stderr.
 
 ## Resolve script dependencies
 
-Arity follows literal, top-level `source()` calls between analyzed files. For
-relative source paths, it assumes R starts in the nearest enclosing package root
-(a directory with `DESCRIPTION` and `R/`). Outside a package, it uses the
-nearest Git root, then the nearest directory containing `arity.toml`, then the
-script's own directory. Nested configs inside a Git repository do not change
-this working directory.
+Arity follows literal `source()` and `sys.source()` calls between analyzed
+files. For relative source paths, it assumes R starts in the nearest enclosing
+package root (a directory with `DESCRIPTION` and `R/`). Outside a package, it
+uses the nearest Git root, then the nearest directory containing `arity.toml`,
+then the script's own directory. Nested configs inside a Git repository do not
+change this working directory.
 
 Sourced files inherit their caller's working directory. With `chdir = TRUE`, the
 target executes in its containing directory, and the caller's directory is
 restored afterward. The CLI and language server use the same defaults.
+
+The destination environment is independent of this directory. Plain `{}` blocks
+share the enclosing environment. `source(..., local = TRUE)` loads into the
+current frame, including a function's local frame. An explicit destination such
+as `source(..., local = helpers)` or `sys.source(..., envir = helpers)` loads
+members into that environment; it does not introduce bare global names. Arity
+tracks environments created with `new.env()`, their simple aliases, and literal
+member reads such as `helpers$helper` and `helpers[["helper"]]`.
+
+Reads respect loading order. Function analysis keeps its loading effects within
+that function. Conditional loads retain possible bindings without treating them
+as unconditional definitions. Arity does not evaluate R, resolve computed paths,
+or infer calls from external programs. Explicit entry-point and helper-provider
+declarations remain separate work.
 
 ## Choose rules
 

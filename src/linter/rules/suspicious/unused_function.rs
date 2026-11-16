@@ -74,11 +74,19 @@ impl Rule for UnusedFunction {
 
     fn check_file(&self, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         let roxygen_exports = roxygen_exported_names(ctx.root);
+        let source_used = ctx
+            .project
+            .and_then(|project| project.source_reads())
+            .map(|reads| reads.used_ranges(ctx.model))
+            .unwrap_or_default();
         sink.extend(
             ctx.model
                 .unused_local_bindings()
                 .filter(|id| {
                     let b = ctx.model.binding(*id);
+                    if source_used.contains(&b.def_range) {
+                        return false;
+                    }
                     // Only a top-level definition can be a package export.
                     if ctx.model.scope(b.scope).kind != ScopeKind::File {
                         return false;

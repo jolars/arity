@@ -8,6 +8,7 @@
 //! `source(path)`) become [`SourceTarget::Dynamic`] so cross-file resolution can
 //! stay conservative and avoid false `undefined-symbol` findings.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use rowan::NodeOrToken;
@@ -15,6 +16,7 @@ use rowan::TextRange;
 use rowan::ast::AstNode as _;
 
 use crate::ast::CallExpr;
+use crate::semantic::{BindingKind, SemanticModel};
 use crate::syntax::{RLanguage, SyntaxKind, SyntaxNode};
 
 type SyntaxToken = rowan::SyntaxToken<RLanguage>;
@@ -38,6 +40,7 @@ pub enum SourceTarget {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct SourceEdgeKey {
     pub target: SourceTarget,
+    /// Whether the destination is separate from the file's evaluation frame.
     pub local: bool,
     /// Original relative spelling, retained to resolve an inherited directory.
     pub relative_path: Option<PathBuf>,
@@ -49,8 +52,8 @@ pub struct SourceEdgeKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceEdge {
     pub target: SourceTarget,
-    /// `source(..., local = TRUE)` evaluates in the calling environment, so it
-    /// does not contribute the target's top-level bindings to the global scope.
+    /// The destination is separate from the file's evaluation environment.
+    /// `local = TRUE` at file scope shares that environment, like a plain block.
     pub local: bool,
     pub relative_path: Option<PathBuf>,
     pub chdir: bool,
@@ -60,7 +63,7 @@ pub struct SourceEdge {
 
 impl SourceEdge {
     /// True when this edge folds the target's top-level bindings into the
-    /// sourcing file's global scope: a non-`local`, statically-resolved source.
+    /// sourcing file's evaluation frame: a shared, statically resolved source.
     pub fn contributes_scope(&self) -> bool {
         !self.local && matches!(self.target, SourceTarget::Path(_))
     }
@@ -91,47 +94,61 @@ pub enum TopLevelEvent {
     /// bindings into scope here.
     SourceEdge(SourceEdgeKey),
     /// A top-level *bare free read* of `name` observes the scope as of here.
-    /// Only file-scope-direct reads — a read inside a function/block body runs at
+    /// Only file-scope-direct reads — a read inside a function body runs at
     /// call time and sees the final post-execution scope, so it is not gated by
     /// position and is omitted.
     Read(String),
 }
 
 /// The [`SourceEdgeKey`] for a top-level `child` that is a `source(...)` or
-/// `sys.source(...)` call, else `None`. `sys.source` is mapped to
-/// [`SourceTarget::Dynamic`] (we don't model its argument resolution), so it
-/// poisons order resolution conservatively rather than being silently ignored.
+/// `sys.source(...)` call, else `None`. Its destination is classified separately
+/// from its literal path and working directory.
 pub fn top_level_source_edge_key(
     child: &SyntaxNode,
     base_dir: Option<&Path>,
 ) -> Option<SourceEdgeKey> {
-    let call = CallExpr::cast(child.clone())?;
-    let callee = call.callee_token()?;
-    if callee.kind() != SyntaxKind::IDENT {
-        return None;
+    source_call(child).map(|call| source_edge(&call, base_dir).key())
+}
+
+pub(crate) fn unconditional_statements(root: &SyntaxNode) -> Vec<SyntaxElement> {
+    let mut statements = Vec::new();
+    for element in root.children_with_tokens() {
+        if let Some(block) = element
+            .as_node()
+            .filter(|node| node.kind() == SyntaxKind::BLOCK_EXPR)
+        {
+            statements.extend(unconditional_statements(block));
+        } else if !is_trivia(element.kind())
+            && !matches!(element.kind(), SyntaxKind::LBRACE | SyntaxKind::RBRACE)
+        {
+            statements.push(element);
+        }
     }
-    match callee.text() {
-        "source" => Some(source_edge(&call, base_dir).key()),
-        "sys.source" => Some(SourceEdgeKey {
-            target: SourceTarget::Dynamic,
-            local: false,
-            relative_path: None,
-            chdir: false,
-        }),
-        _ => None,
-    }
+    statements
 }
 
 /// Collect top-level `source(...)` calls in `root`. `base_dir` is the directory
 /// assumed for execution; relative literal targets are resolved against it.
 ///
-/// Only direct children of the root are scanned: a `source()` nested inside a
-/// function or block runs at call time into a non-global environment, so it is
-/// not a static top-level dependency (the same posture the semantic builder
-/// takes for `library()`).
+/// Plain blocks share their enclosing evaluation environment. Conditional
+/// calls and function bodies are modeled by `source_env`, not folded into this
+/// unconditional file-scope closure.
 pub fn collect_source_edges(root: &SyntaxNode, base_dir: Option<&Path>) -> Vec<SourceEdge> {
-    root.children()
-        .filter_map(|child| source_call(&child))
+    collect_source_edges_in(root, base_dir, &SemanticModel::build(root))
+}
+
+pub(crate) fn collect_source_edges_in(
+    root: &SyntaxNode,
+    base_dir: Option<&Path>,
+    model: &SemanticModel,
+) -> Vec<SourceEdge> {
+    let calls: HashSet<_> = loading_calls(root, model, LoadingCallKind::Unshadowed)
+        .map(|call| call.syntax().text_range())
+        .collect();
+    unconditional_statements(root)
+        .into_iter()
+        .filter_map(|child| child.as_node().and_then(source_call))
+        .filter(|call| calls.contains(&call.syntax().text_range()))
         .map(|call| source_edge(&call, base_dir))
         .collect()
 }
@@ -139,9 +156,9 @@ pub fn collect_source_edges(root: &SyntaxNode, base_dir: Option<&Path>) -> Vec<S
 /// Like [`collect_source_edges`] but projected onto range-free
 /// [`SourceEdgeKey`]s — the form the cross-file graph query consumes.
 pub fn collect_source_edge_keys(root: &SyntaxNode, base_dir: Option<&Path>) -> Vec<SourceEdgeKey> {
-    root.children()
-        .filter_map(|child| source_call(&child))
-        .map(|call| source_edge(&call, base_dir).key())
+    collect_source_edges(root, base_dir)
+        .into_iter()
+        .map(|edge| edge.key())
         .collect()
 }
 
@@ -164,19 +181,86 @@ pub struct SourceLiteralEdge {
     pub was_relative: bool,
 }
 
-/// Collect top-level `source("literal")` edges with the string token's range and
-/// quoting — the form a file rename rewrites. Mirrors [`collect_source_edges`]
-/// but skips [`SourceTarget::Dynamic`] arguments (a computed path can't be
+/// Collect literal loading calls at any depth with the string token's range and
+/// quoting — the form a file rename rewrites. Skips
+/// [`SourceTarget::Dynamic`] arguments (a computed path can't be
 /// rewritten) and named/positional `file` resolution is shared via
 /// [`source_file_value`].
 pub fn collect_source_literal_edges(
     root: &SyntaxNode,
     base_dir: Option<&Path>,
 ) -> Vec<SourceLiteralEdge> {
-    root.children()
-        .filter_map(|child| source_call(&child))
+    collect_source_literal_edges_in(root, base_dir, &SemanticModel::build(root))
+}
+
+pub(crate) fn collect_source_literal_edges_in(
+    root: &SyntaxNode,
+    base_dir: Option<&Path>,
+    model: &SemanticModel,
+) -> Vec<SourceLiteralEdge> {
+    loading_calls(root, model, LoadingCallKind::Unshadowed)
         .filter_map(|call| source_literal_edge(&call, base_dir))
         .collect()
+}
+
+pub(crate) enum LoadingCallKind {
+    Possible,
+    Unshadowed,
+}
+
+pub(crate) fn loading_calls(
+    root: &SyntaxNode,
+    model: &SemanticModel,
+    kind: LoadingCallKind,
+) -> impl Iterator<Item = CallExpr> {
+    let shadowed: HashSet<_> = model
+        .idents()
+        .iter()
+        .enumerate()
+        .filter(|(_, ident)| {
+            matches!(
+                crate::semantic::symbols::unbacktick(&ident.name),
+                "source" | "sys.source"
+            )
+        })
+        .filter(|(index, ident)| {
+            if matches!(kind, LoadingCallKind::Unshadowed) {
+                return !model.ident_bindings(*index).is_empty();
+            }
+            model.ident_bindings(*index).iter().any(|id| {
+                let binding = model.binding(*id);
+                match binding.kind {
+                    BindingKind::Param => true,
+                    BindingKind::ForVar | BindingKind::Implicit => false,
+                    BindingKind::Local => {
+                        let target = root.covering_element(binding.def_range);
+                        // A conditional definition still permits the base loader
+                        // on the path where that definition does not execute.
+                        for ancestor in target.ancestors().skip(1) {
+                            match ancestor.kind() {
+                                SyntaxKind::BLOCK_EXPR => {
+                                    if ancestor.text_range().contains_range(ident.range) {
+                                        return true;
+                                    }
+                                }
+                                SyntaxKind::ROOT | SyntaxKind::FUNCTION_EXPR => return true,
+                                _ => return false,
+                            }
+                        }
+                        false
+                    }
+                }
+            })
+        })
+        .map(|(_, ident)| ident.range)
+        .collect();
+    root.descendants()
+        .filter_map(|child| source_call(&child))
+        .filter(move |call| {
+            call.base()
+                .and_then(SyntaxElement::into_token)
+                .is_none_or(|callee| !shadowed.contains(&callee.text_range()))
+        })
 }
 
 /// A string literal, carrying the byte range of the string token (quotes
@@ -256,7 +340,7 @@ pub fn collect_link_literals(root: &SyntaxNode) -> Vec<LinkLiteral> {
 /// R raw strings of the form `r"delim(content)delim"` (also `R`, `'` quote, and
 /// `[`/`{` bracket variants). Escape sequences inside plain strings are *not*
 /// decoded — the inner text is returned verbatim, matching [`strip_quotes`].
-fn string_literal_content(text: &str) -> Option<&str> {
+pub(crate) fn string_literal_content(text: &str) -> Option<&str> {
     if let Some(raw) = raw_string_content(text) {
         return Some(raw);
     }
@@ -384,18 +468,32 @@ pub fn relative_path(base_dir: &Path, target: &Path) -> Option<PathBuf> {
     Some(result)
 }
 
-/// The `CallExpr` if `node` is a call to the bare function `source`.
-fn source_call(node: &SyntaxNode) -> Option<CallExpr> {
+/// A `source` or `sys.source` call, bare or explicitly qualified with `base`.
+pub(crate) fn source_call(node: &SyntaxNode) -> Option<CallExpr> {
     let call = CallExpr::cast(node.clone())?;
-    let callee = call.callee_token()?;
-    (callee.kind() == SyntaxKind::IDENT && callee.text() == "source").then_some(call)
+    let name = call.callee_name()?;
+    if !matches!(
+        crate::semantic::symbols::unbacktick(&name),
+        "source" | "sys.source"
+    ) {
+        return None;
+    }
+    if let Some(node) = call.base().and_then(SyntaxElement::into_node) {
+        let access = crate::ast::BinaryExpr::cast(node)?.namespace_access()?;
+        if access.package != "base" {
+            return None;
+        }
+    }
+    Some(call)
 }
 
 /// Walk a `source(...)` call's arguments, returning the element that supplies
-/// `file`, `local`, and `chdir` arguments. Match named (including unique partial)
+/// `file`, destination (`local` or `envir`), and `chdir` arguments. Match named (including unique partial)
 /// arguments before positional arguments, as R does. Shared by [`source_edge`]
 /// and [`collect_source_literal_edges`].
-fn source_file_value(call: &CallExpr) -> (Option<SyntaxElement>, bool, Option<bool>) {
+pub(crate) fn source_file_value(
+    call: &CallExpr,
+) -> (Option<SyntaxElement>, Option<SyntaxElement>, Option<bool>) {
     // `chdir` is the twelfth formal. Include the later formals so partial
     // matching doesn't confuse it with `catch.aborts` or `continue.echo`.
     const FORMALS: [&str; 17] = [
@@ -417,8 +515,21 @@ fn source_file_value(call: &CallExpr) -> (Option<SyntaxElement>, bool, Option<bo
         "skip.echo",
         "keep.source",
     ];
-    let mut values: Vec<Option<SyntaxElement>> = vec![None; FORMALS.len()];
-    let mut assigned = [false; FORMALS.len()];
+    const SYS_FORMALS: [&str; 6] = [
+        "file",
+        "envir",
+        "chdir",
+        "keep.source",
+        "keep.parse.data",
+        "toplevel.env",
+    ];
+    let formals: &[&str] = if call.callee_name().as_deref() == Some("sys.source") {
+        &SYS_FORMALS
+    } else {
+        &FORMALS
+    };
+    let mut values: Vec<Option<SyntaxElement>> = vec![None; formals.len()];
+    let mut assigned = vec![false; formals.len()];
     let mut positional = Vec::new();
     if let Some(arg_list) = call.arg_list() {
         for arg in arg_list.args() {
@@ -427,11 +538,11 @@ fn source_file_value(call: &CallExpr) -> (Option<SyntaxElement>, bool, Option<bo
                 positional.push(value);
                 continue;
             };
-            let index = FORMALS
+            let index = formals
                 .iter()
                 .position(|formal| *formal == name)
                 .or_else(|| {
-                    let mut matches = FORMALS
+                    let mut matches = formals
                         .iter()
                         .enumerate()
                         .filter(|(_, formal)| formal.starts_with(&name));
@@ -439,10 +550,10 @@ fn source_file_value(call: &CallExpr) -> (Option<SyntaxElement>, bool, Option<bo
                     matches.next().is_none().then_some(index)
                 });
             let Some(index) = index else {
-                return (None, false, None);
+                return (None, None, None);
             };
             if assigned[index] {
-                return (None, false, None);
+                return (None, None, None);
             }
             assigned[index] = true;
             values[index] = value;
@@ -454,12 +565,12 @@ fn source_file_value(call: &CallExpr) -> (Option<SyntaxElement>, bool, Option<bo
         .filter_map(|(index, assigned)| (!assigned).then_some(index));
     for value in positional {
         let Some(index) = unassigned.next() else {
-            return (None, false, None);
+            return (None, None, None);
         };
         values[index] = value;
     }
-    let local = values[1].as_ref().is_some_and(is_true_literal);
-    let chdir = match values[11].as_ref() {
+    let chdir_index = if formals == SYS_FORMALS { 2 } else { 11 };
+    let chdir = match values[chdir_index].as_ref() {
         None => Some(false),
         Some(NodeOrToken::Token(token)) if token.kind() == SyntaxKind::IDENT => {
             match token.text() {
@@ -470,11 +581,12 @@ fn source_file_value(call: &CallExpr) -> (Option<SyntaxElement>, bool, Option<bo
         }
         _ => None,
     };
-    (values[0].take(), local, chdir)
+    (values[0].take(), values[1].take(), chdir)
 }
 
-fn source_edge(call: &CallExpr, base_dir: Option<&Path>) -> SourceEdge {
-    let (file_value, local, chdir) = source_file_value(call);
+pub(crate) fn source_edge(call: &CallExpr, base_dir: Option<&Path>) -> SourceEdge {
+    let (file_value, _, chdir) = source_file_value(call);
+    let local = !super::source_env::source_destination(call).shares_file_scope();
     let target = match (&file_value, chdir) {
         (Some(value), Some(_)) => target_from_value(value, base_dir),
         _ => SourceTarget::Dynamic,
@@ -531,12 +643,6 @@ fn target_from_value(value: &SyntaxElement, base_dir: Option<&Path>) -> SourceTa
         return SourceTarget::Path(resolved);
     }
     SourceTarget::Dynamic
-}
-
-/// `TRUE` / `T` as a bare token.
-fn is_true_literal(value: &SyntaxElement) -> bool {
-    matches!(value, NodeOrToken::Token(t)
-        if t.kind() == SyntaxKind::IDENT && matches!(t.text(), "TRUE" | "T"))
 }
 
 fn token_name(element: &SyntaxElement) -> Option<String> {
@@ -612,10 +718,10 @@ mod tests {
     }
 
     #[test]
-    fn local_true_does_not_contribute_scope() {
+    fn local_true_shares_the_file_environment() {
         let e = edges("source(\"helpers.R\", local = TRUE)\n", None);
-        assert!(e[0].local);
-        assert!(!e[0].contributes_scope());
+        assert!(!e[0].local);
+        assert!(e[0].contributes_scope());
     }
 
     #[test]

@@ -47,11 +47,19 @@ impl Rule for UnusedBinding {
 
     fn check_file(&self, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         let src = ctx.root.text().to_string();
+        let source_used = ctx
+            .project
+            .and_then(|project| project.source_reads())
+            .map(|reads| reads.used_ranges(ctx.model))
+            .unwrap_or_default();
         sink.extend(
             ctx.model
                 .unused_local_bindings()
                 .filter(|id| {
                     let b = ctx.model.binding(*id);
+                    if source_used.contains(&b.def_range) {
+                        return false;
+                    }
                     // A top-level binding read by a sibling file (same package or
                     // source-closure) is used cross-file, so it isn't unused.
                     let top_level = ctx.model.scope(b.scope).kind == ScopeKind::File;
