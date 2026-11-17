@@ -3,9 +3,8 @@
 <span id="arity"></span>
 
 Arity is a formatter, linter, and language server for R. It keeps your code
-consistent and gives you feedback as you write.
-
-## What Arity does
+consistent and gives you feedback as you write. It bundles three tools in one: a
+formatter, a linter, and a language server. Arity helps you to:
 
 - **Format consistently.** Format R code, roxygen documentation, and package
   `DESCRIPTION` files.
@@ -25,6 +24,9 @@ See the [performance comparisons](guide/performance.md) for measurements of the
 formatter, linter, and language server.
 
 ## Choose your setup {#quick-start}
+
+Arity works in your editor, in the terminal, and in CI. You can install it in
+different ways depending on your workflow:
 
 - **VS Code or Positron:** install the [Arity
   extension](guide/editors.md#vs-code-positron). It includes the binary and
