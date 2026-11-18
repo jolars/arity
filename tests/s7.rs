@@ -830,6 +830,69 @@ obj@
 }
 
 #[test]
+fn s7_union_types_supply_receiver_members() {
+    let definitions = r#"
+A <- S7::new_class("A", properties = list(first = S7::class_integer))
+B <- S7::new_class("B", properties = list(second = S7::class_integer))
+U <- S7::new_union(A, B)
+Wrapper <- S7::new_class("Wrapper", properties = list(item = U))
+"#;
+    for expression in [
+        "Wrapper()@item@|",
+        "S7::prop(Wrapper(), 'item')@|",
+        "g <- S7::new_generic('g', 'x')\nS7::method(g, U) <- function(x) x@|",
+    ] {
+        let source = format!("{definitions}{expression}");
+        let offset = source.find('|').unwrap();
+        let lsp_types::CompletionResponse::List(items) =
+            arity::lsp::compute_completions(&source.replace('|', ""), offset, &Default::default())
+                .unwrap()
+        else {
+            panic!("completion list")
+        };
+        for name in ["first", "second"] {
+            assert!(
+                items.items.iter().any(|item| item.label == name),
+                "{expression}: {name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn s7_union_preserves_known_classes_with_unmodeled_alternatives() {
+    use arity::project::classes::file_class_defs;
+    use arity::semantic::SemanticModel;
+
+    let source = r#"
+A <- S7::new_class("A", properties = list(first = S7::class_integer))
+U <- S7::new_union(A, S7::class_integer)
+Wrapper <- S7::new_class("Wrapper", properties = list(item = U))
+item <- Wrapper()@item
+item"#;
+    let root = arity::parser::parse(source).cst;
+    let model = SemanticModel::build(&root);
+    let path = Path::new("/s7-union.R");
+    let index = IncrementalDatabase::default().snapshot().class_index_in(
+        path,
+        &file_class_defs(&model, &root),
+        &root,
+        &model,
+    );
+    let value = root.last_token().unwrap().into();
+    let evidence = index.class_receiver_evidence(path, &root, &model, &value);
+    assert!(evidence.unknown);
+    let [candidate] = evidence.candidates.as_slice() else {
+        panic!("{evidence:?}");
+    };
+    assert_eq!(
+        index.declarations[&candidate.class].declaration.name,
+        ClassName::Known("A".into())
+    );
+    assert!(index.class_receiver(path, &root, &model, &value).is_none());
+}
+
+#[test]
 fn s7_property_validators_complete_members_of_the_value_type() {
     use lsp_types::CompletionResponse;
 

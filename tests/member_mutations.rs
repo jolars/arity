@@ -171,6 +171,35 @@ fn editor_signatures_follow_mutation_order_and_instance_creation() {
 }
 
 #[test]
+fn r6_factories_preserve_the_creation_points_of_returned_instances() {
+    let definitions = "G <- R6::R6Class(public = list(read = function(original) original))\n\
+                       saved <- G$new()\n\
+                       fresh <- function() G$new()\n\
+                       methods::setClass('Member')\n\
+                       methods::setClassUnion('Choice', 'Member')\n";
+    let replacement =
+        "G$set('public', 'read', function(replacement) replacement, overwrite = TRUE)\n";
+    let later = "G$set('public', 'read', function(later) later, overwrite = TRUE)\n";
+    for (body, expected) in [
+        ("saved", "read(original)"),
+        ("{ alias <- saved; return(alias) }", "read(original)"),
+        ("if (flag) saved else saved", "read(original)"),
+        ("G$new()", "read(replacement)"),
+        ("fresh()", "read(replacement)"),
+        ("if (flag) fresh() else G$new()", "read(replacement)"),
+    ] {
+        assert_eq!(
+            help(&format!(
+                "{definitions}get <- function() {body}\n{replacement}get()$read(|)\n{later}"
+            ))
+            .as_deref(),
+            Some(expected),
+            "{body}"
+        );
+    }
+}
+
+#[test]
 fn s4_registrations_preserve_live_member_mutation_order() {
     for (declaration, mutation, addition) in [
         (
@@ -406,6 +435,7 @@ Open <- R6::R6Class(lock_objects = FALSE, public = list(read = function() 1))
         let receiver = ClassReceiver {
             class: class(&index, binding),
             access: ClassAccess::Public,
+            exact: true,
             point: None,
             cached_members: Default::default(),
             uncertain_cache: false,
@@ -445,6 +475,7 @@ Open <- R6::R6Class(lock_objects = FALSE, public = list(read = function() 1))
     let receiver = ClassReceiver {
         class: class(&index, "Open"),
         access: ClassAccess::Public,
+        exact: true,
         point: None,
         cached_members: Default::default(),
         uncertain_cache: false,

@@ -1,7 +1,10 @@
 use super::*;
 
 impl Projection<'_> {
-    pub(super) fn s4_call_sites(&mut self) -> Vec<S4CallSite> {
+    pub(super) fn s4_call_sites(
+        &mut self,
+        callable_frames: &HashMap<TextRange, usize>,
+    ) -> Vec<S4CallSite> {
         let mut sites = Vec::new();
         for (call, callee, name) in factories(self.model, self.root) {
             let (kind, formals) = match name.as_str() {
@@ -40,15 +43,9 @@ impl Projection<'_> {
             });
             let function = call.syntax().ancestors().find_map(FunctionExpr::cast);
             let named_frame = function.as_ref().and_then(|function| {
-                let assignment =
-                    direct_assignment(&SyntaxElement::Node(function.syntax().clone()))?;
-                let range = assignment.value_element()?.text_range();
-                self.events
-                    .iter()
-                    .find_map(|(event_range, event)| match event {
-                        OopEvent::Callable(index) if *event_range == range => Some(*index),
-                        _ => None,
-                    })
+                callable_frames
+                    .get(&function.syntax().text_range())
+                    .copied()
             });
             let mut frames: Vec<_> = self
                 .method_implementations

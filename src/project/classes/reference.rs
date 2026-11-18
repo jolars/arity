@@ -133,6 +133,40 @@ impl ClassIndex {
         }
         Some(api)
     }
+    pub(super) fn reference_field_class(
+        &self,
+        receiver: &ClassReceiver,
+        name: &str,
+    ) -> Option<ClassId> {
+        if receiver.class.key.system != ClassSystem::RefClass
+            || receiver.access != ClassAccess::Public
+        {
+            return None;
+        }
+        let members = self.reference_receiver_api(receiver)?.instance;
+        if !members.complete {
+            return None;
+        }
+        let [field] = members.entries.get(name)?.as_slice() else {
+            return None;
+        };
+        let (MemberKind::Field, Some(DispatchClass::Formal(class)), Some(declaration)) =
+            (field.kind, &field.declared_type, &field.declaration)
+        else {
+            return None;
+        };
+        let candidates = self.resolve_reference(
+            &declaration.path,
+            &declaration.key.owner,
+            &ParentRef::Formal(class.clone()),
+            true,
+        );
+        let [class] = candidates.as_slice() else {
+            return None;
+        };
+        Some(class.clone())
+    }
+
     /// The standard base is supplied by methods itself, without a workspace
     /// declaration. A visible declaration with that name still needs resolution.
     pub(super) fn reference_base_parent(&self, id: &ClassId, ordinal: usize) -> bool {

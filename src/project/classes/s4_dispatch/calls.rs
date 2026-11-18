@@ -288,7 +288,7 @@ impl ClassIndex {
             .collect()
     }
 
-    fn s4_named_frame(
+    pub(super) fn s4_named_frame(
         &self,
         path: &Path,
         frame: usize,

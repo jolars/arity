@@ -54,6 +54,7 @@ pub(in crate::project::classes) struct OopProjection {
     pub implementations: Vec<MethodImplementationSite>,
     pub s4_calls: Vec<S4CallSite>,
     pub event_ranges: Vec<TextRange>,
+    pub callable_frames: HashMap<TextRange, usize>,
 }
 
 impl Projection<'_> {
@@ -456,7 +457,7 @@ pub(in crate::project::classes) fn project(
     let mut projection = projection_for(model, root, owners, classes, include_sites, s4_events);
     projection.members();
     projection.mutations();
-    projection.execution_events();
+    let callable_frames = projection.execution_events();
     projection.generics();
     projection.generic_bindings();
     projection.registered_methods();
@@ -465,16 +466,11 @@ pub(in crate::project::classes) fn project(
     projection.s3_methods();
     projection.facts.class_lookups = class_lookups(model, root, false);
     projection.events.sort_by_key(|(range, _)| range.end());
-    projection.facts.events = projection
-        .events
-        .iter()
-        .map(|(_, event)| event.clone())
-        .collect();
     if include_sites {
         projection.use_sites();
     }
     let s4_calls = if include_sites {
-        projection.s4_call_sites()
+        projection.s4_call_sites(&callable_frames)
     } else {
         Vec::new()
     };
@@ -482,20 +478,15 @@ pub(in crate::project::classes) fn project(
     projection
         .sites
         .sort_by_key(|site| (site.range.start(), site.range.end()));
+    let (event_ranges, events) = projection.events.into_iter().unzip();
+    projection.facts.events = events;
     OopProjection {
         facts: projection.facts,
         sites: projection.sites,
         implementations: projection.method_implementations,
         s4_calls,
-        event_ranges: if include_sites {
-            projection
-                .events
-                .into_iter()
-                .map(|(range, _)| range)
-                .collect()
-        } else {
-            Vec::new()
-        },
+        callable_frames,
+        event_ranges,
     }
 }
 
@@ -518,24 +509,7 @@ pub fn oop_point(
     path: &std::path::Path,
     offset: TextSize,
 ) -> OopPoint {
-    let classes = extract(model, root, false);
-    let owners = owner_map(root, &classes.facts.declarations, &classes.locations);
-    let mut projection = projection_for(model, root, &owners, &classes, false, Vec::new());
-    projection.mutations();
-    projection.execution_events();
-    projection.generics();
-    projection.generic_bindings();
-    projection.registered_methods();
-    projection.s7_hooks();
-    projection.s7_s4_registrations();
-    OopPoint {
-        path: path.into(),
-        event: projection
-            .events
-            .iter()
-            .filter(|(range, _)| range.end() <= offset)
-            .count(),
-    }
+    extract(model, root, false).oop_point_at(path, offset)
 }
 
 impl Projection<'_> {

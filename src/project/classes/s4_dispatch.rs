@@ -304,6 +304,68 @@ pub struct S4Registry {
     removals: Vec<S4Removal>,
 }
 
+impl ClassIndex {
+    pub(super) fn s4_parameter_classes(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        binding: &crate::semantic::Binding,
+        extracted: &Extracted,
+    ) -> (BTreeSet<ClassId>, bool) {
+        let mut classes = BTreeSet::new();
+        let mut unknown = false;
+        let Some(function) = root
+            .covering_element(binding.def_range)
+            .parent()
+            .and_then(|node| node.ancestors().find_map(FunctionExpr::cast))
+        else {
+            return (classes, true);
+        };
+        let range = function.syntax().text_range();
+        let named_frame = extracted.callable_frames.get(&range).copied();
+        for method in &self.s4.methods {
+            let registration = method.id.source();
+            let inline = registration.path == path
+                && extracted
+                    .method_implementations
+                    .iter()
+                    .any(|site| site.method == registration.key && site.function_range == range);
+            let named = named_frame.is_some_and(|frame| {
+                method
+                    .implementation
+                    .as_ref()
+                    .is_some_and(|source| self.s4_named_frame(path, frame, registration, source))
+            });
+            if !inline && !named {
+                continue;
+            }
+            unknown |= method.dispatch.is_empty();
+            for signature in &method.dispatch {
+                let argument = signature.arguments.iter().find(|argument| {
+                    argument.argument.as_deref() == Some(unbacktick(&binding.name))
+                });
+                let Some(DispatchClass::Formal(name)) = argument.map(|arg| &arg.class) else {
+                    unknown = true;
+                    continue;
+                };
+                if !signature.valid || !signature.complete {
+                    unknown = true;
+                    continue;
+                }
+                let candidates = self.resolve_reference(
+                    &method.owner.path,
+                    &method.owner.lexical,
+                    &ParentRef::Formal(name.clone()),
+                    true,
+                );
+                unknown |= candidates.is_empty();
+                classes.extend(candidates);
+            }
+        }
+        (classes, unknown)
+    }
+}
+
 impl S4Registry {
     pub fn methods_for_generic(&self, generic: &S4GenericId) -> Vec<&S4Method> {
         self.methods

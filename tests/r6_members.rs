@@ -220,6 +220,116 @@ obj <- Child$new()
 "#;
 
 #[test]
+fn r6_completion_follows_simple_constructor_return() {
+    for (body, tail, expected) in [
+        ("Alias$new()", "make()$|", true),
+        ("{ obj <- Alias$new(); obj }", "make()$|", true),
+        ("{ obj <- Alias$new(); return(obj) }", "make()$|", true),
+        ("{ obj <- Alias$new(); 'obj' }", "make()$|", false),
+        ("{ obj <- Alias$new(); return('obj') }", "make()$|", false),
+        (
+            "{ return(Alias$new()) }",
+            "result <- make()\nresult$|",
+            true,
+        ),
+        ("Alias$new()", "make <- function() list()\nmake()$|", false),
+        (
+            "Alias$new()",
+            "result <- make()\nresult <- list()\nresult$|",
+            false,
+        ),
+    ] {
+        let items = completions(&format!(
+            "{EDITOR_CLASSES}\nmake <- function() {body}\n{tail}"
+        ));
+        assert_eq!(items.iter().any(|item| item.label == "read"), expected);
+        assert!(!items.iter().any(|item| item.label == "new"));
+    }
+}
+
+#[test]
+fn r6_factory_resolves_captured_instance_at_call_site() {
+    let source = format!(
+        "{EDITOR_CLASSES}\nmake <- function() saved\nouter <- function() make()\nsaved <- Alias$new()\nAlias$set('public', 'later', function() 1)\n"
+    );
+    for call in ["make()", "outer()"] {
+        let items = completions(&format!("{source}{call}$|"));
+        assert!(items.iter().any(|item| item.label == "read"), "{call}");
+        assert!(!items.iter().any(|item| item.label == "later"), "{call}");
+        assert_eq!(
+            help(&format!("{source}{call}$read(|)")).unwrap().signatures[0].label,
+            "read(scale = 2)",
+            "{call}"
+        );
+    }
+
+    let source = format!("{EDITOR_CLASSES}\nmake <- function() saved\n");
+    let assignment = "saved <- Alias$new()";
+    assert!(
+        !completions(&format!("{source}make()$|\n{assignment}"))
+            .iter()
+            .any(|item| item.label == "read")
+    );
+    assert!(help(&format!("{source}make()$read(|)\n{assignment}")).is_none());
+}
+
+#[test]
+fn r6_recursive_factory_keeps_the_nonrecursive_branch() {
+    let source = "A <- R6::R6Class('A', public = list(read = function(x) x))\n\
+                  make <- function(n) if (n > 0) make(n - 1) else A$new()\n";
+    assert!(
+        completions(&format!("{source}make(1)$|"))
+            .iter()
+            .any(|item| item.label == "read")
+    );
+    assert!(help(&format!("{source}make(1)$read(|)")).is_none());
+}
+
+#[test]
+fn r6_completion_uses_a_neutral_kind_for_conflicting_members() {
+    use lsp_types::CompletionItemKind;
+
+    let definitions = "A <- R6::R6Class('A', public = list(item = 1, shared = function() 1))\n\
+                       B <- R6::R6Class('B', public = list(item = function() 1, shared = function() 2))\n";
+    for receiver in [
+        "if (flag) A$new() else B$new()",
+        "if (!flag) B$new() else A$new()",
+    ] {
+        let items = completions(&format!("{definitions}({receiver})$|"));
+        let kinds = |name: &str| {
+            items
+                .iter()
+                .filter(|item| item.label == name)
+                .map(|item| item.kind)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            kinds("item"),
+            [Some(CompletionItemKind::TEXT)],
+            "{receiver}"
+        );
+        assert_eq!(
+            kinds("shared"),
+            [Some(CompletionItemKind::METHOD)],
+            "{receiver}"
+        );
+    }
+}
+
+#[test]
+fn r6_completion_follows_a_union_of_local_generators() {
+    let items = completions(
+        "A <- R6::R6Class('A', public = list(first = 1))\n\
+         B <- R6::R6Class('B', public = list(second = 2))\n\
+         Generator <- if (flag) A else B\n\
+         Generator$new()$|",
+    );
+    for name in ["first", "second"] {
+        assert!(items.iter().any(|item| item.label == name), "{name}");
+    }
+}
+
+#[test]
 fn r6_completion_separates_generators_instances_and_method_receivers() {
     for (marked, expected, absent) in [
         (

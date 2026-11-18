@@ -55,6 +55,113 @@ fn named(index: &ClassIndex, name: &str) -> ClassId {
 }
 
 #[test]
+fn receiver_evidence_retains_branch_classes_and_unknown_paths() {
+    let definitions = "A <- methods::setClass('A', slots = c(first = 'numeric'))\n\
+                       B <- methods::setClass('B', slots = c(second = 'numeric'))\n";
+    for (rhs, expected, unknown) in [
+        ("if (flag) A() else B()", vec!["A", "B"], false),
+        ("if (flag) A() else opaque()", vec!["A"], true),
+        ("if (flag) A()", vec!["A"], true),
+        ("(if (flag) A else B)()", vec!["A", "B"], false),
+    ] {
+        let source = format!("{definitions}x <- {rhs}\nalias <- x\nalias");
+        let root = parse(&source).cst;
+        let model = SemanticModel::build(&root);
+        let value = root.last_token().unwrap().into();
+        let index = index(&source);
+        let evidence = index.class_receiver_evidence(Path::new("/s4.R"), &root, &model, &value);
+        let ids: Vec<_> = expected.iter().map(|name| named(&index, name)).collect();
+        assert_eq!(
+            evidence
+                .candidates
+                .iter()
+                .map(|receiver| &receiver.class)
+                .collect::<Vec<_>>(),
+            ids.iter().collect::<Vec<_>>(),
+        );
+        assert_eq!(evidence.unknown, unknown);
+    }
+    for expression in [
+        "x <- if (flag) A() else B()\nx@|",
+        "make <- function() if (flag) A() else B()\nmake()@|",
+        "OuterA <- methods::setClass('OuterA', slots = c(inner = 'A'))\n\
+         OuterB <- methods::setClass('OuterB', slots = c(inner = 'B'))\n\
+         x <- if (flag) OuterA() else OuterB()\nx@inner@|",
+    ] {
+        let items = completion(&format!("{definitions}{expression}"));
+        for name in ["first", "second"] {
+            assert!(items.iter().any(|item| item.label == name), "{expression}");
+        }
+    }
+    let items = completion(&format!(
+        "{definitions}x <- if (flag) A() else B()\nx <- opaque()\nx@|"
+    ));
+    assert!(
+        !items
+            .iter()
+            .any(|item| matches!(item.label.as_str(), "first" | "second"))
+    );
+}
+
+#[test]
+fn s4_declared_unions_supply_receiver_slots() {
+    let items = completion(
+        "A <- methods::setClass('A', slots = c(first = 'numeric'))\n\
+         B <- methods::setClass('B', slots = c(second = 'numeric'))\n\
+         methods::setClassUnion('Choice', c('A', 'B'))\n\
+         Box <- methods::setClass('Box', slots = c(item = 'Choice'))\n\
+         Box()@item@|",
+    );
+    for name in ["first", "second"] {
+        assert!(items.iter().any(|item| item.label == name), "{name}");
+    }
+}
+
+#[test]
+fn s4_declared_unions_include_registered_extensions() {
+    let definitions = "A <- methods::setClass('A', slots = c(first = 'numeric'))\n\
+                       B <- methods::setClass('B', slots = c(second = 'numeric'))\n\
+                       methods::setClassUnion('Choice', 'A')\n\
+                       methods::setIs('B', 'Choice')\n\
+                       Box <- methods::setClass('Box', slots = c(item = 'Choice'))\n";
+    let source = format!("{definitions}Box()@item@");
+    let CompletionResponse::List(list) =
+        compute_completions(&source, source.len(), &IndexedProvider::empty()).unwrap()
+    else {
+        panic!("expected completion list");
+    };
+    assert!(list.is_incomplete);
+    for name in ["first", "second"] {
+        assert!(list.items.iter().any(|item| item.label == name), "{name}");
+    }
+}
+
+#[test]
+fn s4_completion_uses_named_dispatch_parameter_class() {
+    let items = completion(
+        "A <- methods::setClass('A', slots = c(value = 'numeric'))\n\
+         methods::setGeneric('inspect', function(other, x) standardGeneric('inspect'), signature = 'x')\n\
+         methods::setMethod('inspect', 'A', function(other, x) x@|)",
+    );
+    assert!(items.iter().any(|item| item.label == "value"));
+}
+
+#[test]
+fn s4_completion_combines_registrations_of_the_same_method_body() {
+    let items = completion(
+        "A <- methods::setClass('A', slots = c(first = 'numeric'))\n\
+         B <- methods::setClass('B', slots = c(second = 'numeric'))\n\
+         methods::setGeneric('inspect', function(x) standardGeneric('inspect'))\n\
+         impl <- function(x) x@|first\n\
+         methods::setMethod('inspect', 'A', impl)\n\
+         methods::setMethod('inspect', 'B', impl)",
+    );
+    for name in ["first", "second"] {
+        assert!(items.iter().any(|item| item.label == name));
+    }
+}
+
+#[test]
 fn legacy_representation_and_untyped_slots_are_declarations() {
     let facts = facts(
         "methods::setClass('Base', slots = c(value = 'numeric'))\n\

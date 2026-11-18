@@ -142,7 +142,7 @@ impl Projection<'_> {
             .and_then(|token| read_binding(self.model, token))?;
         self.mutator_base(stable_value(self.model, self.root, binding)?, depth + 1)
     }
-    pub(super) fn execution_events(&mut self) {
+    pub(super) fn execution_events(&mut self) -> HashMap<TextRange, usize> {
         for (class, location) in self
             .classes
             .facts
@@ -257,6 +257,7 @@ impl Projection<'_> {
                     .push((value.text_range(), OopEvent::Binding(name)));
             }
         }
+        callable_origins
     }
     fn mutation_target(
         &self,

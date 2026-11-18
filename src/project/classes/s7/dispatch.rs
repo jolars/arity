@@ -1079,14 +1079,16 @@ impl ClassIndex {
         signatures.next().is_none().then_some(signature)
     }
 
-    pub(in crate::project::classes) fn s7_parameter_class(
+    pub(in crate::project::classes) fn s7_parameter_classes(
         &self,
         path: &Path,
         root: &SyntaxNode,
         binding: &crate::semantic::Binding,
         implementations: &[MethodImplementationSite],
-    ) -> Option<ClassId> {
-        let file = self.file(path)?;
+    ) -> (BTreeSet<ClassId>, bool) {
+        let Some(file) = self.file(path) else {
+            return (BTreeSet::new(), false);
+        };
         let mut classes = BTreeSet::new();
         let mut unknown = false;
         for site in implementations.iter().filter(|site| {
@@ -1138,18 +1140,17 @@ impl ClassIndex {
                         });
                     }
                     if is_binding(&property.validator) {
-                        let value_class = property
-                            .class
-                            .as_ref()
-                            .filter(|_| {
-                                property.complete
-                                    && property.factory.as_ref().is_some_and(|factory| {
-                                        self.s7_helper(path, factory, "S7").is_some()
-                                    })
-                            })
-                            .and_then(|spec| self.s7_spec_class(path, &key.owner, spec));
-                        if let Some(class) = value_class {
-                            classes.insert(class);
+                        let value_class = property.class.as_ref().filter(|_| {
+                            property.complete
+                                && property.factory.as_ref().is_some_and(|factory| {
+                                    self.s7_helper(path, factory, "S7").is_some()
+                                })
+                        });
+                        if let Some(spec) = value_class {
+                            let (candidates, incomplete) =
+                                self.s7_spec_candidates(path, &key.owner, spec);
+                            classes.extend(candidates);
+                            unknown |= incomplete;
                         } else {
                             unknown = true;
                         }
@@ -1160,40 +1161,52 @@ impl ClassIndex {
                     path: path.to_path_buf(),
                     key: site.method.clone(),
                 };
-                let resolved = self.s7_registration(&id)?;
+                let Some(resolved) = self.s7_registration(&id) else {
+                    unknown = true;
+                    continue;
+                };
                 let [S7GenericTarget::S7(generic)] = resolved.targets.as_slice() else {
+                    unknown = true;
                     continue;
                 };
                 let name = unbacktick(&binding.name);
-                let Some(position) = self
-                    .generic(generic)?
-                    .dispatch_arguments
-                    .iter()
-                    .position(|arg| matches!(arg, ClassName::Known(arg) if arg == name))
-                else {
+                let Some(position) = self.generic(generic).and_then(|generic| {
+                    generic
+                        .dispatch_arguments
+                        .iter()
+                        .position(|arg| matches!(arg, ClassName::Known(arg) if arg == name))
+                }) else {
+                    unknown = true;
                     continue;
                 };
-                let method = self.method(&id)?;
+                let Some(method) = self.method(&id) else {
+                    unknown = true;
+                    continue;
+                };
                 if !self.s7_signature_list_is_base(path, method) {
                     unknown = true;
                     continue;
                 }
-                let arg = method.dispatch.get(position)?;
+                let Some(arg) = method.dispatch.get(position) else {
+                    unknown = true;
+                    continue;
+                };
                 let spec = match &arg.class {
                     DispatchClass::Generator(reference) => {
                         S7ClassSpec::Generator(reference.clone())
                     }
                     DispatchClass::S7(spec) => spec.clone(),
-                    _ => continue,
+                    _ => {
+                        unknown = true;
+                        continue;
+                    }
                 };
-                if let Some(class) = self.s7_spec_class(path, &id.key.owner, &spec) {
-                    classes.insert(class);
-                }
+                let (candidates, incomplete) = self.s7_spec_candidates(path, &id.key.owner, &spec);
+                classes.extend(candidates);
+                unknown |= incomplete;
             }
         }
-        (!unknown && classes.len() == 1)
-            .then(|| classes.pop_first())
-            .flatten()
+        (classes, unknown)
     }
 }
 

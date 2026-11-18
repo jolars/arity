@@ -8,6 +8,7 @@ mod dispatch;
 mod properties;
 
 pub use dispatch::*;
+pub(super) use properties::PropertyCall;
 pub use properties::{S7Api, S7Property, S7PropertyUse};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
@@ -281,6 +282,37 @@ impl ClassIndex {
                 || !S7Version::development_export(name)
                 || self.s7_version(path) == S7Version::Development))
             .then(|| name.clone())
+    }
+
+    fn s7_spec_candidates(
+        &self,
+        path: &Path,
+        owner: &ClassOwner,
+        spec: &S7ClassSpec,
+    ) -> (BTreeSet<ClassId>, bool) {
+        let mut pending = vec![spec];
+        let mut classes = BTreeSet::new();
+        let mut unknown = false;
+        for _ in 0..32 {
+            let Some(spec) = pending.pop() else {
+                return (classes, unknown);
+            };
+            match spec {
+                S7ClassSpec::Union { factory, classes }
+                    if !classes.is_empty() && self.s7_union_origin(path, factory) =>
+                {
+                    pending.extend(classes.iter().rev().take(32));
+                    unknown |= classes.len() > 32;
+                }
+                _ => match self.s7_spec_class(path, owner, spec) {
+                    Some(class) => {
+                        classes.insert(class);
+                    }
+                    None => unknown = true,
+                },
+            }
+        }
+        (classes, unknown || !pending.is_empty())
     }
 
     fn s7_spec_class(

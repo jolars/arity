@@ -236,177 +236,215 @@ fn completions_from_context(
             prefix,
         } => {
             let known = oop::with_class_index(root, context, |index, model, path| {
-                let receiver = index.class_receiver(path, root, model, &receiver_expr)?;
-                if receiver.class.key.system == crate::project::classes::ClassSystem::S7 {
-                    if !at || receiver.access == crate::project::classes::ClassAccess::Generator {
-                        return Some((Vec::new(), true));
-                    }
-                    let api = index.s7_api(&receiver.class)?;
-                    let mut candidates: Vec<_> = api
-                        .properties
-                        .iter()
-                        .map(|property| Candidate {
-                            label: property.name.clone(),
-                            kind: CompletionItemKind::PROPERTY,
-                            sort_group: 0,
-                            data: CompletionData::ClassMember {
-                                signature: None,
-                                declared_type: property.declared_type(index),
-                            },
-                            origin: Some(SmolStr::new_static("S7")),
-                        })
-                        .collect();
-                    if !api.complete {
-                        candidates.extend(
-                            field_candidates(root, model, &receiver_expr, at)
-                                .into_iter()
-                                .map(|mut candidate| {
-                                    candidate.sort_group = 1;
-                                    candidate
-                                }),
-                        );
-                    }
-                    return Some((candidates, api.complete));
-                }
-                if receiver.class.key.system == crate::project::classes::ClassSystem::S4 {
-                    use crate::project::classes::{ClassAccess, DispatchClass};
-                    if !at || receiver.access == ClassAccess::Generator {
-                        return Some((Vec::new(), true));
-                    }
-                    let slots = index.s4_slots(&receiver.class)?;
-                    let candidates = slots
-                        .entries
-                        .iter()
-                        .map(|(name, entries)| {
-                            let declared_type = entries
-                                .first()
-                                .filter(|first| {
-                                    entries
-                                        .iter()
-                                        .all(|entry| entry.declared_type == first.declared_type)
-                                })
-                                .and_then(|slot| match &slot.declared_type {
-                                    DispatchClass::Formal(name) => Some(name.clone()),
-                                    DispatchClass::Any => Some("ANY".into()),
-                                    _ => None,
-                                });
-                            Candidate {
-                                label: name.clone(),
-                                kind: CompletionItemKind::FIELD,
+                use crate::project::classes::ClassReceiver;
+                let evidence = index.class_receiver_evidence(path, root, model, &receiver_expr);
+                let ambiguous = evidence.unknown || evidence.candidates.len() > 1;
+                let for_receiver = |receiver: ClassReceiver| -> Option<(Vec<Candidate>, bool)> {
+                    if receiver.class.key.system == crate::project::classes::ClassSystem::S7 {
+                        if !at || receiver.access == crate::project::classes::ClassAccess::Generator
+                        {
+                            return Some((Vec::new(), true));
+                        }
+                        let api = index.s7_api(&receiver.class)?;
+                        let mut candidates: Vec<_> = api
+                            .properties
+                            .iter()
+                            .map(|property| Candidate {
+                                label: property.name.clone(),
+                                kind: CompletionItemKind::PROPERTY,
                                 sort_group: 0,
                                 data: CompletionData::ClassMember {
                                     signature: None,
-                                    declared_type,
+                                    declared_type: property.declared_type(index),
                                 },
-                                origin: Some(SmolStr::new_static("S4")),
-                            }
-                        })
-                        .collect();
-                    return Some((candidates, slots.complete));
-                }
-                if receiver.class.key.system == crate::project::classes::ClassSystem::RefClass {
-                    use crate::project::classes::{ClassAccess, DispatchClass, MemberKind};
-                    let api = index.reference_receiver_api(&receiver)?;
-                    let generator = receiver.access == ClassAccess::Generator;
-                    let members = if at && !generator {
-                        &api.slots
-                    } else if at {
+                                origin: Some(SmolStr::new_static("S7")),
+                            })
+                            .collect();
+                        if !api.complete {
+                            candidates.extend(
+                                field_candidates(root, model, &receiver_expr, at)
+                                    .into_iter()
+                                    .map(|mut candidate| {
+                                        candidate.sort_group = 1;
+                                        candidate
+                                    }),
+                            );
+                        }
+                        return Some((candidates, api.complete));
+                    }
+                    if receiver.class.key.system == crate::project::classes::ClassSystem::S4 {
+                        use crate::project::classes::{ClassAccess, DispatchClass};
+                        if !at || receiver.access == ClassAccess::Generator {
+                            return Some((Vec::new(), true));
+                        }
+                        let slots = index.s4_slots(&receiver.class)?;
+                        let candidates = slots
+                            .entries
+                            .iter()
+                            .map(|(name, entries)| {
+                                let declared_type = entries
+                                    .first()
+                                    .filter(|first| {
+                                        entries
+                                            .iter()
+                                            .all(|entry| entry.declared_type == first.declared_type)
+                                    })
+                                    .and_then(|slot| match &slot.declared_type {
+                                        DispatchClass::Formal(name) => Some(name.clone()),
+                                        DispatchClass::Any => Some("ANY".into()),
+                                        _ => None,
+                                    });
+                                Candidate {
+                                    label: name.clone(),
+                                    kind: CompletionItemKind::FIELD,
+                                    sort_group: 0,
+                                    data: CompletionData::ClassMember {
+                                        signature: None,
+                                        declared_type,
+                                    },
+                                    origin: Some(SmolStr::new_static("S4")),
+                                }
+                            })
+                            .collect();
+                        return Some((candidates, slots.complete));
+                    }
+                    if receiver.class.key.system == crate::project::classes::ClassSystem::RefClass {
+                        use crate::project::classes::{ClassAccess, DispatchClass, MemberKind};
+                        let api = index.reference_receiver_api(&receiver)?;
+                        let generator = receiver.access == ClassAccess::Generator;
+                        let members = if at && !generator {
+                            &api.slots
+                        } else if at {
+                            return None;
+                        } else if generator {
+                            &api.generator
+                        } else {
+                            &api.instance
+                        };
+                        let candidates = members
+                            .entries
+                            .iter()
+                            .map(|(name, candidates)| {
+                                let member = match candidates.as_slice() {
+                                    [member] => Some(member),
+                                    _ => None,
+                                };
+                                let kind = match member.map(|member| member.kind) {
+                                    Some(MemberKind::Method) => CompletionItemKind::METHOD,
+                                    Some(MemberKind::ActiveBinding) => CompletionItemKind::PROPERTY,
+                                    _ => CompletionItemKind::FIELD,
+                                };
+                                let signature = if !members.complete || !receiver.exact {
+                                    None
+                                } else if generator && name == "new" {
+                                    api.initializer.as_ref()
+                                } else {
+                                    member
+                                        .filter(|member| member.kind == MemberKind::Method)
+                                        .and_then(|member| member.signature.as_ref())
+                                }
+                                .map(|signature| signature::callable_label("", signature));
+                                let declared_type = member
+                                    .and_then(|member| member.declared_type.as_ref())
+                                    .and_then(|class| match class {
+                                        DispatchClass::Formal(name) => Some(name.clone()),
+                                        DispatchClass::Any => Some("ANY".into()),
+                                        _ => None,
+                                    });
+                                Candidate {
+                                    label: name.clone(),
+                                    kind,
+                                    sort_group: 0,
+                                    data: CompletionData::ClassMember {
+                                        signature,
+                                        declared_type,
+                                    },
+                                    origin: Some(SmolStr::new_static("Reference Class")),
+                                }
+                            })
+                            .collect();
+                        return Some((candidates, members.complete));
+                    }
+                    if at {
                         return None;
-                    } else if generator {
-                        &api.generator
-                    } else {
-                        &api.instance
-                    };
+                    }
+                    let api = index.r6_api_at(&receiver.class, receiver.point.as_ref())?;
+                    let members = api.members(receiver.access);
                     let candidates = members
                         .entries
                         .iter()
                         .map(|(name, candidates)| {
-                            let member = match candidates.as_slice() {
-                                [member] => Some(member),
-                                _ => None,
-                            };
+                            let member = (candidates.len() == 1).then(|| &candidates[0]);
                             let kind = match member.map(|member| member.kind) {
-                                Some(MemberKind::Method) => CompletionItemKind::METHOD,
-                                Some(MemberKind::ActiveBinding) => CompletionItemKind::PROPERTY,
+                                Some(crate::project::classes::MemberKind::Method) => {
+                                    CompletionItemKind::METHOD
+                                }
+                                Some(crate::project::classes::MemberKind::ActiveBinding) => {
+                                    CompletionItemKind::PROPERTY
+                                }
                                 _ => CompletionItemKind::FIELD,
                             };
-                            let signature = if !members.complete {
+                            let signature = if !members.complete || !receiver.exact {
                                 None
-                            } else if generator && name == "new" {
+                            } else if receiver.access
+                                == crate::project::classes::R6Access::Generator
+                                && name == "new"
+                            {
                                 api.initializer.as_ref()
                             } else {
                                 member
-                                    .filter(|member| member.kind == MemberKind::Method)
+                                    .filter(|member| {
+                                        member.kind == crate::project::classes::MemberKind::Method
+                                    })
                                     .and_then(|member| member.signature.as_ref())
                             }
                             .map(|signature| signature::callable_label("", signature));
-                            let declared_type = member
-                                .and_then(|member| member.declared_type.as_ref())
-                                .and_then(|class| match class {
-                                    DispatchClass::Formal(name) => Some(name.clone()),
-                                    DispatchClass::Any => Some("ANY".into()),
-                                    _ => None,
-                                });
                             Candidate {
                                 label: name.clone(),
                                 kind,
                                 sort_group: 0,
                                 data: CompletionData::ClassMember {
                                     signature,
-                                    declared_type,
+                                    declared_type: None,
                                 },
-                                origin: Some(SmolStr::new_static("Reference Class")),
+                                origin: Some(SmolStr::new_static("R6")),
                             }
                         })
                         .collect();
-                    return Some((candidates, members.complete));
+                    Some((candidates, members.complete))
+                };
+                let mut surfaces = evidence.candidates.into_iter().filter_map(for_receiver);
+                let (mut candidates, mut complete) = surfaces.next()?;
+                for (other, known) in surfaces {
+                    candidates.extend(other);
+                    complete &= known;
                 }
-                if at {
-                    return None;
+                if ambiguous {
+                    complete = false;
+                    for candidate in &mut candidates {
+                        candidate.data = CompletionData::Field;
+                    }
+                    // Merge class evidence before adding usage-based field guesses.
+                    candidates.sort_by(|a, b| {
+                        a.label.cmp(&b.label).then(a.sort_group.cmp(&b.sort_group))
+                    });
+                    candidates.dedup_by(|candidate, previous| {
+                        if candidate.label != previous.label {
+                            return false;
+                        }
+                        if candidate.sort_group == previous.sort_group {
+                            if candidate.kind != previous.kind {
+                                previous.kind = CompletionItemKind::TEXT;
+                            }
+                            if candidate.origin != previous.origin {
+                                previous.origin = None;
+                            }
+                        }
+                        true
+                    });
+                    candidates.extend(field_candidates(root, model, &receiver_expr, at));
                 }
-                let api = index.r6_api_at(&receiver.class, receiver.point.as_ref())?;
-                let members = api.members(receiver.access);
-                let candidates = members
-                    .entries
-                    .iter()
-                    .map(|(name, candidates)| {
-                        let member = (candidates.len() == 1).then(|| &candidates[0]);
-                        let kind = match member.map(|member| member.kind) {
-                            Some(crate::project::classes::MemberKind::Method) => {
-                                CompletionItemKind::METHOD
-                            }
-                            Some(crate::project::classes::MemberKind::ActiveBinding) => {
-                                CompletionItemKind::PROPERTY
-                            }
-                            _ => CompletionItemKind::FIELD,
-                        };
-                        let signature = if !members.complete {
-                            None
-                        } else if receiver.access == crate::project::classes::R6Access::Generator
-                            && name == "new"
-                        {
-                            api.initializer.as_ref()
-                        } else {
-                            member
-                                .filter(|member| {
-                                    member.kind == crate::project::classes::MemberKind::Method
-                                })
-                                .and_then(|member| member.signature.as_ref())
-                        }
-                        .map(|signature| signature::callable_label("", signature));
-                        Candidate {
-                            label: name.clone(),
-                            kind,
-                            sort_group: 0,
-                            data: CompletionData::ClassMember {
-                                signature,
-                                declared_type: None,
-                            },
-                            origin: Some(SmolStr::new_static("R6")),
-                        }
-                    })
-                    .collect();
-                Some((candidates, members.complete))
+                Some((candidates, complete))
             });
             let (candidates, complete) = known.unwrap_or_else(|| {
                 (

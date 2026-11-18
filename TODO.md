@@ -826,7 +826,7 @@ coverage need not block useful workspace support.
 
 #### 7. Receiver evidence and dependency metadata
 
-- [ ] Add bounded receiver and class evidence for direct construction, aliases,
+- [x] Add bounded receiver and class evidence for direct construction, aliases,
   declared slot, property, and field types, method dispatch parameters, and
   simple constructor returns. Start with `new("Class")`, S4/Reference Class
   generators, R6 `$new()`, and S7 constructors. Keep unions of plausible

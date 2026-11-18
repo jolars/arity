@@ -259,6 +259,58 @@ mod tests {
         assert!(list.items.is_empty());
     }
     #[test]
+    fn s4_completion_recovers_named_method_frames_from_live_buffers() {
+        let package = Path::new("/s4-method-frame");
+        let path = package.join("R/implementation.R");
+        let source = "impl <- function(x) x@first\nalias <- impl\nother <- function(x) x@first\n";
+        let mut db = IncrementalDatabase::default();
+        let implementation = db.upsert_file(&path, source);
+        let registration = db.upsert_file(
+            &package.join("R/methods.R"),
+            "methods::setClass('A', slots = c(first = 'numeric', second = 'numeric'))\n\
+             methods::setGeneric('inspect', function(x) standardGeneric('inspect'))\n\
+             methods::setMethod('inspect', 'A', alias)\n",
+        );
+        db.set_workspace_members(vec![implementation, registration], vec![package.into()]);
+        db.set_package_metadata(vec![PackageInfo {
+            root: package.into(),
+            namespace: None,
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        let edited = source.replace(
+            "impl <- function(x) x@first",
+            "impl <- (function(x) x@first)",
+        );
+        for text in [
+            source.to_string(),
+            format!("# A live edit shifts the callable.\n{edited}"),
+        ] {
+            let buffer = TextBuffer::new(text);
+            for ((offset, _), registered) in buffer.text().match_indices('@').zip([true, false]) {
+                let position = buffer
+                    .line_index()
+                    .byte_to_position(offset + 1, PositionEncoding::Utf16);
+                let CompletionResponse::List(list) = completion::completion_via_db(
+                    &db.snapshot(),
+                    &path,
+                    &buffer,
+                    position,
+                    PositionEncoding::Utf16,
+                    None,
+                )
+                .unwrap() else {
+                    panic!("completion list");
+                };
+                assert_eq!(
+                    list.items.iter().any(|item| item.label == "second"),
+                    registered
+                );
+            }
+        }
+    }
+
+    #[test]
     fn generator_mutations_use_live_signatures_and_keep_older_instances() {
         let mut db = IncrementalDatabase::default();
         let definitions = db.upsert_file(Path::new("/mutation-live/R/a.R"), "G <- R6::R6Class(public = list(read = function(original) original))\nRef <- methods::setRefClass('LiveMutation', methods = list(read = function(original) original))\n");

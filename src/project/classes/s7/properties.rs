@@ -524,11 +524,11 @@ impl ClassIndex {
         }
     }
 
-    pub(in crate::project::classes) fn s7_property_class(
+    pub(in crate::project::classes) fn s7_property_classes(
         &self,
         receiver: &ClassReceiver,
         name: &str,
-    ) -> Option<ClassId> {
+    ) -> Option<(BTreeSet<ClassId>, bool)> {
         let api = self.s7_api(&receiver.class)?;
         if !api.complete || receiver.access == ClassAccess::Generator {
             return None;
@@ -540,11 +540,11 @@ impl ClassIndex {
         if property.definition.getter != S7Function::Absent {
             return None;
         }
-        self.s7_spec_class(
+        Some(self.s7_spec_candidates(
             &property.owner.path,
             &property.owner.key.owner,
             property.definition.class.as_ref()?,
-        )
+        ))
     }
 
     pub fn s7_property_use(

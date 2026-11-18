@@ -42,6 +42,63 @@ fn help(marked: &str) -> Option<String> {
 }
 
 #[test]
+fn reference_completion_keeps_both_owners_of_a_shared_method() {
+    let items = completion(
+        "impl <- function(.self) .self$|first\n\
+         A <- methods::setRefClass('A', fields = c(first = 'numeric'), methods = list(read = impl))\n\
+         B <- methods::setRefClass('B', fields = c(second = 'numeric'), methods = list(read = impl))",
+    );
+    for name in ["first", "second"] {
+        assert!(items.iter().any(|item| item.label == name), "{name}");
+    }
+}
+
+#[test]
+fn reference_completion_follows_declared_field_class() {
+    let items = completion(
+        "Child <- methods::setRefClass('Child', fields = c(label = 'character'))\n\
+         Parent <- methods::setRefClass('Parent', fields = c(child = 'Child'))\n\
+         Parent$new()$child$|",
+    );
+    assert!(items.iter().any(|item| item.label == "label"));
+}
+
+#[test]
+fn reference_field_declarations_do_not_prove_method_signatures() {
+    let source = "Parent <- methods::setRefClass('Parent', methods = list(read = function(base_arg) base_arg))\n\
+                  Child <- methods::setRefClass('Child', contains = 'Parent', methods = list(read = function(child_arg) child_arg))\n\
+                  Box <- methods::setRefClass('Box', fields = c(item = 'Parent'))\n\
+                  box <- Box$new(item = Child$new())\n";
+    assert!(help(&format!("{source}box$item$read(|)")).is_none());
+    assert!(help(&format!("{source}item <- box$item\nitem$read(|)")).is_none());
+    let items = completion(&format!("{source}box$item$|"));
+    let read = items.iter().find(|item| item.label == "read").unwrap();
+    assert_eq!(read.kind, Some(CompletionItemKind::METHOD));
+    assert!(
+        read.label_details
+            .as_ref()
+            .and_then(|label| label.detail.as_ref())
+            .is_none()
+    );
+    assert_eq!(
+        help(&format!("{source}Child$new()$read(|)")).as_deref(),
+        Some("read(child_arg)")
+    );
+}
+
+#[test]
+fn s4_parameter_declarations_do_not_prove_reference_method_signatures() {
+    let source = "Parent <- methods::setRefClass('Parent', methods = list(read = function(base_arg) base_arg))\n\
+                  Child <- methods::setRefClass('Child', contains = 'Parent', methods = list(read = function(child_arg) child_arg))\n\
+                  methods::setGeneric('inspect', function(x) standardGeneric('inspect'))\n";
+    assert!(help(&format!("{source}methods::setMethod('inspect', 'Parent', function(x) x$read(|))\ninspect(Child$new())")).is_none());
+    let items = completion(&format!(
+        "{source}methods::setMethod('inspect', 'Parent', function(x) x$|read())"
+    ));
+    assert!(items.iter().any(|item| item.label == "read"));
+}
+
+#[test]
 fn reference_field_vectors_types_and_accessors_are_distinct_from_slots() {
     let source = "Formal <- methods::setClass('Formal', slots = c(slot = 'numeric'))\nA <- methods::setRefClass('A', contains = 'Formal', fields = c('first', 'second'))\nB <- methods::setRefClass('B', fields = list(value = 'numeric', active = function(value) 1))\nC <- methods::setRefClass('C', fields = 'single')\n";
     let parsed = arity::parser::parse(source);

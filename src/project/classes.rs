@@ -37,7 +37,7 @@ mod member_access;
 mod mutations;
 mod receiver;
 pub use member_access::{AccessorArgument, MemberAccess, MemberEffect};
-pub use receiver::{ClassAccess, ClassReceiver};
+pub use receiver::{ClassAccess, ClassReceiver, ReceiverEvidence};
 mod reference;
 pub use reference::{ReferenceApi, ReferenceMember, ReferenceMembers};
 mod s3;
@@ -54,7 +54,7 @@ pub use s4_dispatch::*;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rowan::ast::AstNode as _;
 use rowan::{TextRange, TextSize, TokenAtOffset};
@@ -384,10 +384,23 @@ struct Extracted {
     occurrences: Vec<(TextRange, ClassOccurrence)>,
     oop_sites: Vec<OopSite>,
     oop_event_ranges: Vec<TextRange>,
+    /// Current function ranges paired with canonical callable origins.
+    callable_frames: HashMap<TextRange, usize>,
     s4_calls: Vec<S4CallSite>,
     s4_old_class_sites: BTreeMap<ClassKey, TextRange>,
     s4_package_load_sites: Vec<s4_dispatch::S4PackageLoadSite>,
     method_implementations: Vec<MethodImplementationSite>,
+}
+
+impl Extracted {
+    fn oop_point_at(&self, path: &Path, offset: TextSize) -> OopPoint {
+        OopPoint {
+            path: path.into(),
+            event: self
+                .oop_event_ranges
+                .partition_point(|range| range.end() <= offset),
+        }
+    }
 }
 
 pub fn file_class_defs(model: &SemanticModel, root: &SyntaxNode) -> FileClassFacts {
@@ -545,6 +558,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         occurrences: Vec::new(),
         oop_sites: Vec::new(),
         oop_event_ranges: Vec::new(),
+        callable_frames: HashMap::new(),
         s4_calls: Vec::new(),
         s4_old_class_sites: BTreeMap::new(),
         s4_package_load_sites: Vec::new(),
@@ -905,6 +919,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
     result.method_implementations = projection.implementations;
     result.facts.oop = projection.facts;
     result.oop_event_ranges = projection.event_ranges;
+    result.callable_frames = projection.callable_frames;
     result.s4_calls = projection.s4_calls;
     result.facts.s3 = s3::project(model, root);
     let loads = s4_dispatch::package_load_sites(root, model, include_sites);
