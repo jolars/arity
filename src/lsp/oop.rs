@@ -1,29 +1,47 @@
 //! Editor consumers share the project class index, including live-buffer overlays.
 
 use super::*;
+use crate::config::CompatVersion;
 use crate::project::classes::{ClassIndex, file_class_defs};
 
-pub(super) fn with_class_index<T>(
+#[derive(Clone, Copy)]
+pub(super) struct ReadContext<'a> {
+    pub snapshot: &'a Analysis,
+    pub path: &'a Path,
+    pub s7_floor: Option<&'a CompatVersion>,
+}
+
+pub(super) fn with_live_model<T>(
     root: &SyntaxNode,
-    context: Option<(&Analysis, &Path)>,
-    compute: impl Fn(&ClassIndex, &SemanticModel, &Path) -> T,
+    context: Option<ReadContext<'_>>,
+    compute: impl Fn(&Analysis, &SemanticModel, &Path) -> T,
 ) -> T {
-    let model = SemanticModel::build(root);
-    let facts = file_class_defs(&model, root);
-    let path = context.map_or(Path::new("buffer.R"), |(_, path)| path);
-    if let Some((snapshot, _)) = context {
+    let path = context.map_or(Path::new("buffer.R"), |context| context.path);
+    let floor = context.and_then(|context| context.s7_floor);
+    if let Some(ReadContext { snapshot, .. }) = context {
         let result = salsa::Cancelled::catch(AssertUnwindSafe(|| {
-            let index = snapshot.class_index_in(path, &facts, root, &model);
-            compute(&index, &model, path)
+            let model = snapshot.semantic_model_in_with_floor(path, root, floor);
+            compute(snapshot, &model, path)
         }));
         if let Ok(result) = result {
             return result;
         }
     }
-    let index = IncrementalDatabase::default()
-        .snapshot()
-        .class_index_in(path, &facts, root, &model);
-    compute(&index, &model, path)
+    let snapshot = IncrementalDatabase::default().snapshot();
+    let model = snapshot.semantic_model_in_with_floor(path, root, floor);
+    compute(&snapshot, &model, path)
+}
+
+pub(super) fn with_class_index<T>(
+    root: &SyntaxNode,
+    context: Option<ReadContext<'_>>,
+    compute: impl Fn(&ClassIndex, &SemanticModel, &Path) -> T,
+) -> T {
+    with_live_model(root, context, |snapshot, model, path| {
+        let facts = file_class_defs(model, root);
+        let index = snapshot.class_index_in(path, &facts, root, model);
+        compute(&index, model, path)
+    })
 }
 
 #[cfg(test)]
@@ -32,6 +50,112 @@ mod tests {
     use crate::project::PackageInfo;
     use crate::text::TextBuffer;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn canceled_read_keeps_the_description_floor() {
+        use std::cell::Cell;
+
+        let package = Path::new("/s7-cancel");
+        let path = package.join("R/point.R");
+        let root = parse("S7::`:=`(Point, S7::new_class())").cst;
+        let mut db = IncrementalDatabase::default();
+        db.refresh_descriptions([package.into()]);
+        db.upsert_description(package, "Package: shapes\nImports: S7 (>= 0.2.2.9000)\n");
+        let floor =
+            crate::project::package_facts_for(&db, &path).and_then(|facts| facts.compat.s7.clone());
+        let context = ReadContext {
+            snapshot: &db.snapshot(),
+            path: &path,
+            s7_floor: floor.as_ref(),
+        };
+        let first = Cell::new(true);
+        let bound = with_live_model(&root, Some(context), |_, model, _| {
+            if first.replace(false) {
+                std::panic::resume_unwind(Box::new(salsa::Cancelled::PendingWrite));
+            }
+            model
+                .bindings()
+                .iter()
+                .any(|binding| binding.name == "Point")
+        });
+        assert!(bound);
+    }
+
+    #[test]
+    fn s7_bare_completion_uses_confirmed_named_bindings() {
+        let path = Path::new("/s7-bare.R");
+        let source = "library(S7)\nPoint := new_class()\nPoi";
+        let buffer = TextBuffer::new(source.to_string());
+        let position = buffer
+            .line_index()
+            .byte_to_position(source.len(), PositionEncoding::Utf16);
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(path, buffer.text_arc());
+        let floor = CompatVersion::parse("0.2.2.9000");
+        db.set_s7_floor(file, floor.clone());
+        let CompletionResponse::List(items) = completion::completion_via_db(
+            &db.snapshot(),
+            path,
+            &buffer,
+            position,
+            PositionEncoding::Utf16,
+            floor.as_ref(),
+        )
+        .unwrap() else {
+            panic!("completion list");
+        };
+        assert!(items.items.iter().any(|item| item.label == "Point"));
+    }
+
+    #[test]
+    fn s7_dev_names_and_properties_follow_live_buffers() {
+        let path = Path::new("/s7-live.R");
+        let source = "library(S7)\nPoint := S7::new_class(properties = list(x = S7::class_integer))\nobj <- Point()\nobj@";
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(path, source);
+        let floor = CompatVersion::parse("0.2.2.9000");
+        db.set_s7_floor(file, floor.clone());
+        for (text, expected) in [
+            (source.to_string(), "x"),
+            (source.replace("x =", "label ="), "label"),
+        ] {
+            let buffer = TextBuffer::new(text.clone());
+            let position = buffer
+                .line_index()
+                .byte_to_position(text.len(), PositionEncoding::Utf16);
+            let snapshot = db.snapshot();
+            let got = completion::completion_via_db(
+                &snapshot,
+                path,
+                &buffer,
+                position,
+                PositionEncoding::Utf16,
+                floor.as_ref(),
+            )
+            .unwrap();
+            let CompletionResponse::List(items) = got else {
+                panic!("completion list")
+            };
+            assert!(
+                items.items.iter().any(|item| item.label == expected
+                    && item.kind == Some(CompletionItemKind::PROPERTY))
+            );
+            read_jobs::with_document_semantics(
+                &snapshot,
+                path,
+                &buffer,
+                floor.as_ref(),
+                |_, model| {
+                    assert!(
+                        model
+                            .bindings()
+                            .iter()
+                            .any(|binding| binding.name == "Point")
+                    );
+                },
+            );
+        }
+    }
 
     #[test]
     fn s4_slot_completion_uses_imports_and_live_buffer_class_facts() {
@@ -100,6 +224,7 @@ mod tests {
                 &buffer,
                 position,
                 PositionEncoding::Utf16,
+                None,
             )
             .unwrap() else {
                 panic!("completion list");
@@ -126,6 +251,7 @@ mod tests {
             &buffer,
             position,
             PositionEncoding::Utf16,
+            None,
         )
         .unwrap() else {
             panic!("completion list");
@@ -169,6 +295,7 @@ mod tests {
                 &buffer,
                 position,
                 PositionEncoding::Utf16,
+                None,
             )
             .unwrap();
             assert_eq!(help.signatures[0].label, expected);
@@ -230,6 +357,7 @@ mod tests {
                 &buffer,
                 position,
                 PositionEncoding::Utf16,
+                None,
             )
             .unwrap() else {
                 panic!("completion list")
@@ -273,6 +401,7 @@ mod tests {
                 &buffer,
                 position,
                 PositionEncoding::Utf16,
+                None,
             )
             .unwrap_or_else(|| panic!("{text}"));
             assert_eq!(help.signatures[0].label, expected);
@@ -289,7 +418,8 @@ mod tests {
                 child_path,
                 &buffer,
                 position,
-                PositionEncoding::Utf16
+                PositionEncoding::Utf16,
+                None,
             )
             .is_none()
         );
@@ -336,6 +466,7 @@ mod tests {
                 &buffer,
                 position,
                 PositionEncoding::Utf16,
+                None,
             )
             .unwrap();
             let CompletionResponse::List(items) = result else {
@@ -367,6 +498,7 @@ mod tests {
                 &buffer,
                 position,
                 PositionEncoding::Utf16,
+                None,
             )
             .unwrap();
             assert_eq!(help.signatures[0].label, expected);
@@ -394,7 +526,8 @@ mod tests {
                 child_path,
                 &buffer,
                 position,
-                PositionEncoding::Utf16
+                PositionEncoding::Utf16,
+                None,
             )
             .is_none()
         );

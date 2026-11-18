@@ -98,6 +98,7 @@ impl Rule for Roxygen2Compat {
         CompatConfig {
             r: None,
             roxygen2: Some("7.3.2".to_string()),
+            s7: None,
         }
     }
 

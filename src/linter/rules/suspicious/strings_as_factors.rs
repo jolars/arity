@@ -39,6 +39,7 @@ impl Rule for StringsAsFactors {
         CompatConfig {
             r: Some("3.6".into()),
             roxygen2: None,
+            s7: None,
         }
     }
 

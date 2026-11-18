@@ -11,7 +11,7 @@
 //! - Detect a `library()`/`require()` call at the *file* level (not nested
 //!   inside a function), and record it as a `LoadedPackage`.
 //!
-//! Definition order: the LHS of `<-`/`=`/`:=` is bound *after* recursing into
+//! Definition order: an assignment target is bound *after* recursing into
 //! the RHS, so an RHS read sees the pre-assignment scope. For `->`/`->>` the
 //! target is on the right; the same rule applies — we recurse into the value
 //! side first.
@@ -36,7 +36,18 @@ use crate::syntax::{RLanguage, SyntaxElement, SyntaxKind, SyntaxNode};
 
 /// Build a fresh semantic model from a root CST node.
 pub fn build(root: &SyntaxNode) -> SemanticModel {
-    let mut model = SemanticModel::default();
+    build_with_s7(root, super::s7::S7Version::Release, &HashSet::new())
+}
+
+pub(crate) fn build_with_s7(
+    root: &SyntaxNode,
+    version: super::s7::S7Version,
+    named_bindings: &HashSet<TextRange>,
+) -> SemanticModel {
+    let mut model = SemanticModel {
+        s7_version: version,
+        ..SemanticModel::default()
+    };
     let file_scope = push_scope(&mut model, ScopeKind::File, None, root.text_range());
     let ident_gates = {
         let mut ctx = BuildCtx {
@@ -53,6 +64,7 @@ pub fn build(root: &SyntaxNode) -> SemanticModel {
             gate_verb: None,
             ident_gates: Vec::new(),
             data_tables: HashSet::new(),
+            named_bindings,
         };
         walk_generic(&mut ctx, root, file_scope);
         ctx.ident_gates
@@ -65,6 +77,7 @@ pub fn build(root: &SyntaxNode) -> SemanticModel {
 
 struct BuildCtx<'a> {
     model: &'a mut SemanticModel,
+    named_bindings: &'a HashSet<TextRange>,
     /// How many `FUNCTION_EXPR`s deep we are. Used to decide whether a
     /// `library()` call counts as "top-level."
     function_depth: usize,
@@ -254,6 +267,27 @@ fn walk_node(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
         && let Some(operand) = unquote_operand(escape, node)
     {
         walk_evaluated(ctx, &operand, scope);
+        return;
+    }
+    if ctx.mask_depth == 0
+        && ctx.quote_depth == 0
+        && ctx.named_bindings.contains(&node.text_range())
+        && let Some((target, value)) = super::s7::binding_parts(node)
+    {
+        if let Some(base) = CallExpr::cast(node.clone()).and_then(|call| call.base()) {
+            walk_element(ctx, &base, scope);
+        }
+        walk_node(ctx, value.syntax(), scope);
+        bind_assignment(
+            ctx,
+            node,
+            scope,
+            SmolStr::new(target.text()),
+            target.text_range(),
+            BindingKind::Local,
+        );
+        ctx.model.s7_bindings.insert(node.text_range());
+        ctx.model.s7_injected_names.insert(target.text_range());
         return;
     }
     match node.kind() {
@@ -508,18 +542,10 @@ fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) 
     if ctx.quote_depth > 0 {
         return;
     }
-    // 2b. `:=` never binds a variable. R parses `a := b` as a call to `` `:=` ``,
-    //     which base R does not define; every package that gives it meaning
-    //     (data.table's `dt[, newcol := 1]` column update, rlang's
-    //     `list2("{name}" := value)` name injection) leaves the frame alone.
-    //     Record the target as a masked read so it neither resolves nor
-    //     surfaces as an unused binding.
+    // Unconfirmed `:=` can name a data.table column or inject an argument name.
     if op == Some(SyntaxKind::WALRUS) {
         match (assign.target_name_token(), &target) {
-            // The target names a column or an injected argument, never a
-            // binding, so mask it: outside a data-masking subscript there is no
-            // ambient mask to inherit. Pinned — the form is identified by
-            // syntax, not by a name a local binding could shadow.
+            // A bare target is a potential column or argument name.
             (Some(tok), _) => {
                 ctx.enter_pinned_mask();
                 record_ident_read(ctx, &tok, scope);
@@ -544,10 +570,6 @@ fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) 
             }
             _ => BindingKind::Local,
         };
-        let target_scope = match kind {
-            BindingKind::Implicit => enclosing_function_or_file(ctx.model, scope),
-            _ => scope,
-        };
         // Remember a name assigned a data.table, so a later marker-free
         // `dt[x > 3]` is recognized as a column filter.
         if value
@@ -557,26 +579,7 @@ fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) 
         {
             ctx.data_tables.insert(name.clone());
         }
-        let id = push_binding(ctx.model, target_scope, name, kind, range, ctx.loop_range);
-        if kind == BindingKind::Implicit {
-            ctx.model.bindings[id.0 as usize].super_assignment_scope = Some(scope);
-        }
-        ctx.model.bindings[id.0 as usize].available_from = node.text_range().end();
-        ctx.model.bindings[id.0 as usize].conditional = node
-            .ancestors()
-            .skip(1)
-            .take_while(|ancestor| {
-                !matches!(
-                    ancestor.kind(),
-                    SyntaxKind::FUNCTION_EXPR | SyntaxKind::ROOT
-                )
-            })
-            .any(|ancestor| {
-                !matches!(
-                    ancestor.kind(),
-                    SyntaxKind::BLOCK_EXPR | SyntaxKind::PAREN_EXPR | SyntaxKind::ASSIGNMENT_EXPR
-                )
-            });
+        bind_assignment(ctx, node, scope, name, range, kind);
     } else if let Some(NodeOrToken::Node(target_node)) = target {
         // `foo(x) <- value` dispatches to `` `foo<-` ``; recording `foo` as an
         // ordinary callee both misses the replacement binding and invents an
@@ -585,6 +588,40 @@ fn handle_assignment(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) 
             walk_node(ctx, &target_node, scope);
         }
     }
+}
+
+fn bind_assignment(
+    ctx: &mut BuildCtx<'_>,
+    node: &SyntaxNode,
+    scope: ScopeId,
+    name: SmolStr,
+    range: TextRange,
+    kind: BindingKind,
+) {
+    let target_scope = if kind == BindingKind::Implicit {
+        enclosing_function_or_file(ctx.model, scope)
+    } else {
+        scope
+    };
+    let id = push_binding(ctx.model, target_scope, name, kind, range, ctx.loop_range);
+    let binding = &mut ctx.model.bindings[id.0 as usize];
+    binding.super_assignment_scope = (kind == BindingKind::Implicit).then_some(scope);
+    binding.available_from = node.text_range().end();
+    binding.conditional = node
+        .ancestors()
+        .skip(1)
+        .take_while(|ancestor| {
+            !matches!(
+                ancestor.kind(),
+                SyntaxKind::FUNCTION_EXPR | SyntaxKind::ROOT
+            )
+        })
+        .any(|ancestor| {
+            !matches!(
+                ancestor.kind(),
+                SyntaxKind::BLOCK_EXPR | SyntaxKind::PAREN_EXPR | SyntaxKind::ASSIGNMENT_EXPR
+            )
+        });
 }
 
 fn walk_replacement_target(ctx: &mut BuildCtx<'_>, target: &SyntaxNode, scope: ScopeId) -> bool {

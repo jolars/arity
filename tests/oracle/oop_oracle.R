@@ -1,8 +1,8 @@
 #!/usr/bin/env Rscript
 # This driver is test-only. Each invocation gets a fresh R process and namespace.
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) != 5L) {
-  stop("usage: oop_oracle.R FIXTURE SOURCE R_VERSION R6_VERSION S7_VERSION")
+if (!length(args) %in% c(5L, 6L)) {
+  stop("usage: oop_oracle.R FIXTURE SOURCE R_VERSION R6_VERSION S7_VERSION [S7_REVISION]")
 }
 
 actual <- list(
@@ -10,8 +10,11 @@ actual <- list(
   r6 = as.character(packageVersion("R6")),
   s7 = as.character(packageVersion("S7"))
 )
-if (!identical(unname(unlist(actual)), args[3:5])) {
-  stop("OOP oracle requires R/R6/S7 ", paste(args[3:5], collapse = "/"),
+if (length(args) == 6L) {
+  actual$s7_revision <- packageDescription("S7", fields = "RemoteSha")
+}
+if (!identical(unname(unlist(actual)), args[3:length(args)])) {
+  stop("OOP oracle requires R/R6/S7 ", paste(args[3:length(args)], collapse = "/"),
        "; found ", paste(actual, collapse = "/"))
 }
 
@@ -75,7 +78,9 @@ dispatch_facts <- function(expression, object, owner) {
 }
 
 scope <- new.env(parent = globalenv())
-scope$.packageName <- "arityOopOracle"
+if (basename(args[[1L]]) != "s7_advanced") {
+  scope$.packageName <- "arityOopOracle"
+}
 # Runtime printing and setGeneric's return value must not corrupt JSON output.
 invisible(capture.output(sys.source(args[[2L]], envir = scope)))
 invisible(capture.output(sys.source(file.path(args[[1L]], "observe.R"), envir = scope)))

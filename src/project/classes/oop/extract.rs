@@ -2,6 +2,7 @@ use super::super::*;
 
 mod mutations;
 mod s4_metadata;
+mod s7;
 
 struct StringVector {
     entries: Vec<(Option<String>, ClassName, TextRange)>,
@@ -300,12 +301,6 @@ fn string_name(value: Option<SyntaxElement>) -> ClassName {
         .map_or(ClassName::Unknown, ClassName::Known)
 }
 
-fn assigned_name(node: &SyntaxNode) -> Option<String> {
-    direct_assignment(&SyntaxElement::Node(node.clone()))
-        .and_then(|assignment| assignment.target_name())
-        .map(|name| unbacktick(&name).to_string())
-}
-
 fn factory(
     model: &SemanticModel,
     root: &SyntaxNode,
@@ -402,15 +397,15 @@ pub(in crate::project::classes) fn declaration_roots(
         .collect()
 }
 
-pub(in crate::project::classes) fn project(
-    model: &SemanticModel,
-    root: &SyntaxNode,
-    owners: &HashMap<TextRange, ClassOwner>,
-    classes: &Extracted,
+fn projection_for<'a>(
+    model: &'a SemanticModel,
+    root: &'a SyntaxNode,
+    owners: &'a HashMap<TextRange, ClassOwner>,
+    classes: &'a Extracted,
     include_sites: bool,
     s4_events: Vec<(TextRange, OopEvent)>,
-) -> OopProjection {
-    let mut projection = Projection {
+) -> Projection<'a> {
+    Projection {
         model,
         root,
         owners,
@@ -423,7 +418,13 @@ pub(in crate::project::classes) fn project(
             .filter(|(def, _)| !matches!(def.factory, FunctionRef::Unresolved(_)))
             .map(|(def, loc)| (loc.call_range, def.key.clone()))
             .collect(),
-        facts: OopFacts::default(),
+        facts: OopFacts {
+            s7: S7Facts {
+                version: model.s7_version,
+                ..S7Facts::default()
+            },
+            ..OopFacts::default()
+        },
         sites: Vec::new(),
         method_bodies: Vec::new(),
         method_implementations: Vec::new(),
@@ -432,13 +433,35 @@ pub(in crate::project::classes) fn project(
         counts: BTreeMap::new(),
         include_sites,
         events: s4_events,
-    };
+    }
+}
+
+pub(in crate::project::classes) fn live_s7_spec(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+    classes: &Extracted,
+    value: &SyntaxElement,
+) -> S7ClassSpec {
+    projection_for(model, root, &classes.owners, classes, false, Vec::new()).s7_spec(value, 0)
+}
+
+pub(in crate::project::classes) fn project(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+    owners: &HashMap<TextRange, ClassOwner>,
+    classes: &Extracted,
+    include_sites: bool,
+    s4_events: Vec<(TextRange, OopEvent)>,
+) -> OopProjection {
+    let mut projection = projection_for(model, root, owners, classes, include_sites, s4_events);
     projection.members();
     projection.mutations();
     projection.execution_events();
     projection.generics();
     projection.generic_bindings();
     projection.registered_methods();
+    projection.s7_hooks();
+    projection.s7_s4_registrations();
     projection.s3_methods();
     projection.facts.class_lookups = class_lookups(model, root, false);
     projection.events.sort_by_key(|(range, _)| range.end());
@@ -497,33 +520,14 @@ pub fn oop_point(
 ) -> OopPoint {
     let classes = extract(model, root, false);
     let owners = owner_map(root, &classes.facts.declarations, &classes.locations);
-    let mut projection = Projection {
-        model,
-        root,
-        owners: &owners,
-        classes: &classes,
-        class_keys: classes
-            .facts
-            .declarations
-            .iter()
-            .zip(&classes.locations)
-            .map(|(class, location)| (location.call_range, class.key.clone()))
-            .collect(),
-        facts: OopFacts::default(),
-        sites: Vec::new(),
-        method_bodies: Vec::new(),
-        method_implementations: Vec::new(),
-        generic_values: HashMap::new(),
-        s4_defaults: HashMap::new(),
-        counts: BTreeMap::new(),
-        include_sites: false,
-        events: Vec::new(),
-    };
+    let mut projection = projection_for(model, root, &owners, &classes, false, Vec::new());
     projection.mutations();
     projection.execution_events();
     projection.generics();
     projection.generic_bindings();
     projection.registered_methods();
+    projection.s7_hooks();
+    projection.s7_s4_registrations();
     OopPoint {
         path: path.into(),
         event: projection
@@ -598,6 +602,11 @@ impl Projection<'_> {
                 continue;
             };
             if let Some(s4) = &def.s4 {
+                if self.model.s7_version == S7Version::Development
+                    && s4.definition == S4Definition::Class
+                {
+                    self.s7_s4_contains(def, &call);
+                }
                 let factory = match s4.definition {
                     S4Definition::Class => "setClass",
                     S4Definition::Union => "setClassUnion",
@@ -639,9 +648,12 @@ impl Projection<'_> {
                 }
                 continue;
             }
-            let Some(args) = matched_args(&call, def.system().formals()) else {
+            let Some(args) = declaration_args(self.model, &call, def.system().formals()) else {
                 continue;
             };
+            if def.system() == ClassSystem::S7 {
+                self.s7_class(def, &call, &args);
+            }
             let groups: &[(&str, MemberVisibility, MemberKind)] = match def.system() {
                 ClassSystem::R6 => &[
                     ("public", MemberVisibility::Public, MemberKind::Field),
@@ -767,8 +779,10 @@ impl Projection<'_> {
                     factory: factory.map(|(reference, _)| reference),
                     uncertainty: issues.clone(),
                 });
-                for arg in entries.into_iter().flatten() {
-                    self.member_entry(
+                for mut arg in entries.into_iter().flatten() {
+                    let property = (kind == MemberKind::Property)
+                        .then(|| self.s7_property(call.syntax(), &mut arg));
+                    let key = self.member_entry(
                         &call,
                         MemberInput {
                             system: def.system(),
@@ -780,6 +794,17 @@ impl Projection<'_> {
                             entry: arg,
                         },
                     );
+                    if let Some(property) = property {
+                        if let Some(member) = self.facts.members.last_mut() {
+                            member.declared_type = property.class.as_ref().map(|spec| match spec {
+                                S7ClassSpec::Generator(reference) => {
+                                    DispatchClass::Generator(reference.clone())
+                                }
+                                _ => DispatchClass::S7(spec.clone()),
+                            });
+                        }
+                        self.facts.s7.properties.insert(key, property);
+                    }
                 }
             }
         }
@@ -973,10 +998,12 @@ impl Projection<'_> {
             };
             let key = self.key(&node, system, OopKind::Generic);
             let mut issues = uncertainty(&node, &reference);
-            if !unconditional(call.syntax()) {
+            if declaration_eager(self.model, call.syntax()) {
+                issues.remove(&OopUncertainty::Conditional);
+            } else {
                 issues.insert(OopUncertainty::Conditional);
             }
-            let args = matched_args(&call, formals);
+            let args = declaration_args(self.model, &call, formals);
             if args.is_none() {
                 issues.insert(OopUncertainty::InvalidArguments);
             }
@@ -986,7 +1013,11 @@ impl Projection<'_> {
             } else {
                 "name"
             });
-            let generic_name = string_name(name_value.clone());
+            let named = s7_named_target(self.model, call.syntax());
+            let generic_name = match named.as_ref() {
+                Some(target) => ClassName::Known(unbacktick(target.text()).to_string()),
+                None => string_name(name_value.clone()),
+            };
             if generic_name == ClassName::Unknown {
                 issues.insert(OopUncertainty::DynamicName);
             }
@@ -1003,7 +1034,10 @@ impl Projection<'_> {
                 })
                 .filter(|value| system != OopSystem::S4 || value.to_string() != "NULL")
             };
-            let signature = self.implementation_signature(function.clone(), &mut BTreeSet::new());
+            let function =
+                function.filter(|value| system != OopSystem::S7 || !constant_atom(value, "NULL"));
+            let mut signature =
+                self.implementation_signature(function.clone(), &mut BTreeSet::new());
             let dispatch_value = value(if system == OopSystem::S7 {
                 "dispatch_args"
             } else {
@@ -1011,7 +1045,7 @@ impl Projection<'_> {
             })
             .filter(|value| system != OopSystem::S4 || value.to_string() != "NULL");
             let mut dispatch_factory = None;
-            let dispatch_arguments = if let Some(value) = dispatch_value {
+            let dispatch_arguments: Vec<_> = if let Some(value) = dispatch_value {
                 match self.string_vector(&value) {
                     Some(vector) => {
                         dispatch_factory = vector.factory;
@@ -1049,7 +1083,8 @@ impl Projection<'_> {
                     .and_then(|a| a.target_name())
                     .map(|name| unbacktick(&name).to_string())
             } else {
-                assigned_name(&node)
+                assigned_binding(self.model, &node)
+                    .and_then(|token| literal(&SyntaxElement::Token(token)))
             };
             let s4 = (system == OopSystem::S4)
                 .then(|| self.s4_generic_definition(&args, function.clone(), &generic_name));
@@ -1074,6 +1109,40 @@ impl Projection<'_> {
                         target: key.clone(),
                     },
                 ));
+            }
+            if system == OopSystem::S7 {
+                let mut names = BTreeSet::new();
+                if dispatch_arguments.is_empty()
+                    || dispatch_arguments.iter().any(|argument| {
+                        !matches!(argument, ClassName::Known(name)
+                        if !name.is_empty() && name != "..." && names.insert(name))
+                    })
+                {
+                    issues.insert(OopUncertainty::DynamicSignature);
+                }
+                let shape = self.s7_generic_shape(&key, function.clone());
+                if shape == S7GenericDef::Generated
+                    && !issues.contains(&OopUncertainty::DynamicSignature)
+                {
+                    let parameters = dispatch_arguments
+                        .iter()
+                        .filter_map(|name| match name {
+                            ClassName::Known(name) => Some(CallableParameter {
+                                name: name.clone(),
+                                default: None,
+                            }),
+                            _ => None,
+                        })
+                        .chain([CallableParameter {
+                            name: "...".into(),
+                            default: None,
+                        }])
+                        .collect();
+                    signature = Some(CallableSignature { parameters });
+                }
+                self.facts.s7.generics.insert(key.clone(), shape);
+                self.events
+                    .push((call.syntax().text_range(), OopEvent::S7Generic(key.clone())));
             }
             let def = GenericDef {
                 key: key.clone(),
@@ -1426,7 +1495,7 @@ impl Projection<'_> {
         )
     }
 
-    fn dispatch(&self, value: Option<SyntaxElement>, system: OopSystem) -> Dispatch {
+    fn dispatch(&mut self, value: Option<SyntaxElement>, system: OopSystem) -> Dispatch {
         let Some(value) = value else {
             return Dispatch {
                 arguments: Vec::new(),
@@ -1471,7 +1540,15 @@ impl Projection<'_> {
                             DispatchArgument {
                                 argument,
                                 class: entry.as_ref().map_or(DispatchClass::Unknown, |entry| {
-                                    DispatchClass::Generator(self.generator(entry))
+                                    match self.s7_spec(entry, 0) {
+                                        S7ClassSpec::Generator(generator) => {
+                                            DispatchClass::Generator(generator)
+                                        }
+                                        S7ClassSpec::Unknown => {
+                                            DispatchClass::Generator(GeneratorRef::Unknown)
+                                        }
+                                        spec => DispatchClass::S7(spec),
+                                    }
                                 }),
                             },
                             range,
@@ -1588,6 +1665,36 @@ impl Projection<'_> {
                 &key.owner,
                 system == OopSystem::S7,
             );
+            let s7_external = if system == OopSystem::S7 {
+                generic_value
+                    .as_ref()
+                    .and_then(|value| self.s7_external_generic(value))
+            } else {
+                None
+            };
+            let s7_origin = generic_value
+                .as_ref()
+                .filter(|_| system == OopSystem::S7)
+                .and_then(|value| function_ref(self.model, self.root, value, &mut BTreeSet::new()));
+            if let Some(external) = &s7_external {
+                generic.name = ClassName::Known(external.name.clone());
+                generic.package = Some(external.package.clone());
+                generic.by_binding = true;
+            } else if generic.local.is_none()
+                && let Some(FunctionRef::Qualified { package, name }) = &s7_origin
+            {
+                generic.name = ClassName::Known(name.clone());
+                generic.package = Some(package.clone());
+            } else if system == OopSystem::S7 && generic.local.is_none() {
+                for system in [OopSystem::S3, OopSystem::S4] {
+                    let alternative =
+                        self.generic_reference(generic_value.clone(), system, &key.owner, true);
+                    if alternative.local.is_some() {
+                        generic = alternative;
+                        break;
+                    }
+                }
+            }
             if name == "setReplaceMethod"
                 && let ClassName::Known(name) = &mut generic.name
             {
@@ -1601,6 +1708,8 @@ impl Projection<'_> {
             }
             if generic.by_binding
                 && generic.local.is_none()
+                && s7_external.is_none()
+                && !matches!(s7_origin, Some(FunctionRef::Qualified { .. }))
                 && generic_value
                     .as_ref()
                     .and_then(SyntaxElement::as_token)
@@ -1619,14 +1728,12 @@ impl Projection<'_> {
             {
                 issues.insert(OopUncertainty::CustomEnvironment);
             }
-            let mut dispatch = self.dispatch(
-                value(if matches!(system, OopSystem::S4 | OopSystem::S7) {
-                    "signature"
-                } else {
-                    "class"
-                }),
-                system,
-            );
+            let dispatch_value = value(if matches!(system, OopSystem::S4 | OopSystem::S7) {
+                "signature"
+            } else {
+                "class"
+            });
+            let mut dispatch = self.dispatch(dispatch_value.clone(), system);
             if system == OopSystem::S3 && dispatch.arguments.len() != 1 {
                 dispatch.arguments = vec![(
                     DispatchArgument {
@@ -1711,10 +1818,15 @@ impl Projection<'_> {
             }
             let signature =
                 self.implementation_signature(implementation.clone(), &mut BTreeSet::new());
-            if signature.is_none() {
+            let s7_removal = system == OopSystem::S7
+                && self.model.s7_version == S7Version::Development
+                && implementation
+                    .as_ref()
+                    .is_some_and(|value| constant_atom(value, "NULL"));
+            if signature.is_none() && !s7_removal {
                 issues.insert(OopUncertainty::UnresolvedImplementation);
             }
-            if matches!(system, OopSystem::S3 | OopSystem::S4) {
+            if matches!(system, OopSystem::S3 | OopSystem::S4 | OopSystem::S7) && !s7_removal {
                 self.implementation(&key, implementation.clone(), true);
                 if name == ".S3method"
                     && implementation.is_none()
@@ -1736,6 +1848,19 @@ impl Projection<'_> {
                             },
                         });
                 }
+            }
+            if system == OopSystem::S7 {
+                self.facts.s7.methods.insert(
+                    key.clone(),
+                    S7MethodDef {
+                        list_signature: dispatch.factory.is_some(),
+                        removal: s7_removal,
+                        external: s7_external,
+                        generic_origin: s7_origin,
+                    },
+                );
+                self.events
+                    .push((node.text_range(), OopEvent::S7Method(key.clone())));
             }
             self.facts.methods.push(MethodDef {
                 key: key.clone(),

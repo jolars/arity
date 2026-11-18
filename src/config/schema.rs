@@ -158,6 +158,7 @@ extend-functions = { sapply = "use `vapply()`" }
 [compat]
 r = "4.1"
 roxygen2 = "7.3.2"
+s7 = "0.2.2.9000"
 
 [index]
 library-paths = ["/opt/R/library"]

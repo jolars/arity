@@ -439,12 +439,20 @@ pub struct CompatConfig {
     #[serde(default)]
     #[cfg_attr(test, schemars(regex(pattern = r"^[0-9]+(?:[.-][0-9]+)*$")))]
     pub roxygen2: Option<String>,
+    /// Minimum supported S7 version, e.g. `"0.2.2.9000"`.
+    #[serde(default)]
+    #[cfg_attr(test, schemars(regex(pattern = r"^[0-9]+(?:[.-][0-9]+)*$")))]
+    pub s7: Option<String>,
 }
 
 impl CompatConfig {
-    /// Validate that both keys, when present, parse as version strings.
+    /// Validate that configured floors parse as version strings.
     fn validate(&self, path: Option<&Path>) -> Result<(), ConfigError> {
-        for (field, value) in [("compat.r", &self.r), ("compat.roxygen2", &self.roxygen2)] {
+        for (field, value) in [
+            ("compat.r", &self.r),
+            ("compat.roxygen2", &self.roxygen2),
+            ("compat.s7", &self.s7),
+        ] {
             if let Some(text) = value
                 && CompatVersion::parse(text).is_none()
             {
@@ -474,6 +482,10 @@ impl CompatConfig {
     /// [`validate`]: CompatConfig::validate
     pub fn roxygen2_version(&self) -> Option<CompatVersion> {
         self.roxygen2.as_deref().and_then(CompatVersion::parse)
+    }
+
+    pub fn s7_version(&self) -> Option<CompatVersion> {
+        self.s7.as_deref().and_then(CompatVersion::parse)
     }
 }
 
@@ -1019,16 +1031,30 @@ mod tests {
 
     #[test]
     fn compat_table_parses_and_resolves() {
-        let config = parse("[compat]\nr = \"4.1\"\nroxygen2 = \"7.3.2\"\n").unwrap();
+        let config =
+            parse("[compat]\nr = \"4.1\"\nroxygen2 = \"7.3.2\"\ns7 = \"0.2.2.9000\"\n").unwrap();
         assert_eq!(config.compat.r_version(), CompatVersion::parse("4.1"));
         assert_eq!(
             config.compat.roxygen2_version(),
             CompatVersion::parse("7.3.2")
         );
+        assert_eq!(
+            config.compat.s7_version(),
+            CompatVersion::parse("0.2.2.9000")
+        );
+        assert_eq!(config.lint.compat.s7, config.compat.s7);
+        assert!(matches!(
+            parse("[compat]\ns7 = \"development\""),
+            Err(ConfigError::InvalidValue {
+                field: "compat.s7",
+                ..
+            })
+        ));
         // Absent keys resolve to no floor.
         let config = parse("").unwrap();
         assert_eq!(config.compat.r_version(), None);
         assert_eq!(config.compat.roxygen2_version(), None);
+        assert_eq!(config.compat.s7_version(), None);
     }
 
     #[test]

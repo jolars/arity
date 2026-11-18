@@ -279,12 +279,23 @@ impl LintWorker {
                     });
                 }
                 recv(read_rx) -> job => {
-                    let Ok(job) = job else { continue };
+                    let Ok(mut job) = job else { continue };
                     // Mint a short-lived read-only snapshot and run the job off the
                     // lint thread. The clone is dropped inside `run_read`, so the
                     // next write isn't blocked once the read finishes (or a racing
                     // write trips `salsa::Cancelled`, handled by the fallback).
                     guard("read job dispatch", || {
+                        // Capture the DESCRIPTION floor before the snapshot can be
+                        // canceled so the standalone fallback gets the same floor.
+                        if let ReadJob::Completion { path, s7_floor, .. }
+                        | ReadJob::SignatureHelp { path, s7_floor, .. }
+                        | ReadJob::Definition { path, s7_floor, .. }
+                        | ReadJob::DocumentSymbol { path, s7_floor, .. } = &mut job
+                            && s7_floor.is_none()
+                        {
+                            *s7_floor = crate::project::package_facts_for(&self.db, path)
+                                .and_then(|facts| facts.compat.s7.clone());
+                        }
                         let snapshot = self.db.snapshot();
                         let encoding = self.position_encoding;
                         self.read_spawner
@@ -336,6 +347,7 @@ impl LintWorker {
             LintMsg::WatchedFiles { batch } => self.on_watched_files(batch),
             LintMsg::RefreshExecutionDirectories => {
                 self.db.refresh_execution_directories();
+                self.refresh_s7_floors();
             }
         }
     }
@@ -358,6 +370,15 @@ impl LintWorker {
             }
         }
         self.db.set_workspace_members(files, roots);
+        self.refresh_s7_floors();
+    }
+
+    fn refresh_s7_floors(&mut self) {
+        let Some(workspace) = self.db.workspace() else {
+            return;
+        };
+        let files = workspace.members(&self.db).clone();
+        crate::linter::check::seed_s7_floors_from_config(&mut self.db, &files);
     }
 
     /// Refresh db membership after a `workspace/didRenameFiles`, then re-lint
@@ -365,6 +386,7 @@ impl LintWorker {
     /// The db mutation is [`apply_file_renames`].
     fn rename_files(&mut self, renames: Vec<(PathBuf, PathBuf)>) {
         if apply_file_renames(&mut self.db, &renames) {
+            self.refresh_s7_floors();
             let _ = self.out_tx.send(Outbound::RelintAll);
         }
     }
@@ -396,6 +418,9 @@ impl LintWorker {
             apply_r_membership(&mut self.db, &batch.r_created, &batch.r_deleted)
         };
         relint |= member_changed;
+        if member_changed {
+            self.refresh_s7_floors();
+        }
 
         if !member_changed {
             // Refresh only what actually moved. A `NAMESPACE` change reshapes
@@ -546,6 +571,8 @@ impl LintWorker {
         self.ensure_remote(cache_root.as_deref(), &req.index_config);
 
         let active = self.db.upsert_file(&req.path, req.buffer.text_arc());
+        self.db
+            .set_s7_floor(active, req.lint_config.compat.s7_version());
         self.db.stage_edits(active, std::mem::take(&mut req.edits));
         // Ensure the active file's project is in the workspace file-set. Lazy:
         // only walks disk when the file isn't already a member (the initialize

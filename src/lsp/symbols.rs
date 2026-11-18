@@ -58,9 +58,16 @@ pub(crate) fn document_symbols_via_db(
     path: &Path,
     buffer: &TextBuffer,
     encoding: PositionEncoding,
-) -> Vec<DocumentSymbol> {
-    with_document_semantics(snapshot, path, buffer, |root, model| {
-        document_symbols_from_model(root, model, buffer.line_index(), encoding)
+    s7_floor: Option<&crate::config::CompatVersion>,
+) -> (Vec<DocumentSymbol>, bool) {
+    with_document_semantics(snapshot, path, buffer, s7_floor, |root, model| {
+        // A binding candidate can appear or disappear after a config,
+        // DESCRIPTION, or project scope change with the same buffer text.
+        let cache_by_text = !root
+            .descendants()
+            .any(|node| crate::semantic::s7::binding_parts(&node).is_some());
+        let symbols = document_symbols_from_model(root, model, buffer.line_index(), encoding);
+        (symbols, cache_by_text)
     })
 }
 
@@ -105,7 +112,7 @@ fn document_symbols_from_model(
         .collect();
     bindings.sort_unstable_by_key(|b| b.def_range.start());
     let mut symbols = Vec::new();
-    collect_document_symbols(root, &bindings, line_index, &mut symbols, encoding);
+    collect_document_symbols(root, &bindings, line_index, &mut symbols, encoding, model);
     symbols
 }
 
@@ -120,6 +127,7 @@ fn collect_document_symbols(
     line_index: &LineIndex,
     out: &mut Vec<DocumentSymbol>,
     encoding: PositionEncoding,
+    model: &SemanticModel,
 ) {
     for child in node.children() {
         if bindings.is_empty() {
@@ -134,9 +142,9 @@ fn collect_document_symbols(
         if within.is_empty() {
             continue;
         }
-        match document_symbol_for(&child, within, line_index, encoding) {
+        match document_symbol_for(&child, within, line_index, encoding, model) {
             Some(symbol) => out.push(symbol),
-            None => collect_document_symbols(&child, within, line_index, out, encoding),
+            None => collect_document_symbols(&child, within, line_index, out, encoding, model),
         }
     }
 }
@@ -152,9 +160,16 @@ fn document_symbol_for(
     bindings: &[&Binding],
     line_index: &LineIndex,
     encoding: PositionEncoding,
+    model: &SemanticModel,
 ) -> Option<DocumentSymbol> {
-    let assign = AssignmentExpr::cast(node.clone())?;
-    let name_token = assign.target_name_token()?;
+    let (name_token, value) = if let Some(assign) = AssignmentExpr::cast(node.clone()) {
+        (assign.target_name_token()?, assign.value_element())
+    } else if model.s7_bindings.contains(&node.text_range()) {
+        let (target, call) = crate::semantic::s7::binding_parts(node)?;
+        (target, Some(call.syntax().clone().into()))
+    } else {
+        return None;
+    };
     let name_range = name_token.text_range();
     let binding_index = bindings
         .binary_search_by_key(&name_range.start(), |b| b.def_range.start())
@@ -163,7 +178,6 @@ fn document_symbol_for(
     if binding.def_range != name_range {
         return None;
     }
-    let value = assign.value_element();
     let function = value
         .as_ref()
         .and_then(|value| value.as_node())
@@ -173,7 +187,14 @@ fn document_symbol_for(
     // that itself contains assignments). The target side binds no further names.
     let mut children = Vec::new();
     if let Some(NodeOrToken::Node(value_node)) = &value {
-        collect_document_symbols(value_node, bindings, line_index, &mut children, encoding);
+        collect_document_symbols(
+            value_node,
+            bindings,
+            line_index,
+            &mut children,
+            encoding,
+            model,
+        );
     }
 
     Some(DocumentSymbol {
@@ -345,7 +366,7 @@ mod tests {
             for encoding in [PositionEncoding::Utf8, PositionEncoding::Utf16] {
                 let expected = compute_document_symbols(text, encoding);
                 assert_eq!(
-                    document_symbols_via_db(&db.snapshot(), test_path(), &buffer, encoding),
+                    document_symbols_via_db(&db.snapshot(), test_path(), &buffer, encoding, None).0,
                     expected,
                     "stale cache",
                 );
@@ -355,7 +376,9 @@ mod tests {
                         test_path(),
                         &buffer,
                         encoding,
-                    ),
+                        None,
+                    )
+                    .0,
                     expected,
                     "missing file",
                 );
@@ -365,7 +388,7 @@ mod tests {
             db.clear_query_log();
             for encoding in [PositionEncoding::Utf8, PositionEncoding::Utf16] {
                 assert_eq!(
-                    document_symbols_via_db(&db.snapshot(), test_path(), &buffer, encoding),
+                    document_symbols_via_db(&db.snapshot(), test_path(), &buffer, encoding, None).0,
                     compute_document_symbols(text, encoding),
                     "warm cache",
                 );

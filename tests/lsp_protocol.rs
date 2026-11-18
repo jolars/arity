@@ -758,6 +758,64 @@ Encoding: UTF-8
 ";
 
 #[test]
+fn rootless_lsp_seeds_s7_compatibility_for_package_siblings() {
+    let description = format!("{COMPLETE_DESCRIPTION}Imports: S7\n");
+    let (dir, _, uri) = package_fixture(&description, "Point()\n");
+    std::fs::write(
+        dir.path().join("arity.toml"),
+        "[compat]\ns7 = '0.2.2.9000'\n[lint]\nselect = ['undefined-symbol']\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("NAMESPACE"), "import(S7)\n").unwrap();
+    std::fs::write(dir.path().join("R/classes.R"), "Point := S7::new_class()\n").unwrap();
+    let mut h = Harness::start_push();
+    h.did_open(&uri, "Point()\n", 1);
+    let diagnostics = h.recv_publish_for(&uri, 1);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    h.shutdown();
+}
+
+#[test]
+fn outlines_refresh_s7_bindings_after_a_config_change() {
+    let source = "library(S7)\nInfix := new_class()\nS7::`:=`(Explicit, S7::new_class())\n";
+    let (dir, _, uri) = package_fixture(COMPLETE_DESCRIPTION, source);
+    let config = dir.path().join("arity.toml");
+    let write_floor = |floor| {
+        std::fs::write(&config, format!("[compat]\ns7 = '{floor}'\n")).unwrap();
+    };
+    write_floor("0.2.2");
+    let mut h = Harness::start_push();
+    h.did_open(&uri, source, 1);
+    h.recv_publish_for(&uri, 1);
+    let outline = |h: &mut Harness| {
+        let id = h.request(
+            "textDocument/documentSymbol",
+            json!({"textDocument": {"uri": uri}}),
+        );
+        h.recv_response(&id).response_result.unwrap()
+    };
+    assert_eq!(outline(&mut h), json!([]));
+
+    write_floor("0.2.2.9000");
+    h.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({
+            "changes": [{"uri": path_uri(&config), "type": 2}]
+        }),
+    );
+    h.recv_publish_for(&uri, 1);
+    let symbols = outline(&mut h);
+    let names: Vec<_> = symbols
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|symbol| symbol["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["Infix", "Explicit"]);
+    h.shutdown();
+}
+
+#[test]
 fn did_open_description_publishes_no_r_syntax_errors() {
     let mut h = Harness::start_push();
     let uri = description_uri();

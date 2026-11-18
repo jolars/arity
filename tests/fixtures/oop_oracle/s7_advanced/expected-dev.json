@@ -1,0 +1,171 @@
+{
+  "facts": {
+    "classes": [
+      {
+        "binding": "Parent",
+        "members": {
+          "id": "property",
+          "value": "property"
+        },
+        "name": "Parent",
+        "parents": []
+      },
+      {
+        "binding": "Child",
+        "members": {
+          "id": "property",
+          "readonly": "property",
+          "value": "property"
+        },
+        "name": "Child",
+        "parents": [
+          "Parent"
+        ]
+      },
+      {
+        "binding": "Custom",
+        "members": {
+          "id": "property"
+        },
+        "name": "Custom",
+        "parents": []
+      },
+      {
+        "binding": "Sub",
+        "members": {
+          "flag": "property",
+          "id": "property"
+        },
+        "name": "Sub",
+        "parents": [
+          "Custom"
+        ]
+      }
+    ],
+    "constructors": [
+      {
+        "binding": "Parent",
+        "formals": [
+          {
+            "default": "integer(0)",
+            "name": "id"
+          },
+          {
+            "default": "\"parent\"",
+            "name": "value"
+          }
+        ]
+      },
+      {
+        "binding": "Child",
+        "formals": [
+          {
+            "default": "integer(0)",
+            "name": "id"
+          },
+          {
+            "default": "\"child\"",
+            "name": "value"
+          }
+        ]
+      },
+      {
+        "binding": "Custom",
+        "formals": [
+          {
+            "default": "1L",
+            "name": "seed"
+          }
+        ]
+      },
+      {
+        "binding": "Sub",
+        "formals": [
+          {
+            "default": null,
+            "name": "..."
+          },
+          {
+            "default": "logical(0)",
+            "name": "flag"
+          }
+        ]
+      }
+    ],
+    "dispatch": [
+      {
+        "classes": [
+          "Child",
+          "Parent",
+          "S7_object"
+        ],
+        "expression": "choose(Child(), 1L)",
+        "value": "specific"
+      },
+      {
+        "classes": [
+          "Child",
+          "Parent",
+          "S7_object"
+        ],
+        "expression": "choose(S7::super(Child(), Parent), 1L)",
+        "value": "left"
+      },
+      {
+        "classes": [
+          "Child",
+          "Parent",
+          "S7_object"
+        ],
+        "expression": "choose(1L, 2L)",
+        "value": "numeric"
+      },
+      {
+        "classes": [
+          "Child",
+          "Parent",
+          "S7_object"
+        ],
+        "expression": "choose(second = 2L)",
+        "value": "missing_first"
+      }
+    ],
+    "methods": [
+      {
+        "environment": [],
+        "formals": [
+          {
+            "default": null,
+            "name": "first"
+          },
+          {
+            "default": null,
+            "name": "second"
+          }
+        ],
+        "generic": "choose",
+        "signature": [
+          "Child",
+          "ANY"
+        ]
+      }
+    ],
+    "s7_observations": {
+      "external_first_arityS7Extension": "extension/external_class/TRUE",
+      "external_first_arityS7Provider": "extension/external_class/TRUE",
+      "property_getter": "4",
+      "property_replacement": "set",
+      "s3_bridge": "23",
+      "s4_bridge": "s4"
+    },
+    "system": "s7_advanced"
+  },
+  "observer": "owner <- environment()\nclass_facts <- function(binding, parents) {\n  class <- get(binding, envir = owner)\n  list(name = class@name, binding = binding, parents = as.list(parents),\n       members = as.list(setNames(rep(\"property\", length(class@properties)), names(class@properties))))\n}\nconstructors <- c(\"Parent\", \"Child\", \"Custom\", \"Sub\")\nfacts <- list(\n  system = \"s7_advanced\",\n  classes = list(class_facts(\"Parent\", character()), class_facts(\"Child\", \"Parent\"),\n                 class_facts(\"Custom\", character()), class_facts(\"Sub\", \"Custom\")),\n  constructors = lapply(constructors, function(binding) {\n    list(binding = binding, formals = formal_facts(get(binding, envir = owner)))\n  }),\n  methods = list(method_facts(\"choose\", c(\"Child\", \"ANY\"), S7::method(choose, list(Child, S7::class_any)), owner)),\n  dispatch = list(\n    dispatch_facts(\"choose(Child(), 1L)\", child, owner),\n    dispatch_facts(\"choose(S7::super(Child(), Parent), 1L)\", child, owner),\n    dispatch_facts(\"choose(1L, 2L)\", child, owner),\n    dispatch_facts(\"choose(second = 2L)\", child, owner)\n  ),\n  s7_observations = list(\n    property_getter = as.character(S7::prop(child, \"readonly\")),\n    property_replacement = S7::prop(child, \"value\"),\n    s3_bridge = as.character(length(child)),\n    s4_bridge = probeS4(Parent())\n  )\n)\n\n# Real package namespaces exercise the load hooks and their delayed registrations.\ndevelopment <- packageVersion(\"S7\") >= \"0.2.2.9000\"\nlibrary_path <- tempfile(\"s7-packages-\")\ndir.create(library_path)\nlocal({\n  old_libraries <- Sys.getenv(\"R_LIBS\", unset = NA_character_)\n  on.exit({\n    if (is.na(old_libraries)) Sys.unsetenv(\"R_LIBS\") else Sys.setenv(R_LIBS = old_libraries)\n    unlink(library_path, recursive = TRUE)\n  })\n  Sys.setenv(R_LIBS = paste(c(library_path, .libPaths()), collapse = .Platform$path.sep))\n  package <- function(name, namespace, code, suggests = NULL) {\n    path <- file.path(tempdir(), name)\n    dir.create(file.path(path, \"R\"), recursive = TRUE)\n    writeLines(c(\n      paste0(\"Package: \", name), \"Version: 1.0.0\", \"Title: S7 oracle namespace\",\n      'Author: Arity', 'Maintainer: Arity <arity@example.com>', 'Description: S7 oracle namespace.',\n      \"License: MIT\", \"Imports: S7\", if (!is.null(suggests)) paste(\"Suggests:\", suggests)\n    ), file.path(path, \"DESCRIPTION\"))\n    writeLines(namespace, file.path(path, \"NAMESPACE\"))\n    writeLines(code, file.path(path, \"R\", \"code.R\"))\n    output <- system2(\"R\", c(\"CMD\", \"INSTALL\", \"--no-multiarch\",\n                            shQuote(paste0(\"--library=\", library_path)), shQuote(path)),\n                      stdout = TRUE, stderr = TRUE)\n    if (!is.null(attr(output, \"status\"))) stop(paste(output, collapse = \"\\n\"))\n  }\n  package(\"arityS7Provider\", c(\"export(probe)\", \"export(Foreign)\"), c(\n    'probe <- S7::new_generic(\"probe\", \"x\")',\n    'Foreign <- S7::new_class(\"Foreign\")'\n  ))\n  package(\"arityS7Extension\", c(\"export(Extension)\", if (development) \"export(local_probe)\"), c(\n    'Extension <- S7::new_class(\"Extension\")',\n    'external_probe <- S7::new_external_generic(\"arityS7Provider\", \"probe\", \"x\", \"1.0.0\")',\n    'S7::method(external_probe, Extension) <- function(x) \"extension\"',\n    if (development) c(\n      'local_probe <- S7::new_generic(\"local_probe\", \"x\")',\n      'Foreign <- S7::new_external_class(\"arityS7Provider\", \"Foreign\")',\n      'S7::method(local_probe, Foreign) <- function(x) \"external_class\"',\n      '.onLoad <- function(...) S7::S7_on_load()',\n      '.onUnload <- function(...) S7::S7_on_unload()',\n      'S7::S7_on_build()'\n    ) else '.onLoad <- function(...) S7::methods_register()'\n  ), suggests = \"arityS7Provider\")\n  for (first in c(\"arityS7Provider\", \"arityS7Extension\")) {\n    second <- setdiff(c(\"arityS7Provider\", \"arityS7Extension\"), first)\n    code <- c(\n      sprintf('loadNamespace(\"%s\")', first),\n      sprintf('loadNamespace(\"%s\")', second),\n      'cat(\"result=\", arityS7Provider::probe(arityS7Extension::Extension()), \"\\n\", sep = \"\")',\n      if (development) c(\n        'cat(\"result=\", arityS7Extension::local_probe(arityS7Provider::Foreign()), \"\\n\", sep = \"\")',\n        'object <- arityS7Extension::Extension()',\n        'stopifnot(!exists(\"external_probe\", asNamespace(\"arityS7Extension\"), inherits = FALSE))',\n        'unloadNamespace(\"arityS7Extension\")',\n        'cat(\"result=\", inherits(try(arityS7Provider::probe(object), silent = TRUE), \"try-error\"), \"\\n\", sep = \"\")'\n      )\n    )\n    script <- tempfile(fileext = \".R\")\n    writeLines(code, script)\n    output <- system2(\"Rscript\", c(\"--vanilla\", shQuote(script)), stdout = TRUE, stderr = TRUE)\n    if (!is.null(attr(output, \"status\"))) stop(paste(output, collapse = \"\\n\"))\n    result <- sub(\"^result=\", \"\", grep(\"^result=\", output, value = TRUE))\n    stopifnot(length(result) == if (development) 3L else 1L)\n    facts$s7_observations[[paste0(\"external_first_\", first)]] <<- paste(result, collapse = \"/\")\n  }\n})\n",
+  "source": "Parent <- S7::new_class(\"Parent\", properties = list(\n  id = S7::class_integer,\n  value = S7::new_property(S7::class_character, default = \"parent\")\n))\nChild <- S7::new_class(\"Child\", parent = Parent, properties = list(\n  value = S7::new_property(S7::class_character, default = \"child\"),\n  S7::new_property(S7::class_integer, name = \"readonly\", getter = function(self) self@id)\n))\nCustom <- S7::new_class(\"Custom\", properties = list(id = S7::class_integer), constructor = function(seed = 1L) {\n  S7::new_object(S7::S7_object(), id = seed)\n})\nSub <- S7::new_class(\"Sub\", parent = Custom, properties = list(flag = S7::class_logical))\nchoose <- S7::new_generic(\"choose\", c(\"first\", \"second\"))\nleft <- function(first, second) \"left\"\nnumeric <- function(first, second) \"numeric\"\nmissing_first <- function(first, second) \"missing_first\"\nspecific <- function(first, second) \"specific\"\nS7::method(choose, list(Parent, S7::class_any)) <- left\nS7::method(choose, list(S7::class_any, S7::new_union(S7::class_integer, S7::class_double))) <- numeric\nS7::method(choose, list(S7::class_missing, S7::class_any)) <- missing_first\nS7::method(choose, list(Child, S7::class_any)) <- specific\nchild <- Child(id = 3L)\nS7::prop(child, \"value\") <- \"set\"\nS7::props(child) <- list(id = 4L)\nlength_generic <- base::length\nS7::method(length_generic, Parent) <- function(x) 23L\nS7::S4_register(Parent)\nmethods::setGeneric(\"probeS4\", function(x) methods::standardGeneric(\"probeS4\"))\nS7::method(probeS4, Parent) <- function(x) \"s4\"\n",
+  "versions": {
+    "r": "4.6.1",
+    "r6": "2.6.1",
+    "s7": "0.2.2.9000",
+    "s7_revision": "420abb36fdb5308dc465fa380c5e960ea70faefc"
+  }
+}

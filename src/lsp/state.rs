@@ -625,13 +625,19 @@ impl GlobalState {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
-        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        let path = uri::to_path(&uri)
+            .unwrap_or_else(|| PathBuf::from(DocumentKind::R.placeholder_file_name()));
+        let s7_floor = self
+            .resolve_settings(&uri)
+            .ok()
+            .and_then(|s| s.lint.compat.s7_version());
         self.register_read(id.clone(), Some((uri, version)));
         self.dispatch_read(ReadJob::SignatureHelp {
             id,
             path,
             buffer,
             position,
+            s7_floor,
             out: self.out_tx.clone(),
         });
     }
@@ -655,12 +661,20 @@ impl GlobalState {
         };
         let path =
             uri::to_path(&uri).unwrap_or_else(|| PathBuf::from(kind.placeholder_file_name()));
+        let s7_floor = if kind == DocumentKind::R {
+            self.resolve_settings(&uri)
+                .ok()
+                .and_then(|s| s.lint.compat.s7_version())
+        } else {
+            None
+        };
         self.register_read(id.clone(), Some((uri, version)));
         self.dispatch_read(ReadJob::Completion {
             id,
             path,
             buffer,
             position,
+            s7_floor,
             out: self.out_tx.clone(),
         });
     }
@@ -698,7 +712,12 @@ impl GlobalState {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
-        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        let path = uri::to_path(&uri)
+            .unwrap_or_else(|| PathBuf::from(DocumentKind::R.placeholder_file_name()));
+        let s7_floor = self
+            .resolve_settings(&uri)
+            .ok()
+            .and_then(|settings| settings.lint.compat.s7_version());
         self.register_read(id.clone(), Some((uri.clone(), version)));
         self.dispatch_read(ReadJob::Definition {
             id,
@@ -706,6 +725,7 @@ impl GlobalState {
             uri,
             buffer,
             position,
+            s7_floor,
             out: self.out_tx.clone(),
         });
     }
@@ -782,8 +802,8 @@ impl GlobalState {
 
     /// `textDocument/documentSymbol`: the file's function and variable bindings
     /// as an outline, reusing the lint thread's cached syntax and
-    /// semantics on the read pool. Unchanged buffers reuse the completed outline
-    /// without another database snapshot. See [`document_symbols_via_db`].
+    /// semantics on the read pool. Text-only outlines can skip the database
+    /// snapshot on repeat requests. See [`document_symbols_via_db`].
     fn on_document_symbol(&mut self, req: Request) {
         let id = req.id.clone();
         let Ok((_, params)) = req.extract::<DocumentSymbolParams>(DocumentSymbolRequest::METHOD)
@@ -812,6 +832,10 @@ impl GlobalState {
         }
         let path = uri::to_path(&uri)
             .unwrap_or_else(|| PathBuf::from(DocumentKind::R.placeholder_file_name()));
+        let s7_floor = self
+            .resolve_settings(&uri)
+            .ok()
+            .and_then(|settings| settings.lint.compat.s7_version());
         self.register_read(id.clone(), Some((uri.clone(), version)));
         self.dispatch_read(ReadJob::DocumentSymbol {
             id,
@@ -820,6 +844,7 @@ impl GlobalState {
             buffer,
             cached,
             hierarchical,
+            s7_floor,
             out: self.out_tx.clone(),
         });
     }
@@ -2087,6 +2112,106 @@ mod cancellation_gate {
             "/tmp/t.R"
         }))
         .expect("valid file uri")
+    }
+
+    #[test]
+    fn s7_signature_help_uses_config_before_the_file_is_tracked() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("arity.toml"),
+            "[compat]\ns7 = '0.2.2.9000'\n",
+        )
+        .unwrap();
+        let uri = uri::from_path(&dir.path().join("live.R")).unwrap();
+        let (mut state, rig) = test_state();
+        state.documents.insert(
+            uri.clone(),
+            Document::new(
+                "library(S7)\nPoint := S7::new_class(properties = list(x = S7::class_integer))\nPoint()".to_string(),
+                1,
+                DocumentKind::R,
+            ),
+        );
+        state.on_signature_help(Request::new(
+            RequestId::from(1),
+            SignatureHelpRequest::METHOD.to_string(),
+            serde_json::json!({
+                "textDocument": {"uri": uri},
+                "position": {"line": 2, "character": 6}
+            }),
+        ));
+        run_read(
+            IncrementalDatabase::default().snapshot(),
+            PositionEncoding::Utf16,
+            rig.read_rx.try_recv().unwrap(),
+        );
+        let Outbound::ReadReply(response) = rig.out_rx.try_recv().unwrap() else {
+            panic!("expected read reply");
+        };
+        state.on_read_reply(response);
+        let help = rig.try_response().unwrap().response_result.unwrap();
+        assert_eq!(help["signatures"][0]["label"], "Point(x = integer(0))");
+    }
+
+    #[test]
+    fn s7_navigation_uses_config_before_the_file_is_tracked() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("arity.toml"),
+            "[compat]\ns7 = '0.2.2.9000'\n",
+        )
+        .unwrap();
+        let uri = uri::from_path(&dir.path().join("live.R")).unwrap();
+        let (mut state, rig) = test_state();
+        state.client_capabilities.hierarchical_document_symbols = true;
+        state.documents.insert(
+            uri.clone(),
+            Document::new(
+                "library(S7)\nPoint := S7::new_class()\nPoint()".into(),
+                1,
+                DocumentKind::R,
+            ),
+        );
+
+        let params = serde_json::json!({
+            "textDocument": {"uri": uri},
+            "position": {"line": 2, "character": 1},
+        });
+        for (id, method, handler) in [
+            (
+                1,
+                GotoDefinition::METHOD,
+                GlobalState::on_definition as fn(&mut GlobalState, Request),
+            ),
+            (
+                2,
+                DocumentSymbolRequest::METHOD,
+                GlobalState::on_document_symbol,
+            ),
+        ] {
+            handler(
+                &mut state,
+                Request::new(RequestId::from(id), method.into(), params.clone()),
+            );
+            run_read(
+                IncrementalDatabase::default().snapshot(),
+                PositionEncoding::Utf16,
+                rig.read_rx.try_recv().unwrap(),
+            );
+            let Outbound::ReadReply(response) = rig.out_rx.try_recv().unwrap() else {
+                panic!("expected read reply");
+            };
+            state.on_read_reply(response);
+            let result = rig.try_response().unwrap().response_result.unwrap();
+            if method == GotoDefinition::METHOD {
+                assert_eq!(
+                    result["range"]["start"],
+                    serde_json::json!({"line": 1, "character": 0})
+                );
+            } else {
+                assert_eq!(result[0]["name"], "Point");
+            }
+        }
     }
 
     #[test]

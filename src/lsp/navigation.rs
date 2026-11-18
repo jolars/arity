@@ -15,6 +15,7 @@ pub(crate) fn definition_via_db(
     buffer: &TextBuffer,
     position: Position,
     encoding: PositionEncoding,
+    s7_floor: Option<&crate::config::CompatVersion>,
 ) -> Option<GotoDefinitionResponse> {
     let text = buffer.text();
     let line_index = buffer.line_index();
@@ -23,7 +24,7 @@ pub(crate) fn definition_via_db(
             .position_to_byte(position, encoding)
             .min(text.len()) as u32,
     );
-    with_document_semantics(snapshot, path, buffer, |root, model| {
+    with_document_semantics(snapshot, path, buffer, s7_floor, |root, model| {
         // Intra-file: the cursor names a local binding (or sits on its definition).
         if let Some(def_range) = definition_local_range(root, model, offset) {
             let location = Location {
@@ -107,7 +108,7 @@ pub(crate) fn references_via_db(
             .position_to_byte(position, encoding)
             .min(text.len()) as u32,
     );
-    with_document_semantics(snapshot, path, buffer, |root, model| {
+    with_document_semantics(snapshot, path, buffer, None, |root, model| {
         if let Some(ranges) = generated_occurrences(root, model, offset) {
             return Some(
                 ranges
@@ -225,7 +226,7 @@ pub(crate) fn rename_via_db(
     }
     let line_index = buffer.line_index();
     let off = TextSize::new(offset.min(text.len()) as u32);
-    with_document_semantics(snapshot, path, buffer, |root, model| {
+    with_document_semantics(snapshot, path, buffer, None, |root, model| {
         let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
 
         // Intra-file: the cursor names a local binding (or sits on its definition).
@@ -948,6 +949,7 @@ mod tests {
                         &buffer,
                         position,
                         encoding,
+                        None,
                     ),
                     expected_def,
                 );

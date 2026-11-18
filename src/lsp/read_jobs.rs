@@ -7,6 +7,7 @@ pub(crate) fn with_document_semantics<T>(
     snapshot: &Analysis,
     path: &Path,
     buffer: &TextBuffer,
+    s7_floor: Option<&crate::config::CompatVersion>,
     compute: impl Fn(&SyntaxNode, &SemanticModel) -> T,
 ) -> T {
     let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
@@ -15,21 +16,31 @@ pub(crate) fn with_document_semantics<T>(
             return None;
         }
         let root = snapshot.parsed_tree(file);
-        Some(compute(&root, snapshot.runtime_semantic_model(file)))
+        let model = snapshot.runtime_semantic_model(file);
+        if s7_floor.is_some_and(|floor| {
+            model.s7_version != crate::semantic::s7::S7Version::from_floor(floor)
+        }) {
+            return None;
+        }
+        Some(compute(&root, model))
     }));
     if let Ok(Some(result)) = cached {
         return result;
     }
     let root = parse(buffer.text()).cst;
-    let model = SemanticModel::build(&root);
-    let resolved = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+    let fresh = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        let model = if s7_floor.is_some() {
+            snapshot.semantic_model_in_with_floor(path, &root, s7_floor)
+        } else {
+            snapshot.semantic_model_in(path, &root)
+        };
         if !crate::project::classes::has_method_candidates(&model)
             && !model
                 .scopes()
                 .iter()
                 .any(|scope| scope.kind == crate::semantic::ScopeKind::Function)
         {
-            return None;
+            return compute(&root, &model);
         }
         let facts = crate::project::file_class_defs(&model, &root);
         let index = snapshot.class_index_in(path, &facts, &root, &model);
@@ -38,18 +49,19 @@ pub(crate) fn with_document_semantics<T>(
             &root,
             &index.method_environments(path),
         )
-        .unwrap_or_else(|| model.clone());
-        Some(
-            crate::project::classes::apply_dispatch_contexts(
-                &resolved,
-                &root,
-                &index.dispatch_contexts(path),
-            )
-            .unwrap_or(resolved),
+        .unwrap_or(model);
+        let resolved = crate::project::classes::apply_dispatch_contexts(
+            &resolved,
+            &root,
+            &index.dispatch_contexts(path),
         )
-    }))
-    .unwrap_or_else(|_| Some(crate::project::classes::standalone_semantic_model(&root)));
-    compute(&root, resolved.as_ref().unwrap_or(&model))
+        .unwrap_or(resolved);
+        compute(&root, &resolved)
+    }));
+    fresh.unwrap_or_else(|_| {
+        let model = crate::project::classes::standalone_semantic_model_with_floor(&root, s7_floor);
+        compute(&root, &model)
+    })
 }
 
 /// A read-only request the lint thread services by cloning its salsa db and
@@ -94,6 +106,7 @@ pub(crate) enum ReadJob {
         path: PathBuf,
         buffer: Arc<TextBuffer>,
         position: Position,
+        s7_floor: Option<crate::config::CompatVersion>,
         out: Sender<Outbound>,
     },
     SignatureHelp {
@@ -101,6 +114,7 @@ pub(crate) enum ReadJob {
         path: PathBuf,
         buffer: Arc<TextBuffer>,
         position: Position,
+        s7_floor: Option<crate::config::CompatVersion>,
         out: Sender<Outbound>,
     },
     ResolveCompletion {
@@ -117,6 +131,7 @@ pub(crate) enum ReadJob {
         uri: Uri,
         buffer: Arc<TextBuffer>,
         position: Position,
+        s7_floor: Option<crate::config::CompatVersion>,
         out: Sender<Outbound>,
     },
     References {
@@ -156,6 +171,7 @@ pub(crate) enum ReadJob {
         buffer: Arc<TextBuffer>,
         cached: Arc<OnceLock<Vec<DocumentSymbol>>>,
         hierarchical: bool,
+        s7_floor: Option<crate::config::CompatVersion>,
         out: Sender<Outbound>,
     },
     WorkspaceSymbol {
@@ -262,9 +278,17 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             path,
             buffer,
             position,
+            s7_floor,
             out,
         } => {
-            let result = completion_via_db(&snapshot, &path, &buffer, position, encoding);
+            let result = completion_via_db(
+                &snapshot,
+                &path,
+                &buffer,
+                position,
+                encoding,
+                s7_floor.as_ref(),
+            );
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::SignatureHelp {
@@ -272,9 +296,17 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             path,
             buffer,
             position,
+            s7_floor,
             out,
         } => {
-            let result = signature_help_via_db(&snapshot, &path, &buffer, position, encoding);
+            let result = signature_help_via_db(
+                &snapshot,
+                &path,
+                &buffer,
+                position,
+                encoding,
+                s7_floor.as_ref(),
+            );
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::ResolveCompletion { id, item, out } => {
@@ -287,9 +319,18 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             uri,
             buffer,
             position,
+            s7_floor,
             out,
         } => {
-            let result = definition_via_db(&snapshot, &path, &uri, &buffer, position, encoding);
+            let result = definition_via_db(
+                &snapshot,
+                &path,
+                &uri,
+                &buffer,
+                position,
+                encoding,
+                s7_floor.as_ref(),
+            );
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::References {
@@ -336,10 +377,22 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             buffer,
             cached,
             hierarchical,
+            s7_floor,
             out,
         } => {
-            let symbols =
-                cached.get_or_init(|| document_symbols_via_db(&snapshot, &path, &buffer, encoding));
+            let fresh;
+            let symbols = if let Some(symbols) = cached.get() {
+                symbols
+            } else {
+                let (symbols, cache_by_text) =
+                    document_symbols_via_db(&snapshot, &path, &buffer, encoding, s7_floor.as_ref());
+                if cache_by_text {
+                    cached.get_or_init(|| symbols)
+                } else {
+                    fresh = symbols;
+                    &fresh
+                }
+            };
             let response = document_symbol_response(symbols, &uri, hierarchical);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, response)));
         }
@@ -487,8 +540,12 @@ mod document_semantics_tests {
             native_routines: Default::default(),
         }]);
         let buffer = buf(source);
-        let cold = with_document_semantics(&db.snapshot(), path, &buffer, |_, model| model.clone());
-        let warm = with_document_semantics(&db.snapshot(), path, &buffer, |_, model| model.clone());
+        let cold = with_document_semantics(&db.snapshot(), path, &buffer, None, |_, model| {
+            model.clone()
+        });
+        let warm = with_document_semantics(&db.snapshot(), path, &buffer, None, |_, model| {
+            model.clone()
+        });
         assert_eq!(cold, warm);
         for name in ["self", "private", "super"] {
             assert!(
@@ -507,12 +564,13 @@ mod document_semantics_tests {
                 "{ nested <- function() list(self, private, super); nested() }"
             )
         ));
-        let overlay = with_document_semantics(&db.snapshot(), path, &live, |root, model| {
+        let overlay = with_document_semantics(&db.snapshot(), path, &live, None, |root, model| {
             assert_eq!(root.text().to_string(), live.text());
             model.clone()
         });
         db.set_file_text(child, live.text_arc());
-        let fresh = with_document_semantics(&db.snapshot(), path, &live, |_, model| model.clone());
+        let fresh =
+            with_document_semantics(&db.snapshot(), path, &live, None, |_, model| model.clone());
         assert_eq!(overlay, fresh);
     }
 
@@ -535,8 +593,12 @@ mod document_semantics_tests {
             native_routines: Default::default(),
         }]);
         let buffer = buf(source);
-        let cold = with_document_semantics(&db.snapshot(), path, &buffer, |_, model| model.clone());
-        let warm = with_document_semantics(&db.snapshot(), path, &buffer, |_, model| model.clone());
+        let cold = with_document_semantics(&db.snapshot(), path, &buffer, None, |_, model| {
+            model.clone()
+        });
+        let warm = with_document_semantics(&db.snapshot(), path, &buffer, None, |_, model| {
+            model.clone()
+        });
         assert_eq!(cold, warm);
         for name in ["value", ".self", ".refClassDef"] {
             assert!(
@@ -555,12 +617,13 @@ mod document_semantics_tests {
                 "{ nested <- function() list(value, .self, .refClassDef); nested() }"
             )
         ));
-        let overlay = with_document_semantics(&db.snapshot(), path, &live, |root, model| {
+        let overlay = with_document_semantics(&db.snapshot(), path, &live, None, |root, model| {
             assert_eq!(root.text().to_string(), live.text());
             model.clone()
         });
         db.set_file_text(child, live.text_arc());
-        let fresh = with_document_semantics(&db.snapshot(), path, &live, |_, model| model.clone());
+        let fresh =
+            with_document_semantics(&db.snapshot(), path, &live, None, |_, model| model.clone());
         assert_eq!(overlay, fresh);
     }
 
@@ -576,7 +639,7 @@ mod document_semantics_tests {
         // Equal text in a separate allocation must take the same path as the
         // shared live buffer; pointer identity alone cannot establish staleness.
         for live in [&buffer, &buf(buffer.text())] {
-            with_document_semantics(&snapshot, test_path(), live, |root, model| {
+            with_document_semantics(&snapshot, test_path(), live, None, |root, model| {
                 assert_eq!(root.text().to_string(), live.text());
                 assert!(std::ptr::eq(model, cached), "reuse the cached model");
             });
@@ -593,7 +656,7 @@ mod document_semantics_tests {
         let _ = db.semantic_model(file);
         let empty = IncrementalDatabase::default();
         for snapshot in [db.snapshot(), empty.snapshot()] {
-            with_document_semantics(&snapshot, test_path(), &buffer, |root, model| {
+            with_document_semantics(&snapshot, test_path(), &buffer, None, |root, model| {
                 assert_eq!(root.text().to_string(), buffer.text());
                 assert_eq!(model, &expected);
             });
@@ -601,27 +664,35 @@ mod document_semantics_tests {
     }
 
     #[test]
-    fn cancelled_document_read_retries_with_fresh_semantics() {
-        let buffer = buf("x <- 1\nx\n");
+    fn cancelled_document_read_retries_with_the_resolved_s7_floor() {
+        let buffer = buf("library(S7)\nPoint := S7::new_class()\nPoint()\n");
+        let floor = crate::config::CompatVersion::parse("0.2.2.9000");
+        let path = test_path();
         let mut db = IncrementalDatabase::default();
-        let file = db.upsert_file(test_path(), buffer.text_arc());
+        let file = db.upsert_file(path, buffer.text_arc());
+        db.set_s7_floor(file, floor.clone());
         let snapshot = db.snapshot();
-        let cached = snapshot.semantic_model(file);
+        let cached = snapshot.runtime_semantic_model(file);
         let calls = std::cell::Cell::new(0);
 
-        let result = with_document_semantics(&snapshot, test_path(), &buffer, |root, model| {
-            calls.set(calls.get() + 1);
-            if calls.get() == 1 {
-                assert!(std::ptr::eq(model, cached));
-                // Inject the unwind at the read boundary without racing a
-                // writer or relying on thread scheduling in the test.
-                std::panic::resume_unwind(Box::new(salsa::Cancelled::PendingWrite));
-            }
-            assert!(!std::ptr::eq(model, cached));
-            assert_eq!(model, cached);
-            root.text().to_string()
-        });
+        let result =
+            with_document_semantics(&snapshot, path, &buffer, floor.as_ref(), |root, model| {
+                let attempt = calls.get();
+                calls.set(attempt + 1);
+                assert_eq!(std::ptr::eq(model, cached), attempt == 0);
+                if attempt < 2 {
+                    // Simulate a pending write canceling both snapshot-backed reads.
+                    std::panic::resume_unwind(Box::new(salsa::Cancelled::PendingWrite));
+                }
+                assert!(
+                    model
+                        .bindings()
+                        .iter()
+                        .any(|binding| binding.name == "Point")
+                );
+                root.text().to_string()
+            });
         assert_eq!(result, buffer.text());
-        assert_eq!(calls.get(), 2);
+        assert_eq!(calls.get(), 3);
     }
 }

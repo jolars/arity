@@ -23,9 +23,9 @@ pub(super) struct OwnMembers {
 }
 
 #[derive(Default)]
-struct Execution {
-    events: Vec<(PathBuf, usize)>,
-    complete: bool,
+pub(super) struct Execution {
+    pub(super) events: Vec<(PathBuf, usize)>,
+    pub(super) complete: bool,
 }
 
 #[derive(Default)]
@@ -172,7 +172,7 @@ impl ClassIndex {
         visiting.remove(path);
     }
 
-    fn execution(&self, path: &Path) -> Execution {
+    pub(super) fn execution(&self, path: &Path) -> Execution {
         let mut out = Execution {
             complete: true,
             ..Execution::default()
@@ -741,6 +741,10 @@ impl ClassIndex {
                 | OopEvent::Generic { .. }
                 | OopEvent::Method(_)
                 | OopEvent::RemoveS4Method(_)
+                | OopEvent::S7Generic(_)
+                | OopEvent::S7Method(_)
+                | OopEvent::S7Hook(_)
+                | OopEvent::S7S4Bridge(_)
                 | OopEvent::S4Relation(_) => {}
                 OopEvent::Binding(name) => {
                     live.remove(name);

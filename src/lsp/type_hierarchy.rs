@@ -6,9 +6,9 @@
 
 use super::*;
 use crate::incremental::normalize_path;
+use crate::project::classes::locate_class_def_in;
 use crate::project::{
     ClassId, ClassIndex, ClassOccurrence, class_occurrence_at_offset, file_class_defs,
-    locate_class_def,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,12 +36,12 @@ fn class_item(
             (&stored_root, stored_index, uri::from_path(&id.path)?)
         }
     };
-    let model = SemanticModel::build(root);
+    let model = snapshot.semantic_model_in(&id.path, root);
     let facts = file_class_defs(&model, root);
     if facts.fingerprint() != class.fingerprint {
         return None;
     }
-    let loc = locate_class_def(root, &id.key)?;
+    let loc = locate_class_def_in(&model, root, &id.key)?;
     let owner = id
         .key
         .owner
@@ -98,10 +98,10 @@ pub(crate) fn prepare_type_hierarchy_via_db(
             .min(text.len()) as u32,
     );
     let root = parse(text).cst;
-    let model = SemanticModel::build(&root);
-    let facts = file_class_defs(&model, &root);
-    let occurrence = class_occurrence_at_offset(&model, &root, offset)?;
     let prepare = |snapshot: &Analysis| {
+        let model = snapshot.semantic_model_in(path, &root);
+        let facts = file_class_defs(&model, &root);
+        let occurrence = class_occurrence_at_offset(&model, &root, offset)?;
         let index = snapshot.class_index_in(path, &facts, &root, &model);
         let ids = match &occurrence {
             ClassOccurrence::Declaration(key) => vec![ClassId {

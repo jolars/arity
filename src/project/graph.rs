@@ -28,7 +28,8 @@ use crate::incremental::{
     Descriptions, IncrementalDb, LibraryIndex, PackageGraph, QueryKind, QueryLogEntry, SourceFile,
     Workspace, description_facts, file_class_defs, file_def_sites, file_exports, file_free_reads,
     file_promise_seeds, file_qualified_reads, file_roxygen_topics, file_use_only_reads,
-    loaded_names, package_references, parse_diagnostics, source_edges, top_level_events,
+    loaded_names, package_references, parse_diagnostics, s7_version_for, source_edges,
+    top_level_events,
 };
 pub use crate::project::classes::ClassIndex;
 use crate::project::classes::{ClassFile, ClassResolution, FileClassFacts};
@@ -41,7 +42,7 @@ use crate::project::promises::{
 use crate::project::roxygen::TopicMember;
 use crate::project::scope::{FileFacts, FileScope, LayeredSet, ProjectScope, package_root_of_dir};
 use crate::project::source::{SourceEdgeKey, SourceTarget};
-use crate::rindex::provider::{attach_members, package_indexed, resolve_origin};
+use crate::rindex::provider::{attach_members, package_indexed, resolve_origin_with_s7};
 use crate::semantic::symbols::{LoadedPackage, PackageOrigin, unbacktick};
 use crate::semantic::test_runner::implicit_bindings;
 
@@ -859,16 +860,8 @@ pub(crate) fn build_class_index(
             });
         }
     }
-    let empty_index;
-    let empty_remote;
-    let (indexed, remote) = match LibraryIndex::try_get(db) {
-        Some(index) => (index.data(db).as_ref(), index.remote(db).as_ref()),
-        None => {
-            empty_index = crate::rindex::provider::IndexedProvider::empty();
-            empty_remote = crate::rindex::remote::RemoteExports::new();
-            (&empty_index, &empty_remote)
-        }
-    };
+    let library = LibraryIndex::get(db);
+    let (indexed, remote) = (library.data(db).as_ref(), library.remote(db).as_ref());
     // Class resolution needs scope and execution order, but not def-use counts.
     // Depending on `project_graph` would pull arbitrary method-body reads through
     // the class firewall even when declarations and visibility stay unchanged.
@@ -942,6 +935,10 @@ pub(crate) fn build_class_index(
         .filter_map(|(root, facts)| facts.package.clone().map(|name| (root, name)))
         .collect();
     let description_facts = description_facts_by_root(db);
+    let package_versions = description_facts
+        .iter()
+        .filter_map(|(root, facts)| Some((root.clone(), facts.version.as_ref()?.to_string())))
+        .collect();
     let mut load_orders = BTreeMap::new();
     for root in files
         .iter()
@@ -980,6 +977,7 @@ pub(crate) fn build_class_index(
         namespaces: &namespace_texts,
         packages: &package_declarations,
         package_names: &package_names,
+        package_versions: &package_versions,
         indexed,
         remote,
         load_orders: &load_orders,
@@ -1291,6 +1289,7 @@ pub fn external_resolution(
     let index: &crate::rindex::provider::IndexedProvider = manifest.data(db);
     let remote: &crate::rindex::remote::RemoteExports = manifest.remote(db);
     let loaded = attached_names(db, file);
+    let s7_version = s7_version_for(db, file.path(db).as_deref(), file.s7_floor(db).as_ref());
 
     // Gate: an attached package whose exports we don't fully know could define
     // any of the unresolved names — suppress the whole file. A meta-package
@@ -1354,7 +1353,7 @@ pub fn external_resolution(
         })
         .filter(|name| {
             matches!(
-                resolve_origin(index, remote, name, &loaded_pkgs),
+                resolve_origin_with_s7(index, remote, name, &loaded_pkgs, s7_version),
                 PackageOrigin::Unknown
             )
         })
@@ -1376,8 +1375,13 @@ pub fn external_resolution(
             Some(BTreeSet::new())
         } else {
             crate::semantic::spelling::candidate_names(
-                crate::rindex::provider::known_export_names(index, remote, &loaded_pkgs)
-                    .chain(runner_bindings.iter()),
+                crate::rindex::provider::known_export_names(
+                    index,
+                    remote,
+                    &loaded_pkgs,
+                    s7_version,
+                )
+                .chain(runner_bindings.iter()),
             )
         },
         unresolved,

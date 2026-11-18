@@ -653,6 +653,12 @@ const CACHE_SUPPORTED: bool = true;
 
 type FileConfigs = HashMap<PathBuf, Arc<ResolvedConfig>>;
 
+struct ConfiguredFiles {
+    discovered: arity::file_discovery::DiscoveredFiles,
+    configs: FileConfigs,
+    resolver: Arc<Mutex<DirectoryConfigs>>,
+}
+
 /// Discover once, then retain the exact selected config for both processing
 /// passes. The walker prunes exclusions before it ever loads child configs.
 fn discover_configured(
@@ -660,10 +666,7 @@ fn discover_configured(
     source: &ConfigOptions,
     excludes: &ExcludeOptions,
     anchor: &Path,
-) -> Result<
-    (arity::file_discovery::DiscoveredFiles, FileConfigs),
-    arity::file_discovery::FileDiscoveryError,
-> {
+) -> Result<ConfiguredFiles, arity::file_discovery::FileDiscoveryError> {
     let resolver = Arc::new(Mutex::new(DirectoryConfigs::new(
         anchor.to_path_buf(),
         source.explicit.clone(),
@@ -688,10 +691,10 @@ fn discover_configured(
         },
     )?;
     let mut configs = HashMap::new();
-    let mut resolver = resolver.lock().unwrap();
+    let mut directories = resolver.lock().unwrap();
     for path in files.r.iter().chain(&files.description) {
         let directory = path.parent().unwrap_or(anchor);
-        let resolved = resolver.resolve(directory).map_err(|message| {
+        let resolved = directories.resolve(directory).map_err(|message| {
             arity::file_discovery::FileDiscoveryError::WalkError {
                 path: directory.to_path_buf(),
                 message,
@@ -699,7 +702,12 @@ fn discover_configured(
         })?;
         configs.insert(path.clone(), resolved);
     }
-    Ok((files, configs))
+    drop(directories);
+    Ok(ConfiguredFiles {
+        discovered: files,
+        configs,
+        resolver,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -721,7 +729,11 @@ fn run_format_files(
         eprintln!("error: {err}");
         return ExitCode::from(2);
     }
-    let (mut discovered, configs) = match discover_configured(paths, source, excludes, anchor) {
+    let ConfiguredFiles {
+        mut discovered,
+        configs,
+        ..
+    } = match discover_configured(paths, source, excludes, anchor) {
         Ok(files) => files,
         Err(arity::file_discovery::FileDiscoveryError::UnsupportedFilePath { path })
             if !modes.check =>
@@ -1161,8 +1173,11 @@ fn run_lint(
         eprintln!("error: {}", arity::linter::LintError::UnknownRule { rule });
         return ExitCode::from(2);
     }
-    let (discovered, configs) = match discover_configured(paths, config_source, &excludes, &anchor)
-    {
+    let ConfiguredFiles {
+        discovered,
+        configs,
+        resolver,
+    } = match discover_configured(paths, config_source, &excludes, &anchor) {
         Ok(files) => files,
         Err(err) => {
             eprintln!("error: {}", arity::linter::LintError::from(err));
@@ -1191,11 +1206,23 @@ fn run_lint(
         }
         lint_configs.insert(key, config);
     }
+    // Scope-only sources can come from pruned directories. Fall back to the
+    // nearest usable ancestor config if discovery there hits an invalid file.
+    let scope_floor = |path: &Path| {
+        let directory = path.parent().unwrap_or(&anchor);
+        let mut resolver = resolver.lock().unwrap();
+        directory
+            .ancestors()
+            .find_map(|directory| resolver.resolve(directory).ok())
+            .and_then(|resolved| resolved.config.compat.s7_version())
+    };
     if fix_opts.fix
         && let Some(code) = apply_fixes_to_paths(
+            &anchor,
             &discovered.r,
             &configs,
             &lint_configs,
+            &scope_floor,
             fix_opts.unsafe_fixes,
             out,
         )
@@ -1208,10 +1235,11 @@ fn run_lint(
             .entry(resolved.config.index.cache_dir.clone())
             .or_insert_with(|| Arc::new(lint_index(&resolved.config)));
     }
-    match arity::linter::check::check_files_with_configs(
+    match arity::linter::check::check_files_with_scope_configs(
         discovered,
         &|path| &lint_configs[&(Arc::as_ptr(&configs[path]) as usize)],
         &|path| &indexes[&configs[path].config.index.cache_dir],
+        |path| Ok(scope_floor(path)),
     ) {
         Ok(result) => {
             // Files that couldn't be decoded as UTF-8 are skipped rather than
@@ -1280,21 +1308,38 @@ fn apply_lint_overrides(config: &mut LintConfig, overrides: &LintOverrides) {
 
 /// Apply fixes to the same discovered set used by the reporting pass.
 fn apply_fixes_to_paths(
+    anchor: &Path,
     files: &[PathBuf],
     configs: &FileConfigs,
     lint_configs: &HashMap<usize, LintConfig>,
+    scope_floor: &impl Fn(&Path) -> Option<arity::config::CompatVersion>,
     include_unsafe: bool,
     out: OutputOptions,
 ) -> Option<ExitCode> {
     let mut db = IncrementalDatabase::default();
     for path in files {
+        let absolute_path = anchor.join(path);
         let provider = CompositeProvider::with_index(lint_index(&configs[path].config));
         match fix_file(
             &mut db,
             &provider,
-            path,
+            &absolute_path,
             &lint_configs[&(Arc::as_ptr(&configs[path]) as usize)],
             include_unsafe,
+            |db, active| {
+                if !db
+                    .workspace()
+                    .is_some_and(|ws| ws.members(db).contains(&active))
+                {
+                    arity::linter::check::seed_workspace_for_with_floors(
+                        db,
+                        &absolute_path,
+                        active,
+                        &configs[path].exclude,
+                        scope_floor,
+                    );
+                }
+            },
         ) {
             Ok(0) => {}
             Ok(n) => {
@@ -1329,8 +1374,11 @@ fn fix_file(
     path: &Path,
     config: &LintConfig,
     include_unsafe: bool,
+    seed: impl FnOnce(&mut IncrementalDatabase, arity::incremental::SourceFile),
 ) -> io::Result<usize> {
     let content = fs::read_to_string(path)?;
+    let active = db.upsert_file(path, content.as_str());
+    seed(db, active);
     let (fixed, total) =
         fix_source_in_project(db, provider, path, &content, config, include_unsafe);
     if total > 0 {

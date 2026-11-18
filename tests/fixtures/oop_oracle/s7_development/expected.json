@@ -1,0 +1,87 @@
+{
+  "facts": {
+    "classes": [
+      {
+        "binding": "Point",
+        "members": {
+          "id": "property"
+        },
+        "name": "Point",
+        "parents": []
+      },
+      {
+        "binding": "Colored",
+        "members": {
+          "color": "property",
+          "seed": "property"
+        },
+        "name": "Colored",
+        "parents": [
+          "Plain"
+        ]
+      }
+    ],
+    "constructors": [
+      {
+        "binding": "Point",
+        "formals": [
+          {
+            "default": "integer(0)",
+            "name": "id"
+          }
+        ]
+      },
+      {
+        "binding": "Colored",
+        "formals": [
+          {
+            "default": "integer(0)",
+            "name": "seed"
+          },
+          {
+            "default": "character(0)",
+            "name": "color"
+          }
+        ]
+      }
+    ],
+    "dispatch": [
+      {
+        "classes": [
+          "Point",
+          "S7_object"
+        ],
+        "expression": "describe(Point())",
+        "value": "registered"
+      }
+    ],
+    "methods": [
+      {
+        "environment": [],
+        "formals": [
+          {
+            "default": null,
+            "name": "x"
+          }
+        ],
+        "generic": "describe",
+        "signature": [
+          "Point"
+        ]
+      }
+    ],
+    "s7_observations": {
+      "s4_parent_property": "8",
+      "s4_subclass_property": "5"
+    },
+    "system": "s7_development"
+  },
+  "observer": "owner <- environment()\nfacts <- list(\n  system = \"s7_development\",\n  classes = list(\n    list(name = Point@name, binding = \"Point\", parents = list(),\n         members = list(id = \"property\")),\n    list(name = Colored@name, binding = \"Colored\", parents = list(\"Plain\"),\n         members = list(seed = \"property\", color = \"property\"))\n  ),\n  constructors = list(\n    list(binding = \"Point\", formals = formal_facts(Point)),\n    list(binding = \"Colored\", formals = formal_facts(Colored))\n  ),\n  methods = list(method_facts(\"describe\", \"Point\", method(describe, Point), owner)),\n  dispatch = list(dispatch_facts(\"describe(Point())\", point, owner)),\n  s7_observations = list(\n    s4_subclass_property = as.character(prop(wrapped, \"id\")),\n    s4_parent_property = as.character(prop(colored, \"seed\"))\n  )\n)\n",
+  "source": "library(S7)\nPoint := new_class(properties = list(id = class_integer))\ndescribe := new_generic(\"x\")\nregistered <- function(x) \"registered\"\nmethod(describe, list(Point)) <- registered\npoint <- Point(id = 2L)\nS4_register(Point)\nmethods::setClass(\"S4Point\", contains = S4_contains(Point), slots = c(label = \"character\"))\nmethods::setClass(\"Plain\", slots = c(seed = \"integer\"))\nColored := new_class(parent = methods::getClass(\"Plain\"), properties = list(color = class_character))\nwrapped <- methods::new(\"S4Point\", id = 5L, label = \"wrapped\")\ncolored <- Colored(seed = 8L, color = \"red\")\n",
+  "versions": {
+    "r": "4.6.1",
+    "r6": "2.6.1",
+    "s7": "0.2.2.9000",
+    "s7_revision": "420abb36fdb5308dc465fa380c5e960ea70faefc"
+  }
+}

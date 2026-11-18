@@ -5340,3 +5340,36 @@ fn s3_implicit_dispatch_refreshes_reference_effects_across_files() {
     assert!(matches!(rebound.selected.unwrap().implementation,
         Some(MethodImplementationSource::Binding { name, .. }) if name == "g.A"));
 }
+
+#[test]
+fn s7_source_graph_is_lazy_and_shared_across_files_and_body_edits() {
+    let mut db = IncrementalDatabase::default();
+    let floor = arity::config::CompatVersion::parse("0.2.2.9000");
+    let root = Path::new("/s7-graph");
+    let ordinary = db.upsert_file(&root.join("ordinary.R"), "list(pi, identity(1L))\n");
+    let first = db.upsert_file(&root.join("first.R"), "S7::`:=`(First, S7::new_class())\n");
+    let second = db.upsert_file(
+        &root.join("second.R"),
+        "S7::`:=`(Second, S7::new_class())\n",
+    );
+    for file in [ordinary, first, second] {
+        db.set_s7_floor(file, floor.clone());
+    }
+    db.set_workspace_members(vec![ordinary, first, second], vec![root.into()]);
+
+    db.clear_query_log();
+    db.semantic_model(ordinary);
+    let counts = count_by_kind(&db.query_log());
+    assert!(!counts.contains_key(&QueryKind::WorkspaceProject));
+    assert!(!counts.contains_key(&QueryKind::S7SourceGraph));
+
+    db.clear_query_log();
+    db.semantic_model(first);
+    db.semantic_model(second);
+    assert_eq!(count_by_kind(&db.query_log())[&QueryKind::S7SourceGraph], 1);
+
+    db.set_file_text(second, "S7::`:=`(Second, S7::new_class())\nlist(pi)\n");
+    db.clear_query_log();
+    db.semantic_model(second);
+    assert!(!count_by_kind(&db.query_log()).contains_key(&QueryKind::S7SourceGraph));
+}

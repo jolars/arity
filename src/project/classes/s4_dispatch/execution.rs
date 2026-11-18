@@ -61,6 +61,7 @@ impl ClassIndex {
                 .filter_map(|(event, _)| match event {
                     OopEvent::Generic { target, .. }
                     | OopEvent::Method(target)
+                    | OopEvent::S7Method(target)
                     | OopEvent::RemoveS4Method(target) => Some(target.clone()),
                     _ => None,
                 })
@@ -394,32 +395,7 @@ fn package_load_call(
         _ => unbacktick(&call.callee_name()?).to_owned(),
     };
     let formals: &[_] = match name.as_str() {
-        "library" => &[
-            "package",
-            "help",
-            "pos",
-            "lib.loc",
-            "character.only",
-            "logical.return",
-            "warn.conflicts",
-            "quietly",
-            "verbose",
-            "mask.ok",
-            "exclude",
-            "include.only",
-            "attach.required",
-        ],
-        "require" => &[
-            "package",
-            "lib.loc",
-            "quietly",
-            "warn.conflicts",
-            "character.only",
-            "mask.ok",
-            "exclude",
-            "include.only",
-            "attach.required",
-        ],
+        "library" | "require" => attachment_formals(&name)?,
         "requireNamespace" => &["package", "...", "quietly"],
         "loadNamespace" => &[
             "package",
@@ -474,7 +450,11 @@ fn package_load_call(
 }
 
 impl ClassIndex {
-    pub(super) fn s4_loader_activity(&self, path: &Path, load: &S4NamespaceLoad) -> Availability {
+    pub(in crate::project::classes) fn s4_loader_activity(
+        &self,
+        path: &Path,
+        load: &S4NamespaceLoad,
+    ) -> Availability {
         let activity = match &load.kind {
             S4NamespaceLoadKind::Access => Present,
             S4NamespaceLoadKind::Call { callee, .. } => match callee {

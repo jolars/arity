@@ -403,12 +403,26 @@ pub fn apply_method_environments(
 
 /// Cold and pathless consumers use the same project resolver with one live file.
 pub fn standalone_semantic_model(root: &SyntaxNode) -> SemanticModel {
-    let model = SemanticModel::build(root);
+    standalone_semantic_model_with_floor(root, None)
+}
+
+pub(crate) fn standalone_semantic_model_with_floor(
+    root: &SyntaxNode,
+    floor: Option<&crate::config::CompatVersion>,
+) -> SemanticModel {
+    let path = Path::new("buffer.R");
+    let model = if floor.is_some_and(|floor| S7Version::from_floor(floor) == S7Version::Development)
+    {
+        crate::incremental::IncrementalDatabase::default()
+            .snapshot()
+            .semantic_model_in_with_floor(path, root, floor)
+    } else {
+        SemanticModel::build(root)
+    };
     if !has_method_candidates(&model) {
         return model;
     }
     let facts = file_class_defs(&model, root);
-    let path = Path::new("buffer.R");
     let index = crate::incremental::IncrementalDatabase::default()
         .snapshot()
         .class_index_in(path, &facts, root, &model);

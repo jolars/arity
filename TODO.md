@@ -773,14 +773,18 @@ coverage need not block useful workspace support.
 
 #### 6. S7 classes, properties, and dispatch
 
-- [ ] Extract `new_class()` parents, package identity, stored/dynamic
+- [x] Extract `new_class()` parents, package identity, stored/dynamic
   properties, `new_property()` types, defaults, getters, and setters, custom
   constructors, validators, and `new_object()` context. Derive default
   constructor signatures from properties and inheritance. Support `@`,
   `prop()`, `props()`, and replacement forms without assuming that an S7
   property is an S4 slot or evaluating validation and accessor code.
 
-- [ ] Index `new_generic()` dispatch arguments and
+  The shared class model resolves inherited properties and constructor
+  signatures. It records custom constructors, validators, and property accessor
+  effects. Editor completion and signature help use those source facts.
+
+- [x] Index `new_generic()` dispatch arguments and
   `method(generic, signature) <- definition`, including definition bindings,
   multiple dispatch, unions, base classes, `class_any`, `class_missing`,
   `S7_dispatch()`, and `super()`. Treat replacement registration as an
@@ -789,7 +793,11 @@ coverage need not block useful workspace support.
   registration through `methods_register()` and the package hooks supported
   by the targeted S7 version.
 
-- [ ] Version the S7 oracle and metadata carefully. Released 0.2.2 and the
+  The registry retains implementation and package ownership and ranks S7
+  signatures in dispatch-argument order. Its candidates account for namespace
+  visibility, package hooks, unions, and S3/S4 bridges.
+
+- [x] Version the S7 oracle and metadata carefully. Released 0.2.2 and the
   current 0.2.2.9000 development documentation differ: the latter introduces
   binding `:=` and expanded S4 interoperability. Before supporting that
   operator, replace the builder's unconditional nonbinding interpretation
@@ -799,6 +807,11 @@ coverage need not block useful workspace support.
   that development APIs exist in every installation. Test supported S3/S4
   bridges, unions, and external registration against each pinned version
   instead of inferring compatibility from shared syntax.
+
+  The S7 floor comes from `[compat] s7` or the package dependency constraint.
+  Development named binding uses resolved operator provenance and ordinary
+  lexical def-use. The R oracle pins released 0.2.2 and the tested development
+  revision and observes both editions independently.
 
   Semantic references: [released S7
   0.2.2](https://cran.r-project.org/web/packages/S7/index.html),

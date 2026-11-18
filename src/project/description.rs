@@ -22,7 +22,7 @@ use std::path::Path;
 
 use crate::ast::{Arg, AstNode, CallExpr, HasArgList};
 use crate::config::CompatVersion;
-use crate::dcf::deps::dependency_entries;
+use crate::dcf::deps::{VersionOp, dependency_entries};
 use crate::parser::parse;
 use crate::project::scope::package_root;
 use crate::syntax::SyntaxKind;
@@ -80,6 +80,7 @@ pub struct Dependency {
 pub struct DescriptionFacts {
     /// The `Package` field, when non-empty.
     pub package: Option<String>,
+    pub version: Option<CompatVersion>,
     /// Every declared dependency, in field then source order. **`R` is not
     /// here**: it names the language, not a package, and its floor is
     /// [`compat`](Self::compat). Letting it reach an attach set would be
@@ -110,6 +111,7 @@ impl DescriptionFacts {
 
         let mut dependencies = Vec::new();
         let mut r_floor = None;
+        let mut s7_floor = None;
         let mut seen_r = false;
         for field in DependencyField::ALL {
             // The last occurrence wins, matching `Document::field` and
@@ -129,6 +131,18 @@ impl DescriptionFacts {
                             .and_then(|c| CompatVersion::parse(c.version.trim()));
                     }
                     continue;
+                }
+                if entry.name == "S7" && field != DependencyField::LinkingTo {
+                    s7_floor = s7_floor.max(
+                        entry
+                            .constraints
+                            .iter()
+                            .filter(|constraint| {
+                                constraint.op.is_lower_bound() || constraint.op == VersionOp::Eq
+                            })
+                            .filter_map(|constraint| CompatVersion::parse(&constraint.version))
+                            .max(),
+                    );
                 }
                 dependencies.push(Dependency {
                     field,
@@ -159,9 +173,11 @@ impl DescriptionFacts {
 
         DescriptionFacts {
             package: get("Package").filter(|name| !name.is_empty()),
+            version: get("Version").and_then(|version| CompatVersion::parse(version.trim())),
             dependencies,
             compat: DescriptionCompat {
                 r: r_floor,
+                s7: s7_floor,
                 roxygen2: get("Config/roxygen2/version")
                     .or_else(|| get("RoxygenNote"))
                     .and_then(|v| CompatVersion::parse(v.trim())),
@@ -289,6 +305,8 @@ pub fn package_name_for_file(path: &Path) -> Option<String> {
 /// explicit keys override these).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DescriptionCompat {
+    /// The S7 floor stated by a runtime dependency.
+    pub s7: Option<CompatVersion>,
     /// The R floor from `Depends: R (>= x.y)` (a `>` constraint counts too —
     /// close enough for a floor).
     pub r: Option<CompatVersion>,

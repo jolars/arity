@@ -5,6 +5,7 @@ use rowan::TextRange;
 
 use super::super::{
     ClassKey, ClassName, ClassOwner, ClassSystem, FunctionRef, GeneratorRef, ParentRef,
+    S7ClassSpec, S7Facts,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
@@ -33,6 +34,7 @@ pub enum OopKind {
     Method,
     Member,
     Coercion,
+    S7Function,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
@@ -116,6 +118,7 @@ pub enum DispatchClass {
     Formal(String),
     S3(String),
     Generator(GeneratorRef),
+    S7(S7ClassSpec),
     Any,
     Missing,
     Unknown,
@@ -207,6 +210,7 @@ pub struct GenericBinding {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct OopFacts {
+    pub s7: S7Facts,
     pub generics: Vec<GenericDef>,
     pub generic_bindings: Vec<GenericBinding>,
     pub methods: Vec<MethodDef>,
@@ -273,6 +277,10 @@ pub enum OopEvent {
     /// Capture named S4 implementations before later bindings replace them.
     Method(OopKey),
     RemoveS4Method(OopKey),
+    S7Generic(OopKey),
+    S7Method(OopKey),
+    S7Hook(usize),
+    S7S4Bridge(usize),
     S4Relation(usize),
     Generator {
         name: String,

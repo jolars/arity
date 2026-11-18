@@ -15,13 +15,18 @@ pub use dispatch::{
     apply_dispatch_contexts,
 };
 mod resolve;
-pub(crate) use environments::has_method_candidates;
+mod s7;
+mod s7_binding;
+pub use crate::semantic::s7::S7Version;
 pub use environments::{
     ClassMethodEnvironment, R6MethodEnvironment, apply_method_environments,
     standalone_semantic_model,
 };
+pub(crate) use environments::{has_method_candidates, standalone_semantic_model_with_floor};
 pub use resolve::s3_registry::*;
 pub use resolve::{ClassFile, ClassIndex, ClassResolution, ResolvedClass, S4Namespace};
+pub use s7::*;
+pub(crate) use s7_binding::{S7BindingContext, s7_binding_sites};
 mod oop;
 pub use oop::*;
 mod calls;
@@ -390,8 +395,15 @@ pub fn file_class_defs(model: &SemanticModel, root: &SyntaxNode) -> FileClassFac
 }
 
 pub fn locate_class_def(root: &SyntaxNode, key: &ClassKey) -> Option<ClassLocation> {
-    let model = SemanticModel::build(root);
-    let extracted = extract(&model, root, false);
+    locate_class_def_in(&SemanticModel::build(root), root, key)
+}
+
+pub(crate) fn locate_class_def_in(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+    key: &ClassKey,
+) -> Option<ClassLocation> {
+    let extracted = extract(model, root, false);
     extracted
         .facts
         .declarations
@@ -539,17 +551,13 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         method_implementations: Vec::new(),
     };
     for (call, system, factory, factory_name, ordinal, key) in calls {
-        let assignment = direct_assignment(&SyntaxElement::Node(call.syntax().clone()));
-        let binding_token = assignment
-            .as_ref()
-            .and_then(AssignmentExpr::target_name_token);
+        let binding_token = assigned_binding(model, call.syntax());
         let mut def = ClassDef {
             key: key.clone(),
             name: ClassName::Unknown,
-            binding: assignment
+            binding: binding_token
                 .as_ref()
-                .and_then(AssignmentExpr::target_name)
-                .map(|name| unbacktick(&name).to_string()),
+                .and_then(|token| resolve::namespace_name(SyntaxElement::Token(token.clone()))),
             factory,
             parents: Vec::new(),
             parent_vector: None,
@@ -561,7 +569,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         if matches!(def.factory, FunctionRef::Unresolved(_)) {
             def.uncertainty.insert(ClassUncertainty::UnresolvedCallee);
         }
-        if !unconditional(call.syntax()) {
+        if !declaration_eager(model, call.syntax()) {
             def.uncertainty.insert(ClassUncertainty::Conditional);
         }
         let mut selection = binding_token
@@ -571,7 +579,8 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
                 call.callee_token()
                     .map_or(call.syntax().text_range(), |token| token.text_range())
             });
-        if let Some(args) = matched_args(
+        if let Some(args) = declaration_args(
+            model,
             &call,
             if system == ClassSystem::S4 {
                 s4::formals(&factory_name)
@@ -613,6 +622,11 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
                 _ => "Class",
             });
             def.name = match name_arg {
+                None if system == ClassSystem::S7
+                    && s7_named_target(model, call.syntax()).is_some() =>
+                {
+                    ClassName::Known(def.binding.clone().expect("validated S7 binding"))
+                }
                 None if system == ClassSystem::R6 => ClassName::Absent,
                 Some(SyntaxElement::Token(token))
                     if system == ClassSystem::R6 && token.text() == "NULL" =>
@@ -813,10 +827,20 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         }
         result.locations.push(ClassLocation {
             name_range: selection,
-            full_range: assignment.as_ref().map_or_else(
-                || call.syntax().text_range(),
-                |assignment| assignment.syntax().text_range(),
-            ),
+            full_range: s7_binding_node(model, call.syntax())
+                .filter(|_| s7_named_target(model, call.syntax()).is_some())
+                .map_or_else(
+                    || {
+                        direct_assignment(&SyntaxElement::Node(call.syntax().clone()))
+                            .map(|assignment| assignment.syntax().clone())
+                    },
+                    Some,
+                )
+                .as_ref()
+                .map_or_else(
+                    || call.syntax().text_range(),
+                    |assignment| assignment.text_range(),
+                ),
             call_range: call.syntax().text_range(),
         });
         result.facts.declarations.push(def);
@@ -946,6 +970,38 @@ fn direct_assignment(value: &SyntaxElement) -> Option<AssignmentExpr> {
     (assignment.value_element()?.text_range() == value.text_range()).then_some(assignment)
 }
 
+fn s7_binding_node(model: &SemanticModel, node: &SyntaxNode) -> Option<SyntaxNode> {
+    node.ancestors()
+        .take(4)
+        .find(|node| model.s7_bindings.contains(&node.text_range()))
+}
+
+fn s7_named_target(model: &SemanticModel, call: &SyntaxNode) -> Option<SyntaxToken> {
+    let parent = s7_binding_node(model, &call.parent()?)?;
+    let (target, rhs) = crate::semantic::s7::binding_parts(&parent)?;
+    (rhs.syntax() == call).then_some(target)
+}
+
+fn declaration_eager(model: &SemanticModel, node: &SyntaxNode) -> bool {
+    if s7_named_target(model, node).is_some()
+        && let Some(binding) = s7_binding_node(model, node)
+    {
+        return unconditional(&binding);
+    }
+    unconditional(node)
+}
+
+fn assigned_binding(model: &SemanticModel, value: &SyntaxNode) -> Option<SyntaxToken> {
+    if let Some(target) = s7_named_target(model, value) {
+        return Some(target);
+    }
+    let assignment = direct_assignment(&SyntaxElement::Node(value.clone()))?;
+    if assignment.op_kind() == Some(SyntaxKind::WALRUS) {
+        return None;
+    }
+    assignment.target_name_token()
+}
+
 fn stable_value(model: &SemanticModel, root: &SyntaxNode, id: BindingId) -> Option<SyntaxElement> {
     let binding = model.binding(id);
     if binding.kind != BindingKind::Local
@@ -962,7 +1018,15 @@ fn stable_value(model: &SemanticModel, root: &SyntaxNode, id: BindingId) -> Opti
     {
         return None;
     }
-    let assignment = binding_assignment(root, binding.def_range)?;
+    let token = root.covering_element(binding.def_range).into_token()?;
+    let node = token.parent()?;
+    if let Some(named) = s7_binding_node(model, &node)
+        && let Some((target, call)) = crate::semantic::s7::binding_parts(&named)
+        && target == token
+    {
+        return unconditional(&named).then(|| SyntaxElement::Node(call.syntax().clone()));
+    }
+    let assignment = AssignmentExpr::cast(node)?;
     unconditional(assignment.syntax())
         .then(|| assignment.value_element())
         .flatten()
@@ -1112,6 +1176,7 @@ fn free_function_ref(
         .any(|node| node.kind() == SyntaxKind::FUNCTION_EXPR);
     let mut attached = Vec::new();
     let mut attachment_uncertain = false;
+    let mut seen_attachments = BTreeSet::new();
     for package in model
         .loaded_packages()
         .iter()
@@ -1131,10 +1196,12 @@ fn free_function_ref(
         {
             continue;
         }
-        let trusted = call.as_ref().is_some_and(|call| {
-            let Some(callee) = call.callee_token() else {
-                return false;
-            };
+        if name == ":=" && seen_attachments.contains(&package.name) {
+            // Repeated library/require calls leave the existing attachment alone.
+            continue;
+        }
+        let exposes = call.as_ref().and_then(|call| {
+            let callee = call.callee_token()?;
             let origin_known = match call.base() {
                 Some(SyntaxElement::Node(node)) => BinaryExpr::cast(node)
                     .and_then(|binary| binary.namespace_access())
@@ -1142,12 +1209,25 @@ fn free_function_ref(
                 Some(SyntaxElement::Token(_)) => read_binding(model, &callee).is_none(),
                 None => false,
             };
-            origin_known && unconditional(call.syntax())
+            if !origin_known || !unconditional(call.syntax()) {
+                return None;
+            }
+            if name == ":=" {
+                s7_binding::attachment_exposes_operator(model, call, unbacktick(callee.text()))
+            } else {
+                Some(true)
+            }
         });
-        if trusted {
-            attached.push(package.name.to_string());
-        } else {
-            attachment_uncertain = true;
+        match exposes {
+            Some(exposes) => {
+                if name == ":=" {
+                    seen_attachments.insert(package.name.clone());
+                }
+                if exposes {
+                    attached.push(package.name.to_string());
+                }
+            }
+            None => attachment_uncertain = true,
         }
     }
     Some(FunctionRef::Bare {

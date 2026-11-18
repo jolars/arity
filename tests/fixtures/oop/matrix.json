@@ -518,13 +518,15 @@
         "method": "definition",
         "needle": "describe(obj)",
         "offset": 0
+      },
+      {
+        "method": "signature-help",
+        "needle": "describe(obj)",
+        "offset": 9
       }
     ]
   },
   "s7/use_sites": {
-    "known_gaps": [
-      "S7 properties and constructors have no dedicated member or signature information."
-    ],
     "probes": [
       {
         "method": "definition",
@@ -550,9 +552,6 @@
   },
   "s7/incomplete": {
     "parse_errors": true,
-    "known_gaps": [
-      "Declared S7 property completion is unavailable."
-    ],
     "probes": [
       {
         "method": "type-hierarchy",

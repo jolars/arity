@@ -26,6 +26,8 @@ fn fixture_names() -> &'static [&'static str] {
         "r6_members",
         "member_mutations",
         "s7",
+        "s7_advanced",
+        "s7_development",
     ]
 }
 
@@ -39,6 +41,35 @@ struct Versions {
     r: String,
     r6: String,
     s7: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    s7_revision: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VersionPins {
+    release: Versions,
+    development: Versions,
+}
+
+fn versions() -> VersionPins {
+    serde_json::from_str(include_str!("fixtures/oop_oracle/versions.json")).unwrap()
+}
+
+fn editions(name: &str) -> &'static [bool] {
+    match name {
+        "s7_advanced" => &[false, true],
+        "s7_development" => &[true],
+        _ => &[false],
+    }
+}
+
+fn pin_filename(name: &str, development: bool) -> &'static str {
+    if development && name == "s7_advanced" {
+        "expected-dev.json"
+    } else {
+        "expected.json"
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -61,6 +92,8 @@ struct Facts {
     dispatch: Vec<Dispatch>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     s3_evidence: Vec<S3Evidence>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    s7_observations: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -113,8 +146,13 @@ struct Dispatch {
 }
 
 fn pin(name: &str) -> Pin {
+    pin_for(name, editions(name)[0])
+}
+
+fn pin_for(name: &str, development: bool) -> Pin {
     serde_json::from_str(
-        &fs::read_to_string(root().join(name).join("expected.json")).expect("read OOP pin"),
+        &fs::read_to_string(root().join(name).join(pin_filename(name, development)))
+            .expect("read OOP pin"),
     )
     .expect("decode OOP runtime facts")
 }
@@ -166,8 +204,7 @@ fn s3_explicit_class_evidence_matches_pinned_runtime_attributes() {
 
 #[test]
 fn pinned_facts_are_registered_and_current() {
-    let versions: Versions =
-        serde_json::from_str(include_str!("fixtures/oop_oracle/versions.json")).unwrap();
+    let versions = versions();
     let mut directories: Vec<_> = fs::read_dir(root())
         .unwrap()
         .map(Result::unwrap)
@@ -178,10 +215,19 @@ fn pinned_facts_are_registered_and_current() {
     let mut registered = fixture_names().to_vec();
     registered.sort();
     assert_eq!(directories, registered);
-    for name in fixture_names() {
-        let pin = pin(name);
-        assert_eq!(pin.versions, versions, "{name}");
-        assert_eq!(pin.facts.system, *name);
+    for (name, development) in fixture_names().iter().flat_map(|&name| {
+        editions(name)
+            .iter()
+            .map(move |&development| (name, development))
+    }) {
+        let pin = pin_for(name, development);
+        let expected = if development {
+            &versions.development
+        } else {
+            &versions.release
+        };
+        assert_eq!(&pin.versions, expected, "{name}");
+        assert_eq!(pin.facts.system, name);
         assert_eq!(
             pin.source,
             fs::read_to_string(root().join(name).join("input.R")).unwrap(),
@@ -243,6 +289,128 @@ fn supported_class_projection_matches_runtime() {
                 })
                 .collect();
             assert_eq!(parents, class.parents, "{name}: {}", class.name);
+        }
+    }
+}
+
+#[test]
+fn s7_properties_constructors_and_dispatch_match_both_runtime_pins() {
+    use arity::ast::{AstNode, CallExpr};
+    use arity::config::CompatVersion;
+    use arity::incremental::{IncrementalDatabase, parsed_tree_root};
+    use arity::project::classes::{
+        CallableParameter, MethodImplementationSource, OopId, S7GenericTarget,
+    };
+    for (name, development) in [
+        ("s7_advanced", false),
+        ("s7_advanced", true),
+        ("s7_development", true),
+    ] {
+        let pin = pin_for(name, development);
+        let source = format!(
+            "{}\n{}\n",
+            pin.source,
+            pin.facts
+                .dispatch
+                .iter()
+                .map(|probe| probe.expression.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let path = Path::new("s7-runtime.R");
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(path, source);
+        db.set_s7_floor(file, CompatVersion::parse(&pin.versions.s7));
+        let model = db.semantic_model(file);
+        let root = parsed_tree_root(&db, file);
+        let facts = file_class_defs(model, &root);
+        let index = db.snapshot().class_index_in(path, &facts, &root, model);
+        for expected in &pin.facts.constructors {
+            let id = index
+                .declarations
+                .iter()
+                .find(|(_, class)| {
+                    class.declaration.binding.as_deref() == Some(expected.binding.as_str())
+                })
+                .unwrap()
+                .0;
+            let api = index.s7_api(id).unwrap();
+            assert!(api.complete, "{name}: {id:?}");
+            let formals: Vec<_> = expected
+                .formals
+                .iter()
+                .map(|formal| CallableParameter {
+                    name: formal.name.clone(),
+                    default: formal.default.clone(),
+                })
+                .collect();
+            assert_eq!(
+                api.constructor.unwrap().parameters,
+                formals,
+                "{name}: {id:?}"
+            );
+            let class = pin
+                .facts
+                .classes
+                .iter()
+                .find(|class| class.binding == expected.binding)
+                .unwrap();
+            let names: BTreeMap<_, _> = api
+                .properties
+                .iter()
+                .map(|property| (property.name.clone(), "property".to_string()))
+                .collect();
+            assert_eq!(names, class.members, "{name}: {id:?}");
+        }
+        for observation in &pin.facts.dispatch {
+            let call = root
+                .children()
+                .filter_map(CallExpr::cast)
+                .find(|call| call.syntax().to_string() == observation.expression)
+                .unwrap();
+            let dispatch = index.s7_dispatch_at(path, &root, model, &call).unwrap();
+            let selected = index
+                .s7_registration(
+                    &dispatch
+                        .selected
+                        .unwrap_or_else(|| panic!("{name}: {observation:?}")),
+                )
+                .unwrap();
+            assert!(
+                matches!(selected.implementation, Some(MethodImplementationSource::Binding { name, .. }) if name == observation.value),
+                "{observation:?}"
+            );
+        }
+        if name == "s7_advanced" {
+            let registrations: Vec<_> = facts
+                .oop
+                .s7
+                .methods
+                .keys()
+                .filter_map(|key| {
+                    index.s7_registration(&OopId {
+                        path: path.into(),
+                        key: key.clone(),
+                    })
+                })
+                .collect();
+            assert!(registrations.iter().any(|registration| matches!(
+                registration.targets.as_slice(),
+                [S7GenericTarget::S3(_)]
+            )));
+            assert!(registrations.iter().any(|registration| matches!(
+                registration.targets.as_slice(),
+                [S7GenericTarget::S4(_)]
+            )));
+            assert_eq!(
+                index
+                    .s3
+                    .methods
+                    .iter()
+                    .filter(|method| method.class == ClassName::Known("Parent".into()))
+                    .count(),
+                1
+            );
         }
     }
 }
@@ -925,22 +1093,37 @@ fn live_runtime_matches_pins_and_formatted_sources() {
     let refresh = std::env::var_os("UPDATE_OOP_ORACLE").is_some();
     let rscript = std::env::var_os("RSCRIPT").unwrap_or_else(|| "Rscript".into());
     let driver = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/oracle/oop_oracle.R");
-    let versions: Versions =
-        serde_json::from_str(include_str!("fixtures/oop_oracle/versions.json")).unwrap();
+    let versions = versions();
     let temporary = tempfile::tempdir().unwrap();
     let mut updates = Vec::new();
-    for name in fixture_names() {
+    for (name, development) in fixture_names().iter().flat_map(|&name| {
+        editions(name)
+            .iter()
+            .map(move |&development| (name, development))
+    }) {
+        let versions = if development {
+            &versions.development
+        } else {
+            &versions.release
+        };
         let fixture = root().join(name);
         let input = fs::read_to_string(fixture.join("input.R")).unwrap();
         let formatted_path = temporary.path().join(format!("{name}.R"));
         fs::write(&formatted_path, format(&input).unwrap()).unwrap();
         let run = |source: &Path| {
-            let output = Command::new(&rscript)
+            let mut command = Command::new(&rscript);
+            if development {
+                let library = std::env::var_os("ARITY_S7_DEV_LIB")
+                    .expect("set ARITY_S7_DEV_LIB to the pinned development S7 library");
+                command.env("R_LIBS_USER", library);
+            }
+            let output = command
                 .arg("--vanilla")
                 .arg(&driver)
                 .arg(&fixture)
                 .arg(source)
                 .args([&versions.r, &versions.r6, &versions.s7])
+                .args(versions.s7_revision.as_deref())
                 .output()
                 .expect("run Rscript (see tests/fixtures/oop_oracle/README.md)");
             assert!(
@@ -965,7 +1148,7 @@ fn live_runtime_matches_pins_and_formatted_sources() {
         });
         // Validate the schema before writing any pins, including during refresh.
         serde_json::from_value::<Pin>(pin.clone()).expect("runtime fact schema");
-        let destination = fixture.join("expected.json");
+        let destination = fixture.join(pin_filename(name, development));
         if refresh {
             updates.push((
                 destination,
@@ -989,8 +1172,8 @@ fn live_runtime_matches_pins_and_formatted_sources() {
 #[test]
 #[ignore = "requires pinned R, R6, and S7; run via `task oop-oracle`"]
 fn live_runtime_rejects_unpinned_versions() {
-    let versions: Versions =
-        serde_json::from_str(include_str!("fixtures/oop_oracle/versions.json")).unwrap();
+    let pins = versions();
+    let versions = pins.release;
     let rscript = std::env::var_os("RSCRIPT").unwrap_or_else(|| "Rscript".into());
     let driver = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/oracle/oop_oracle.R");
     for index in 0..3 {
@@ -1011,4 +1194,23 @@ fn live_runtime_rejects_unpinned_versions() {
             "must reject before evaluating fixtures"
         );
     }
+    let development = pins.development;
+    let library = std::env::var_os("ARITY_S7_DEV_LIB")
+        .expect("set ARITY_S7_DEV_LIB to the pinned development S7 library");
+    let output = Command::new(&rscript)
+        .env("R_LIBS_USER", library)
+        .args(["--vanilla"])
+        .arg(&driver)
+        .arg(root().join("s7_development"))
+        .arg(root().join("s7_development/input.R"))
+        .args([&development.r, &development.r6, &development.s7])
+        .arg("unpinned")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains(development.s7_revision.as_deref().unwrap())
+    );
+    assert!(output.stdout.is_empty());
 }

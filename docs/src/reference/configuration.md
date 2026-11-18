@@ -312,15 +312,15 @@ extend-functions = { sapply = "use `vapply()` for a stable return type" }
 
 ## `[compat]`
 
-The minimum tool versions the project supports, in the spirit of clippy's `msrv`
-and ruff's `target-version`. Consumed by the version-aware lint rules
-(`r-compat`, `roxygen2-compat`): syntax or documentation constructs that need a
-*newer* version than the declared floor are flagged.
+The minimum tool and package versions the project supports. Version-aware lint
+rules use the R and roxygen2 floors. Semantic analysis uses the S7 floor to
+resolve declarations and package APIs.
 
   | Key        | Type           | Default | Description                                                      |
   | ---------- | -------------- | ------- | ---------------------------------------------------------------- |
   | `r`        | version string | unset   | Minimum supported R version, e.g. `"4.1"`.                       |
   | `roxygen2` | version string | unset   | The roxygen2 version the project documents with, e.g. `"7.3.2"`. |
+  | `s7`       | version string | unset   | Minimum supported S7 version, e.g. `"0.2.2.9000"`.               |
 
 Values are plain version strings---the key *is* the `>=` floor, so there is no
 operator syntax.
@@ -328,14 +328,18 @@ operator syntax.
 When a key is unset, the floor is derived per file from the enclosing package's
 `DESCRIPTION`: `Depends: R (>= …)` supplies `r`, and `Config/roxygen2/version`
 (written by roxygen2 8.0.0 and later) or the legacy `RoxygenNote` supplies
-`roxygen2`. An explicit key here always wins. With neither a key nor a
-`DESCRIPTION` fact, the version-aware rules stay silent, so loose scripts see no
-false positives.
+`roxygen2`. An S7 dependency constraint supplies `s7`. An explicit key here
+always wins. With neither a key nor a `DESCRIPTION` fact, the version-aware lint
+rules stay silent and Arity analyzes S7 using the released 0.2.2 API.
+
+A floor of `0.2.2.9000` or higher enables the development S7 APIs, including
+named bindings such as `Point := new_class()` when `:=` resolves to S7.
 
 ```toml
 [compat]
 r = "4.1"
 roxygen2 = "7.3.2"
+s7 = "0.2.2.9000"
 ```
 
 ## `[index]`

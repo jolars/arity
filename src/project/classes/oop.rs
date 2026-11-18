@@ -9,6 +9,6 @@
 mod extract;
 mod model;
 
-pub(super) use extract::{declaration_roots, project};
+pub(super) use extract::{declaration_roots, live_s7_spec, project};
 pub use extract::{method_implementation_sites, oop_point, oop_sites};
 pub use model::*;

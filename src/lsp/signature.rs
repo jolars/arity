@@ -9,6 +9,7 @@ pub(crate) fn signature_help_via_db(
     buffer: &TextBuffer,
     position: Position,
     encoding: PositionEncoding,
+    s7_floor: Option<&crate::config::CompatVersion>,
 ) -> Option<SignatureHelp> {
     let text = buffer.text();
     let line_index = buffer.line_index();
@@ -16,24 +17,24 @@ pub(crate) fn signature_help_via_db(
         .position_to_byte(position, encoding)
         .min(text.len());
     let index = snapshot.library_data().unwrap_or_default();
+    let context = Some(oop::ReadContext {
+        snapshot,
+        path,
+        s7_floor,
+    });
     let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         let file = snapshot.lookup_file(path)?;
         if !snapshot.file_text_is(file, &buffer.text_arc()) {
             return None;
         }
         let root = snapshot.parsed_tree(file);
-        Some(signature_help_in(
-            &root,
-            offset,
-            &index,
-            Some((snapshot, path)),
-        ))
+        Some(signature_help_in(&root, offset, &index, context))
     }));
     match cached {
         Ok(Some(help)) => help,
         Ok(None) | Err(_) => {
             let root = parse(text).cst;
-            signature_help_in(&root, offset, &index, Some((snapshot, path)))
+            signature_help_in(&root, offset, &index, context)
         }
     }
 }
@@ -65,7 +66,7 @@ fn signature_help_in(
     root: &SyntaxNode,
     offset: usize,
     indexed: &IndexedProvider,
-    context: Option<(&Analysis, &Path)>,
+    context: Option<oop::ReadContext<'_>>,
 ) -> Option<SignatureHelp> {
     let offset = TextSize::new(offset as u32);
     let call = enclosing_call(root, offset)?;
@@ -554,6 +555,7 @@ mod tests {
             &buf(src),
             position,
             PositionEncoding::Utf16,
+            None,
         )
         .expect("signature via db");
         assert_eq!(help.signatures.len(), 1);
@@ -567,7 +569,8 @@ mod tests {
                 path,
                 &buf(src),
                 position,
-                PositionEncoding::Utf16
+                PositionEncoding::Utf16,
+                None,
             )
             .is_some(),
             "fallback signature help should resolve too"

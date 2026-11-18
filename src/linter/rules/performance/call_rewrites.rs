@@ -346,6 +346,7 @@ impl Rule for List2df {
         CompatConfig {
             r: Some("4.0".into()),
             roxygen2: None,
+            s7: None,
         }
     }
     fn interests(&self) -> &'static [SyntaxKind] {

@@ -149,6 +149,8 @@ pub struct S4Slot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct S4Slots {
     pub entries: BTreeMap<String, Vec<S4Slot>>,
+    /// Effective order in R's class definition, including inherited slots.
+    pub order: Vec<String>,
     pub complete: bool,
 }
 
@@ -156,8 +158,31 @@ impl Default for S4Slots {
     fn default() -> Self {
         Self {
             entries: BTreeMap::new(),
+            order: Vec::new(),
             complete: true,
         }
+    }
+}
+
+impl S4Slots {
+    pub(super) fn slot_entries(&mut self, name: &str, inherited: bool) -> &mut Vec<S4Slot> {
+        self.entries.entry(name.to_string()).or_insert_with(|| {
+            // R prepends an inherited data part. An explicitly declared .Data
+            // slot stays where it appears in the declaration.
+            if inherited && name == ".Data" {
+                self.order.insert(0, name.to_string());
+            } else {
+                self.order.push(name.to_string());
+            }
+            Vec::new()
+        })
+    }
+
+    pub(super) fn into_ordered_entries(mut self) -> impl Iterator<Item = (String, Vec<S4Slot>)> {
+        self.order.into_iter().filter_map(move |name| {
+            let slots = self.entries.remove(&name)?;
+            Some((name, slots))
+        })
     }
 }
 

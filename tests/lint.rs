@@ -3558,6 +3558,7 @@ fn compat_config(r: Option<&str>, roxygen2: Option<&str>) -> LintConfig {
         compat: arity::config::CompatConfig {
             r: r.map(str::to_string),
             roxygen2: roxygen2.map(str::to_string),
+            s7: None,
         },
         ..LintConfig::default()
     }

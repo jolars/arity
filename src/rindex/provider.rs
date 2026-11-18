@@ -17,6 +17,7 @@ use smol_str::SmolStr;
 use crate::rindex::cache::Cache;
 use crate::rindex::remote::RemoteExports;
 use crate::rindex::schema::{PackageExports, PackageIndex, SymbolEntry};
+use crate::semantic::s7::S7Version;
 use crate::semantic::symbols::{
     BundledPackages, LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider,
     meta_package_members, unbacktick,
@@ -46,6 +47,16 @@ pub fn resolve_origin(
     name: &str,
     loaded: &[LoadedPackage],
 ) -> PackageOrigin {
+    resolve_origin_with_s7(indexed, remote, name, loaded, S7Version::Release)
+}
+
+pub(crate) fn resolve_origin_with_s7(
+    indexed: &IndexedProvider,
+    remote: &RemoteExports,
+    name: &str,
+    loaded: &[LoadedPackage],
+    s7_version: S7Version,
+) -> PackageOrigin {
     // Default packages attach first.
     let mut candidates: Vec<SmolStr> = match BASE_R.origin(name, &[]) {
         PackageOrigin::Resolved(p) => vec![p],
@@ -63,7 +74,11 @@ pub fn resolve_origin(
         } else {
             BUNDLED.exports(pkg, name)
         };
-        if exports_it && !candidates.iter().any(|c| c == pkg) {
+        let s7_export = s7_version
+            .additional_exports(pkg)
+            .iter()
+            .any(|export| export == unbacktick(name));
+        if (exports_it || s7_export) && !candidates.iter().any(|c| c == pkg) {
             candidates.push(SmolStr::new(pkg));
         }
     };
@@ -143,22 +158,23 @@ pub(crate) fn known_export_names<'a>(
     indexed: &'a IndexedProvider,
     remote: &'a RemoteExports,
     loaded: &'a [LoadedPackage],
+    s7_version: S7Version,
 ) -> impl Iterator<Item = &'a SmolStr> + 'a {
     let base: &'a StaticBaseR = &BASE_R;
     base.base_names().chain(loaded.iter().flat_map(move |pkg| {
         std::iter::once(pkg.name.as_str())
             .chain(attach_members(indexed, &pkg.name))
-            .flat_map(
-                move |package| -> Box<dyn Iterator<Item = &'a SmolStr> + 'a> {
+            .flat_map(move |package| {
+                let exports: Box<dyn Iterator<Item = &'a SmolStr> + 'a> =
                     if let Some(membership) = indexed.membership(package) {
                         Box::new(membership.exports.iter())
                     } else if let Some(exports) = remote.package_exports(package) {
                         Box::new(exports)
                     } else {
                         Box::new(BUNDLED.package_exports(package).into_iter().flatten())
-                    }
-                },
-            )
+                    };
+                exports.chain(s7_version.additional_exports(package))
+            })
     }))
 }
 
@@ -473,7 +489,12 @@ impl SymbolProvider for CompositeProvider {
         &'a self,
         loaded: &'a [LoadedPackage],
     ) -> Box<dyn Iterator<Item = &'a SmolStr> + 'a> {
-        Box::new(known_export_names(&self.indexed, &self.remote, loaded))
+        Box::new(known_export_names(
+            &self.indexed,
+            &self.remote,
+            loaded,
+            S7Version::Release,
+        ))
     }
 
     fn origin(&self, name: &str, loaded: &[LoadedPackage]) -> PackageOrigin {
@@ -557,7 +578,8 @@ mod tests {
             loaded("dplyr"),
             loaded("rlang"),
         ];
-        let names: HashSet<_> = known_export_names(&index, &remote, &loaded).collect();
+        let names: HashSet<_> =
+            known_export_names(&index, &remote, &loaded, S7Version::Release).collect();
         for name in [
             "length",
             "installed_name",

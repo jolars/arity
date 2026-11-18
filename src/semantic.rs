@@ -12,6 +12,7 @@ pub mod cfg;
 pub mod enclosure;
 mod interpolation;
 mod rng;
+pub(crate) mod s7;
 pub mod scope;
 pub(crate) mod spelling;
 pub mod symbols;
@@ -141,6 +142,9 @@ pub struct SemanticModel {
     signature_effects: calls::SignatureEffects,
     method_enclosures: enclosure::MethodEnclosures,
     contextual_resolutions: HashMap<TextRange, enclosure::IdentifierResolution>,
+    pub(crate) s7_version: s7::S7Version,
+    pub(crate) s7_bindings: HashSet<TextRange>,
+    pub(crate) s7_injected_names: HashSet<TextRange>,
 }
 
 impl SemanticModel {

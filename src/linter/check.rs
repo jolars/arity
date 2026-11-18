@@ -189,15 +189,32 @@ pub fn check_paths_with_index(
         return Err(LintError::NoFiles);
     }
     let indexed = Arc::new(indexed);
-    check_files_with_configs(discovered, &|_| config, &|_| &indexed)
+    check_files_with_scope_configs(discovered, &|_| config, &|_| &indexed, |_| {
+        Ok(config.compat.s7_version())
+    })
 }
 
 /// Lint an already discovered file set with per-file settings while retaining
-/// one shared project graph. Discovery and config errors are the caller's job.
+/// one shared project graph. Package sources loaded for scope discover their
+/// S7 floor on disk. Discovery and config errors for lint targets are the
+/// caller's job.
 pub fn check_files_with_configs<'a>(
     discovered: crate::file_discovery::DiscoveredFiles,
     config_for: &(impl Fn(&Path) -> &'a LintConfig + Sync),
     index_for: &(impl Fn(&Path) -> &'a Arc<IndexedProvider> + Sync),
+) -> Result<LintResult, LintError> {
+    check_files_with_scope_configs(discovered, config_for, index_for, |path| {
+        Ok(path.parent().and_then(configured_s7_floor))
+    })
+}
+
+/// Like [`check_files_with_configs`], with a resolver for files discovered
+/// during package scope seeding.
+pub fn check_files_with_scope_configs<'a>(
+    discovered: crate::file_discovery::DiscoveredFiles,
+    config_for: &(impl Fn(&Path) -> &'a LintConfig + Sync),
+    index_for: &(impl Fn(&Path) -> &'a Arc<IndexedProvider> + Sync),
+    mut scope_floor_for: impl FnMut(&Path) -> Result<Option<crate::config::CompatVersion>, LintError>,
 ) -> Result<LintResult, LintError> {
     let mut rule_cache = HashMap::new();
     let mut rules = HashMap::new();
@@ -240,6 +257,7 @@ pub fn check_files_with_configs<'a>(
             }
         };
         let file = db.upsert_file(&path, content);
+        db.set_s7_floor(file, config_for(&path).compat.s7_version());
         tracked.insert(path.clone(), file);
         readable.push(path);
     }
@@ -269,7 +287,9 @@ pub fn check_files_with_configs<'a>(
         excluded.par_iter().map(fs::read_to_string).collect();
     for (path, content) in excluded.into_iter().zip(excluded_contents) {
         if let Ok(content) = content {
-            scope_only.push(db.upsert_file(&path, content));
+            let file = db.upsert_file(&path, content);
+            db.set_s7_floor(file, scope_floor_for(&path)?);
+            scope_only.push(file);
         }
     }
 
@@ -579,6 +599,24 @@ pub fn seed_workspace_for(
     active: SourceFile,
     exclude: &ExcludeFilter,
 ) {
+    let mut by_directory = HashMap::new();
+    seed_workspace_for_with_floors(db, path, active, exclude, |path| {
+        let directory = path.parent()?;
+        by_directory
+            .entry(directory.to_path_buf())
+            .or_insert_with(|| configured_s7_floor(directory))
+            .clone()
+    });
+}
+
+#[doc(hidden)]
+pub fn seed_workspace_for_with_floors(
+    db: &mut IncrementalDatabase,
+    path: &Path,
+    active: SourceFile,
+    exclude: &ExcludeFilter,
+    mut floor_for: impl FnMut(&Path) -> Option<crate::config::CompatVersion>,
+) {
     let (mut files, mut roots) = match db.workspace() {
         Some(ws) => (ws.members(&*db).to_vec(), ws.roots(&*db).to_vec()),
         None => (Vec::new(), Vec::new()),
@@ -588,19 +626,44 @@ pub fn seed_workspace_for(
     let search_dir =
         package_root(path).or_else(|| path.parent().filter(|p| p.is_dir()).map(Path::to_path_buf));
     if let Some(dir) = search_dir {
+        let mut siblings = Vec::new();
         for sibling in scope_members(std::slice::from_ref(&dir), exclude) {
             if sibling == path {
                 continue;
             }
             if let Ok(text) = fs::read_to_string(&sibling) {
-                files.push(db.upsert_file(&sibling, text));
+                let file = db.upsert_file(&sibling, text);
+                db.set_s7_floor(file, floor_for(&sibling));
+                siblings.push(file);
             }
         }
+        files.extend(siblings);
         if !roots.contains(&dir) {
             roots.push(dir);
         }
     }
     db.set_workspace_members(files, roots);
+}
+
+/// Resolve the configured floor once per directory for disk-seeded files.
+/// Semantic queries apply the DESCRIPTION fallback using tracked facts.
+pub(crate) fn seed_s7_floors_from_config(db: &mut IncrementalDatabase, files: &[SourceFile]) {
+    let mut by_directory = HashMap::new();
+    for &file in files {
+        let Some(directory) = db.file_path(file).and_then(Path::parent) else {
+            continue;
+        };
+        let floor = by_directory
+            .entry(directory.to_path_buf())
+            .or_insert_with(|| configured_s7_floor(directory));
+        db.set_s7_floor(file, floor.clone());
+    }
+}
+
+fn configured_s7_floor(directory: &Path) -> Option<crate::config::CompatVersion> {
+    crate::config::Config::resolve(None, false, directory)
+        .ok()
+        .and_then(|(config, _)| config.compat.s7_version())
 }
 
 /// [`seed_workspace_for`], skipped when `active` is already a workspace member.
@@ -726,6 +789,7 @@ pub fn check_document_in_project(
         return Err(LintError::UnknownRule { rule });
     }
     ensure_workspace_for(db, path, active);
+    db.set_s7_floor(active, config.compat.s7_version());
     match prepare_document_in_project(db, path, active, Arc::new(rules)) {
         Some(prepared) => {
             let analysis = db.snapshot();
@@ -838,7 +902,12 @@ pub fn check_document_with_provider(
     provider: &dyn SymbolProvider,
 ) -> Result<Vec<Diagnostic>, LintError> {
     let mut db = IncrementalDatabase::default();
-    let file = db.add_file(content.to_string());
+    let file = db.upsert_file(path, content.to_string());
+    db.set_s7_floor(file, config.compat.s7_version());
+    if let Some(package) = package_root(path) {
+        db.refresh_descriptions([package]);
+        db.set_package_metadata(crate::project::discover_packages(&[path.to_path_buf()]));
+    }
     // `add_file` tracks the buffer pathless; the lint path still knows the real
     // location, so resolve the package-wide roxygen markdown default from it.
     db.set_roxygen_markdown(

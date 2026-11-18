@@ -491,7 +491,7 @@ fn directives(text: &str) -> Option<Vec<NamespaceDirective>> {
 }
 
 /// R removes the named exclusion before interpreting package operands.
-pub(super) fn wildcard_import(
+pub(in crate::project::classes) fn wildcard_import(
     directive: &crate::namespace::Directive,
 ) -> Option<(Vec<String>, BTreeSet<String>)> {
     let mut packages = Vec::new();

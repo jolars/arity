@@ -258,6 +258,20 @@ impl UndefinedSymbol {
         if ctx.project.is_some_and(|p| p.resolution_incomplete) {
             return;
         }
+        let s7_exports = ctx.model.s7_version.additional_exports("S7");
+        let s7_exports = if !s7_exports.is_empty()
+            && loaded.iter().any(|package| {
+                package.name == "S7"
+                    || ctx
+                        .symbols
+                        .attached_packages(&package.name)
+                        .iter()
+                        .any(|member| member == "S7")
+            }) {
+            s7_exports
+        } else {
+            &[]
+        };
         let exports = OnceLock::new();
         let runner_bindings = implicit_bindings(ctx.path);
         let mut suggestions = Suggestions::default();
@@ -293,16 +307,21 @@ impl UndefinedSymbol {
                 continue;
             }
             // Skip if the symbol provider can place it.
-            if !matches!(
-                ctx.symbols.origin(&ident.name, loaded),
-                PackageOrigin::Unknown
-            ) {
+            if s7_exports
+                .iter()
+                .any(|name| name == unbacktick(&ident.name))
+                || !matches!(
+                    ctx.symbols.origin(&ident.name, loaded),
+                    PackageOrigin::Unknown
+                )
+            {
                 continue;
             }
             let exports = exports.get_or_init(|| {
                 candidate_names(
                     ctx.symbols
                         .export_names(loaded)
+                        .chain(s7_exports)
                         .chain(runner_bindings.iter()),
                 )
             });

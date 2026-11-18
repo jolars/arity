@@ -52,7 +52,7 @@ pub struct S4DispatchCall {
 }
 
 pub(super) struct S4PackageLoadSite {
-    range: TextRange,
+    pub range: TextRange,
     pub function: Option<TextRange>,
     pub load: super::s4::S4NamespaceLoad,
 }

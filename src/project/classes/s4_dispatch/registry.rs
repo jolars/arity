@@ -94,6 +94,7 @@ pub(super) fn s4_event_position(file: &ClassFile, key: &OopKey) -> Option<usize>
     file.facts.oop.events.iter().position(|event| match event {
         OopEvent::Generic { target, .. }
         | OopEvent::Method(target)
+        | OopEvent::S7Method(target)
         | OopEvent::RemoveS4Method(target) => target == key,
         _ => false,
     })

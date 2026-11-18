@@ -38,3 +38,7 @@ extend-select = []
 # This opt-in rule is enabled with `extend-select` above.
 [lint.rules.cyclomatic-complexity]
 max-complexity = 20
+
+# Opt in to development S7 behavior when the project depends on it.
+# [compat]
+# s7 = "0.2.2.9000"

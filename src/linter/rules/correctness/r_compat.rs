@@ -64,6 +64,7 @@ impl Rule for RCompat {
         CompatConfig {
             r: Some("4.0".to_string()),
             roxygen2: None,
+            s7: None,
         }
     }
 

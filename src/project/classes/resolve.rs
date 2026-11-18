@@ -9,7 +9,7 @@ use smol_str::SmolStr;
 
 use super::*;
 
-mod namespace;
+pub(super) mod namespace;
 pub use namespace::S4Namespace;
 mod oop;
 pub(super) mod s3_registry;
@@ -32,6 +32,7 @@ pub struct ClassResolution<'a> {
     pub scope: &'a ProjectScope,
     pub namespaces: &'a [(PathBuf, String)],
     pub package_names: &'a BTreeMap<PathBuf, String>,
+    pub package_versions: &'a BTreeMap<PathBuf, String>,
     pub packages: &'a [PackageDeclarations],
     pub indexed: &'a IndexedProvider,
     pub remote: &'a RemoteExports,
@@ -71,6 +72,9 @@ pub struct ClassIndex {
     uncertain_methods: BTreeMap<OopId, MethodDef>,
     uncertain_generics: BTreeMap<OopId, GenericDef>,
     pub(super) load_orders: BTreeMap<PathBuf, Option<Vec<PathBuf>>>,
+    pub(super) package_versions: BTreeMap<PathBuf, String>,
+    pub(super) s7_s4_parents: BTreeMap<ClassId, ClassId>,
+    pub(super) s7_s4_registered: BTreeSet<ClassId>,
 }
 
 impl ClassIndex {
@@ -118,9 +122,19 @@ impl ClassIndex {
         explicit: &BTreeSet<PathBuf>,
         attachments: &BTreeSet<PathBuf>,
     ) -> (BTreeSet<PathBuf>, bool) {
+        let owner = self.file(path).and_then(|file| file.package_root.as_ref());
+        self.namespace_load_closure(owner, explicit, attachments)
+    }
+
+    pub(super) fn namespace_load_closure(
+        &self,
+        owner: Option<&PathBuf>,
+        explicit: &BTreeSet<PathBuf>,
+        attachments: &BTreeSet<PathBuf>,
+    ) -> (BTreeSet<PathBuf>, bool) {
         let mut pending: Vec<_> = explicit
             .iter()
-            .chain(self.file(path).and_then(|file| file.package_root.as_ref()))
+            .chain(owner)
             .map(|root| (root.clone(), false))
             .chain(attachments.iter().map(|root| (root.clone(), true)))
             .collect();
@@ -272,6 +286,7 @@ impl ClassIndex {
                 .collect(),
             scope: Arc::new(resolution.scope.clone()),
             load_orders: resolution.load_orders.clone(),
+            package_versions: resolution.package_versions.clone(),
             s3_origins: s3_registry::S3LookupOrigins::build(resolution),
             ..Self::default()
         };
@@ -341,6 +356,7 @@ impl ClassIndex {
                         .filter_map(|member| member.value_factory.as_ref()),
                 )
                 .chain(file.facts.oop.class_lookups.iter())
+                .chain(file.facts.oop.s7.helpers.iter())
                 .chain(
                     file.facts
                         .declarations
@@ -512,8 +528,11 @@ impl ClassIndex {
             }
         }
         index.install_s4_relations();
+        index.install_s7_bridges();
         index.s3 = index.build_s3_registry(resolution);
         index.s4 = index.build_s4_registry(resolution);
+        index.install_s7_s3_registrations();
+        index.install_s7_s4_registrations();
         index
     }
 
@@ -772,6 +791,11 @@ fn function_availability(
     files: &BTreeMap<PathBuf, ClassFile>,
     resolution: &ClassResolution<'_>,
 ) -> Availability {
+    let version = file.facts.oop.s7.version;
+    let s7_development = package == "S7" && S7Version::development_export(name);
+    if s7_development && version == S7Version::Release {
+        return Availability::Absent;
+    }
     match reference {
         FunctionRef::Qualified {
             package: actual_package,
@@ -874,6 +898,9 @@ fn function_availability(
                     return Availability::Unknown;
                 }
                 imports.extend(package_origins(resolution, name, &wildcard));
+                if s7_development && wildcard.iter().any(|package| package == "S7") {
+                    imports.insert("S7".into());
+                }
                 if !imports.is_empty() {
                     return if imports.len() == 1 && imports.contains(package) {
                         Availability::Present
@@ -898,6 +925,9 @@ fn function_availability(
             }
             // Depends attaches before this file executes its own library calls.
             loaded.extend(attached.iter().cloned());
+            if s7_development && loaded.iter().any(|package| package == "S7") {
+                return Availability::Present;
+            }
             let loaded: Vec<_> = loaded
                 .into_iter()
                 .map(|name| LoadedPackage {
@@ -960,7 +990,7 @@ fn package_origins(
         .collect()
 }
 
-fn namespace_name(element: SyntaxElement) -> Option<String> {
+pub(super) fn namespace_name(element: SyntaxElement) -> Option<String> {
     let token = element.into_token()?;
     match token.kind() {
         SyntaxKind::IDENT => Some(unbacktick(token.text()).to_string()),

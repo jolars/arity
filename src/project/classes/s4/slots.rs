@@ -21,7 +21,7 @@ fn generated(slots: &mut S4Slots, name: &str, class: &str) {
             DispatchClass::Formal(class.into())
         },
     };
-    let candidates = slots.entries.entry(name.into()).or_default();
+    let candidates = slots.slot_entries(name, true);
     if !candidates.contains(&slot) {
         candidates.push(slot);
     }
@@ -157,9 +157,9 @@ impl ClassIndex {
     }
 
     fn inherit_s4_slots(&self, context: &ClassId, slots: &mut S4Slots, inherited: S4Slots) {
-        slots.complete &= inherited.complete;
-        for (name, entries) in inherited.entries {
-            let target = slots.entries.entry(name).or_default();
+        let mut complete = slots.complete && inherited.complete;
+        for (name, entries) in inherited.into_ordered_entries() {
+            let target = slots.slot_entries(&name, true);
             for entry in entries {
                 if target.is_empty() {
                     target.push(entry);
@@ -169,7 +169,7 @@ impl ClassIndex {
                     .iter()
                     .all(|actual| self.slot_type_extends(context, actual, &entry));
                 if !narrows {
-                    slots.complete = false;
+                    complete = false;
                 }
                 let same_type = target
                     .iter()
@@ -179,6 +179,7 @@ impl ClassIndex {
                 }
             }
         }
+        slots.complete = complete;
     }
 
     pub(in crate::project::classes) fn install_s4_relations(&mut self) {
@@ -335,12 +336,14 @@ impl ClassIndex {
             }
             _ => false,
         };
-        let own = self.own_s4_slots(id, def);
-        slots.complete &= own.complete;
-        slots.entries = own.entries;
+        self.collect_own_s4_slots(id, def, &mut slots);
+        let s7_parent = self.s7_s4_slots(id);
+        if let Some(inherited) = s7_parent.as_ref() {
+            self.inherit_s4_slots(id, &mut slots, inherited.clone());
+        }
         if let Some(s4) = &def.s4 {
             slots.complete &= s4.slots_complete
-                && s4.parents_complete
+                && (s4.parents_complete || s7_parent.is_some())
                 && s4
                     .schema_helpers
                     .iter()
@@ -383,6 +386,9 @@ impl ClassIndex {
             slots.complete &= self.callee_identity(&id.path, vector).is_some();
         }
         for (ordinal, reference) in def.parents.iter().enumerate() {
+            if s7_parent.is_some() && matches!(reference, ParentRef::Unknown) {
+                continue;
+            }
             let candidates = self
                 .parent_candidates
                 .get(id)
@@ -427,9 +433,7 @@ impl ClassIndex {
         slots
     }
 
-    fn own_s4_slots(&self, id: &ClassId, def: &ClassDef) -> S4Slots {
-        let mut slots = S4Slots::default();
-        let mut own: BTreeMap<String, Vec<S4Slot>> = BTreeMap::new();
+    fn collect_own_s4_slots(&self, id: &ClassId, def: &ClassDef, slots: &mut S4Slots) {
         let own_slots_known = def.s4.as_ref().is_none_or(|s4| {
             s4.slot_helpers
                 .iter()
@@ -454,22 +458,19 @@ impl ClassIndex {
                 {
                     slots.complete = false;
                 }
-                own.entry(name.clone()).or_default().push(S4Slot {
+                let entries = slots.slot_entries(name, false);
+                entries.push(S4Slot {
                     declaration: Some(OopId {
                         path: id.path.clone(),
                         key: member.key.clone(),
                     }),
                     declared_type: class,
                 });
+                if entries.len() > 1 {
+                    slots.complete = false;
+                }
             }
         }
-        for (name, entries) in own {
-            if entries.len() != 1 {
-                slots.complete = false;
-            }
-            slots.entries.insert(name, entries);
-        }
-        slots
     }
 
     /// Prototype values inherit through contains/representation. Implicit defaults

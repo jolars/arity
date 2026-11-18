@@ -13,12 +13,36 @@ pub(super) fn expected_package(name: &str) -> Option<&'static str> {
         | "signature" | "new" | "getRefClass" | "setClassUnion" | "setOldClass" | "setIs"
         | "setAs" | "representation" | "prototype" | "slot" | "slot<-" | "as" | "as<-"
         | "callNextMethod" | "selectMethod" | "removeMethod" => "methods",
-        "new_class" | "new_generic" | "method<-" => "S7",
+        "new_class"
+        | "new_generic"
+        | "method<-"
+        | "method"
+        | "new_property"
+        | "new_object"
+        | "prop"
+        | "prop<-"
+        | "props"
+        | "props<-"
+        | "set_props"
+        | "new_union"
+        | "new_S3_class"
+        | "new_external_generic"
+        | "new_external_class"
+        | "S7_dispatch"
+        | "super"
+        | "S4_register"
+        | "S4_contains"
+        | "methods_register"
+        | "S7_on_load"
+        | "S7_on_unload"
+        | "S7_on_build" => "S7",
+        "getClass" | "getClassDef" => "methods",
+        name if super::s7::is_builtin(name) => "S7",
         "UseMethod" | "NextMethod" | ".S3method" | "registerS3method" | "c" | "list"
         | "character" | "structure" | "class" | "class<-" | "oldClass" | "oldClass<-"
         | "unclass" | "return" | "lockBinding" | "unlockBinding" | "do.call" | "environment"
         | "globalenv" | "@" | "@<-" | "standardGeneric" | "library" | "require"
-        | "requireNamespace" | "loadNamespace" => "base",
+        | "requireNamespace" | "loadNamespace" | "unloadNamespace" | "|" => "base",
         _ => return None,
     })
 }
@@ -132,6 +156,16 @@ pub(super) fn class_lookups(
                     | "require"
                     | "requireNamespace"
                     | "loadNamespace"
+                    | "unloadNamespace"
+                    | "prop"
+                    | "prop<-"
+                    | "props"
+                    | "props<-"
+                    | "set_props"
+                    | "new_object"
+                    | "S7_dispatch"
+                    | "super"
+                    | "method"
             ) || selection_helper)
                 && call
                     .syntax()
@@ -189,8 +223,53 @@ fn match_supplied(
     Some((result, dots))
 }
 
+pub(super) fn attachment_formals(name: &str) -> Option<&'static [&'static str]> {
+    let formals: &[_] = match name {
+        "library" => &[
+            "package",
+            "help",
+            "pos",
+            "lib.loc",
+            "character.only",
+            "logical.return",
+            "warn.conflicts",
+            "quietly",
+            "verbose",
+            "mask.ok",
+            "exclude",
+            "include.only",
+            "attach.required",
+        ],
+        "require" => &[
+            "package",
+            "lib.loc",
+            "quietly",
+            "warn.conflicts",
+            "character.only",
+            "mask.ok",
+            "exclude",
+            "include.only",
+            "attach.required",
+        ],
+        _ => return None,
+    };
+    Some(formals)
+}
+
 pub(super) fn matched_args(call: &CallExpr, formals: &[&str]) -> Option<MatchedArguments> {
     Some(match_supplied(supplied_args(call)?, formals)?.0)
+}
+
+pub(super) fn declaration_args(
+    model: &SemanticModel,
+    call: &CallExpr,
+    formals: &[&str],
+) -> Option<MatchedArguments> {
+    let mut supplied = supplied_args(call)?;
+    if s7_named_target(model, call.syntax()).is_some() {
+        supplied.push((Some("name".into()), None));
+    }
+    Some(match_supplied(supplied, formals)?.0)
 }
 
 pub(super) fn argument(args: &MatchedArguments, name: &str) -> Option<SyntaxElement> {
@@ -212,7 +291,7 @@ pub(super) fn registration_args(
     formals: &[&str],
 ) -> Option<MatchedArguments> {
     let mut supplied = supplied_args(call)?;
-    if name == "method<-"
+    if matches!(name, "method<-" | "prop<-" | "props<-")
         && let Some(assignment) = replacement_assignment(call)
     {
         supplied.push((Some("value".into()), assignment.value_element()));

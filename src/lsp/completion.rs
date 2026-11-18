@@ -82,6 +82,7 @@ pub(crate) fn completion_via_db(
     buffer: &TextBuffer,
     position: Position,
     encoding: PositionEncoding,
+    s7_floor: Option<&crate::config::CompatVersion>,
 ) -> Option<CompletionResponse> {
     let text = buffer.text();
     let line_index = buffer.line_index();
@@ -105,25 +106,24 @@ pub(crate) fn completion_via_db(
             encoding,
         );
     }
+    let context = Some(oop::ReadContext {
+        snapshot,
+        path,
+        s7_floor,
+    });
     let cached = salsa::Cancelled::catch(AssertUnwindSafe(|| {
         let file = snapshot.lookup_file(path)?;
         if !snapshot.file_text_is(file, &buffer.text_arc()) {
             return None;
         }
         let root = snapshot.parsed_tree(file);
-        Some(completions_in(
-            &root,
-            offset,
-            &index,
-            &remote,
-            Some((snapshot, path)),
-        ))
+        Some(completions_in(&root, offset, &index, &remote, context))
     }));
     match cached {
         Ok(Some(resp)) => resp,
         Ok(None) | Err(_) => {
             let root = parse(text).cst;
-            completions_in(&root, offset, &index, &remote, Some((snapshot, path)))
+            completions_in(&root, offset, &index, &remote, context)
         }
     }
 }
@@ -193,7 +193,7 @@ fn completions_in(
     offset: TextSize,
     indexed: &IndexedProvider,
     remote: &RemoteExports,
-    context: Option<(&Analysis, &Path)>,
+    context: Option<oop::ReadContext<'_>>,
 ) -> Option<CompletionResponse> {
     // Ask the parser about a hypothetical field identifier when the user has
     // just typed `$`. This restores surrounding calls and method enclosures
@@ -216,7 +216,7 @@ fn completions_from_context(
     offset: TextSize,
     indexed: &IndexedProvider,
     remote: &RemoteExports,
-    context: Option<(&Analysis, &Path)>,
+    context: Option<oop::ReadContext<'_>>,
 ) -> Option<CompletionResponse> {
     match classify_context(root, offset) {
         CompletionContext::None => None,
@@ -231,12 +231,43 @@ fn completions_from_context(
             indexed,
         )),
         CompletionContext::Field {
-            receiver,
+            receiver: receiver_expr,
             at,
             prefix,
         } => {
             let known = oop::with_class_index(root, context, |index, model, path| {
-                let receiver = index.class_receiver(path, root, model, &receiver)?;
+                let receiver = index.class_receiver(path, root, model, &receiver_expr)?;
+                if receiver.class.key.system == crate::project::classes::ClassSystem::S7 {
+                    if !at || receiver.access == crate::project::classes::ClassAccess::Generator {
+                        return Some((Vec::new(), true));
+                    }
+                    let api = index.s7_api(&receiver.class)?;
+                    let mut candidates: Vec<_> = api
+                        .properties
+                        .iter()
+                        .map(|property| Candidate {
+                            label: property.name.clone(),
+                            kind: CompletionItemKind::PROPERTY,
+                            sort_group: 0,
+                            data: CompletionData::ClassMember {
+                                signature: None,
+                                declared_type: property.declared_type(index),
+                            },
+                            origin: Some(SmolStr::new_static("S7")),
+                        })
+                        .collect();
+                    if !api.complete {
+                        candidates.extend(
+                            field_candidates(root, model, &receiver_expr, at)
+                                .into_iter()
+                                .map(|mut candidate| {
+                                    candidate.sort_group = 1;
+                                    candidate
+                                }),
+                        );
+                    }
+                    return Some((candidates, api.complete));
+                }
                 if receiver.class.key.system == crate::project::classes::ClassSystem::S4 {
                     use crate::project::classes::{ClassAccess, DispatchClass};
                     if !at || receiver.access == ClassAccess::Generator {
@@ -377,16 +408,24 @@ fn completions_from_context(
                     .collect();
                 Some((candidates, members.complete))
             });
-            let (candidates, complete) =
-                known.unwrap_or_else(|| (field_candidates(root, &receiver, at), true));
+            let (candidates, complete) = known.unwrap_or_else(|| {
+                (
+                    field_candidates(root, &SemanticModel::build(root), &receiver_expr, at),
+                    true,
+                )
+            });
             Some(build_response(candidates, &prefix, complete, indexed))
         }
-        CompletionContext::Bare { prefix, offset } => Some(build_response(
-            bare_candidates(root, offset, indexed, remote),
-            &prefix,
-            false,
-            indexed,
-        )),
+        CompletionContext::Bare { prefix, offset } => {
+            let candidates = if context.is_some() {
+                oop::with_live_model(root, context, |_, model, _| {
+                    bare_candidates(model, offset, indexed, remote)
+                })
+            } else {
+                bare_candidates(&SemanticModel::build(root), offset, indexed, remote)
+            };
+            Some(build_response(candidates, &prefix, false, indexed))
+        }
     }
 }
 
@@ -632,10 +671,14 @@ fn member_candidates(
 /// evaluate). Harvests field names used with the same operator on the same
 /// receiver anywhere in the file, and — for `$` only — infers the named fields
 /// of a local `list()`/`data.frame()`-family construction bound to `receiver`.
-fn field_candidates(root: &SyntaxNode, receiver: &SyntaxElement, at: bool) -> Vec<Candidate> {
+fn field_candidates(
+    root: &SyntaxNode,
+    model: &SemanticModel,
+    receiver: &SyntaxElement,
+    at: bool,
+) -> Vec<Candidate> {
     let mut out: Vec<Candidate> = Vec::new();
     let receiver_text = normalize_receiver(receiver);
-    let model = SemanticModel::build(root);
     let binding_at = |value: &SyntaxElement| {
         model
             .idents()
@@ -753,12 +796,11 @@ fn field_candidate(name: SmolStr) -> Candidate {
 /// Bare-name candidates: scope-visible locals, attached-package exports, and
 /// base-R default-package names.
 fn bare_candidates(
-    root: &SyntaxNode,
+    model: &SemanticModel,
     offset: TextSize,
     indexed: &IndexedProvider,
     remote: &RemoteExports,
 ) -> Vec<Candidate> {
-    let model = SemanticModel::build(root);
     let mut out: Vec<Candidate> = Vec::new();
 
     // 1. Scope-visible locals.

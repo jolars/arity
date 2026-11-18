@@ -18,8 +18,9 @@ use crate::parser::{
 use crate::project::{
     ClassId, ClassIndex, DefKind, DescriptionFacts, FileClassFacts, FilePromiseSeeds, PackageInfo,
     PackageReferences, ReadBinding, ReadSite, SourceEdgeKey, TopLevelEvent,
-    collect_top_level_events, collect_top_level_events_spanned, discover_packages, project_classes,
-    project_defs, project_graph, project_reads, relative_path, reverse_source_edges,
+    collect_top_level_events, collect_top_level_events_spanned, discover_packages,
+    package_facts_for, project_classes, project_defs, project_graph, project_reads, relative_path,
+    reverse_source_edges,
 };
 use crate::rindex::provider::IndexedProvider;
 use crate::rindex::remote::RemoteExports;
@@ -51,6 +52,8 @@ pub struct SourceFile {
     /// change never invalidates the parse.
     #[returns(ref)]
     pub execution_root: Option<PathBuf>,
+    #[returns(ref)]
+    pub s7_floor: Option<crate::config::CompatVersion>,
 }
 
 impl SourceFile {
@@ -182,6 +185,10 @@ pub struct LibraryIndex {
     /// write-phase (empty when the feature is disabled or nothing fetched yet).
     #[returns(ref)]
     pub remote: Arc<RemoteExports>,
+    /// The inputs are tracked from database creation. Until an index or sidecar
+    /// is installed, lint callers can still supply their own symbol provider.
+    #[default]
+    installed: bool,
 }
 
 /// The explicit workspace file-set, modeled as a salsa **singleton** input at
@@ -293,6 +300,7 @@ pub enum QueryKind {
     FileRoxygenTopics,
     FilePromiseSeeds,
     SourceEdges,
+    S7SourceGraph,
     SourceCalls,
     SourceProgram,
     TopLevelEvents,
@@ -518,7 +526,190 @@ pub fn semantic_model(db: &dyn IncrementalDb, file: SourceFile) -> SemanticModel
         kind: QueryKind::SemanticModel,
         file: Some(file),
     });
-    SemanticModel::build(&parsed_tree_root(db, file))
+    let root = parsed_tree_root(db, file);
+    semantic_model_in(
+        db,
+        Some(file),
+        file.path(db).as_deref(),
+        &root,
+        file.s7_floor(db).as_ref(),
+    )
+}
+
+pub(crate) fn s7_version_for(
+    db: &dyn IncrementalDb,
+    path: Option<&Path>,
+    configured_floor: Option<&crate::config::CompatVersion>,
+) -> crate::semantic::s7::S7Version {
+    use crate::semantic::s7::S7Version;
+
+    configured_floor
+        .or_else(|| {
+            path.and_then(|path| package_facts_for(db, path))
+                .and_then(|facts| facts.compat.s7.as_ref())
+        })
+        .map_or(S7Version::Release, S7Version::from_floor)
+}
+
+#[salsa::tracked(returns(ref))]
+fn s7_scope_facts(
+    db: &dyn IncrementalDb,
+    file: SourceFile,
+) -> (BTreeSet<String>, Vec<SourceEdgeKey>, bool) {
+    let root = parsed_tree_root(db, file);
+    let lexical = SemanticModel::build(&root);
+    (
+        crate::project::file_exports(&lexical),
+        crate::project::source::collect_source_edges_in(
+            &root,
+            file.execution_directory(db),
+            &lexical,
+        )
+        .iter()
+        .map(|edge| edge.key())
+        .collect(),
+        crate::semantic::calls::has_dynamic_bindings(&lexical),
+    )
+}
+
+#[salsa::tracked(returns(ref))]
+fn s7_source_graph(db: &dyn IncrementalDb) -> crate::project::source_context::SourceGraph {
+    db.record_query(QueryLogEntry {
+        kind: QueryKind::S7SourceGraph,
+        file: None,
+    });
+    crate::project::source_context::SourceGraph::build(
+        crate::project::graph::workspace_project(db)
+            .members
+            .iter()
+            .map(|member| {
+                (
+                    member.path.as_path(),
+                    member.file.execution_directory(db),
+                    s7_scope_facts(db, member.file).1.as_slice(),
+                )
+            }),
+    )
+}
+
+fn semantic_model_in(
+    db: &dyn IncrementalDb,
+    file: Option<SourceFile>,
+    path: Option<&Path>,
+    root: &SyntaxNode,
+    configured_floor: Option<&crate::config::CompatVersion>,
+) -> SemanticModel {
+    use crate::project::classes::{S7BindingContext, S7Version, s7_binding_sites};
+    use crate::project::graph::workspace_project;
+    use crate::project::source_context::SourceGraph;
+
+    let version = s7_version_for(db, path, configured_floor);
+    let mut lexical = SemanticModel::build(root);
+    if version == S7Version::Release {
+        return lexical;
+    }
+    lexical.s7_version = version;
+    if !root
+        .descendants()
+        .any(|node| crate::semantic::s7::binding_parts(&node).is_some())
+    {
+        return lexical;
+    }
+
+    let package = path.and_then(|path| {
+        PackageGraph::try_get(db)?
+            .packages(db)
+            .iter()
+            .filter(|package| {
+                path.parent()
+                    .is_some_and(|parent| parent.starts_with(&package.root))
+            })
+            .max_by_key(|package| package.root.components().count())
+    });
+    let attached: Vec<_> = path
+        .and_then(|path| package_facts_for(db, path))
+        .into_iter()
+        .flat_map(|facts| facts.in_field(crate::project::description::DependencyField::Depends))
+        .map(|dependency| dependency.name.clone())
+        .collect();
+    let library = LibraryIndex::get(db);
+    let project = workspace_project(db);
+    let live_path = path.unwrap_or_else(|| Path::new("buffer.R"));
+    let live_directory = file
+        .and_then(|file| file.execution_directory(db))
+        .or_else(|| live_path.parent());
+    let sources: Vec<_> =
+        crate::project::source::collect_source_edges_in(root, live_directory, &lexical)
+            .iter()
+            .map(|edge| edge.key())
+            .collect();
+    let overlay;
+    let source_graph = if project
+        .members
+        .binary_search_by(|member| member.path.as_path().cmp(live_path))
+        .ok()
+        .is_some_and(|index| {
+            let member = &project.members[index];
+            member.file.execution_directory(db) == live_directory
+                && s7_scope_facts(db, member.file).1 == sources
+        }) {
+        s7_source_graph(db)
+    } else {
+        overlay = SourceGraph::build(
+            project
+                .members
+                .iter()
+                .filter(|member| member.path != live_path)
+                .map(|member| {
+                    (
+                        member.path.as_path(),
+                        member.file.execution_directory(db),
+                        s7_scope_facts(db, member.file).1.as_slice(),
+                    )
+                })
+                .chain(std::iter::once((
+                    live_path,
+                    live_directory,
+                    sources.as_slice(),
+                ))),
+        );
+        &overlay
+    };
+    let sharing = source_graph.sourced_from(live_path);
+    let mut opaque = sharing.incomplete || crate::semantic::calls::has_dynamic_bindings(&lexical);
+    let mut shadowed = BTreeSet::new();
+    for member in &project.members {
+        if member.path != live_path
+            && (sharing.paths.contains(&member.path)
+                || package
+                    .is_some_and(|package| member.package_root.as_ref() == Some(&package.root)))
+        {
+            let (exports, _, dynamic) = s7_scope_facts(db, member.file);
+            shadowed.extend(
+                exports
+                    .iter()
+                    .map(|name| crate::semantic::symbols::unbacktick(name).to_string()),
+            );
+            opaque |= dynamic;
+        }
+    }
+    let sites = s7_binding_sites(
+        &lexical,
+        root,
+        S7BindingContext {
+            namespace: package.and_then(|package| package.namespace.as_deref()),
+            attached: &attached,
+            shadowed: &shadowed,
+            opaque,
+            indexed: library.data(db),
+            remote: library.remote(db),
+        },
+    );
+    if sites.is_empty() {
+        lexical
+    } else {
+        crate::semantic::builder::build_with_s7(root, version, &sites)
+    }
 }
 
 /// Environment availability is range-free and independent of method bodies.
@@ -615,7 +806,7 @@ pub fn dispatch_contexts(
 /// preserve the dependency direction through `file_class_defs` and classes.
 pub fn runtime_semantic_model(db: &dyn IncrementalDb, file: SourceFile) -> &SemanticModel {
     let lexical = semantic_model(db, file);
-    let project_implementation = Workspace::try_get(db).is_some()
+    let project_implementation = !Workspace::get(db).members(db).is_empty()
         && lexical
             .scopes()
             .iter()
@@ -966,7 +1157,7 @@ pub struct IncrementalDatabase {
 
 impl Default for IncrementalDatabase {
     fn default() -> Self {
-        Self {
+        let db = Self {
             storage: salsa::Storage::new(None),
             query_log: Arc::new(Mutex::new(Vec::new())),
             query_log_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -979,7 +1170,27 @@ impl Default for IncrementalDatabase {
                 crate::project::description::MarkdownDefaultResolver::new(),
             )),
             description_map: Arc::new(Mutex::new(HashMap::new())),
-        }
+        };
+        // A query that sees an empty index must invalidate on the first harvest.
+        // Looking up a missing singleton would record no salsa dependency.
+        let _ = LibraryIndex::builder(
+            Arc::new(IndexedProvider::empty()),
+            Arc::new(RemoteExports::new()),
+        )
+        .durability(Durability::HIGH)
+        .new(&db);
+        // Record dependencies even when the first workspace or package
+        // metadata has yet to arrive.
+        let _ = Descriptions::builder(Vec::new())
+            .durability(Durability::MEDIUM)
+            .new(&db);
+        let _ = Workspace::builder(Vec::new(), Vec::new())
+            .durability(Durability::MEDIUM)
+            .new(&db);
+        let _ = PackageGraph::builder(Vec::new())
+            .durability(Durability::MEDIUM)
+            .new(&db);
+        db
     }
 }
 
@@ -1027,11 +1238,17 @@ impl IncrementalDatabase {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .alloc_id();
-        SourceFile::new(self, id, None, text.into(), false, None)
+        SourceFile::new(self, id, None, text.into(), false, None, None)
     }
 
     pub fn set_file_text(&mut self, file: SourceFile, text: impl Into<Arc<str>>) {
         file.set_text(self).to(text.into());
+    }
+
+    pub fn set_s7_floor(&mut self, file: SourceFile, floor: Option<crate::config::CompatVersion>) {
+        if file.s7_floor(self) != &floor {
+            file.set_s7_floor(self).to(floor);
+        }
     }
 
     /// Set `file`'s package-wide roxygen markdown default, **skipped when
@@ -1081,29 +1298,12 @@ impl IncrementalDatabase {
         changed
     }
 
-    /// Get the [`LibraryIndex`] singleton, creating an empty one if absent. Both
-    /// fields are set at `Durability::HIGH` on creation so the first edit
-    /// afterwards skips revalidating either subgraph.
-    fn library_index_or_empty(&mut self) -> LibraryIndex {
-        match LibraryIndex::try_get(self) {
-            Some(index) => index,
-            None => {
-                let index = LibraryIndex::new(
-                    self,
-                    Arc::new(IndexedProvider::empty()),
-                    Arc::new(RemoteExports::new()),
-                );
-                index
-                    .set_data(self)
-                    .with_durability(Durability::HIGH)
-                    .to(Arc::new(IndexedProvider::empty()));
-                index
-                    .set_remote(self)
-                    .with_durability(Durability::HIGH)
-                    .to(Arc::new(RemoteExports::new()));
-                index
-            }
+    fn install_library_index(&mut self) -> LibraryIndex {
+        let index = LibraryIndex::get(self);
+        if !*index.installed(self) {
+            index.set_installed(self).to(true);
         }
+        index
     }
 
     /// Install (or replace) the harvested package index in the [`LibraryIndex`]
@@ -1111,7 +1311,7 @@ impl IncrementalDatabase {
     /// setup, the LSP lint thread) calls this; never a read snapshot. Leaves the
     /// `remote` sidecar field untouched. Returns the singleton input handle.
     pub fn set_library_index(&mut self, indexed: impl Into<Arc<IndexedProvider>>) -> LibraryIndex {
-        let index = self.library_index_or_empty();
+        let index = self.install_library_index();
         index
             .set_data(self)
             .with_durability(Durability::HIGH)
@@ -1124,7 +1324,7 @@ impl IncrementalDatabase {
     /// the harvested `data` field untouched. The sole writer (the LSP lint
     /// thread) calls this; never a read snapshot.
     pub fn set_remote_exports(&mut self, remote: RemoteExports) -> LibraryIndex {
-        let index = self.library_index_or_empty();
+        let index = self.install_library_index();
         index
             .set_remote(self)
             .with_durability(Durability::HIGH)
@@ -1134,7 +1334,8 @@ impl IncrementalDatabase {
 
     /// The [`LibraryIndex`] singleton, if one has been installed. Read-only.
     pub fn library_index(&self) -> Option<LibraryIndex> {
-        LibraryIndex::try_get(self)
+        let index = LibraryIndex::get(self);
+        index.installed(self).then_some(index)
     }
 
     /// Install (or update) the explicit workspace file-set as the [`Workspace`]
@@ -1414,18 +1615,20 @@ impl IncrementalDatabase {
 
     /// The [`Workspace`] singleton, if one has been seeded. Read-only.
     pub fn workspace(&self) -> Option<Workspace> {
-        Workspace::try_get(self)
+        Workspace::try_get(self).filter(|workspace| {
+            !workspace.members(self).is_empty() || !workspace.roots(self).is_empty()
+        })
     }
 
     /// The harvested package index payload, if installed. A cheap `Arc` clone.
     pub fn library_data(&self) -> Option<Arc<IndexedProvider>> {
-        LibraryIndex::try_get(self).map(|index| index.data(self).clone())
+        self.library_index().map(|index| index.data(self).clone())
     }
 
     /// The downloadable names-only CRAN sidecar payload, if installed. A cheap
     /// `Arc` clone (empty when nothing has been fetched).
     pub fn remote_exports(&self) -> Option<Arc<RemoteExports>> {
-        LibraryIndex::try_get(self).map(|index| index.remote(self).clone())
+        self.library_index().map(|index| index.remote(self).clone())
     }
 
     /// Insert or update the input for `path`, reusing the existing `SourceFile`
@@ -1488,6 +1691,7 @@ impl IncrementalDatabase {
                     text,
                     markdown,
                     directory,
+                    None,
                 );
                 self.source_map
                     .lock()
@@ -1649,6 +1853,20 @@ pub struct CrossFileBinding {
 pub struct Analysis(IncrementalDatabase);
 
 impl Analysis {
+    pub(crate) fn semantic_model_in(&self, path: &Path, root: &SyntaxNode) -> SemanticModel {
+        let file = self.lookup_file(path);
+        let floor = file.and_then(|file| file.s7_floor(&self.0).as_ref());
+        semantic_model_in(&self.0, file, Some(path), root, floor)
+    }
+
+    pub(crate) fn semantic_model_in_with_floor(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        floor: Option<&crate::config::CompatVersion>,
+    ) -> SemanticModel {
+        semantic_model_in(&self.0, self.lookup_file(path), Some(path), root, floor)
+    }
     /// The `SourceFile` input currently tracked for `path`, if any.
     pub fn lookup_file(&self, path: &Path) -> Option<SourceFile> {
         self.0.lookup_file(path)

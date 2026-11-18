@@ -413,7 +413,10 @@ impl SemanticModel {
             return false;
         }
         self.variable_cohort(id).into_iter().all(|binding| {
-            !self.blocks_source_navigation(self.binding(binding).def_range)
+            let definition = self.binding(binding).def_range;
+            // Changing the target of an S7 named binding also changes its runtime name.
+            !self.s7_injected_names.contains(&definition)
+                && !self.blocks_source_navigation(definition)
                 && self
                     .read_sites(binding)
                     .all(|ident| !self.blocks_source_navigation(ident.range))

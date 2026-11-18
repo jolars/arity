@@ -34,6 +34,14 @@ impl ClassIndex {
         if receiver.access == ClassAccess::Generator {
             return None;
         }
+        if receiver.class.key.system == ClassSystem::S7 {
+            let api = self.s7_api(&receiver.class)?;
+            let property = api
+                .properties
+                .iter()
+                .find(|property| property.name == name)?;
+            return Some(property.access());
+        }
         if receiver.class.key.system == ClassSystem::S4 {
             let slots = self.s4_slots(&receiver.class)?;
             slots.entries.get(name)?;

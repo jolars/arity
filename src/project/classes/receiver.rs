@@ -28,6 +28,29 @@ impl ClassIndex {
         value: &SyntaxElement,
     ) -> Option<ClassReceiver> {
         let extracted = extract(model, root, false);
+        self.receiver_for(path, root, model, value, &extracted, false)
+    }
+
+    pub(super) fn dispatch_receiver(
+        &self,
+        path: &std::path::Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        value: &SyntaxElement,
+        extracted: &Extracted,
+    ) -> Option<ClassReceiver> {
+        self.receiver_for(path, root, model, value, extracted, true)
+    }
+
+    fn receiver_for(
+        &self,
+        path: &std::path::Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        value: &SyntaxElement,
+        extracted: &Extracted,
+        exact_s7_value: bool,
+    ) -> Option<ClassReceiver> {
         let keys = extracted
             .facts
             .declarations
@@ -42,6 +65,7 @@ impl ClassIndex {
             model,
             keys: &keys,
             implementations: &extracted.method_implementations,
+            exact_s7_value,
         }
         .resolve(value, &mut BTreeSet::new(), 0)
     }
@@ -110,6 +134,15 @@ impl ClassIndex {
                 base.to_string(),
                 self.reference_receiver_api(&receiver)?.initializer?,
             ));
+        }
+        if let Some(receiver) = self.class_receiver(path, root, model, &base)
+            && receiver.access == ClassAccess::Generator
+            && self.s7_constructible(&receiver.class)
+        {
+            return Some((base.to_string(), self.s7_api(&receiver.class)?.constructor?));
+        }
+        if let Some(signature) = self.s7_generic_signature(path, root, model, &base) {
+            return Some((base.to_string(), signature));
         }
         let token = base.as_token()?;
         let runtime = apply_method_environments(model, root, &self.method_environments(path))?;
@@ -182,9 +215,52 @@ struct ReceiverLookup<'a> {
     model: &'a SemanticModel,
     keys: &'a HashMap<TextRange, ClassKey>,
     implementations: &'a [MethodImplementationSite],
+    /// Declared S7 property and parameter types also admit subclass values.
+    exact_s7_value: bool,
 }
 
 impl ReceiverLookup<'_> {
+    fn s7_constructor_returns_class(&self, id: &ClassId) -> bool {
+        use super::s7::S7Function;
+
+        let Some(class) = self.index.s7_class(id) else {
+            return false;
+        };
+        match &class.constructor {
+            S7Function::Absent => true,
+            S7Function::Known { key: Some(key), .. } if id.path == self.path => self
+                .implementations
+                .iter()
+                .filter(|site| site.method == *key)
+                .any(|site| {
+                    let body = self
+                        .root
+                        .covering_element(site.function_range)
+                        .into_node()
+                        .filter(|node| node.text_range() == site.function_range)
+                        .and_then(FunctionExpr::cast)
+                        .and_then(|function| function.body());
+                    let Some(call) = body
+                        .and_then(SyntaxElement::into_node)
+                        .and_then(CallExpr::cast)
+                    else {
+                        return false;
+                    };
+                    self.index
+                        .s7_new_object_in(
+                            self.path,
+                            self.root,
+                            self.model,
+                            &call,
+                            self.implementations,
+                        )
+                        .as_ref()
+                        == Some(id)
+                }),
+            _ => false,
+        }
+    }
+
     fn point(&self, value: &SyntaxElement) -> Option<OopPoint> {
         if value.parent().is_some_and(|node| {
             node.ancestors()
@@ -300,6 +376,7 @@ impl ReceiverLookup<'_> {
             model,
             keys,
             implementations,
+            exact_s7_value,
         } = *self;
         if let Some(paren) = value
             .as_node()
@@ -321,7 +398,14 @@ impl ReceiverLookup<'_> {
                 }
             })?;
             return Some(ClassReceiver {
-                class: index.s4_slot_class(&receiver, &name)?,
+                class: if receiver.class.key.system == ClassSystem::S7 {
+                    if exact_s7_value {
+                        return None;
+                    }
+                    index.s7_property_class(&receiver, &name)?
+                } else {
+                    index.s4_slot_class(&receiver, &name)?
+                },
                 access: ClassAccess::Public,
                 point: self.point(value),
                 cached_members: BTreeMap::new(),
@@ -357,7 +441,7 @@ impl ReceiverLookup<'_> {
                 && index.declarations.get(id).is_some_and(|class| {
                     matches!(
                         class.declaration.system(),
-                        ClassSystem::R6 | ClassSystem::RefClass | ClassSystem::S4
+                        ClassSystem::R6 | ClassSystem::RefClass | ClassSystem::S4 | ClassSystem::S7
                     ) && class.declaration.binding_known()
                         && class.declaration.returns_generator()
                 })
@@ -395,6 +479,43 @@ impl ReceiverLookup<'_> {
             });
         }
         if let Some(call) = value.as_node().cloned().and_then(CallExpr::cast) {
+            if let Some(class) = index.s7_new_object_in(path, root, model, &call, implementations) {
+                return Some(ClassReceiver {
+                    class,
+                    access: ClassAccess::Public,
+                    point: self.point(value),
+                    cached_members: BTreeMap::new(),
+                    uncertain_cache: false,
+                });
+            }
+            if let Some(property) = index.s7_property_call(path, root, model, &call) {
+                let mut receiver = self.resolve(&property.object, visiting, depth + 1)?;
+                if receiver.access == ClassAccess::Generator
+                    || (receiver.class.key.system != ClassSystem::S7
+                        && !index.s7_s4_parents.contains_key(&receiver.class))
+                {
+                    return None;
+                }
+                if property.write {
+                    return Some(receiver);
+                }
+                if exact_s7_value {
+                    return None;
+                }
+                if property.single
+                    && property.complete
+                    && let Some(names) = property.names
+                    && let [name] = names.as_slice()
+                {
+                    if let Some(parent) = index.s7_s4_parents.get(&receiver.class) {
+                        receiver.class = parent.clone();
+                    }
+                    return Some(ClassReceiver {
+                        class: index.s7_property_class(&receiver, name)?,
+                        ..receiver
+                    });
+                }
+            }
             if let Some((object, name, replacement)) =
                 s4::slot_call(index, path, root, model, &call)
             {
@@ -488,6 +609,8 @@ impl ReceiverLookup<'_> {
             }
             let receiver = self.resolve(&call.base()?, visiting, depth + 1)?;
             return ((receiver.class.key.system == ClassSystem::RefClass
+                || (index.s7_constructible(&receiver.class)
+                    && self.s7_constructor_returns_class(&receiver.class))
                 || (receiver.class.key.system == ClassSystem::S4
                     && index.s4_constructible(&receiver.class)))
                 && receiver.access == ClassAccess::Generator)
@@ -566,6 +689,20 @@ impl ReceiverLookup<'_> {
             }
         }
         let binding = read_binding(model, token)?;
+        if !exact_s7_value
+            && model.binding(binding).kind == BindingKind::Param
+            && model.variable_cohort(binding).len() == 1
+            && let Some(class) =
+                index.s7_parameter_class(path, root, model.binding(binding), implementations)
+        {
+            return Some(ClassReceiver {
+                class,
+                access: ClassAccess::Public,
+                point: None,
+                cached_members: BTreeMap::new(),
+                uncertain_cache: false,
+            });
+        }
         if visiting.len() >= 32
             || !visiting.insert(binding.0)
             || model.binding(binding).def_range.start() >= token.text_range().start()

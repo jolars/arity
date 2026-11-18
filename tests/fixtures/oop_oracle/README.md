@@ -6,23 +6,27 @@ R6, and S7. It complements the CLI and LSP coverage matrix in `../oop/`.
 contains executable `input.R`, a runtime observation script `observe.R`, and a
 reviewed `expected.json` pin.
 
-`versions.json` pins R 4.6.1, R6 2.6.1, and S7 0.2.2. The live driver checks all
-three versions before evaluating a fixture. Missing dependencies or different
-versions fail the explicitly requested oracle; they never silently skip cases.
-Use an R installation matching the manifest, and install the exact R6 and S7
-source releases into a developer library. `RSCRIPT` can select that
-installation's `Rscript` executable, and `R_LIBS_USER` can select the library.
-The oracle does not install packages, fetch dependencies, or execute R in
-production.
+`versions.json` pins R 4.6.1, R6 2.6.1, released S7 0.2.2, and S7 0.2.2.9000 at
+commit `420abb36fdb5308dc465fa380c5e960ea70faefc`. The live driver checks
+package versions and the development installation's `RemoteSha` before
+evaluating a fixture. `s7_advanced` has a pin for each edition, and
+`s7_development` exercises development APIs. The live fixtures install temporary
+synthetic packages to observe S7 registration in real namespaces.
 
 For example, with the matching release tarballs already downloaded, install them
 under a matching R installation:
 
 ```sh
-mkdir -p /tmp/arity-oop-library
-compute run -- R CMD INSTALL --library=/tmp/arity-oop-library R6_2.6.1.tar.gz S7_0.2.2.tar.gz
-R_LIBS_USER=/tmp/arity-oop-library compute run -- task oop-oracle
+mkdir -p /tmp/arity-oop-release /tmp/arity-oop-dev
+R CMD INSTALL --library=/tmp/arity-oop-release R6_2.6.1.tar.gz S7_0.2.2.tar.gz
+R CMD INSTALL --library=/tmp/arity-oop-dev R6_2.6.1.tar.gz
+Rscript --vanilla -e 'remotes::install_github("RConsortium/S7@420abb36fdb5308dc465fa380c5e960ea70faefc", lib = "/tmp/arity-oop-dev", dependencies = FALSE)'
+R_LIBS_USER=/tmp/arity-oop-release ARITY_S7_DEV_LIB=/tmp/arity-oop-dev task oop-oracle
 ```
+
+`RSCRIPT` can select the matching R installation. The development package can
+also be installed with `R CMD INSTALL` from the verified source revision after
+adding its commit hash as the `RemoteSha` field in the temporary DESCRIPTION.
 
 Each original and formatted input runs in a fresh `Rscript --vanilla` process.
 The driver creates a lexical owner environment with a stable package name so
@@ -53,9 +57,9 @@ preserve them. A separate live test verifies rejection of each mismatched
 version. To refresh deliberately:
 
 ```sh
-R_LIBS_USER=/tmp/arity-oop-library compute run -- task oop-oracle-refresh
+R_LIBS_USER=/tmp/arity-oop-release ARITY_S7_DEV_LIB=/tmp/arity-oop-dev task oop-oracle-refresh
 git diff -- tests/fixtures/oop_oracle
-R_LIBS_USER=/tmp/arity-oop-library compute run -- task oop-oracle
+R_LIBS_USER=/tmp/arity-oop-release ARITY_S7_DEV_LIB=/tmp/arity-oop-dev task oop-oracle
 ```
 
 Refresh computes and validates every case before writing any pins. Review every
