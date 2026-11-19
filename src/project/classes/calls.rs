@@ -119,7 +119,7 @@ pub(super) fn factories(
         .collect()
 }
 
-pub(super) fn class_lookups(
+pub(crate) fn class_lookups(
     model: &SemanticModel,
     root: &SyntaxNode,
     body_local: bool,

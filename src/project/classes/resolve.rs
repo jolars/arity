@@ -259,18 +259,17 @@ impl ClassIndex {
     pub(crate) fn confirm_body_class_lookups(
         &mut self,
         path: &Path,
-        model: &SemanticModel,
-        root: &SyntaxNode,
+        references: &[FunctionRef],
         resolution: &ClassResolution<'_>,
     ) {
         let Some(file) = self.files.get(path) else {
             return;
         };
-        for reference in class_lookups(model, root, true) {
-            for identity in possible_functions(&reference) {
+        for reference in references {
+            for identity in possible_functions(reference) {
                 match function_availability(
                     file,
-                    &reference,
+                    reference,
                     &identity.package,
                     &identity.name,
                     &self.files,

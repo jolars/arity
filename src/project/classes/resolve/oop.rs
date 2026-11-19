@@ -3,14 +3,18 @@
 use super::*;
 
 impl ClassIndex {
+    pub(crate) fn dispatch_helper_confirmed(
+        &self,
+        path: &Path,
+        helper: Option<&FunctionRef>,
+    ) -> bool {
+        helper.is_none_or(|helper| self.callee_identity(path, helper).is_some())
+    }
+
     pub(super) fn confirm_dispatch_helpers(&mut self) {
         for file in self.files.values() {
             for def in &file.facts.oop.methods {
-                if def
-                    .dispatch_factory
-                    .as_ref()
-                    .is_some_and(|helper| self.callee_identity(&file.path, helper).is_none())
-                {
+                if !self.dispatch_helper_confirmed(&file.path, def.dispatch_factory.as_ref()) {
                     let mut method = def.clone();
                     method.dispatch = vec![DispatchArgument {
                         argument: None,
@@ -27,11 +31,7 @@ impl ClassIndex {
                 }
             }
             for def in &file.facts.oop.generics {
-                if def
-                    .dispatch_factory
-                    .as_ref()
-                    .is_some_and(|helper| self.callee_identity(&file.path, helper).is_none())
-                {
+                if !self.dispatch_helper_confirmed(&file.path, def.dispatch_factory.as_ref()) {
                     let mut generic = def.clone();
                     generic.dispatch_arguments = vec![ClassName::Unknown];
                     generic.uncertainty.insert(OopUncertainty::DynamicSignature);
@@ -255,11 +255,7 @@ impl ClassIndex {
         candidates
     }
 
-    pub(in crate::project::classes) fn generic_confirmed(
-        &self,
-        path: &Path,
-        def: &GenericDef,
-    ) -> bool {
+    pub(crate) fn generic_confirmed(&self, path: &Path, def: &GenericDef) -> bool {
         let (package, name) = match def.key.system {
             OopSystem::S3 => ("base", "UseMethod"),
             OopSystem::S4 => ("methods", "setGeneric"),

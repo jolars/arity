@@ -771,7 +771,7 @@ pub fn project_classes(db: &dyn IncrementalDb) -> ClassIndex {
         kind: QueryKind::ProjectClasses,
         file: None,
     });
-    build_class_index(db, None)
+    build_class_index(db, None, false)
 }
 
 pub(crate) struct LiveClassFile<'a> {
@@ -786,6 +786,7 @@ pub(crate) struct LiveClassFile<'a> {
 pub(crate) fn build_class_index(
     db: &dyn IncrementalDb,
     live: Option<LiveClassFile<'_>>,
+    confirm_workspace_bodies: bool,
 ) -> ClassIndex {
     let project = workspace_project(db);
     let mut files: Vec<_> = project
@@ -983,8 +984,24 @@ pub(crate) fn build_class_index(
         load_orders: &load_orders,
     };
     let mut index = ClassIndex::build(files, &resolution);
-    if let Some(live) = live {
-        index.confirm_body_class_lookups(live.path, live.model, live.root, &resolution);
+    if let Some(live) = &live {
+        index.confirm_body_class_lookups(
+            live.path,
+            &crate::project::classes::class_lookups(live.model, live.root, true),
+            &resolution,
+        );
+    }
+    if confirm_workspace_bodies {
+        for member in &project.members {
+            if live.as_ref().is_some_and(|live| live.path == member.path) {
+                continue;
+            }
+            index.confirm_body_class_lookups(
+                &member.path,
+                crate::incremental::file_body_class_lookups(db, member.file),
+                &resolution,
+            );
+        }
     }
     index
 }

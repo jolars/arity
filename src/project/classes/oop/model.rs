@@ -460,3 +460,10 @@ pub struct OopSite {
     pub owner: ClassOwner,
     pub in_function: bool,
 }
+
+#[derive(PartialEq, Eq)]
+pub(crate) struct OopSourceSite {
+    pub site: OopSite,
+    pub required_callee: Option<(FunctionRef, &'static str)>,
+    pub dispatch_factory: Option<FunctionRef>,
+}

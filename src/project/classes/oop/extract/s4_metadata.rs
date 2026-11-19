@@ -100,10 +100,19 @@ impl Projection<'_> {
             if let Some(value) = generic_value
                 && let Some(reference) = &reference
             {
-                self.site(
+                self.site_with_callee(
                     value.text_range(),
                     OopSiteRole::Use,
                     OopTarget::Generic(reference.clone()),
+                    (!uncertainty.contains(&S4CallUncertainty::CustomMethodTable)).then(|| {
+                        let package = if kind == S4CallKind::StandardGeneric {
+                            "base"
+                        } else {
+                            "methods"
+                        };
+                        (callee.clone(), package)
+                    }),
+                    None,
                 );
             }
             sites.push(S4CallSite {

@@ -38,7 +38,7 @@ struct Projection<'a> {
     classes: &'a Extracted,
     class_keys: HashMap<TextRange, ClassKey>,
     facts: OopFacts,
-    sites: Vec<OopSite>,
+    sites: Vec<OopSourceSite>,
     method_bodies: Vec<(TextRange, ClassKey)>,
     method_implementations: Vec<MethodImplementationSite>,
     generic_values: HashMap<TextRange, OopKey>,
@@ -50,7 +50,7 @@ struct Projection<'a> {
 
 pub(in crate::project::classes) struct OopProjection {
     pub facts: OopFacts,
-    pub sites: Vec<OopSite>,
+    pub sites: Vec<OopSourceSite>,
     pub implementations: Vec<MethodImplementationSite>,
     pub s4_calls: Vec<S4CallSite>,
     pub event_ranges: Vec<TextRange>,
@@ -206,6 +206,17 @@ impl Projection<'_> {
     }
 
     fn site(&mut self, range: TextRange, role: OopSiteRole, target: OopTarget) {
+        self.site_with_callee(range, role, target, None, None);
+    }
+
+    fn site_with_callee(
+        &mut self,
+        range: TextRange,
+        role: OopSiteRole,
+        target: OopTarget,
+        required_callee: Option<(FunctionRef, &'static str)>,
+        dispatch_factory: Option<FunctionRef>,
+    ) {
         if !self.include_sites {
             return;
         }
@@ -218,12 +229,16 @@ impl Projection<'_> {
         let in_function = node
             .ancestors()
             .any(|node| node.kind() == SyntaxKind::FUNCTION_EXPR);
-        self.sites.push(OopSite {
-            range,
-            role,
-            target,
-            owner,
-            in_function,
+        self.sites.push(OopSourceSite {
+            site: OopSite {
+                range,
+                role,
+                target,
+                owner,
+                in_function,
+            },
+            required_callee,
+            dispatch_factory,
         });
     }
 
@@ -477,7 +492,7 @@ pub(in crate::project::classes) fn project(
     projection.retire_s4_generic_bindings();
     projection
         .sites
-        .sort_by_key(|site| (site.range.start(), site.range.end()));
+        .sort_by_key(|source| (source.site.range.start(), source.site.range.end()));
     let (event_ranges, events) = projection.events.into_iter().unzip();
     projection.facts.events = events;
     OopProjection {
@@ -493,7 +508,11 @@ pub(in crate::project::classes) fn project(
 /// The declaration projection is range-free. Call this against the current CST
 /// to obtain declaration, alias, registration-reference, and member-use spans.
 pub fn oop_sites(model: &SemanticModel, root: &SyntaxNode) -> Vec<OopSite> {
-    extract(model, root, true).oop_sites
+    extract(model, root, true)
+        .oop_sites
+        .into_iter()
+        .map(|source| source.site)
+        .collect()
 }
 
 pub fn method_implementation_sites(
@@ -1836,6 +1855,8 @@ impl Projection<'_> {
                 self.events
                     .push((node.text_range(), OopEvent::S7Method(key.clone())));
             }
+            let registration_environment_known =
+                !issues.contains(&OopUncertainty::CustomEnvironment);
             self.facts.methods.push(MethodDef {
                 key: key.clone(),
                 system,
@@ -1847,9 +1868,9 @@ impl Projection<'_> {
                     .iter()
                     .map(|(arg, _)| arg.clone())
                     .collect(),
-                dispatch_factory: dispatch.factory,
+                dispatch_factory: dispatch.factory.clone(),
                 signature,
-                registration: Some(reference),
+                registration: Some(reference.clone()),
                 uncertainty: issues,
             });
             if system == OopSystem::S4 {
@@ -1862,15 +1883,22 @@ impl Projection<'_> {
                 OopSiteRole::Declaration,
                 OopTarget::Declaration(key),
             );
+            let package = match system {
+                OopSystem::S4 => "methods",
+                OopSystem::S7 => "S7",
+                _ => "base",
+            };
             if let Some(value) = generic_value {
-                self.site(
+                self.site_with_callee(
                     value.text_range(),
                     OopSiteRole::Use,
                     OopTarget::Generic(generic),
+                    registration_environment_known.then(|| (reference.clone(), package)),
+                    None,
                 );
             }
             for (arg, range) in dispatch.arguments {
-                let reference = match arg.class {
+                let class_reference = match arg.class {
                     DispatchClass::Formal(name) => ParentRef::Formal(name),
                     DispatchClass::Generator(generator) => ParentRef::Generator(generator),
                     class
@@ -1884,10 +1912,12 @@ impl Projection<'_> {
                     }
                     _ => continue,
                 };
-                self.site(
+                self.site_with_callee(
                     range,
                     OopSiteRole::Use,
-                    OopTarget::ClassReference(reference),
+                    OopTarget::ClassReference(class_reference),
+                    registration_environment_known.then(|| (reference.clone(), package)),
+                    dispatch.factory.clone(),
                 );
             }
         }
@@ -2027,13 +2057,30 @@ impl Projection<'_> {
                 ),
             }
         }
+        for (call, callee, name) in factories(self.model, self.root) {
+            if name == "new"
+                && accepts(&callee, "methods")
+                && let Some(args) = matched_args(&call, &["Class", "..."])
+                && let Some(value) = argument(&args, "Class")
+                && value.kind() == SyntaxKind::STRING
+                && let Some(class) = literal(&value)
+            {
+                self.site_with_callee(
+                    value.text_range(),
+                    OopSiteRole::Use,
+                    OopTarget::ClassReference(ParentRef::Formal(class)),
+                    Some((callee, "methods")),
+                    None,
+                );
+            }
+        }
         for (index, binding) in self.model.bindings().iter().enumerate() {
             let Some(value) = stable_value(self.model, self.root, BindingId::from_index(index))
             else {
                 continue;
             };
             if let GeneratorRef::Local(key) = self.generator(&value)
-                && !self.sites.iter().any(|site| {
+                && !self.sites.iter().map(|source| &source.site).any(|site| {
                     site.range == binding.def_range && site.role == OopSiteRole::Declaration
                 })
             {
@@ -2041,7 +2088,11 @@ impl Projection<'_> {
             }
         }
         for ident in self.model.idents() {
-            if self.sites.iter().any(|site| site.range == ident.range) {
+            if self
+                .sites
+                .iter()
+                .any(|source| source.site.range == ident.range)
+            {
                 continue;
             }
             let Some(token) = self.root.covering_element(ident.range).into_token() else {

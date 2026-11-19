@@ -32,6 +32,7 @@ pub(crate) use s7_binding::{S7BindingContext, s7_binding_sites};
 mod oop;
 pub use oop::*;
 mod calls;
+pub(crate) use calls::class_lookups;
 use calls::*;
 mod r6;
 pub use r6::{R6Access, R6Api, R6Member, R6Members, R6Options, R6Receiver};
@@ -368,7 +369,7 @@ pub struct ClassLocation {
     call_range: TextRange,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClassOccurrence {
     Declaration(ClassKey),
     Reference {
@@ -384,7 +385,8 @@ struct Extracted {
     facts: FileClassFacts,
     locations: Vec<ClassLocation>,
     occurrences: Vec<(TextRange, ClassOccurrence)>,
-    oop_sites: Vec<OopSite>,
+    oop_sites: Vec<OopSourceSite>,
+    class_reference_factories: HashMap<TextRange, FunctionRef>,
     oop_event_ranges: Vec<TextRange>,
     /// Current function ranges paired with canonical callable origins.
     callable_frames: HashMap<TextRange, usize>,
@@ -407,6 +409,28 @@ impl Extracted {
 
 pub fn file_class_defs(model: &SemanticModel, root: &SyntaxNode) -> FileClassFacts {
     extract(model, root, false).facts
+}
+
+#[derive(PartialEq, Eq)]
+pub(crate) struct ClassSourceSites {
+    pub classes: Vec<(TextRange, ClassOccurrence)>,
+    pub oop: Vec<OopSourceSite>,
+    pub class_reference_factories: HashMap<TextRange, FunctionRef>,
+}
+
+pub(crate) fn class_source_sites(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+) -> (FileClassFacts, ClassSourceSites) {
+    let extracted = extract(model, root, true);
+    (
+        extracted.facts,
+        ClassSourceSites {
+            classes: extracted.occurrences,
+            oop: extracted.oop_sites,
+            class_reference_factories: extracted.class_reference_factories,
+        },
+    )
 }
 
 pub fn locate_class_def(root: &SyntaxNode, key: &ClassKey) -> Option<ClassLocation> {
@@ -559,6 +583,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         locations: Vec::new(),
         occurrences: Vec::new(),
         oop_sites: Vec::new(),
+        class_reference_factories: HashMap::new(),
         oop_event_ranges: Vec::new(),
         callable_frames: HashMap::new(),
         s4_calls: Vec::new(),
@@ -690,6 +715,11 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
                     }
                     for (name, range) in shape.parents {
                         let reference = ParentRef::Formal(name);
+                        if include_sites {
+                            result
+                                .class_reference_factories
+                                .insert(range, def.factory.clone());
+                        }
                         result.occurrences.push((
                             range,
                             ClassOccurrence::Reference {
@@ -742,6 +772,11 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
                             def.parent_vector = parents.vector;
                             for (name, range) in parents.names {
                                 let reference = ParentRef::Formal(name);
+                                if include_sites {
+                                    result
+                                        .class_reference_factories
+                                        .insert(range, def.factory.clone());
+                                }
                                 result.occurrences.push((
                                     range,
                                     ClassOccurrence::Reference {
@@ -818,10 +853,13 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
                         || matches!(&previous.factory, FunctionRef::Qualified { package, .. } if package == "methods"))
             })
         {
-            for (_, occurrence) in &mut result.occurrences {
+            for (range, occurrence) in &mut result.occurrences {
                 if matches!(occurrence, ClassOccurrence::Declaration(candidate) if *candidate == key)
                     && let ClassName::Known(name) = &def.name
                 {
+                    if include_sites {
+                        result.class_reference_factories.insert(*range, def.factory.clone());
+                    }
                     *occurrence = ClassOccurrence::Reference {
                         owner: key.owner.clone(),
                         reference: ParentRef::Formal(name.clone()),

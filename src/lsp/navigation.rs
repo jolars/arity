@@ -25,6 +25,25 @@ pub(crate) fn definition_via_db(
             .min(text.len()) as u32,
     );
     with_document_semantics(snapshot, path, buffer, s7_floor, |root, model| {
+        if let Some(mut locations) = oop::name_locations(
+            oop::ReadContext {
+                snapshot,
+                path,
+                s7_floor,
+            },
+            uri,
+            root,
+            line_index,
+            offset,
+            encoding,
+            oop::NameNavigation::Definition,
+        ) {
+            return match locations.len() {
+                0 => None,
+                1 => locations.pop().map(GotoDefinitionResponse::Scalar),
+                _ => Some(GotoDefinitionResponse::Array(locations)),
+            };
+        }
         // Intra-file: the cursor names a local binding (or sits on its definition).
         if let Some(def_range) = definition_local_range(root, model, offset) {
             let location = Location {
@@ -109,6 +128,23 @@ pub(crate) fn references_via_db(
             .min(text.len()) as u32,
     );
     with_document_semantics(snapshot, path, buffer, None, |root, model| {
+        if let Some(locations) = oop::name_locations(
+            oop::ReadContext {
+                snapshot,
+                path,
+                s7_floor: None,
+            },
+            uri,
+            root,
+            line_index,
+            offset,
+            encoding,
+            oop::NameNavigation::References {
+                include_declaration,
+            },
+        ) {
+            return Some(locations);
+        }
         if let Some(ranges) = generated_occurrences(root, model, offset) {
             return Some(
                 ranges

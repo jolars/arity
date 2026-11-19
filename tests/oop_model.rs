@@ -962,3 +962,27 @@ fn namespace_s3_registrations_preserve_dispatch_and_export_identities() {
     );
     assert!(info.s3_methods.contains("as.data.frame.dotted.class"));
 }
+
+#[test]
+fn oop_sites_support_external_construction_and_destructuring() {
+    let root = parse("methods::new('Parent')").cst;
+    let mut sites = oop_sites(&SemanticModel::build(&root), &root);
+    let site = sites.pop().expect("class reference");
+    let OopSite {
+        range,
+        role,
+        target,
+        owner,
+        in_function,
+    } = site.clone();
+    assert_eq!(
+        OopSite {
+            range,
+            role,
+            target,
+            owner,
+            in_function,
+        },
+        site
+    );
+}

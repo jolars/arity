@@ -4,6 +4,9 @@ use super::*;
 use crate::config::CompatVersion;
 use crate::project::classes::{ClassIndex, file_class_defs};
 
+mod navigation;
+pub(super) use navigation::{NameNavigation, name_locations};
+
 #[derive(Clone, Copy)]
 pub(super) struct ReadContext<'a> {
     pub snapshot: &'a Analysis,
@@ -50,6 +53,217 @@ mod tests {
     use crate::project::PackageInfo;
     use crate::text::TextBuffer;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn formal_class_navigation_uses_registrations_and_ignores_unrelated_strings() {
+        let source = "methods::setClass('Parent')\nmethods::setClass('Child', contains = 'Parent')\nmethods::setGeneric('describe', function(x) standardGeneric('describe'))\nmethods::setMethod('describe', 'Parent', function(x) x)\nmethods::new('Parent')\nlabel <- 'Parent'\n";
+        let snapshot = IncrementalDatabase::default().snapshot();
+        let path = &ws_path("classes.R");
+        let uri = uri::from_path(path).unwrap();
+        let buffer = TextBuffer::from(source);
+        let encoding = PositionEncoding::Utf16;
+        let position = |offset| buffer.line_index().byte_to_position(offset, encoding);
+        let use_offset = source.find("contains = 'Parent'").unwrap() + "contains = '".len();
+        let got = definition_via_db(
+            &snapshot,
+            path,
+            &uri,
+            &buffer,
+            position(use_offset),
+            encoding,
+            None,
+        )
+        .unwrap();
+        let GotoDefinitionResponse::Scalar(definition) = got else {
+            panic!("expected a single definition");
+        };
+        assert_eq!(definition.range.start.line, 0);
+        let references = references_via_db(
+            &snapshot,
+            path,
+            &uri,
+            &buffer,
+            position(use_offset),
+            true,
+            encoding,
+        )
+        .unwrap();
+        assert_eq!(
+            references
+                .iter()
+                .map(|loc| loc.range.start.line)
+                .collect::<Vec<_>>(),
+            [0, 1, 3, 4]
+        );
+        let unrelated = source.rfind("'Parent'").unwrap() + 1;
+        assert!(
+            definition_via_db(
+                &snapshot,
+                path,
+                &uri,
+                &buffer,
+                position(unrelated),
+                encoding,
+                None,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn formal_class_navigation_resolves_across_live_package_files() {
+        let root = ws_root();
+        let parent_path = root.join("R/parent.R");
+        let child_path = root.join("R/child.R");
+        let mut db = IncrementalDatabase::default();
+        let parent = db.upsert_file(&parent_path, "methods::setClass('Parent')\n");
+        let tracked = "methods::setClass('Child', contains = 'Parent')\n";
+        let child = db.upsert_file(&child_path, tracked);
+        db.set_workspace_members(vec![parent, child], vec![root.clone()]);
+        db.refresh_descriptions([root.clone()]);
+        db.upsert_description(&root, "Package: classes\n");
+        db.set_package_metadata(vec![PackageInfo {
+            root,
+            namespace: Some(String::new()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        let snapshot = db.snapshot();
+        let uri = uri::from_path(&child_path).unwrap();
+        let parent_uri = uri::from_path(&parent_path).unwrap();
+        let live = format!("\n\n{tracked}");
+        let buffer = TextBuffer::from(live.as_str());
+        let encoding = PositionEncoding::Utf16;
+        let offset = live.find("'Parent'").unwrap() + 1;
+        let position = buffer.line_index().byte_to_position(offset, encoding);
+        let Some(GotoDefinitionResponse::Scalar(definition)) = definition_via_db(
+            &snapshot,
+            &child_path,
+            &uri,
+            &buffer,
+            position,
+            encoding,
+            None,
+        ) else {
+            panic!("expected a definition in the parent file");
+        };
+        assert_eq!(definition.uri, parent_uri);
+        let references = references_via_db(
+            &snapshot,
+            &child_path,
+            &uri,
+            &buffer,
+            position,
+            false,
+            encoding,
+        )
+        .unwrap();
+        let [reference] = references.as_slice() else {
+            panic!("expected only the use in the live buffer");
+        };
+        assert_eq!(reference.uri, uri);
+        assert_eq!(reference.range.start.line, 2);
+    }
+
+    #[test]
+    fn formal_class_navigation_checks_cross_file_callees() {
+        let root = ws_root();
+        let parent_path = root.join("R/parent.R");
+        let body_path = root.join("R/body.R");
+        let shadowed_path = root.join("R/shadowed.R");
+        let parent_source = "methods::setClass('Parent')\nsetClass <- function(...) NULL\nsignature <- function(...) 'Other'\nc <- function(...) 'Other'\n";
+        let body_source = "make <- function() methods::new('Parent')\n\
+            methods::setMethod('describe', methods::signature(x = 'Parent'), function(x) x)\n";
+        let shadowed_source = "setClass('Child', contains = 'Parent')\n";
+        let signature_path = root.join("R/signature.R");
+        let vector_path = root.join("R/vector.R");
+        let signature_source =
+            "methods::setMethod('describe', signature(x = 'Parent'), function(x) x)\n";
+        let vector_source = "methods::setMethod('describe', c(x = 'Parent'), function(x) x)\n";
+        let mut db = IncrementalDatabase::default();
+        let signature = db.upsert_file(&signature_path, signature_source);
+        let vector = db.upsert_file(&vector_path, vector_source);
+        let parent = db.upsert_file(&parent_path, parent_source);
+        let body = db.upsert_file(&body_path, body_source);
+        let shadowed = db.upsert_file(&shadowed_path, shadowed_source);
+        db.set_workspace_members(
+            vec![parent, body, shadowed, signature, vector],
+            vec![root.clone()],
+        );
+        db.refresh_descriptions([root.clone()]);
+        db.upsert_description(&root, "Package: classes\nImports: methods\n");
+        db.set_package_metadata(vec![PackageInfo {
+            root,
+            namespace: Some("importFrom(methods, setClass, signature)".into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        let snapshot = db.snapshot();
+        let encoding = PositionEncoding::Utf16;
+        let query = |path: &Path, source: &str| {
+            let uri = uri::from_path(path).unwrap();
+            let buffer = TextBuffer::from(source);
+            let offset = source.find("'Parent'").unwrap() + 1;
+            let position = buffer.line_index().byte_to_position(offset, encoding);
+            (
+                definition_via_db(&snapshot, path, &uri, &buffer, position, encoding, None),
+                references_via_db(&snapshot, path, &uri, &buffer, position, false, encoding),
+            )
+        };
+        let body_uri = uri::from_path(&body_path).unwrap();
+        // Exercise both cold and warm workspace lookups.
+        for _ in 0..2 {
+            let (_, references) = query(&parent_path, parent_source);
+            let references = references.unwrap();
+            assert_eq!(
+                references
+                    .iter()
+                    .map(|location| (&location.uri, location.range.start.line))
+                    .collect::<Vec<_>>(),
+                [(&body_uri, 0), (&body_uri, 1)]
+            );
+        }
+
+        assert!(query(&body_path, body_source).0.is_some());
+        for (path, source) in [
+            (&shadowed_path, shadowed_source),
+            (&signature_path, signature_source),
+            (&vector_path, vector_source),
+        ] {
+            let (definition, references) = query(path, source);
+            assert!(definition.is_none(), "{source}");
+            assert!(
+                references.is_none_or(|locations| locations.is_empty()),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn generic_registration_navigation_only_links_semantic_uses() {
+        let source = "methods::setGeneric('describe', function(x) standardGeneric('describe'))\nmethods::setMethod('describe', 'numeric', function(x) x)\nlabel <- 'describe'\nmethods::setMethod('describe', 'character', function(x) x, where = custom)\n";
+        let snapshot = IncrementalDatabase::default().snapshot();
+        let path = &ws_path("generics.R");
+        let uri = uri::from_path(path).unwrap();
+        let buffer = TextBuffer::from(source);
+        let encoding = PositionEncoding::Utf16;
+        let offset = source.find("setMethod('").unwrap() + "setMethod('".len();
+        let position = buffer.line_index().byte_to_position(offset, encoding);
+        let Some(GotoDefinitionResponse::Scalar(definition)) =
+            definition_via_db(&snapshot, path, &uri, &buffer, position, encoding, None)
+        else {
+            panic!("expected the registered generic definition");
+        };
+        assert_eq!(definition.range.start.line, 0);
+        assert_eq!(
+            definition.range.start.character,
+            "methods::setGeneric(".len() as u32
+        );
+        let references =
+            references_via_db(&snapshot, path, &uri, &buffer, position, true, encoding).unwrap();
+        assert!(references.iter().any(|loc| loc.range.start.line == 1));
+        assert!(references.iter().all(|loc| loc.range.start.line < 2));
+    }
 
     #[test]
     fn known_receivers_never_borrow_usage_from_unknown_branches() {

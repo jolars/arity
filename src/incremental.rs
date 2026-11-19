@@ -743,6 +743,7 @@ pub fn method_environments(
             root: &root,
             model: semantic_model(db, file),
         }),
+        false,
     )
     .method_environments(path)
 }
@@ -798,6 +799,7 @@ pub fn dispatch_contexts(
             root: &root,
             model: semantic_model(db, file),
         }),
+        false,
     )
     .dispatch_contexts(path)
 }
@@ -933,6 +935,33 @@ pub fn file_class_defs(db: &dyn IncrementalDb, file: SourceFile) -> FileClassFac
         file: Some(file),
     });
     crate::project::file_class_defs(semantic_model(db, file), &parsed_tree_root(db, file))
+}
+
+/// Current spans for quoted navigation. Keep them separate from the range-free
+/// class facts so moving a site does not invalidate the project class graph.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn file_class_source_sites(
+    db: &dyn IncrementalDb,
+    file: SourceFile,
+) -> crate::project::classes::ClassSourceSites {
+    crate::project::classes::class_source_sites(
+        semantic_model(db, file),
+        &parsed_tree_root(db, file),
+    )
+    .1
+}
+
+/// Body-local callee origins, shared by repeated workspace reference requests.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn file_body_class_lookups(
+    db: &dyn IncrementalDb,
+    file: SourceFile,
+) -> Vec<crate::project::classes::FunctionRef> {
+    crate::project::classes::class_lookups(
+        semantic_model(db, file),
+        &parsed_tree_root(db, file),
+        true,
+    )
 }
 
 /// The file's roxygen blocks grouped by the Rd topic they merge into
@@ -2021,6 +2050,17 @@ impl Analysis {
         root: &SyntaxNode,
         model: &SemanticModel,
     ) -> ClassIndex {
+        self.class_index_with_body_lookups(path, facts, root, model, false)
+    }
+
+    pub(crate) fn class_index_with_body_lookups(
+        &self,
+        path: &Path,
+        facts: &FileClassFacts,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        confirm_workspace_bodies: bool,
+    ) -> ClassIndex {
         crate::project::graph::build_class_index(
             &self.0,
             Some(crate::project::graph::LiveClassFile {
@@ -2029,7 +2069,15 @@ impl Analysis {
                 root,
                 model,
             }),
+            confirm_workspace_bodies,
         )
+    }
+
+    pub(crate) fn class_source_sites(
+        &self,
+        file: SourceFile,
+    ) -> &crate::project::classes::ClassSourceSites {
+        file_class_source_sites(&self.0, file)
     }
 
     pub fn class_supertypes(&self, id: &ClassId) -> Vec<ClassId> {

@@ -1045,10 +1045,15 @@ impl ClassIndex {
             let S3MethodSource::Declaration(id) = &method.source else {
                 continue;
             };
-            let Some(site) = extracted.oop_sites.iter().find(|site| {
-                site.role == OopSiteRole::Declaration
-                    && site.target == OopTarget::Declaration(id.key.clone())
-            }) else {
+            let Some(site) = extracted
+                .oop_sites
+                .iter()
+                .map(|source| &source.site)
+                .find(|site| {
+                    site.role == OopSiteRole::Declaration
+                        && site.target == OopTarget::Declaration(id.key.clone())
+                })
+            else {
                 continue;
             };
             let element = root.covering_element(site.range);
