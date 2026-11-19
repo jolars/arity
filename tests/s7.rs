@@ -486,6 +486,7 @@ fn s7_named_bindings_refresh_when_the_first_library_index_arrives() {
     };
     assert!(!has_point(&db));
     db.set_library_index(IndexedProvider::from_indices([PackageIndex {
+        objects: Default::default(),
         schema_version: arity::rindex::schema::SCHEMA_VERSION,
         package: "otherpkg".into(),
         version: "1.0.0".into(),

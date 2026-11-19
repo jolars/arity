@@ -95,6 +95,11 @@ impl LazyLoadDb {
         Ok(rds::read_rds_stream(record.decompressed_bytes())?)
     }
 
+    pub(crate) fn fetch_reference(&self, key: &str) -> Result<Robj> {
+        let record = self.inner.read_reference(key)?;
+        Ok(rds::read_rds_stream(record.decompressed_bytes())?)
+    }
+
     pub(crate) fn fetch_shared(&self, name: &str) -> Result<rd_rds::RObject> {
         let record = self.inner.read(name)?;
         rd_rds::parse(record.decompressed_bytes())

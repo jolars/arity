@@ -1,0 +1,6 @@
+import(methods)
+exportClasses(Shape)
+exportMethods(area)
+export(Counter, RefCounter, Point, measure, describe, malformed, future)
+S3method(describe, fixture, describe_impl)
+S3method(base::print, fixture, describe_impl)

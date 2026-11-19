@@ -8,7 +8,9 @@ use arity::rindex::harvest::{HarvestOptions, harvest_package, harvest_package_in
 use arity::rindex::lazyload::LazyLoadDb;
 use arity::rindex::libpaths::LibrarySearch;
 use arity::rindex::rds::{self, Rkind};
-use arity::rindex::schema::{SymbolEntry, SymbolKind};
+use arity::rindex::schema::{
+    Formal, InstalledMemberKind, ObjectSystem, ObjectType, SymbolEntry, SymbolKind,
+};
 
 fn fixture(pkg: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -377,4 +379,267 @@ fn help_body_snapshot() {
         .expect("harvest magrittr");
     let pipe = find(&idx.symbols, "%>%").expect("%>% exported");
     insta::assert_debug_snapshot!(pipe.help);
+}
+
+#[test]
+fn harvests_installed_classes_and_members() {
+    let index = harvest_package(&fixture("oopfixture"), HarvestOptions::default(), 0).unwrap();
+    let class = |name: &str| {
+        index
+            .objects
+            .classes
+            .iter()
+            .find(|class| class.identity.name == name)
+            .unwrap()
+    };
+
+    let shape = class("Shape");
+    assert_eq!(shape.system, ObjectSystem::S4);
+    assert_eq!(shape.origin.binding, ".__C__Shape");
+    assert_eq!(shape.help.as_ref().unwrap().alias, "Shape-class");
+    let slot = &shape.members[0];
+    assert_eq!(slot.name, "size");
+    assert_eq!(slot.kind, InstalledMemberKind::Slot);
+    assert!(matches!(&slot.declared_type, Some(ObjectType::Named(ty)) if ty.name == "numeric"));
+
+    let counter = class("Counter");
+    assert_eq!(counter.system, ObjectSystem::R6);
+    assert_eq!(counter.identity.package.as_deref(), Some("oopfixture"));
+    assert_eq!(counter.parent_generator.as_ref().unwrap().name, "LocalBase");
+    assert_eq!(class("BaseCounter").origin.binding, "LocalBase");
+    assert!(find(&index.symbols, "LocalBase").is_none());
+    assert_eq!(
+        counter.help.as_ref().unwrap().topic.as_deref(),
+        Some("Shape")
+    );
+    assert_eq!(
+        counter.constructor.as_deref(),
+        Some(
+            [Formal {
+                name: "start".into(),
+                default: Some("0".into())
+            }]
+            .as_slice()
+        )
+    );
+    assert!(
+        counter
+            .members
+            .iter()
+            .any(|member| member.name == "secret" && member.private)
+    );
+    assert!(counter.members.iter().any(|member| {
+        member.name == "value" && member.kind == InstalledMemberKind::ActiveBinding
+    }));
+
+    let reference = class("RefCounter");
+    assert_eq!(reference.system, ObjectSystem::Reference);
+    assert_eq!(reference.parents[0].name, "envRefClass");
+    assert_eq!(reference.generators[0].binding, "RefCounter");
+    assert_eq!(reference.constructor.as_ref().unwrap()[0].name, "...");
+    assert!(reference.members.iter().any(|member| {
+        member.name == "add"
+            && member.kind == InstalledMemberKind::Method
+            && member.formals.as_ref().unwrap()[0].default.as_deref() == Some("1")
+    }));
+
+    let point = class("Point");
+    assert_eq!(point.system, ObjectSystem::S7);
+    assert_eq!(point.identity.package.as_deref(), Some("oopfixture"));
+    assert_eq!(point.constructor.as_ref().unwrap()[0].name, "x");
+    let property = &point.members[0];
+    assert_eq!(property.kind, InstalledMemberKind::Property);
+    assert!(matches!(&property.declared_type, Some(ObjectType::Named(ty)) if ty.name == "double"));
+    assert_eq!(index.objects.classes.len(), 5);
+    assert!(find(&index.symbols, "malformed").is_some());
+    assert!(find(&index.symbols, "future").is_some());
+}
+
+#[test]
+fn harvests_installed_generics_and_method_registrations() {
+    let index = harvest_package(&fixture("oopfixture"), HarvestOptions::default(), 0).unwrap();
+    for (system, name, args) in [
+        (ObjectSystem::S3, "describe", None),
+        (
+            ObjectSystem::S4,
+            "area",
+            Some(vec!["x".into(), "scale".into()]),
+        ),
+        (ObjectSystem::S7, "measure", Some(vec!["x".into()])),
+    ] {
+        let generic = index
+            .objects
+            .generics
+            .iter()
+            .find(|generic| generic.system == system)
+            .unwrap();
+        assert_eq!(generic.identity.name, name);
+        assert_eq!(generic.origin.binding, name);
+        assert_eq!(generic.dispatch_arguments, args);
+        assert_eq!(generic.formals.as_ref().unwrap()[0].name, "x");
+    }
+
+    let methods = &index.objects.methods;
+    let s4 = methods
+        .iter()
+        .find(|method| method.system == ObjectSystem::S4)
+        .unwrap();
+    assert_eq!(s4.generic.name, "area");
+    assert_eq!(s4.generic.package.as_deref(), Some("oopfixture"));
+    assert_eq!(s4.origin.binding, ".__T__area:oopfixture");
+    let dispatch = &s4.dispatch.as_ref().unwrap()[0];
+    assert_eq!(dispatch.argument.as_deref(), Some("x"));
+    assert!(matches!(&dispatch.class, Some(ObjectType::Named(ty))
+        if ty.name == "Shape" && ty.package.as_deref() == Some("oopfixture")));
+    assert_eq!(s4.help.as_ref().unwrap().alias, "area,Shape-method");
+    assert_eq!(s4.target_dispatch, s4.dispatch);
+
+    let s7 = methods
+        .iter()
+        .find(|method| method.generic.name == "measure")
+        .unwrap();
+    assert_eq!(s7.system, ObjectSystem::S7);
+    assert_eq!(s7.origin.entry.as_deref(), Some("oopfixture::Point"));
+    assert_eq!(
+        s7.formals.as_ref().unwrap()[1].default.as_deref(),
+        Some("1")
+    );
+    let dispatch = &s7.dispatch.as_ref().unwrap()[0];
+    assert_eq!(dispatch.argument.as_deref(), Some("x"));
+    assert!(matches!(&dispatch.class, Some(ObjectType::Named(ty)) if ty.name == "Point"));
+
+    let external = methods
+        .iter()
+        .find(|method| method.generic.name == "foreign_measure")
+        .unwrap();
+    assert_eq!(external.generic.package.as_deref(), Some("otherfixture"));
+    assert!(external.conditional);
+    assert!(matches!(
+        &external.dispatch.as_ref().unwrap()[0].class,
+        Some(ObjectType::Union(types)) if types.len() == 2
+    ));
+
+    let s3: Vec<_> = methods
+        .iter()
+        .filter(|method| method.system == ObjectSystem::S3)
+        .collect();
+    assert_eq!(s3.len(), 2);
+    assert_eq!(s3[0].generic.name, "describe");
+    assert_eq!(s3[0].generic.package, None);
+    assert_eq!(s3[1].generic.name, "print");
+    assert_eq!(s3[1].generic.package.as_deref(), Some("base"));
+    for method in s3 {
+        assert_eq!(method.origin.binding, "describe_impl");
+        let dispatch = &method.dispatch.as_ref().unwrap()[0];
+        assert!(matches!(&dispatch.class, Some(ObjectType::Named(ty)) if ty.name == "fixture"));
+        assert_eq!(
+            method.formals.as_ref().unwrap()[2].default.as_deref(),
+            Some("\"fixture\"")
+        );
+    }
+    assert!(find(&index.symbols, "describe_impl").is_none());
+
+    let temp = tempfile::tempdir().unwrap();
+    let cache = arity::rindex::cache::Cache::new(temp.path().into());
+    cache.write_package(&index).unwrap();
+    assert_eq!(
+        cache.read_package(&index.package, &index.version),
+        Some(index.clone())
+    );
+    let names = cache
+        .read_package_exports(&index.package, &index.version)
+        .unwrap();
+    assert_eq!(
+        names
+            .symbols
+            .iter()
+            .map(|symbol| &symbol.name)
+            .collect::<Vec<_>>(),
+        index
+            .symbols
+            .iter()
+            .map(|symbol| &symbol.name)
+            .collect::<Vec<_>>()
+    );
+}
+
+fn copy_oopfixture_index(destination: &std::path::Path) {
+    let source = fixture("oopfixture");
+    std::fs::create_dir_all(destination.join("R")).unwrap();
+    for file in ["DESCRIPTION", "NAMESPACE", "R/oopfixture.rdx"] {
+        std::fs::copy(source.join(file), destination.join(file)).unwrap();
+    }
+}
+
+#[test]
+fn retains_names_and_s3_tuples_when_code_records_are_missing() {
+    let temp = tempfile::tempdir().unwrap();
+    let package = temp.path();
+    let source = fixture("oopfixture");
+    copy_oopfixture_index(package);
+    let options = HarvestOptions { help: false };
+    let complete = harvest_package(&source, options, 0).unwrap();
+    assert!(
+        complete
+            .objects
+            .classes
+            .iter()
+            .all(|class| class.help.is_none())
+    );
+    let partial = harvest_package(package, options, 0).unwrap();
+    assert_eq!(
+        complete
+            .symbols
+            .iter()
+            .map(|symbol| &symbol.name)
+            .collect::<Vec<_>>(),
+        partial
+            .symbols
+            .iter()
+            .map(|symbol| &symbol.name)
+            .collect::<Vec<_>>()
+    );
+    assert!(partial.objects.classes.is_empty());
+    assert!(partial.objects.generics.is_empty());
+    assert_eq!(partial.objects.methods.len(), 2);
+    assert!(partial.objects.methods.iter().all(|method| {
+        method.system == ObjectSystem::S3 && method.formals.is_none() && method.dispatch.is_some()
+    }));
+}
+
+#[test]
+fn skips_a_corrupt_lazy_load_reference_and_keeps_other_metadata() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = fixture("oopfixture");
+    copy_oopfixture_index(temp.path());
+    let database = LazyLoadDb::open(&source.join("R/oopfixture.rdx")).unwrap();
+    let Rkind::Persistent(keys) = database.fetch("Counter").unwrap().kind else {
+        panic!("expected a persisted generator");
+    };
+    let key = keys[0].as_deref().unwrap();
+    let rdx = rd_rds::lazyload::LazyLoadIndex::open(source.join("R/oopfixture.rdx")).unwrap();
+    let rd_rds::lazyload::RecordReference::Direct(location) = rdx.reference(key).unwrap() else {
+        panic!("expected a direct generator record");
+    };
+    let mut rdb = std::fs::read(source.join("R/oopfixture.rdb")).unwrap();
+    let offset = location.offset() as usize;
+    rdb[offset..offset + location.length() as usize].fill(0);
+    std::fs::write(temp.path().join("R/oopfixture.rdb"), rdb).unwrap();
+
+    let index = harvest_package(temp.path(), HarvestOptions { help: false }, 0).unwrap();
+    assert!(find(&index.symbols, "Counter").is_some());
+    assert!(
+        index
+            .objects
+            .classes
+            .iter()
+            .all(|class| class.identity.name != "Counter")
+    );
+    assert!(
+        index
+            .objects
+            .classes
+            .iter()
+            .any(|class| class.identity.name == "Shape")
+    );
 }

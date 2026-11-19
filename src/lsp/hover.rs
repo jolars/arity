@@ -256,6 +256,7 @@ mod tests {
         // is harvested, a bare `as.matrix` (no `library()`) hovers.
         use crate::rindex::schema::{HelpDoc, PackageIndex, SCHEMA_VERSION};
         let idx = PackageIndex {
+            objects: Default::default(),
             schema_version: SCHEMA_VERSION,
             package: "base".into(),
             version: "4.5.3".into(),

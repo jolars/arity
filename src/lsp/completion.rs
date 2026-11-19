@@ -1056,6 +1056,7 @@ mod tests {
 
     fn provider_with_unexported() -> IndexedProvider {
         let idx = PackageIndex {
+            objects: Default::default(),
             schema_version: SCHEMA_VERSION,
             package: "pkg".into(),
             version: "1.0".into(),

@@ -1,0 +1,2 @@
+Installed from source/ with R CMD INSTALL using R 4.6.1, R6 2.6.1, and S7 0.2.2.
+Only files read by the native harvester are retained. Tests need no R installation.

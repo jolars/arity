@@ -524,6 +524,7 @@ mod tests {
 
     fn pkg(name: &str, exports: &[&str]) -> PackageIndex {
         PackageIndex {
+            objects: Default::default(),
             schema_version: SCHEMA_VERSION,
             package: SmolStr::new(name),
             version: SmolStr::new("1.0"),

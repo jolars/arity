@@ -235,6 +235,7 @@ fn description_inlay_hints_report_installed_versions() {
     let text = "Package: p\nImports:\n    dplyr (>= 1.0),\n    stats\n";
     let buffer = TextBuffer::new(text.to_string());
     let indexed = IndexedProvider::from_indices([PackageIndex {
+        objects: Default::default(),
         schema_version: SCHEMA_VERSION,
         package: "dplyr".into(),
         version: "1.1.4".into(),

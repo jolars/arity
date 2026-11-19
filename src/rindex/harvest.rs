@@ -8,7 +8,8 @@
 //! - `data/Rdata.rdx` → lazy-data (`LazyData`) object names — what R exposes
 //!   via `.getNamespaceInfo(ns, "lazydata")`, classified `Data`. (`datasets`
 //!   is entirely lazy-data.)
-//! - `R/{pkg}.rdb` → function formals and symbol-kind refinement.
+//! - `R/{pkg}.rdb` → function formals, symbol kinds, classes, and method tables.
+//! - `NAMESPACE` also supplies S3 registration tuples when code is unavailable.
 //! - `Meta/Rd.rds` → per-symbol help titles + the help-page key for each alias.
 //! - `help/{pkg}.rdb` → full Rd bodies (description/usage/arguments), rendered
 //!   to markdown via [`rd`](crate::rindex::rd).
@@ -25,6 +26,7 @@ use crate::namespace::{
 use crate::rindex::deparse;
 use crate::rindex::lazyload::{self, LazyLoadDb};
 use crate::rindex::libpaths::LibrarySearch;
+use crate::rindex::objects::ObjectHarvester;
 use crate::rindex::rd;
 use crate::rindex::rds::{Rkind, Robj};
 use crate::rindex::schema::{
@@ -116,7 +118,8 @@ pub fn harvest_package_in(
     let title = desc.field("Title").map(|t| SmolStr::new(flatten_ws(&t)));
 
     let object_names = read_object_names(pkg_dir, &package);
-    let exports = resolve_package_exports(pkg_dir, &object_names);
+    let namespace = read_package_namespace(pkg_dir, &object_names);
+    let exports = namespace.exports;
     let lazydata = read_lazydata_names(pkg_dir);
 
     let help = HelpFiles::when_enabled(opts.help, || HelpFiles::open(pkg_dir, &package));
@@ -128,12 +131,35 @@ pub fn harvest_package_in(
         })
         .ok();
 
-    let export_set: BTreeSet<&str> = exports.iter().map(String::as_str).collect();
+    let help_for_object = |alias: &str| {
+        let topic = help.index.as_ref()?.find_alias(alias)?;
+        Some(crate::rindex::schema::HelpAssociation {
+            alias: alias.into(),
+            topic: topic.topic_key().map(Into::into),
+        })
+    };
+    let mut objects = ObjectHarvester::new(
+        db.as_ref(),
+        &package,
+        namespace.imported_names.contains("UseMethod"),
+        &help_for_object,
+    );
+
     let mut symbols: Vec<SymbolEntry> = exports
         .iter()
         .map(|name| {
             let help = build_help(&help, name);
-            let (kind, formals) = refine_symbol(db.as_ref(), name);
+            let value = db.as_ref().and_then(|db| {
+                db.fetch(name)
+                    .inspect_err(|error| {
+                        log::debug!("code binding {name:?} unavailable: {error}");
+                    })
+                    .ok()
+            });
+            if let Some(value) = &value {
+                objects.observe(name, value);
+            }
+            let (kind, formals) = refine_symbol(value.as_ref());
             SymbolEntry {
                 name: SmolStr::new(name),
                 kind,
@@ -150,7 +176,7 @@ pub fn harvest_package_in(
     // `data/Rdata.rdb` to re-derive a kind we already know. A name that is both
     // a code export and a dataset keeps its richer export classification.
     for name in &lazydata {
-        if export_set.contains(name.as_str()) {
+        if exports.contains(name.as_str()) {
             continue;
         }
         let help = build_help(&help, name);
@@ -165,6 +191,7 @@ pub fn harvest_package_in(
     symbols.sort_by(|a, b| a.name.cmp(&b.name));
 
     Ok(PackageIndex {
+        objects: objects.finish(&exports, namespace.s3_registrations),
         schema_version: SCHEMA_VERSION,
         package: SmolStr::new(&package),
         version: SmolStr::new(&version),
@@ -276,14 +303,17 @@ pub(crate) fn is_valid_package_name(name: &str) -> bool {
 /// namespace is the implicit base environment — exports its whole object set,
 /// matching R's pre-namespace "export everything" rule. Over-exporting is
 /// harmless: name resolution still gates which names reach a `base` lookup.
-fn resolve_package_exports(pkg_dir: &Path, object_names: &[String]) -> Vec<String> {
+fn read_package_namespace(pkg_dir: &Path, object_names: &[String]) -> NamespaceInfo {
     let ns_path = pkg_dir.join("NAMESPACE");
     if ns_path.is_file() {
         let namespace = std::fs::read_to_string(&ns_path).unwrap_or_default();
         let borrowed: Vec<&str> = object_names.iter().map(String::as_str).collect();
-        resolve_exports(&namespace, &borrowed)
+        parse_namespace(&namespace, &borrowed)
     } else {
-        object_names.to_vec()
+        NamespaceInfo {
+            exports: object_names.iter().cloned().collect(),
+            ..Default::default()
+        }
     }
 }
 
@@ -314,16 +344,9 @@ fn read_lazydata_names(pkg_dir: &Path) -> Vec<String> {
 /// to the cheap-tier default (`Function`, no formals) when there is no DB to
 /// fetch from, or the object isn't in it, or it decodes to a type we don't
 /// model — a single object that won't decode never aborts the package.
-fn refine_symbol(db: Option<&LazyLoadDb>, name: &str) -> (SymbolKind, Option<Vec<Formal>>) {
-    let Some(db) = db else {
+fn refine_symbol(obj: Option<&Robj>) -> (SymbolKind, Option<Vec<Formal>>) {
+    let Some(obj) = obj else {
         return (SymbolKind::Function, None);
-    };
-    let obj = match db.fetch(name) {
-        Ok(obj) => obj,
-        Err(error) => {
-            log::debug!("code binding {name:?} unavailable: {error}");
-            return (SymbolKind::Function, None);
-        }
     };
     match &obj.kind {
         Rkind::Closure { formals, .. } => (SymbolKind::Function, Some(extract_formals(formals))),
@@ -341,7 +364,7 @@ fn refine_symbol(db: Option<&LazyLoadDb>, name: &str) -> (SymbolKind, Option<Vec
 /// Map a closure's formals pairlist (tag = parameter name, value = default
 /// expression or the empty-arg sentinel) to [`Formal`]s. A zero-parameter
 /// function yields an empty list (distinct from `None` = "not read").
-fn extract_formals(formals: &Robj) -> Vec<Formal> {
+pub(super) fn extract_formals(formals: &Robj) -> Vec<Formal> {
     match &formals.kind {
         Rkind::Pairlist(items) => items
             .iter()
@@ -1200,7 +1223,10 @@ mod tests {
         // `base` ships no NAMESPACE; its whole object set is exported.
         let tmp = tempfile::tempdir().unwrap();
         let objs = vec!["as.matrix".to_string(), "cbind".to_string()];
-        let exports = resolve_package_exports(tmp.path(), &objs);
+        let exports = read_package_namespace(tmp.path(), &objs)
+            .exports
+            .into_iter()
+            .collect::<Vec<_>>();
         assert_eq!(exports, objs);
     }
 
@@ -1208,7 +1234,10 @@ mod tests {
     fn namespace_present_restricts_to_declared_exports() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("NAMESPACE"), "export(foo)\n").unwrap();
-        let exports = resolve_package_exports(tmp.path(), &["foo".to_string(), "bar".to_string()]);
+        let exports = read_package_namespace(tmp.path(), &["foo".to_string(), "bar".to_string()])
+            .exports
+            .into_iter()
+            .collect::<Vec<_>>();
         assert_eq!(exports, vec!["foo".to_string()]);
     }
 

@@ -571,6 +571,7 @@ Suggests: testthat
 
     fn indexed() -> IndexedProvider {
         IndexedProvider::from_indices([PackageIndex {
+            objects: Default::default(),
             schema_version: SCHEMA_VERSION,
             package: "dplyr".into(),
             version: "1.1.4".into(),

@@ -15,6 +15,7 @@
 //! - Integers and reals are big-endian; `NA` is `i32::MIN`.
 
 use std::io::Read;
+use std::sync::Arc;
 
 use smol_str::SmolStr;
 
@@ -23,6 +24,7 @@ use smol_str::SmolStr;
 pub struct Robj {
     pub kind: Rkind,
     /// Attribute name → value (e.g. `"names"`, `"class"`, `"row.names"`).
+    /// Inline environments store theirs in the shared `Environment`.
     pub attr: Vec<(SmolStr, Robj)>,
 }
 
@@ -51,15 +53,32 @@ pub enum Rkind {
     Closure {
         formals: Box<Robj>,
         body: Box<Robj>,
+        environment: Option<Box<Robj>>,
     },
-    /// An environment — contents not retained (placeholder so refs resolve).
+    /// The source expression stored with bytecode. Instructions are opaque.
+    Bytecode(Box<Robj>),
+    /// An environment without a locally serialized frame.
     Env,
+    Namespace(Vec<Option<String>>),
+    Environment(Arc<Environment>),
+    /// A lazy-load persistence hook key. Resolving it requires the companion index.
+    Persistent(Vec<Option<String>>),
+    /// Formal S4 objects store their slots in attributes.
+    S4,
     /// A builtin or special primitive (e.g. an export aliased to `` `+` ``).
     /// Callable, but has no R-level formals.
     Builtin,
     /// A type whose value we don't model but whose bytes were consumed
     /// correctly (S4 objects, external pointers, promises, complex/raw vectors).
     Opaque,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Environment {
+    pub parent: Robj,
+    pub frame: Robj,
+    pub hash_table: Robj,
+    pub attr: Vec<(SmolStr, Robj)>,
 }
 
 /// One element of a pairlist / argument list.
@@ -117,6 +136,7 @@ const VECSXP: u8 = 19;
 const EXPRSXP: u8 = 20;
 const BCODESXP: u8 = 21;
 const EXTPTRSXP: u8 = 22;
+const WEAKREFSXP: u8 = 23;
 const RAWSXP: u8 = 24;
 const S4SXP: u8 = 25;
 
@@ -169,6 +189,7 @@ struct Reader<'a> {
     /// Reference table (1-based on the wire); holds symbols, environments, and
     /// persistent strings as they are first seen.
     refs: Vec<Robj>,
+    depth: usize,
 }
 
 impl<'a> Reader<'a> {
@@ -177,6 +198,7 @@ impl<'a> Reader<'a> {
             buf,
             pos: 0,
             refs: Vec::new(),
+            depth: 0,
         }
     }
 
@@ -200,17 +222,18 @@ impl<'a> Reader<'a> {
     }
 
     fn read_length(&mut self) -> Result<usize> {
-        let len = self.read_i32()?;
-        if len == -1 {
-            // Long vector: two more i32 encode a 64-bit length.
-            let hi = self.read_i32()? as i64;
-            let lo = self.read_i32()? as i64;
-            Ok(((hi << 32) | (lo & 0xffff_ffff)) as usize)
-        } else if len < 0 {
-            Err(RdsError::BadHeader(format!("negative length {len}")))
-        } else {
-            Ok(len as usize)
+        let len = match self.read_i32()? {
+            -1 => {
+                let hi = u64::from(self.read_i32()? as u32);
+                let lo = u64::from(self.read_i32()? as u32);
+                usize::try_from((hi << 32) | lo).map_err(|_| RdsError::UnexpectedEof)?
+            }
+            len => usize::try_from(len).map_err(|_| RdsError::UnexpectedEof)?,
+        };
+        if len > self.buf.len() - self.pos {
+            return Err(RdsError::UnexpectedEof);
         }
+        Ok(len)
     }
 
     fn read_header(&mut self) -> Result<()> {
@@ -262,7 +285,21 @@ impl<'a> Reader<'a> {
         Ok(Some(s))
     }
 
+    fn descend<T>(&mut self, read: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        if self.depth >= 128 {
+            return Err(RdsError::BadHeader("object nesting limit exceeded".into()));
+        }
+        self.depth += 1;
+        let result = read(self);
+        self.depth -= 1;
+        result
+    }
+
     fn read_item(&mut self) -> Result<Robj> {
+        self.descend(Self::read_item_inner)
+    }
+
+    fn read_item_inner(&mut self) -> Result<Robj> {
         let flags = self.read_i32()?;
         let ty = (flags & 0xff) as u8;
         let has_attr = (flags >> 9) & 1 == 1;
@@ -321,7 +358,7 @@ impl<'a> Reader<'a> {
             }
             CPLXSXP => {
                 let n = self.read_length()?;
-                let _ = self.take(n * 16)?; // two f64 per element
+                let _ = self.take(n.checked_mul(16).ok_or(RdsError::UnexpectedEof)?)?; // two f64 per element
                 self.finish(Rkind::Opaque, has_attr)
             }
             RAWSXP => {
@@ -357,28 +394,33 @@ impl<'a> Reader<'a> {
                 } else {
                     Vec::new()
                 };
-                if has_tag {
-                    let _cloenv = self.read_item()?;
-                }
+                let environment = if has_tag {
+                    Some(Box::new(self.read_item()?))
+                } else {
+                    None
+                };
                 let formals = self.read_item()?;
                 let body = self.read_item()?;
                 Ok(Robj {
                     kind: Rkind::Closure {
                         formals: Box::new(formals),
                         body: Box::new(body),
+                        environment,
                     },
                     attr,
                 })
             }
             ENVSXP => self.read_env(),
             PROMSXP => {
-                // [attrib?] value, expr, env  (order: value, tag(expr), env)
+                // A promise is a dotted pair with an optional environment tag.
                 if has_attr {
                     let _ = self.read_attributes()?;
                 }
-                let _ = self.read_item()?;
-                let _ = self.read_item()?;
-                let _ = self.read_item()?;
+                if has_tag {
+                    let _ = self.read_item()?;
+                }
+                let _ = self.read_item()?; // value
+                let _ = self.read_item()?; // expression
                 Ok(Robj::bare(Rkind::Opaque))
             }
             BUILTINSXP | SPECIALSXP => {
@@ -395,14 +437,19 @@ impl<'a> Reader<'a> {
                     Vec::new()
                 };
                 Ok(Robj {
-                    kind: Rkind::Opaque,
+                    kind: Rkind::S4,
                     attr,
                 })
             }
-            EXTPTRSXP => {
-                let _ = self.read_item()?; // prot
-                let _ = self.read_item()?; // tag
-                Ok(Robj::bare(Rkind::Opaque))
+            EXTPTRSXP | WEAKREFSXP => {
+                // These take reference slots even though their runtime values
+                // cannot be recovered. An external pointer may refer to itself.
+                self.refs.push(Robj::bare(Rkind::Opaque));
+                if ty == EXTPTRSXP {
+                    let _ = self.read_item()?; // protected object
+                    let _ = self.read_item()?; // tag
+                }
+                self.finish(Rkind::Opaque, has_attr)
             }
             ALTREP_SXP => self.read_altrep(),
             NAMESPACESXP | PACKAGESXP | PERSISTSXP => {
@@ -417,7 +464,11 @@ impl<'a> Reader<'a> {
                     let item = self.read_item()?; // CHARSXP
                     v.push(item.into_single_str());
                 }
-                let names = Robj::bare(Rkind::Str(v));
+                let names = Robj::bare(match ty {
+                    PERSISTSXP => Rkind::Persistent(v),
+                    NAMESPACESXP => Rkind::Namespace(v),
+                    _ => Rkind::Env,
+                });
                 self.refs.push(names.clone());
                 Ok(names)
             }
@@ -520,89 +571,106 @@ impl<'a> Reader<'a> {
         let slot = self.refs.len();
         self.refs.push(Robj::bare(Rkind::Env));
         let _locked = self.read_i32()?;
-        let _enclos = self.read_item()?;
-        let _frame = self.read_item()?;
-        let _hashtab = self.read_item()?;
-        let _attrib = self.read_item()?;
-        let env = Robj::bare(Rkind::Env);
+        let parent = self.read_item()?;
+        let frame = self.read_item()?;
+        let hash_table = self.read_item()?;
+        let attr = self.read_attributes()?;
+        let env = Robj::bare(Rkind::Environment(Arc::new(Environment {
+            parent,
+            frame,
+            hash_table,
+            attr,
+        })));
         self.refs[slot] = env.clone();
         Ok(env)
     }
 
-    /// Consume a `BCODESXP`. We never interpret bytecode — we only walk its
-    /// bytes so the surrounding stream stays aligned (the body of a fetched
-    /// closure is left `Opaque`; its formals were already read). This is a
-    /// faithful port of R's `serialize.c` `ReadBC`/`ReadBC1`/`ReadBCConsts`/
-    /// `ReadBCLang`. The crux: inside this sub-grammar, type tags are **bare
-    /// `read_i32` values**, not the packed `flags` that [`read_item`] decodes.
+    /// Consume a bytecode record. Its sub-grammar uses bare tags before
+    /// constants and language nodes.
     fn read_bytecode(&mut self) -> Result<Robj> {
-        let nreps = self.read_i32()?;
-        // The reps table lets a BCREPREF point back at an earlier BCREPDEF. We
-        // only consume bytes, so placeholder nulls suffice; clamp the count to
-        // guard against a corrupt/negative length.
-        let mut reps: Vec<Robj> = vec![Robj::null(); nreps.max(0) as usize];
-        self.read_bc1(&mut reps)
+        let _nreps = self.read_i32()?;
+        let expression = self.read_bc1(true)?;
+        Ok(Robj::bare(Rkind::Bytecode(Box::new(expression))))
     }
 
-    /// `ReadBC1`: the code object (an INTSXP) followed by the constant pool.
-    fn read_bc1(&mut self, reps: &mut Vec<Robj>) -> Result<Robj> {
-        let _code = self.read_item()?;
-        let nconsts = self.read_i32()?;
-        for _ in 0..nconsts {
-            let ty = self.read_i32()? as u8; // bare type tag
+    /// The first constant is the original expression. Keep it for static
+    /// inspection of direct dispatch calls, without interpreting instructions.
+    fn read_bc1(&mut self, retain_source: bool) -> Result<Robj> {
+        self.descend(|reader| {
+            let _code = reader.read_item()?;
+            let count = reader.read_i32()?;
+            let mut expression = Robj::bare(Rkind::Opaque);
+            if count < 0 {
+                return Err(RdsError::BadHeader(
+                    "negative bytecode constant count".into(),
+                ));
+            }
+            for index in 0..count {
+                let retain = retain_source && index == 0;
+                let ty = reader.read_i32()? as u8;
+                let constant = match ty {
+                    BCODESXP => reader.read_bc1(false)?,
+                    LANGSXP | LISTSXP | ATTRLANGSXP | ATTRLISTSXP | BCREPDEF | BCREPREF => {
+                        reader.read_bc_lang(ty, retain)?
+                    }
+                    _ => reader.read_item()?,
+                };
+                if retain {
+                    expression = constant;
+                }
+            }
+            Ok(expression)
+        })
+    }
+
+    fn read_bc_lang(&mut self, ty: u8, retain: bool) -> Result<Robj> {
+        self.descend(|reader| reader.read_bc_lang_chain(ty, retain))
+    }
+
+    /// CDR links extend the same pairlist. Only a nested CAR descends
+    /// into another bytecode language expression.
+    fn read_bc_lang_chain(&mut self, mut ty: u8, retain: bool) -> Result<Robj> {
+        let mut items = Vec::new();
+        let mut has_cells = false;
+        let tail = loop {
             match ty {
-                BCODESXP => {
-                    self.read_bc1(reps)?;
+                BCREPREF => {
+                    let _idx = self.read_i32()?;
+                    break Robj::bare(Rkind::Opaque);
                 }
-                LANGSXP | LISTSXP | ATTRLANGSXP | ATTRLISTSXP | BCREPDEF | BCREPREF => {
-                    self.read_bc_lang(ty, reps)?;
+                BCREPDEF => {
+                    let _pos = self.read_i32()?;
+                    ty = self.read_i32()? as u8;
                 }
-                _ => {
-                    // Any other constant is an ordinary packed-flags item.
-                    self.read_item()?;
-                }
+                _ => {}
             }
+            if !matches!(ty, LANGSXP | LISTSXP | ATTRLANGSXP | ATTRLISTSXP) {
+                break self.read_item()?;
+            }
+            has_cells = true;
+            if matches!(ty, ATTRLANGSXP | ATTRLISTSXP) {
+                let _attrib = self.read_item()?;
+            }
+            let tag = self.read_item()?.symbol_name();
+            let car_ty = self.read_i32()? as u8;
+            let value = self.read_bc_lang(car_ty, retain)?;
+            if retain {
+                items.push(PairlistItem { tag, value });
+            }
+            ty = self.read_i32()? as u8;
+        };
+        if !has_cells {
+            return Ok(tail);
         }
-        Ok(Robj::bare(Rkind::Opaque))
-    }
-
-    /// `ReadBCLang`: dispatch a bare type tag within the bytecode const pool.
-    fn read_bc_lang(&mut self, ty: u8, reps: &mut Vec<Robj>) -> Result<Robj> {
-        match ty {
-            BCREPREF => {
-                let _idx = self.read_i32()?;
-                Ok(Robj::null())
-            }
-            BCREPDEF => {
-                // A definition slot, then the real type follows.
-                let _pos = self.read_i32()?;
-                let real_ty = self.read_i32()? as u8;
-                self.read_bc_lang_node(real_ty, reps)
-            }
-            LANGSXP | LISTSXP | ATTRLANGSXP | ATTRLISTSXP => self.read_bc_lang_node(ty, reps),
-            // Any other real type is an ordinary item.
-            _ => self.read_item(),
+        if !retain {
+            return Ok(Robj::bare(Rkind::Opaque));
         }
-    }
-
-    /// Read one `LANG`/`LIST` cons cell within the bytecode grammar: optional
-    /// attributes (for the `ATTR*` variants), a tag, then CAR and CDR — each
-    /// introduced by its own bare type tag.
-    fn read_bc_lang_node(&mut self, ty: u8, reps: &mut Vec<Robj>) -> Result<Robj> {
-        match ty {
-            LANGSXP | LISTSXP | ATTRLANGSXP | ATTRLISTSXP => {
-                if ty == ATTRLANGSXP || ty == ATTRLISTSXP {
-                    let _attrib = self.read_item()?;
-                }
-                let _tag = self.read_item()?;
-                let car_ty = self.read_i32()? as u8;
-                let _car = self.read_bc_lang(car_ty, reps)?;
-                let cdr_ty = self.read_i32()? as u8;
-                let _cdr = self.read_bc_lang(cdr_ty, reps)?;
-                Ok(Robj::bare(Rkind::Opaque))
-            }
-            _ => self.read_item(),
+        match tail.kind {
+            Rkind::Null => {}
+            Rkind::Pairlist(tail) => items.extend(tail),
+            _ => return Ok(Robj::bare(Rkind::Opaque)),
         }
+        Ok(Robj::bare(Rkind::Pairlist(items)))
     }
 
     fn read_altrep(&mut self) -> Result<Robj> {
@@ -649,6 +717,11 @@ fn expand_compact_intseq(state: &Robj) -> Robj {
         && v.len() == 3
     {
         let n = v[0] as usize;
+        // Compact integer sequences can represent far more data than the
+        // record contains. Large defaults remain opaque.
+        if n > 65_536 {
+            return Robj::bare(Rkind::Opaque);
+        }
         let start = v[1];
         let step = v[2];
         let seq = (0..n)
@@ -692,7 +765,7 @@ impl Robj {
     /// The first string element, if this is a (CHAR/STR) string vector.
     pub fn as_str(&self) -> Option<&str> {
         match &self.kind {
-            Rkind::Str(v) => v.first().and_then(|s| s.as_deref()),
+            Rkind::Str(v) | Rkind::Namespace(v) => v.first().and_then(|s| s.as_deref()),
             _ => None,
         }
     }
@@ -700,7 +773,7 @@ impl Robj {
     /// The full string vector, if this is a character vector.
     pub fn as_str_vec(&self) -> Option<&[Option<String>]> {
         match &self.kind {
-            Rkind::Str(v) => Some(v),
+            Rkind::Str(v) | Rkind::Namespace(v) => Some(v),
             _ => None,
         }
     }
@@ -723,7 +796,11 @@ impl Robj {
 
     /// The named attribute, if present.
     pub fn attr(&self, name: &str) -> Option<&Robj> {
-        self.attr.iter().find(|(k, _)| k == name).map(|(_, v)| v)
+        let attributes = match &self.kind {
+            Rkind::Environment(environment) => &environment.attr,
+            _ => &self.attr,
+        };
+        attributes.iter().find(|(k, _)| k == name).map(|(_, v)| v)
     }
 
     /// The `names` attribute as a vector of `Option<&str>`.
@@ -738,6 +815,113 @@ impl Robj {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn environment_references_share_attributes() {
+        // A list containing an attributed environment and a reference to it.
+        let nil = i32::from(NILVALUE_SXP);
+        let words = [
+            2,
+            0,
+            0,
+            VECSXP.into(),
+            2,
+            ENVSXP.into(),
+            0,
+            EMPTYENV_SXP.into(),
+            nil,
+            nil,
+            i32::from(LISTSXP) | (1 << 10),
+            SYMSXP.into(),
+            CHARSXP.into(),
+            1,
+        ];
+        let mut stream = b"X\n".to_vec();
+        stream.extend(words.into_iter().flat_map(i32::to_be_bytes));
+        stream.push(b'x');
+        stream.extend(
+            [INTSXP.into(), 1, 42, nil, i32::from(REFSXP) | (1 << 8)]
+                .into_iter()
+                .flat_map(i32::to_be_bytes),
+        );
+
+        let value = read_rds_stream(&stream).unwrap();
+        let envs = value.as_list().unwrap();
+        let attr = envs[0].attr("x").unwrap();
+        assert_eq!(attr.kind, Rkind::Int(vec![Some(42)]));
+        assert!(std::ptr::eq(attr, envs[1].attr("x").unwrap()));
+    }
+
+    #[test]
+    fn decodes_formals_of_compiled_closure_with_wide_call() {
+        let mut stream = b"X\n".to_vec();
+        let mut words = |values: &[i32]| {
+            stream.extend(values.iter().flat_map(|value| value.to_be_bytes()));
+        };
+        words(&[2, 0, 0, CLOSXP.into(), i32::from(LISTSXP) | (1 << 10)]);
+        words(&[SYMSXP.into(), CHARSXP.into(), 1]);
+        stream.push(b'x');
+        stream.extend(
+            [MISSINGARG_SXP, NILVALUE_SXP, BCODESXP]
+                .into_iter()
+                .flat_map(|ty| i32::from(ty).to_be_bytes()),
+        );
+        let mut words = |values: &[i32]| {
+            stream.extend(values.iter().flat_map(|value| value.to_be_bytes()));
+        };
+        words(&[0, INTSXP.into(), 0, 1]);
+        words(&[
+            LANGSXP.into(),
+            NILVALUE_SXP.into(),
+            SYMSXP.into(),
+            SYMSXP.into(),
+            CHARSXP.into(),
+            4,
+        ]);
+        stream.extend_from_slice(b"list");
+        for _ in 0..140 {
+            for word in [
+                LISTSXP.into(),
+                NILVALUE_SXP.into(),
+                INTSXP.into(),
+                INTSXP.into(),
+                1i32,
+                42,
+            ] {
+                stream.extend(word.to_be_bytes());
+            }
+        }
+        stream.extend(i32::from(NILVALUE_SXP).to_be_bytes()); // bare CDR tag
+        stream.extend(i32::from(NILVALUE_SXP).to_be_bytes()); // serialized value
+
+        let closure = read_rds_stream(&stream).unwrap();
+        let Rkind::Closure { formals, body, .. } = closure.kind else {
+            panic!("expected closure");
+        };
+        assert!(
+            matches!(formals.kind, Rkind::Pairlist(items) if items[0].tag.as_deref() == Some("x"))
+        );
+        assert!(matches!(body.kind, Rkind::Bytecode(source)
+            if matches!(&source.kind, Rkind::Pairlist(items) if items.len() == 141)));
+    }
+
+    #[test]
+    fn limits_nesting_of_bytecode_language_expressions() {
+        // Each CAR starts a nested language node. The reader must hit the
+        // depth limit before it reaches the innermost value.
+        let stream = [NILVALUE_SXP, LANGSXP]
+            .into_iter()
+            .cycle()
+            .take(280)
+            .flat_map(|ty| i32::from(ty).to_be_bytes())
+            .collect::<Vec<_>>();
+        let error = Reader::new(&stream)
+            .read_bc_lang(LANGSXP, true)
+            .unwrap_err();
+        assert!(
+            matches!(error, RdsError::BadHeader(message) if message == "object nesting limit exceeded")
+        );
+    }
 
     #[test]
     fn rejects_non_xdr() {

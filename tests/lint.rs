@@ -2457,6 +2457,7 @@ use arity::rindex::schema::{PackageIndex, SymbolEntry, SymbolKind};
 
 fn indexed_pkg(name: &str, exports: &[&str]) -> PackageIndex {
     PackageIndex {
+        objects: Default::default(),
         schema_version: arity::rindex::schema::SCHEMA_VERSION,
         package: name.into(),
         version: "1.0".into(),

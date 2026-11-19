@@ -2014,6 +2014,7 @@ fn cli_nested_lint_configs_use_their_own_package_index() {
         let cache_root = dir.path().join(sub).join("cache");
         Cache::new(cache_root.clone())
             .write_package(&PackageIndex {
+                objects: Default::default(),
                 schema_version: SCHEMA_VERSION,
                 package: "configfixture".into(),
                 version: "1.0".into(),

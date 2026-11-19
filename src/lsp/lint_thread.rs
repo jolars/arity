@@ -1328,6 +1328,7 @@ mod tests {
         // member: the member must be queued for build too, or the
         // undefined-symbol gates would suppress files indefinitely.
         let meta = PackageIndex {
+            objects: Default::default(),
             schema_version: SCHEMA_VERSION,
             package: "metaverse".into(),
             version: "1.0".into(),

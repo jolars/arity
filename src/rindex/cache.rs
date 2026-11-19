@@ -229,6 +229,7 @@ mod tests {
 
     fn sample(pkg: &str, ver: &str) -> PackageIndex {
         PackageIndex {
+            objects: Default::default(),
             schema_version: SCHEMA_VERSION,
             package: SmolStr::new(pkg),
             version: SmolStr::new(ver),

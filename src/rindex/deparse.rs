@@ -61,7 +61,15 @@ fn write_obj(out: &mut String, obj: &Robj, depth: usize) {
         Rkind::Pairlist(items) => write_call(out, items, depth),
         // Defaults are never a compiled closure / builtin / environment / S4;
         // emit valid R rather than fail.
-        Rkind::Closure { .. } | Rkind::Builtin | Rkind::Env | Rkind::Opaque => out.push_str("NULL"),
+        Rkind::Closure { .. }
+        | Rkind::Builtin
+        | Rkind::Bytecode(_)
+        | Rkind::Env
+        | Rkind::Namespace(_)
+        | Rkind::Environment(_)
+        | Rkind::Persistent(_)
+        | Rkind::S4
+        | Rkind::Opaque => out.push_str("NULL"),
     }
 }
 

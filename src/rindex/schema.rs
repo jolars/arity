@@ -2,9 +2,8 @@
 //!
 //! One [`PackageIndex`] is serialized to `{package}@{version}.json` under the
 //! cache directory; a single [`IndexMeta`] (`meta.json`) records which version
-//! of each package is currently indexed. The schema is deliberately rich
-//! (formals + help) even though early phases only populate names + help titles
-//! — later phases fill the remaining fields without a schema change.
+//! of each package is currently indexed. Rich entries can include formals,
+//! help, and object metadata from installed packages.
 //!
 //! The thin name-list view used by the [`SymbolProvider`](crate::semantic::symbols::SymbolProvider)
 //! is derived in memory from [`PackageIndex::symbols`] at load time; there is
@@ -15,9 +14,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 
-/// Bump when the on-disk shape changes incompatibly. Files (and the enclosing
-/// `v{N}/` directory) carrying a different version are ignored and rebuilt.
-pub const SCHEMA_VERSION: u32 = 3;
+/// Bump when the on-disk shape changes incompatibly or cached metadata needs
+/// to be reharvested. Older versions are ignored and rebuilt.
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// Everything harvested for a single installed package at a single version.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,6 +49,132 @@ pub struct PackageIndex {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attaches: Vec<SmolStr>,
     pub symbols: Vec<SymbolEntry>,
+    #[serde(default, skip_serializing_if = "ObjectMetadata::is_empty")]
+    pub objects: ObjectMetadata,
+}
+
+/// Positive evidence from installed records. Empty collections carry no
+/// completeness guarantee, including for registrations performed at load time.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObjectMetadata {
+    pub classes: Vec<InstalledClass>,
+    pub generics: Vec<InstalledGeneric>,
+    pub methods: Vec<InstalledMethod>,
+}
+
+impl ObjectMetadata {
+    fn is_empty(&self) -> bool {
+        self.classes.is_empty() && self.generics.is_empty() && self.methods.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObjectSystem {
+    S3,
+    S4,
+    R6,
+    Reference,
+    S7,
+}
+
+/// A name observed in serialized metadata. Package is present only when the
+/// object or registration identifies it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObjectName {
+    pub name: SmolStr,
+    pub package: Option<SmolStr>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstalledClass {
+    pub system: ObjectSystem,
+    pub identity: ObjectName,
+    pub origin: ObjectOrigin,
+    pub parents: Vec<ObjectName>,
+    /// An R6 inheritance expression recoverable as a binding reference.
+    pub parent_generator: Option<ObjectName>,
+    /// Reference Class generator bindings associated with this representation.
+    pub generators: Vec<ObjectOrigin>,
+    pub constructor: Option<Vec<Formal>>,
+    pub members: Vec<InstalledMember>,
+    pub help: Option<HelpAssociation>,
+}
+
+/// Binding or table entry within the package containing this index. The
+/// referenced class or generic can be defined in a different package.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObjectOrigin {
+    pub binding: SmolStr,
+    pub entry: Option<SmolStr>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstalledMemberKind {
+    Field,
+    Slot,
+    Property,
+    Method,
+    ActiveBinding,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstalledMember {
+    pub name: SmolStr,
+    pub kind: InstalledMemberKind,
+    pub private: bool,
+    pub declared_type: Option<ObjectType>,
+    pub formals: Option<Vec<Formal>>,
+    pub help: Option<HelpAssociation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstalledGeneric {
+    pub system: ObjectSystem,
+    pub identity: ObjectName,
+    pub origin: ObjectOrigin,
+    pub dispatch_arguments: Option<Vec<SmolStr>>,
+    pub formals: Option<Vec<Formal>>,
+    pub help: Option<HelpAssociation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstalledMethod {
+    pub system: ObjectSystem,
+    pub generic: ObjectName,
+    pub origin: ObjectOrigin,
+    /// Unknown signature positions are retained so later positions stay aligned.
+    pub dispatch: Option<Vec<DispatchParameter>>,
+    /// The S4 table's target signature, when recorded separately from the
+    /// definition's signature (for example, for an inherited method).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_dispatch: Option<Vec<DispatchParameter>>,
+    pub conditional: bool,
+    pub formals: Option<Vec<Formal>>,
+    pub help: Option<HelpAssociation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DispatchParameter {
+    pub argument: Option<SmolStr>,
+    pub class: Option<ObjectType>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObjectType {
+    Named(ObjectName),
+    S3Chain(Vec<SmolStr>),
+    Union(Vec<ObjectType>),
+    Any,
+    Missing,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HelpAssociation {
+    pub alias: SmolStr,
+    pub topic: Option<SmolStr>,
 }
 
 /// A single exported (or, under a future `--all`, internal) name.
@@ -95,8 +220,8 @@ pub struct Formal {
 /// Names-only projection of a [`PackageIndex`], deserialized from the same
 /// `{pkg}@{ver}.json` file. For consumers that need export *membership* but
 /// none of the rich payload (linting: `resolve_origin`/`package_indexed`),
-/// deserializing this instead of [`PackageIndex`] skips the formals and help
-/// bodies — the bulk of the file — without a schema change.
+/// deserializing this instead of [`PackageIndex`] skips formals, help bodies,
+/// and object metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct PackageExports {
     /// Must equal [`SCHEMA_VERSION`]; a mismatch means "treat as absent".
@@ -166,6 +291,7 @@ mod tests {
 
     fn sample() -> PackageIndex {
         PackageIndex {
+            objects: Default::default(),
             schema_version: SCHEMA_VERSION,
             package: SmolStr::new("magrittr"),
             version: SmolStr::new("2.0.4"),

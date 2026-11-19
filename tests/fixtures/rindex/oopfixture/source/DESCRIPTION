@@ -1,0 +1,8 @@
+Package: oopfixture
+Version: 1.0
+Title: Object Metadata Fixture
+Description: Fixed examples for native object metadata harvesting.
+License: CC0
+Author: Arity contributors
+Maintainer: Arity contributors <arity@example.org>
+Imports: methods, R6, S7

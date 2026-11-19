@@ -42,6 +42,7 @@ pub(crate) fn uri_named(name: &str) -> Uri {
 pub(crate) fn indexed_dplyr() -> IndexedProvider {
     use crate::rindex::schema::{PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind};
     let idx = PackageIndex {
+        objects: Default::default(),
         schema_version: SCHEMA_VERSION,
         package: "dplyr".into(),
         version: "1.0".into(),
@@ -67,6 +68,7 @@ pub(crate) fn indexed_dplyr() -> IndexedProvider {
 pub(crate) fn documented_dplyr() -> IndexedProvider {
     use crate::rindex::schema::{Formal, HelpArg, HelpDoc, PackageIndex, SCHEMA_VERSION};
     let idx = PackageIndex {
+        objects: Default::default(),
         schema_version: SCHEMA_VERSION,
         package: "dplyr".into(),
         version: "1.0".into(),

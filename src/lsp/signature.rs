@@ -438,6 +438,7 @@ mod tests {
     fn usage_only_entry_has_label_without_parameters() {
         use crate::rindex::schema::{HelpDoc, PackageIndex, SCHEMA_VERSION};
         let idx = PackageIndex {
+            objects: Default::default(),
             schema_version: SCHEMA_VERSION,
             package: "base".into(),
             version: "4.5.3".into(),
@@ -478,6 +479,7 @@ mod tests {
             default: default.map(str::to_string),
         };
         let idx = PackageIndex {
+            objects: Default::default(),
             schema_version: SCHEMA_VERSION,
             package: "dplyr".into(),
             version: "1.0".into(),

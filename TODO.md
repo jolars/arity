@@ -833,7 +833,7 @@ coverage need not block useful workspace support.
   classes, invalidation after reassignment, and unknown results explicit. Do
   not require whole-program type inference before resolving `self`,
   `private`, `.self`, or a directly constructed local instance.
-- [ ] Extend the versioned rindex schema and native harvesting to retain
+- [x] Extend the versioned rindex schema and native harvesting to retain
   available class, member, generic, and method metadata, S3 registration
   tuples, origins, signatures, and help associations. Preserve the
   RDS/lazy-load structure needed for S4 metadata, R6 and Reference Class

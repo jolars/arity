@@ -1129,6 +1129,7 @@ fn indexed_external_generic_definitions_check_formals_dispatch_and_groups() {
     ] {
         let mut db = IncrementalDatabase::default();
         db.set_library_index(IndexedProvider::from_indices([PackageIndex {
+            objects: Default::default(),
             schema_version: SCHEMA_VERSION,
             package: "base".into(),
             version: "4.6.1".into(),

@@ -3666,6 +3666,7 @@ fn reseeding_membership_preserves_seeded_metadata_and_graph_memo() {
 /// A harvested package index for `name` exporting `exports`.
 fn index_pkg(name: &str, exports: &[&str]) -> PackageIndex {
     PackageIndex {
+        objects: Default::default(),
         schema_version: SCHEMA_VERSION,
         package: name.into(),
         version: "1.0".into(),
