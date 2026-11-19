@@ -1,5 +1,6 @@
 //! Bounded receiver evidence shared by class systems, without executing accessors.
 
+use super::editor::{EditorReceiver, InstalledObjects};
 use super::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,40 +36,32 @@ impl ClassReceiver {
 }
 
 /// Possible receiver values. An unknown path may coexist with known candidates.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct ReceiverEvidence {
-    pub candidates: Vec<ClassReceiver>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceiverEvidence<T = ClassReceiver> {
+    pub candidates: Vec<T>,
     pub unknown: bool,
 }
 
 const MAX_RECEIVER_CANDIDATES: usize = 32;
 
-impl ReceiverEvidence {
-    fn unique(self) -> Option<ClassReceiver> {
+impl<T> Default for ReceiverEvidence<T> {
+    fn default() -> Self {
+        Self {
+            candidates: Vec::new(),
+            unknown: false,
+        }
+    }
+}
+
+impl<T: PartialEq> ReceiverEvidence<T> {
+    pub(super) fn unique(self) -> Option<T> {
         if self.unknown || self.candidates.len() != 1 {
             return None;
         }
         self.candidates.into_iter().next()
     }
 
-    fn project(self, project: impl Fn(ClassReceiver) -> Option<ClassReceiver>) -> Self {
-        let mut result = Self {
-            candidates: Vec::new(),
-            unknown: self.unknown,
-        };
-        for receiver in self.candidates {
-            match project(receiver) {
-                Some(candidate) if !result.candidates.contains(&candidate) => {
-                    result.candidates.push(candidate);
-                }
-                Some(_) => {}
-                None => result.unknown = true,
-            }
-        }
-        result
-    }
-
-    fn project_many(self, project: impl Fn(ClassReceiver) -> Option<Self>) -> Self {
+    fn project_many(self, project: impl Fn(T) -> Option<Self>) -> Self {
         let mut result = Self {
             candidates: Vec::new(),
             unknown: self.unknown,
@@ -82,6 +75,21 @@ impl ReceiverEvidence {
         result
     }
 
+    fn merge(&mut self, other: Self) {
+        self.unknown |= other.unknown;
+        for candidate in other.candidates {
+            if !self.candidates.contains(&candidate) {
+                if self.candidates.len() == MAX_RECEIVER_CANDIDATES {
+                    self.unknown = true;
+                    break;
+                }
+                self.candidates.push(candidate);
+            }
+        }
+    }
+}
+
+impl ReceiverEvidence {
     fn instances(
         classes: impl IntoIterator<Item = ClassId>,
         unknown: bool,
@@ -96,19 +104,6 @@ impl ReceiverEvidence {
         Self {
             candidates,
             unknown: unknown || classes.next().is_some(),
-        }
-    }
-
-    fn merge(&mut self, other: Self) {
-        self.unknown |= other.unknown;
-        for candidate in other.candidates {
-            if !self.candidates.contains(&candidate) {
-                if self.candidates.len() == MAX_RECEIVER_CANDIDATES {
-                    self.unknown = true;
-                    break;
-                }
-                self.candidates.push(candidate);
-            }
         }
     }
 }
@@ -157,6 +152,29 @@ impl ClassIndex {
         value: &SyntaxElement,
         extracted: &Extracted,
     ) -> ReceiverEvidence {
+        let evidence = self.editor_receivers(path, root, model, value, extracted, None);
+        ReceiverEvidence {
+            candidates: evidence
+                .candidates
+                .into_iter()
+                .filter_map(|receiver| match receiver {
+                    EditorReceiver::Source(receiver) => Some(receiver),
+                    EditorReceiver::Installed(_) => None,
+                })
+                .collect(),
+            unknown: evidence.unknown,
+        }
+    }
+
+    pub(super) fn editor_receivers<'a>(
+        &'a self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        value: &SyntaxElement,
+        extracted: &Extracted,
+        installed: Option<&InstalledObjects<'a>>,
+    ) -> ReceiverEvidence<EditorReceiver<'a>> {
         let keys = extracted
             .facts
             .declarations
@@ -173,85 +191,17 @@ impl ClassIndex {
             extracted,
             factory: None,
         }
-        .evidence(value, &mut 32)
+        .evidence(value, &mut 32, installed)
     }
 
-    /// Callable class surface, including implicit Reference Class method calls and
-    /// callSuper's lexical method owner. Accessor reads are never executed.
-    pub fn class_call_signature(
+    /// Bare Reference Class calls can target an implicit method or callSuper.
+    pub(super) fn implicit_member_signature(
         &self,
-        path: &std::path::Path,
+        path: &Path,
         root: &SyntaxNode,
         model: &SemanticModel,
-        call: &CallExpr,
-    ) -> Option<(String, CallableSignature)> {
-        let base = call.base()?;
-        if let Some(binary) = base.as_node().cloned().and_then(BinaryExpr::cast)
-            && binary.op_kind() == Some(SyntaxKind::DOLLAR)
-            && let Some(SyntaxElement::Token(name)) = binary.rhs()
-        {
-            let receiver = self
-                .class_receiver(path, root, model, &binary.lhs()?)
-                .filter(|receiver| receiver.exact)?;
-            let name = unbacktick(name.text());
-            if receiver.class.key.system == ClassSystem::R6 {
-                let api = self.r6_api_at(&receiver.class, receiver.point.as_ref())?;
-                let surface = api.members(receiver.access);
-                if !surface.complete {
-                    return None;
-                }
-                let signature = if receiver.access == ClassAccess::Generator && name == "new" {
-                    api.initializer?
-                } else {
-                    let [member] = surface.entries.get(name)?.as_slice() else {
-                        return None;
-                    };
-                    if member.kind != MemberKind::Method {
-                        return None;
-                    }
-                    member.signature.clone()?
-                };
-                return Some((name.into(), signature));
-            }
-            let api = self.reference_receiver_api(&receiver)?;
-            let signature = if receiver.access == ClassAccess::Generator && name == "new" {
-                api.initializer?
-            } else {
-                let surface = if receiver.access == ClassAccess::Generator {
-                    &api.generator
-                } else {
-                    &api.instance
-                };
-                if !surface.complete {
-                    return None;
-                }
-                let [member] = surface.entries.get(name)?.as_slice() else {
-                    return None;
-                };
-                if member.kind != MemberKind::Method {
-                    return None;
-                }
-                member.signature.clone()?
-            };
-            return Some((name.into(), signature));
-        }
-        if let Some(receiver) = self.class_receiver(path, root, model, &base)
-            && receiver.exact
-            && receiver.access == ClassAccess::Generator
-        {
-            if receiver.class.key.system == ClassSystem::RefClass {
-                return Some((
-                    base.to_string(),
-                    self.reference_receiver_api(&receiver)?.initializer?,
-                ));
-            }
-            if self.s7_constructible(&receiver.class) {
-                return Some((base.to_string(), self.s7_api(&receiver.class)?.constructor?));
-            }
-        }
-        if let Some(signature) = self.s7_generic_signature(path, root, model, &base) {
-            return Some((base.to_string(), signature));
-        }
+        base: &SyntaxElement,
+    ) -> Option<CallableSignature> {
         let token = base.as_token()?;
         let runtime = apply_method_environments(model, root, &self.method_environments(path))?;
         let ident = runtime
@@ -312,7 +262,27 @@ impl ClassIndex {
         if member.kind != MemberKind::Method {
             return None;
         }
-        Some((name.into(), member.signature?))
+        member.signature
+    }
+}
+
+fn source_evidence(evidence: ReceiverEvidence) -> ReceiverEvidence<EditorReceiver<'static>> {
+    ReceiverEvidence {
+        candidates: evidence
+            .candidates
+            .into_iter()
+            .map(EditorReceiver::Source)
+            .collect(),
+        unknown: evidence.unknown,
+    }
+}
+
+fn installed_evidence(
+    receiver: super::editor::InstalledReceiver<'_>,
+) -> ReceiverEvidence<EditorReceiver<'_>> {
+    ReceiverEvidence {
+        unknown: !receiver.exact,
+        candidates: vec![EditorReceiver::Installed(receiver)],
     }
 }
 
@@ -749,7 +719,12 @@ impl ReceiverLookup<'_> {
         self.declared_instances(classes, unknown, None)
     }
 
-    fn evidence(&self, value: &SyntaxElement, budget: &mut usize) -> ReceiverEvidence {
+    fn evidence<'a>(
+        &self,
+        value: &SyntaxElement,
+        budget: &mut usize,
+        installed: Option<&InstalledObjects<'a>>,
+    ) -> ReceiverEvidence<EditorReceiver<'a>> {
         if *budget == 0 {
             return ReceiverEvidence {
                 candidates: Vec::new(),
@@ -759,8 +734,16 @@ impl ReceiverLookup<'_> {
         *budget -= 1;
         if let Some(candidate) = self.resolve(value, &mut BTreeSet::new(), 0) {
             return ReceiverEvidence {
-                candidates: vec![candidate],
+                candidates: vec![EditorReceiver::Source(candidate)],
                 unknown: false,
+            };
+        }
+        if let Some(receiver) = installed.and_then(|installed| {
+            installed.direct_receiver(self.index, self.path, self.root, self.model, value)
+        }) {
+            return ReceiverEvidence {
+                unknown: !receiver.exact,
+                candidates: vec![EditorReceiver::Installed(receiver)],
             };
         }
         let unknown = || ReceiverEvidence {
@@ -774,8 +757,10 @@ impl ReceiverLookup<'_> {
                     !crate::ast::kinds::is_trivia(element.kind())
                         && element.kind() != SyntaxKind::COMMENT
                 });
-                evidence
-                    .merge(candidate.map_or_else(unknown, |value| self.evidence(&value, budget)));
+                evidence.merge(
+                    candidate
+                        .map_or_else(unknown, |value| self.evidence(&value, budget, installed)),
+                );
             }
             return evidence;
         }
@@ -786,7 +771,7 @@ impl ReceiverLookup<'_> {
         {
             return paren
                 .inner()
-                .map_or_else(unknown, |inner| self.evidence(&inner, budget));
+                .map_or_else(unknown, |inner| self.evidence(&inner, budget, installed));
         }
         if let Some(block) = value
             .as_node()
@@ -797,16 +782,27 @@ impl ReceiverLookup<'_> {
             if let Some(statement) = statements.next()
                 && statements.next().is_none()
             {
-                return self.evidence(&statement, budget);
+                return self.evidence(&statement, budget, installed);
             }
         }
         if let Some(binary) = value.as_node().cloned().and_then(BinaryExpr::cast)
             && matches!(binary.op_kind(), Some(SyntaxKind::AT | SyntaxKind::DOLLAR))
             && let Some(lhs) = binary.lhs()
         {
-            return self
-                .evidence(&lhs, budget)
-                .project_many(|receiver| self.member_receiver(&binary, receiver, value));
+            return self.evidence(&lhs, budget, installed).project_many(
+                |receiver| match receiver {
+                    EditorReceiver::Source(receiver) => self
+                        .member_receiver(&binary, receiver, value)
+                        .map(source_evidence),
+                    EditorReceiver::Installed(receiver) => installed?
+                        .member_type(
+                            receiver,
+                            binary.op_kind()? == SyntaxKind::AT,
+                            &resolve::namespace_name(binary.rhs()?)?,
+                        )
+                        .map(installed_evidence),
+                },
+            );
         }
         if let Some(call) = value.as_node().cloned().and_then(CallExpr::cast)
             && let Some(base) = call.base()
@@ -816,19 +812,43 @@ impl ReceiverLookup<'_> {
                 .s7_property_call(self.path, self.root, self.model, &call)
             {
                 return self
-                    .evidence(&property.object, budget)
-                    .project_many(|receiver| self.property_receiver(&property, receiver));
+                    .evidence(&property.object, budget, installed)
+                    .project_many(|receiver| match receiver {
+                        EditorReceiver::Source(receiver) => self
+                            .property_receiver(&property, receiver)
+                            .map(source_evidence),
+                        EditorReceiver::Installed(receiver) => {
+                            if property.write {
+                                return Some(installed_evidence(receiver));
+                            }
+                            let [name] = property.names.as_deref()? else {
+                                return None;
+                            };
+                            installed?
+                                .member_type(receiver, true, name)
+                                .map(installed_evidence)
+                        }
+                    });
             }
             if let Some((object, name, replacement)) =
                 s4::slot_call(self.index, self.path, self.root, self.model, &call)
             {
-                let receivers = self.evidence(&object, budget);
+                let receivers = self.evidence(&object, budget, installed);
                 if replacement {
                     return receivers;
                 }
-                return receivers.project_many(|receiver| {
-                    let class = self.index.s4_slot_class(&receiver, &name)?;
-                    Some(self.declared_instances([class], false, self.point(value)))
+                return receivers.project_many(|receiver| match receiver {
+                    EditorReceiver::Source(receiver) => {
+                        let class = self.index.s4_slot_class(&receiver, &name)?;
+                        Some(source_evidence(self.declared_instances(
+                            [class],
+                            false,
+                            self.point(value),
+                        )))
+                    }
+                    EditorReceiver::Installed(receiver) => installed?
+                        .member_type(receiver, true, &name)
+                        .map(installed_evidence),
                 });
             }
             if let Some((function, result)) = self.local_return(&base) {
@@ -839,21 +859,21 @@ impl ReceiverLookup<'_> {
                     factory: Some(&frame),
                     ..*self
                 }
-                .evidence(&result, budget);
+                .evidence(&result, budget, installed);
             }
             if let Some(generator) = member_new_generator(&base) {
                 return self
-                    .evidence(&generator, budget)
-                    .project(|receiver| self.construction(receiver, value, true));
+                    .evidence(&generator, budget, installed)
+                    .project_many(|receiver| self.editor_construction(receiver, value, true));
             }
             return self
-                .evidence(&base, budget)
-                .project(|receiver| self.construction(receiver, value, false));
+                .evidence(&base, budget, installed)
+                .project_many(|receiver| self.editor_construction(receiver, value, false));
         }
         if let Some(token) = value.as_token()
             && let Some(evidence) = self.contextual_receiver(value, token)
         {
-            return evidence;
+            return source_evidence(evidence);
         }
         if let Some(token) = value
             .as_token()
@@ -861,7 +881,7 @@ impl ReceiverLookup<'_> {
             && let Some(binding) = read_binding(self.model, token)
         {
             if self.model.binding(binding).kind == BindingKind::Param {
-                return self.parameter_evidence(binding);
+                return source_evidence(self.parameter_evidence(binding));
             }
             let definition = self.model.binding(binding).def_range;
             let read_offset = self.binding_read_offset(value, definition);
@@ -871,9 +891,10 @@ impl ReceiverLookup<'_> {
             let Some(rhs) = stable_value(self.model, self.root, binding) else {
                 return unknown();
             };
-            let mut evidence = self.evidence(&rhs, budget);
+            let mut evidence = self.evidence(&rhs, budget, installed);
             for receiver in &mut evidence.candidates {
-                if receiver.class.key.system == ClassSystem::RefClass
+                if let EditorReceiver::Source(receiver) = receiver
+                    && receiver.class.key.system == ClassSystem::RefClass
                     && read_offset == token.text_range().start()
                 {
                     receiver.point = self.point(value);
@@ -883,6 +904,26 @@ impl ReceiverLookup<'_> {
             return evidence;
         }
         unknown()
+    }
+
+    fn editor_construction<'a>(
+        &self,
+        receiver: EditorReceiver<'a>,
+        value: &SyntaxElement,
+        member: bool,
+    ) -> Option<ReceiverEvidence<EditorReceiver<'a>>> {
+        match receiver {
+            EditorReceiver::Source(receiver) => Some(source_evidence(
+                self.construction(receiver, value, member)
+                    .map(|receiver| ReceiverEvidence {
+                        candidates: vec![receiver],
+                        unknown: false,
+                    })?,
+            )),
+            EditorReceiver::Installed(receiver) => {
+                Some(installed_evidence(receiver.construct(member)?))
+            }
+        }
     }
 
     fn contextual_receiver(

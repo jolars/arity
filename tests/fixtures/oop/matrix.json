@@ -118,9 +118,6 @@
     ]
   },
   "s4/use_sites": {
-    "known_gaps": [
-      "Generic signatures from unassigned registrations are unavailable to signature help."
-    ],
     "probes": [
       {
         "method": "definition",

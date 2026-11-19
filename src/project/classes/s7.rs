@@ -4,7 +4,7 @@ use super::*;
 use std::path::Path;
 
 mod bridges;
-mod dispatch;
+pub(super) mod dispatch;
 mod properties;
 
 pub use dispatch::*;

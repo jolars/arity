@@ -20,11 +20,10 @@ TypeHierarchy "Class = \"Child\"": [{"children":[],"detail":"S4 class","name":"C
 TypeHierarchy "contains = \"Base\"": [{"children":[],"detail":"S4 class via First","name":"Base","parents":[],"selection":[48,54]},{"children":[],"detail":"S4 class via Second","name":"Base","parents":[],"selection":[92,98]}]
 
 === s4/use_sites ===
-known gap: Generic signatures from unassigned registrations are unavailable to signature help.
 diagnostics: []
 symbols: []
 Definition "audit_speak(1)": null
-SignatureHelp "audit_speak(1)": null
+SignatureHelp "audit_speak(1)": {"active_parameter":0,"signatures":["audit_speak(x)"]}
 Definition ".defined,": null
 References ".defined,": [{"range":[165,173],"text":".defined"}]
 PrepareRename ".defined,": null
@@ -46,7 +45,7 @@ diagnostic: unused-binding severity=2 37..42 "Point"
 symbols: [["class_name",13,null],["Point",13,null],["generic_name",13,null],["obj",13,null]]
 Definition "Point <-": [{"range":[37,42],"text":"Point"}]
 TypeHierarchy "class_name, slots": null
-Completion "obj@value": [["value",5]]
+Completion "obj@value": []
 
 === s4/named_arguments ===
 diagnostic: unused-binding severity=2 0..5 "Point"

@@ -200,6 +200,8 @@ impl<'a> ObjectHarvester<'a> {
             .iter()
             .find(|member| member.name == "initialize" && !member.private)
             .and_then(|member| member.formals.clone());
+        let inherit = generator.get("inherit");
+        let parent_generator = inherit.and_then(binding_reference);
         Some(InstalledClass {
             system: ObjectSystem::R6,
             identity: ObjectName {
@@ -209,8 +211,15 @@ impl<'a> ObjectHarvester<'a> {
             origin: origin(binding, None),
             generators: Vec::new(),
             parents: Vec::new(),
-            parent_generator: generator.get("inherit").and_then(binding_reference),
+            parent_known: parent_generator.is_some()
+                || inherit.is_some_and(|value| matches!(value.kind, Rkind::Null)),
+            parent_generator,
+            portable: generator.get("portable").and_then(logical),
+            cloneable: generator.get("cloneable").and_then(logical),
+            virtual_class: None,
+            exported_class: false,
             constructor,
+            constructor_returns_instance: true,
             members,
             help: (self.help)(binding).or_else(|| (self.help)(name)),
         })
@@ -246,8 +255,14 @@ impl<'a> ObjectHarvester<'a> {
                 origin: origin(binding, None),
                 parents: Vec::new(),
                 parent_generator: None,
+                parent_known: false,
+                portable: None,
+                cloneable: None,
+                virtual_class: None,
+                exported_class: false,
                 generators: Vec::new(),
                 constructor: None,
+                constructor_returns_instance: true,
                 members: Vec::new(),
                 help: None,
             });
@@ -343,6 +358,20 @@ impl<'a> ObjectHarvester<'a> {
                 ));
             }
         }
+        if system == ObjectSystem::Reference {
+            members.extend(value.attr("slots").into_iter().flat_map(named_list).map(
+                |(member, value)| {
+                    self.member(
+                        name,
+                        member,
+                        InstalledMemberKind::Slot,
+                        false,
+                        object_name(value).map(ObjectType::Named),
+                        None,
+                    )
+                },
+            ));
+        }
         let parents = value
             .attr("contains")
             .into_iter()
@@ -363,8 +392,14 @@ impl<'a> ObjectHarvester<'a> {
             origin: origin(binding, None),
             parents,
             parent_generator: None,
+            parent_known: false,
+            portable: None,
+            cloneable: None,
+            virtual_class: value.attr("virtual").and_then(logical),
+            exported_class: false,
             generators: Vec::new(),
             constructor: None,
+            constructor_returns_instance: true,
             members,
             help,
         })
@@ -379,22 +414,31 @@ impl<'a> ObjectHarvester<'a> {
             .filter(|(_, property)| is_class(property, "S7_property"))
             .map(|(name, property)| {
                 let declared_type = list_field(property, "class").and_then(s7_type);
-                self.member(
+                let mut member = self.member(
                     &identity.name,
                     name,
                     InstalledMemberKind::Property,
                     false,
                     declared_type,
                     None,
-                )
+                );
+                member.stored = list_field(property, "getter")
+                    .is_some_and(|getter| matches!(getter.kind, Rkind::Null));
+                member
             })
             .collect();
         Some(InstalledClass {
             system: ObjectSystem::S7,
             parents: value.attr("parent").and_then(s7_name).into_iter().collect(),
             parent_generator: None,
+            parent_known: false,
+            portable: None,
+            cloneable: None,
+            virtual_class: value.attr("abstract").and_then(logical),
+            exported_class: false,
             generators: Vec::new(),
             constructor: formals(value),
+            constructor_returns_instance: s7_constructor_returns_instance(value),
             members,
             help: (self.help)(binding).or_else(|| (self.help)(&identity.name)),
             identity,
@@ -418,6 +462,7 @@ impl<'a> ObjectHarvester<'a> {
             declared_type,
             formals,
             help: (self.help)(&format!("{owner}-{name}")),
+            stored: matches!(kind, InstalledMemberKind::Field | InstalledMemberKind::Slot),
         }
     }
 
@@ -532,6 +577,47 @@ impl<'a> ObjectHarvester<'a> {
             formals: formals(method),
             help: None,
         });
+    }
+}
+
+fn s7_constructor_returns_instance(value: &Robj) -> bool {
+    let Rkind::Closure { body, .. } = &value.kind else {
+        return false;
+    };
+    let body = match &body.kind {
+        Rkind::Bytecode(source) => source,
+        _ => body,
+    };
+    let Rkind::Pairlist(items) = &body.kind else {
+        return false;
+    };
+    let call = if matches!(items.first().map(|item| &item.value.kind),
+        Some(Rkind::Symbol(name)) if name == "{")
+    {
+        let Some(tail) = items.last() else {
+            return false;
+        };
+        let Rkind::Pairlist(call) = &tail.value.kind else {
+            return false;
+        };
+        call
+    } else {
+        items
+    };
+    call.first()
+        .and_then(|callee| binding_reference(&callee.value))
+        .is_some_and(|callee| {
+            callee.package.as_deref() == Some("S7") && callee.name == "new_object"
+        })
+}
+
+fn logical(value: &Robj) -> Option<bool> {
+    match &value.kind {
+        Rkind::Logical(values) => match values.as_slice() {
+            [value] => *value,
+            _ => None,
+        },
+        _ => None,
     }
 }
 

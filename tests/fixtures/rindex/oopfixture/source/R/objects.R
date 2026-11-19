@@ -1,7 +1,7 @@
 setClass("Shape", slots = c(size = "numeric"))
 setGeneric("area", function(x, scale = 1) standardGeneric("area"))
 setMethod("area", "Shape", function(x, scale = 1) x@size * scale)
-LocalBase <- R6::R6Class("BaseCounter")
+LocalBase <- R6::R6Class("BaseCounter", public = list(base_add = function(n = 2) n))
 Counter <- R6::R6Class("Counter", inherit = LocalBase,
   public = list(count = 0, initialize = function(start = 0) self$count <- start,
     add = function(n = 1) n),

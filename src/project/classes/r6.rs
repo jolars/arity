@@ -148,7 +148,7 @@ fn generated(kind: MemberKind, parameters: Option<&[(&str, Option<&str>)]>) -> R
     }
 }
 
-fn generator_members() -> R6Members {
+pub(super) fn generator_members() -> R6Members {
     let mut members = R6Members::default();
     for name in [
         "classname",

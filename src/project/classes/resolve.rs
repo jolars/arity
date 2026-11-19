@@ -180,6 +180,18 @@ impl ClassIndex {
         !self.incomplete.contains(path)
     }
 
+    pub(super) fn installed_binding_masked(&self, path: &Path, value: &SyntaxElement) -> bool {
+        let Some(name) = namespace_name(value.clone()) else {
+            return false;
+        };
+        let scope = self.scope.for_file(path);
+        let in_function = value.parent().is_some_and(|node| {
+            node.ancestors()
+                .any(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
+        });
+        scope.resolution_incomplete || !self.definition_files(path, &name, in_function).is_empty()
+    }
+
     pub(super) fn implementation_files(
         &self,
         path: &Path,

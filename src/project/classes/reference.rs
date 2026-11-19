@@ -58,7 +58,7 @@ fn generated(kind: MemberKind, parameters: Option<&[(&str, Option<&str>)]>) -> R
     }
 }
 
-fn object_members() -> ReferenceMembers {
+pub(super) fn object_members() -> ReferenceMembers {
     let mut members = ReferenceMembers::default();
     for name in [".self", ".refClassDef", ".objectPackage", ".objectParent"] {
         members
@@ -93,7 +93,7 @@ fn object_members() -> ReferenceMembers {
     members
 }
 
-fn generator_members() -> ReferenceMembers {
+pub(super) fn generator_members() -> ReferenceMembers {
     let mut members = object_members();
     for name in ["def", "className"] {
         members

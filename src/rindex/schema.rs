@@ -16,7 +16,7 @@ use smol_str::SmolStr;
 
 /// Bump when the on-disk shape changes incompatibly or cached metadata needs
 /// to be reharvested. Older versions are ignored and rebuilt.
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 6;
 
 /// Everything harvested for a single installed package at a single version.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,11 +60,17 @@ pub struct ObjectMetadata {
     pub classes: Vec<InstalledClass>,
     pub generics: Vec<InstalledGeneric>,
     pub methods: Vec<InstalledMethod>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub help: BTreeMap<String, HelpDoc>,
 }
 
 impl ObjectMetadata {
     fn is_empty(&self) -> bool {
         self.classes.is_empty() && self.generics.is_empty() && self.methods.is_empty()
+    }
+
+    pub(crate) fn render_help(&self, association: &HelpAssociation) -> Option<&HelpDoc> {
+        self.help.get(&association.cache_key())
     }
 }
 
@@ -94,9 +100,22 @@ pub struct InstalledClass {
     pub parents: Vec<ObjectName>,
     /// An R6 inheritance expression recoverable as a binding reference.
     pub parent_generator: Option<ObjectName>,
+    /// A missing R6 parent may be either a known NULL or an undecodable expression.
+    #[serde(default)]
+    pub parent_known: bool,
+    #[serde(default)]
+    pub portable: Option<bool>,
+    #[serde(default)]
+    pub cloneable: Option<bool>,
+    #[serde(default)]
+    pub virtual_class: Option<bool>,
+    #[serde(default)]
+    pub exported_class: bool,
     /// Reference Class generator bindings associated with this representation.
     pub generators: Vec<ObjectOrigin>,
     pub constructor: Option<Vec<Formal>>,
+    #[serde(default)]
+    pub constructor_returns_instance: bool,
     pub members: Vec<InstalledMember>,
     pub help: Option<HelpAssociation>,
 }
@@ -127,6 +146,9 @@ pub struct InstalledMember {
     pub declared_type: Option<ObjectType>,
     pub formals: Option<Vec<Formal>>,
     pub help: Option<HelpAssociation>,
+    /// The member is a stored value with no known read accessor.
+    #[serde(default)]
+    pub stored: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,6 +197,15 @@ pub enum ObjectType {
 pub struct HelpAssociation {
     pub alias: SmolStr,
     pub topic: Option<SmolStr>,
+}
+
+impl HelpAssociation {
+    pub(super) fn cache_key(&self) -> String {
+        self.topic.as_ref().map_or_else(
+            || format!("alias:{}", self.alias),
+            |topic| format!("topic:{topic}"),
+        )
+    }
 }
 
 /// A single exported (or, under a future `--all`, internal) name.

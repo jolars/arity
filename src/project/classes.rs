@@ -9,6 +9,8 @@
 //! their declaration and use spans without putting source ranges in the projection.
 
 mod dispatch;
+mod editor;
+pub(crate) use editor::{EditorCallable, EditorRead, ObjectHelp};
 mod environments;
 pub use dispatch::{
     DispatchContexts, DispatchEnvironment, GenericEffect, NamedDispatchEnvironment,

@@ -52,6 +52,233 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
+    fn known_receivers_never_borrow_usage_from_unknown_branches() {
+        let source = "A <- R6::R6Class('A', public = list(`odd name` = 1))\nobj <- if (flag) A$new() else unknown\nobj$guessed\nobj$";
+        let CompletionResponse::List(list) =
+            completion::compute_completions(source, source.len(), &IndexedProvider::empty())
+                .unwrap()
+        else {
+            panic!("expected a completion list");
+        };
+        assert!(!list.items.iter().any(|item| item.label == "guessed"));
+        let member = list
+            .items
+            .iter()
+            .find(|item| item.label == "odd name")
+            .unwrap();
+        assert_eq!(member.insert_text.as_deref(), Some("`odd name`"));
+    }
+
+    #[test]
+    fn source_generics_show_formals_and_only_proven_dispatch() {
+        for (source, label, selected) in [
+            (
+                "describe <- function(x, ...) UseMethod('describe')\ndescribe.demo <- function(x, ..., extra = 1) x\ndescribe(structure(1, class = 'demo'))",
+                "describe(x, ...)",
+                true,
+            ),
+            (
+                "describe <- function(x, ...) UseMethod('describe')\ndescribe.demo <- function(x, ..., extra = 1) x\ndescribe(unknown)",
+                "describe(x, ...)",
+                false,
+            ),
+            (
+                "methods::setClass('Demo', slots = c(x = 'numeric'))\nmethods::setGeneric('describe', function(x, scale = 1) standardGeneric('describe'))\nmethods::setMethod('describe', 'Demo', function(x, scale) x)\ndescribe(methods::new('Demo'))",
+                "describe(x, scale = 1)",
+                true,
+            ),
+            (
+                "methods::setGeneric('describe', function(x, scale = 1) standardGeneric('describe'))\ndescribe(",
+                "describe(x, scale = 1)",
+                false,
+            ),
+            (
+                "methods::setGeneric('describe', function(x) standardGeneric('describe'))\nmethods::setMethod('describe', 'missing', function(x) 0)\ndescribe(",
+                "describe(x)",
+                false,
+            ),
+        ] {
+            let offset = source.rfind("describe(").unwrap() + "describe(".len();
+            let help = signature::compute_signature_help(source, offset, &IndexedProvider::empty())
+                .unwrap_or_else(|| panic!("no generic signature for {source}"));
+            let [info] = help.signatures.as_slice() else {
+                panic!("expected the generic as the only signature");
+            };
+            assert_eq!(info.label, label);
+            assert_eq!(help.active_parameter, Some(0));
+            assert_eq!(
+                matches!(&info.documentation, Some(Documentation::MarkupContent(markdown))
+                    if markdown.value.contains("Selected method")),
+                selected,
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn project_generic_signatures_respect_exports_and_imports() {
+        let mut db = IncrementalDatabase::default();
+        let provider = Path::new("/generic-provider/R/describe.R");
+        let consumer = Path::new("/generic-consumer/R/use.R");
+        let provider_file = db.upsert_file(
+            provider,
+            "describe <- function(x, ..., scale = 1) UseMethod('describe')\n",
+        );
+        let consumer_file = db.upsert_file(consumer, "describe(");
+        db.set_workspace_members(
+            vec![provider_file, consumer_file],
+            vec!["/generic-provider".into(), "/generic-consumer".into()],
+        );
+        db.refresh_descriptions(["/generic-provider".into(), "/generic-consumer".into()]);
+        db.upsert_description(Path::new("/generic-provider"), "Package: provider\n");
+        db.upsert_description(
+            Path::new("/generic-consumer"),
+            "Package: consumer\nImports: provider\n",
+        );
+        for exported in [true, false] {
+            db.set_package_metadata(
+                [
+                    (
+                        "/generic-provider",
+                        if exported { "export(describe)" } else { "" },
+                    ),
+                    ("/generic-consumer", "importFrom(provider, describe)"),
+                ]
+                .into_iter()
+                .map(|(root, namespace)| PackageInfo {
+                    root: root.into(),
+                    namespace: Some(namespace.into()),
+                    dir_sources: BTreeSet::new(),
+                    native_routines: BTreeSet::new(),
+                })
+                .collect(),
+            );
+            for callee in ["describe", "provider::describe"] {
+                let text = format!("{callee}(");
+                let buffer = TextBuffer::new(text.clone());
+                let position = buffer
+                    .line_index()
+                    .byte_to_position(text.len(), PositionEncoding::Utf16);
+                let help = signature::signature_help_via_db(
+                    &db.snapshot(),
+                    consumer,
+                    &buffer,
+                    position,
+                    PositionEncoding::Utf16,
+                    None,
+                );
+                let expected = format!("{callee}(x, ..., scale = 1)");
+                assert_eq!(
+                    help.as_ref().map(|help| help.signatures[0].label.as_str()),
+                    exported.then_some(expected.as_str()),
+                    "{text}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn installed_inherited_members_resolve_the_declaring_help_topic() {
+        use crate::rindex::harvest::{HarvestOptions, harvest_package};
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rindex/oopfixture");
+        let package = harvest_package(&fixture, HarvestOptions::default(), 0).unwrap();
+        let indexed = IndexedProvider::from_indices([package]);
+        let source = "obj <- oopfixture::Counter$new()\nobj$";
+        let CompletionResponse::List(list) =
+            completion::compute_completions(source, source.len(), &indexed).unwrap()
+        else {
+            panic!("expected a completion list");
+        };
+        assert!(!list.items.iter().any(|item| item.label == "secret"));
+        let item = list
+            .items
+            .into_iter()
+            .find(|item| item.label == "base_add")
+            .unwrap();
+        assert_eq!(item.kind, Some(CompletionItemKind::METHOD));
+        assert!(
+            completion::resolve_completion(item, &indexed)
+                .documentation
+                .is_some()
+        );
+        let call = format!("{source}base_add(");
+        let help = signature::compute_signature_help(&call, call.len(), &indexed).unwrap();
+        assert_eq!(help.signatures[0].label, "base_add(n = 2)");
+        assert!(help.signatures[0].documentation.is_some());
+
+        let call = "oopfixture::area(";
+        let help = signature::compute_signature_help(call, call.len(), &indexed).unwrap();
+        assert_eq!(help.signatures[0].label, "oopfixture::area(x, scale = 1)");
+    }
+
+    #[test]
+    fn names_only_imports_can_make_installed_receiver_identity_ambiguous() {
+        use crate::rindex::harvest::{HarvestOptions, harvest_package};
+        use crate::rindex::remote::RemoteExports;
+
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rindex/oopfixture");
+        let package = harvest_package(&fixture, HarvestOptions::default(), 0).unwrap();
+        let mut db = IncrementalDatabase::default();
+        db.set_library_index(IndexedProvider::from_indices([package]));
+        let path = Path::new("/consumer/R/use.R");
+        let source = "obj <- Counter$new()\nobj$";
+        let file = db.upsert_file(path, source);
+        db.set_workspace_members(vec![file], vec!["/consumer".into()]);
+        db.upsert_description(
+            Path::new("/consumer"),
+            "Package: consumer\nImports: oopfixture, other\n",
+        );
+        db.set_package_metadata(vec![PackageInfo {
+            root: "/consumer".into(),
+            namespace: Some("import(oopfixture)\nimport(other)".into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        let buffer = TextBuffer::new(source.to_string());
+        let position = buffer
+            .line_index()
+            .byte_to_position(source.len(), PositionEncoding::Utf16);
+        for ambiguous in [false, true] {
+            let mut remote = RemoteExports::new();
+            remote.insert_package("other", ambiguous.then(|| "Counter".into()));
+            db.set_remote_exports(remote);
+            let CompletionResponse::List(list) = completion::completion_via_db(
+                &db.snapshot(),
+                path,
+                &buffer,
+                position,
+                PositionEncoding::Utf16,
+                None,
+            )
+            .unwrap() else {
+                panic!("expected a completion list");
+            };
+            assert_eq!(
+                list.items.iter().any(|item| item.label == "base_add"),
+                !ambiguous
+            );
+        }
+    }
+
+    #[test]
+    fn s4_constructor_signature_lists_inherited_slots_in_an_open_call() {
+        let source = "methods::setClass('Parent', slots = c(size = 'numeric'))\nmethods::setClass('Child', contains = 'Parent', slots = c(label = 'character'))\nmethods::new('Child', ";
+        let help =
+            signature::compute_signature_help(source, source.len(), &IndexedProvider::empty())
+                .unwrap();
+        let info = &help.signatures[0];
+        assert_eq!(info.label, "methods::new(Class, ...)");
+        assert_eq!(help.active_parameter, Some(1));
+        let Some(Documentation::MarkupContent(markdown)) = &info.documentation else {
+            panic!("expected declared slot documentation");
+        };
+        assert!(markdown.value.contains("size"));
+        assert!(markdown.value.contains("label"));
+    }
+
+    #[test]
     fn canceled_read_keeps_the_description_floor() {
         use std::cell::Cell;
 

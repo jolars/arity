@@ -214,32 +214,7 @@ impl ClassIndex {
             .collect()
     }
 
-    pub(in crate::project::classes) fn s7_generic_signature(
-        &self,
-        path: &Path,
-        root: &SyntaxNode,
-        model: &SemanticModel,
-        callee: &SyntaxElement,
-    ) -> Option<CallableSignature> {
-        if !self
-            .oop_files()
-            .any(|file| !file.facts.oop.s7.generics.is_empty())
-        {
-            return None;
-        }
-        let extracted = extract(model, root, false);
-        let target = self.s7_live_generic(path, root, model, &extracted, callee)?;
-        let definition = self.generic(&target)?;
-        if definition
-            .uncertainty
-            .contains(&OopUncertainty::DynamicSignature)
-        {
-            return None;
-        }
-        definition.signature.clone()
-    }
-
-    fn s7_live_generic(
+    pub(in crate::project::classes) fn s7_live_generic(
         &self,
         path: &Path,
         root: &SyntaxNode,
@@ -1302,7 +1277,7 @@ fn builtin_lineage(name: &str) -> Option<Vec<String>> {
     Some(tags)
 }
 
-fn literal_class(value: &SyntaxElement) -> Option<&'static str> {
+pub(in crate::project::classes) fn literal_class(value: &SyntaxElement) -> Option<&'static str> {
     let token = value.as_token()?;
     Some(match token.kind() {
         SyntaxKind::STRING => "character",

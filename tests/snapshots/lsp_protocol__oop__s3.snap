@@ -12,7 +12,7 @@ TypeHierarchy "\"point\"": null
 diagnostics: []
 symbols: [["describe",12,"(x)"],["describe.point",12,"(x)"],["obj",13,null]]
 Definition "describe(obj)": [{"range":[0,8],"text":"describe"}]
-Completion "obj$value": [["value",5]]
+Completion "obj$value": []
 References "describe(obj)": [{"range":[208,216],"text":"describe"},{"range":[0,8],"text":"describe"}]
 Definition ".Generic,": null
 References ".Generic,": [{"range":[85,93],"text":".Generic"}]

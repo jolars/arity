@@ -190,8 +190,50 @@ pub fn harvest_package_in(
     }
     symbols.sort_by(|a, b| a.name.cmp(&b.name));
 
+    let mut objects = objects.finish(&exports, namespace.s3_registrations);
+    for class in &mut objects.classes {
+        class.exported_class = namespace
+            .exported_classes
+            .contains(class.identity.name.as_str());
+    }
+    let mut rendered = std::collections::BTreeMap::new();
+    for association in objects
+        .classes
+        .iter()
+        .flat_map(|class| {
+            class
+                .help
+                .iter()
+                .chain(class.members.iter().filter_map(|m| m.help.as_ref()))
+        })
+        .chain(
+            objects
+                .generics
+                .iter()
+                .filter_map(|generic| generic.help.as_ref()),
+        )
+        .chain(
+            objects
+                .methods
+                .iter()
+                .filter_map(|method| method.help.as_ref()),
+        )
+    {
+        rendered.entry(association.cache_key()).or_insert_with(|| {
+            symbols
+                .iter()
+                .find(|entry| entry.name == association.alias)
+                .and_then(|entry| entry.help.clone())
+                .or_else(|| build_help(&help, &association.alias))
+        });
+    }
+    objects.help = rendered
+        .into_iter()
+        .filter_map(|(key, doc)| Some((key, doc?)))
+        .collect();
+
     Ok(PackageIndex {
-        objects: objects.finish(&exports, namespace.s3_registrations),
+        objects,
         schema_version: SCHEMA_VERSION,
         package: SmolStr::new(&package),
         version: SmolStr::new(&version),
@@ -431,6 +473,7 @@ pub struct NamespaceInfo {
     /// Names made public via `export()` / `exportMethods()` / `exportClasses()`,
     /// plus `exportPattern()` matches against the package's object names.
     pub exports: BTreeSet<String>,
+    pub exported_classes: BTreeSet<String>,
     /// Names imported individually via `importFrom(pkg, name, ...)`.
     pub imported_names: BTreeSet<String>,
     /// Packages imported wholesale via `import(pkg)`. Every export of such a
@@ -543,13 +586,15 @@ impl DynLibFixes {
 pub fn parse_namespace(namespace: &str, object_names: &[&str]) -> NamespaceInfo {
     let mut info = NamespaceInfo::default();
     let mut patterns: Vec<regex::Regex> = Vec::new();
+    let mut class_patterns: Vec<regex::Regex> = Vec::new();
 
     for directive in crate::namespace::parse(namespace).document().directives() {
         match directive.kind() {
-            DirectiveKind::Export
-            | DirectiveKind::ExportClass
-            | DirectiveKind::ExportClasses
-            | DirectiveKind::ExportMethods => {
+            DirectiveKind::Export | DirectiveKind::ExportMethods => {
+                info.exports.extend(directive_values(&directive));
+            }
+            DirectiveKind::ExportClass | DirectiveKind::ExportClasses => {
+                info.exported_classes.extend(directive_values(&directive));
                 info.exports.extend(directive_values(&directive));
             }
             DirectiveKind::S3Method => {
@@ -561,6 +606,9 @@ pub fn parse_namespace(namespace: &str, object_names: &[&str]) -> NamespaceInfo 
             DirectiveKind::ExportPattern | DirectiveKind::ExportClassPattern => {
                 for arg in directive_values(&directive) {
                     if let Some(re) = compile_r_pattern(&arg) {
+                        if directive.kind() == DirectiveKind::ExportClassPattern {
+                            class_patterns.push(re.clone());
+                        }
                         patterns.push(re);
                     }
                 }
@@ -600,6 +648,14 @@ pub fn parse_namespace(namespace: &str, object_names: &[&str]) -> NamespaceInfo 
             }
         }
     }
+    info.exported_classes
+        .extend(object_names.iter().filter_map(|name| {
+            let name = name.strip_prefix(".__C__")?;
+            class_patterns
+                .iter()
+                .any(|re| re.is_match(name))
+                .then(|| name.to_string())
+        }));
 
     info
 }

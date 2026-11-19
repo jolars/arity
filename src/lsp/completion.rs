@@ -11,6 +11,7 @@
 //! sees rich data.
 
 use super::*;
+use crate::project::classes::{EditorRead, MemberKind, ObjectHelp};
 use crate::syntax::SyntaxElement;
 
 /// Identity carried on a completion item (serialized into `CompletionItem.data`)
@@ -35,6 +36,8 @@ pub(crate) enum CompletionData {
         signature: Option<String>,
         #[serde(default)]
         declared_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        help: Option<ObjectHelp>,
     },
 }
 
@@ -166,7 +169,13 @@ pub fn resolve_completion(mut item: CompletionItem, indexed: &IndexedProvider) -
             }
             return item;
         }
-        CompletionData::Local | CompletionData::Field | CompletionData::ClassMember { .. } => None,
+        CompletionData::ClassMember { help, .. } => {
+            if let Some(doc) = help.as_ref().and_then(|help| help.resolve(indexed)) {
+                item.documentation = signature::help_documentation(doc, &[]);
+            }
+            return item;
+        }
+        CompletionData::Local | CompletionData::Field => None,
     };
     if let Some((package, entry)) = resolved {
         item.documentation = Some(Documentation::MarkupContent(MarkupContent {
@@ -235,223 +244,42 @@ fn completions_from_context(
             at,
             prefix,
         } => {
-            let known = oop::with_class_index(root, context, |index, model, path| {
-                use crate::project::classes::ClassReceiver;
-                let evidence = index.class_receiver_evidence(path, root, model, &receiver_expr);
-                let ambiguous = evidence.unknown || evidence.candidates.len() > 1;
-                let for_receiver = |receiver: ClassReceiver| -> Option<(Vec<Candidate>, bool)> {
-                    if receiver.class.key.system == crate::project::classes::ClassSystem::S7 {
-                        if !at || receiver.access == crate::project::classes::ClassAccess::Generator
-                        {
-                            return Some((Vec::new(), true));
-                        }
-                        let api = index.s7_api(&receiver.class)?;
-                        let mut candidates: Vec<_> = api
-                            .properties
-                            .iter()
-                            .map(|property| Candidate {
-                                label: property.name.clone(),
-                                kind: CompletionItemKind::PROPERTY,
-                                sort_group: 0,
-                                data: CompletionData::ClassMember {
-                                    signature: None,
-                                    declared_type: property.declared_type(index),
-                                },
-                                origin: Some(SmolStr::new_static("S7")),
-                            })
-                            .collect();
-                        if !api.complete {
-                            candidates.extend(
-                                field_candidates(root, model, &receiver_expr, at)
-                                    .into_iter()
-                                    .map(|mut candidate| {
-                                        candidate.sort_group = 1;
-                                        candidate
-                                    }),
-                            );
-                        }
-                        return Some((candidates, api.complete));
-                    }
-                    if receiver.class.key.system == crate::project::classes::ClassSystem::S4 {
-                        use crate::project::classes::{ClassAccess, DispatchClass};
-                        if !at || receiver.access == ClassAccess::Generator {
-                            return Some((Vec::new(), true));
-                        }
-                        let slots = index.s4_slots(&receiver.class)?;
-                        let candidates = slots
-                            .entries
-                            .iter()
-                            .map(|(name, entries)| {
-                                let declared_type = entries
-                                    .first()
-                                    .filter(|first| {
-                                        entries
-                                            .iter()
-                                            .all(|entry| entry.declared_type == first.declared_type)
-                                    })
-                                    .and_then(|slot| match &slot.declared_type {
-                                        DispatchClass::Formal(name) => Some(name.clone()),
-                                        DispatchClass::Any => Some("ANY".into()),
-                                        _ => None,
-                                    });
-                                Candidate {
-                                    label: name.clone(),
-                                    kind: CompletionItemKind::FIELD,
-                                    sort_group: 0,
-                                    data: CompletionData::ClassMember {
-                                        signature: None,
-                                        declared_type,
-                                    },
-                                    origin: Some(SmolStr::new_static("S4")),
-                                }
-                            })
-                            .collect();
-                        return Some((candidates, slots.complete));
-                    }
-                    if receiver.class.key.system == crate::project::classes::ClassSystem::RefClass {
-                        use crate::project::classes::{ClassAccess, DispatchClass, MemberKind};
-                        let api = index.reference_receiver_api(&receiver)?;
-                        let generator = receiver.access == ClassAccess::Generator;
-                        let members = if at && !generator {
-                            &api.slots
-                        } else if at {
-                            return None;
-                        } else if generator {
-                            &api.generator
-                        } else {
-                            &api.instance
-                        };
-                        let candidates = members
-                            .entries
-                            .iter()
-                            .map(|(name, candidates)| {
-                                let member = match candidates.as_slice() {
-                                    [member] => Some(member),
-                                    _ => None,
-                                };
-                                let kind = match member.map(|member| member.kind) {
-                                    Some(MemberKind::Method) => CompletionItemKind::METHOD,
-                                    Some(MemberKind::ActiveBinding) => CompletionItemKind::PROPERTY,
-                                    _ => CompletionItemKind::FIELD,
-                                };
-                                let signature = if !members.complete || !receiver.exact {
-                                    None
-                                } else if generator && name == "new" {
-                                    api.initializer.as_ref()
-                                } else {
-                                    member
-                                        .filter(|member| member.kind == MemberKind::Method)
-                                        .and_then(|member| member.signature.as_ref())
-                                }
-                                .map(|signature| signature::callable_label("", signature));
-                                let declared_type = member
-                                    .and_then(|member| member.declared_type.as_ref())
-                                    .and_then(|class| match class {
-                                        DispatchClass::Formal(name) => Some(name.clone()),
-                                        DispatchClass::Any => Some("ANY".into()),
-                                        _ => None,
-                                    });
-                                Candidate {
-                                    label: name.clone(),
-                                    kind,
-                                    sort_group: 0,
-                                    data: CompletionData::ClassMember {
-                                        signature,
-                                        declared_type,
-                                    },
-                                    origin: Some(SmolStr::new_static("Reference Class")),
-                                }
-                            })
-                            .collect();
-                        return Some((candidates, members.complete));
-                    }
-                    if at {
-                        return None;
-                    }
-                    let api = index.r6_api_at(&receiver.class, receiver.point.as_ref())?;
-                    let members = api.members(receiver.access);
-                    let candidates = members
-                        .entries
-                        .iter()
-                        .map(|(name, candidates)| {
-                            let member = (candidates.len() == 1).then(|| &candidates[0]);
-                            let kind = match member.map(|member| member.kind) {
-                                Some(crate::project::classes::MemberKind::Method) => {
-                                    CompletionItemKind::METHOD
-                                }
-                                Some(crate::project::classes::MemberKind::ActiveBinding) => {
+            let (candidates, complete) =
+                oop::with_class_index(root, context, |index, model, path| {
+                    let read = EditorRead::new(index, root, model, path, indexed, remote);
+                    let Some(surface) = read.members(&receiver_expr, at) else {
+                        return (field_candidates(root, model, &receiver_expr, at), true);
+                    };
+                    let candidates = surface
+                        .members
+                        .into_iter()
+                        .map(|(label, member)| {
+                            let kind = match member.kind {
+                                MemberKind::Field | MemberKind::Slot => CompletionItemKind::FIELD,
+                                MemberKind::Property | MemberKind::ActiveBinding => {
                                     CompletionItemKind::PROPERTY
                                 }
-                                _ => CompletionItemKind::FIELD,
+                                MemberKind::Method => CompletionItemKind::METHOD,
+                                MemberKind::Unknown => CompletionItemKind::TEXT,
                             };
-                            let signature = if !members.complete || !receiver.exact {
-                                None
-                            } else if receiver.access
-                                == crate::project::classes::R6Access::Generator
-                                && name == "new"
-                            {
-                                api.initializer.as_ref()
-                            } else {
-                                member
-                                    .filter(|member| {
-                                        member.kind == crate::project::classes::MemberKind::Method
-                                    })
-                                    .and_then(|member| member.signature.as_ref())
-                            }
-                            .map(|signature| signature::callable_label("", signature));
                             Candidate {
-                                label: name.clone(),
+                                label,
                                 kind,
                                 sort_group: 0,
                                 data: CompletionData::ClassMember {
-                                    signature,
-                                    declared_type: None,
+                                    signature: member
+                                        .signature
+                                        .as_ref()
+                                        .map(|formals| signature::callable_label("", formals)),
+                                    declared_type: member.declared_type,
+                                    help: member.help,
                                 },
-                                origin: Some(SmolStr::new_static("R6")),
+                                origin: member.origin,
                             }
                         })
                         .collect();
-                    Some((candidates, members.complete))
-                };
-                let mut surfaces = evidence.candidates.into_iter().filter_map(for_receiver);
-                let (mut candidates, mut complete) = surfaces.next()?;
-                for (other, known) in surfaces {
-                    candidates.extend(other);
-                    complete &= known;
-                }
-                if ambiguous {
-                    complete = false;
-                    for candidate in &mut candidates {
-                        candidate.data = CompletionData::Field;
-                    }
-                    // Merge class evidence before adding usage-based field guesses.
-                    candidates.sort_by(|a, b| {
-                        a.label.cmp(&b.label).then(a.sort_group.cmp(&b.sort_group))
-                    });
-                    candidates.dedup_by(|candidate, previous| {
-                        if candidate.label != previous.label {
-                            return false;
-                        }
-                        if candidate.sort_group == previous.sort_group {
-                            if candidate.kind != previous.kind {
-                                previous.kind = CompletionItemKind::TEXT;
-                            }
-                            if candidate.origin != previous.origin {
-                                previous.origin = None;
-                            }
-                        }
-                        true
-                    });
-                    candidates.extend(field_candidates(root, model, &receiver_expr, at));
-                }
-                Some((candidates, complete))
-            });
-            let (candidates, complete) = known.unwrap_or_else(|| {
-                (
-                    field_candidates(root, &SemanticModel::build(root), &receiver_expr, at),
-                    true,
-                )
-            });
+                    (candidates, surface.complete)
+                });
             Some(build_response(candidates, &prefix, complete, indexed))
         }
         CompletionContext::Bare { prefix, offset } => {
@@ -566,7 +394,7 @@ fn recover_namespace_at(root: &SyntaxNode, offset: TextSize) -> Option<(SmolStr,
 
 /// Detect a `receiver$`/`receiver@` field-completion context: either a partial
 /// RHS field name, or a just-typed operator with nothing after it. Mirrors
-/// [`member_context`]. Returns the normalized receiver text, whether the
+/// [`member_context`]. Returns the receiver expression, whether the
 /// operator is `@` (S4 slot) versus `$`, and the typed prefix.
 fn field_context(root: &SyntaxNode, offset: TextSize) -> Option<(SyntaxElement, bool, String)> {
     // Partial name: the cursor is on the RHS field of a `receiver$field` access.
@@ -581,7 +409,13 @@ fn field_context(root: &SyntaxNode, offset: TextSize) -> Option<(SyntaxElement, 
             if matches!(binary.rhs(), Some(SyntaxElement::Token(rhs)) if rhs == token)
                 && let Some(lhs) = binary.lhs()
             {
-                return Some((lhs, at, prefix_in_token(&token, offset)));
+                return Some((
+                    lhs,
+                    at,
+                    prefix_in_token(&token, offset)
+                        .trim_matches('`')
+                        .to_string(),
+                ));
             }
         }
     }
@@ -619,16 +453,6 @@ fn recover_field_at(root: &SyntaxNode, offset: TextSize) -> Option<(SyntaxElemen
         return None;
     }
     Some((SyntaxElement::Token(recv), at))
-}
-
-/// Whitespace-normalized source text of a receiver operand, used as the key that
-/// ties a completion request to the `$`/`@` accesses that share it.
-fn normalize_receiver(el: &SyntaxElement) -> String {
-    let text = match el {
-        SyntaxElement::Node(n) => n.text().to_string(),
-        SyntaxElement::Token(t) => t.text().to_string(),
-    };
-    text.split_whitespace().collect()
 }
 
 /// Bare-name context, unless the cursor is on the package operand of a
@@ -705,75 +529,63 @@ fn member_candidates(
     }
 }
 
-/// `$`/`@` field candidates for `receiver`, gathered statically (arity does not
-/// evaluate). Harvests field names used with the same operator on the same
-/// receiver anywhere in the file, and — for `$` only — infers the named fields
-/// of a local `list()`/`data.frame()`-family construction bound to `receiver`.
+/// Heuristics for an ordinary, simple receiver without class evidence.
 fn field_candidates(
     root: &SyntaxNode,
     model: &SemanticModel,
     receiver: &SyntaxElement,
     at: bool,
 ) -> Vec<Candidate> {
-    let mut out: Vec<Candidate> = Vec::new();
-    let receiver_text = normalize_receiver(receiver);
-    let binding_at = |value: &SyntaxElement| {
+    let Some(token) = receiver
+        .as_token()
+        .filter(|token| token.kind() == SyntaxKind::IDENT)
+    else {
+        return Vec::new();
+    };
+    let receiver_name = crate::semantic::symbols::unbacktick(token.text());
+    let offset = token.text_range().start();
+    let binding_at = |range| {
         model
             .idents()
             .iter()
-            .find(|ident| ident.range == value.text_range())
+            .find(|ident| ident.range == range)
             .and_then(|ident| model.resolve_local(ident))
     };
-    let binding = binding_at(receiver);
-    let function_at = |value: &SyntaxElement| {
-        value
-            .parent()
-            .and_then(|node| node.ancestors().find_map(FunctionExpr::cast))
-            .map(|function| function.syntax().text_range())
-    };
-
-    // 1. Harvest field names used on the same receiver elsewhere in the file.
-    for node in root.descendants() {
-        let Some(binary) = BinaryExpr::cast(node) else {
+    let binding = binding_at(token.text_range());
+    if binding.is_none() && matches!(receiver_name, "self" | "private" | "super" | ".self") {
+        return Vec::new();
+    }
+    let frame = model.frame_scope(model.innermost_scope_at(offset));
+    let mut out = Vec::new();
+    for binary in root.descendants().filter_map(BinaryExpr::cast) {
+        if binary.syntax().text_range().end() > offset || field_op(binary.op_kind()) != Some(at) {
+            continue;
+        }
+        let Some(lhs) = binary.lhs().and_then(SyntaxElement::into_token) else {
             continue;
         };
-        if field_op(binary.op_kind()) != Some(at) {
-            continue;
-        }
-        let Some(lhs) = binary.lhs() else { continue };
-        if normalize_receiver(&lhs) != receiver_text || binding_at(&lhs) != binding {
-            continue;
-        }
-        if matches!(
-            receiver_text.as_str(),
-            "self" | "private" | "super" | ".self"
-        ) && function_at(&lhs) != function_at(receiver)
+        if lhs.kind() != SyntaxKind::IDENT
+            || crate::semantic::symbols::unbacktick(lhs.text()) != receiver_name
+            || model.frame_scope(model.innermost_scope_at(lhs.text_range().start())) != frame
+            || binding_at(lhs.text_range()) != binding
         {
             continue;
         }
-        if let Some(SyntaxElement::Token(name)) = binary.rhs()
+        if let Some(name) = binary.rhs().and_then(SyntaxElement::into_token)
             && matches!(name.kind(), SyntaxKind::IDENT | SyntaxKind::STRING)
         {
             out.push(field_candidate(token_text_unquoted(&name)));
         }
     }
-
-    // 2. Infer fields from a local record construction bound to the receiver.
-    if !at {
-        let definitions = binding.map(|binding| {
-            model
-                .variable_cohort(binding)
-                .into_iter()
-                .map(|binding| model.binding(binding).def_range)
-                .collect()
-        });
-        out.extend(constructed_fields(
-            root,
-            &receiver_text,
-            definitions.as_ref(),
-        ));
+    if !at && let Some(binding) = binding {
+        let definitions = model
+            .variable_cohort(binding)
+            .into_iter()
+            .map(|binding| model.binding(binding).def_range)
+            .filter(|range| range.end() <= offset)
+            .collect();
+        out.extend(constructed_fields(root, receiver_name, &definitions));
     }
-
     out
 }
 
@@ -782,7 +594,7 @@ fn field_candidates(
 fn constructed_fields(
     root: &SyntaxNode,
     receiver: &str,
-    definitions: Option<&HashSet<TextRange>>,
+    definitions: &HashSet<TextRange>,
 ) -> Vec<Candidate> {
     const CONSTRUCTORS: [&str; 4] = ["list", "data.frame", "tibble", "data.table"];
     let mut out = Vec::new();
@@ -793,11 +605,10 @@ fn constructed_fields(
         if assign.target_name().as_deref() != Some(receiver) {
             continue;
         }
-        if definitions.is_some_and(|definitions| {
-            assign
-                .target_name_token()
-                .is_none_or(|token| !definitions.contains(&token.text_range()))
-        }) {
+        if assign
+            .target_name_token()
+            .is_none_or(|token| !definitions.contains(&token.text_range()))
+        {
             continue;
         }
         let Some(SyntaxElement::Node(value)) = assign.value_element() else {
@@ -827,7 +638,7 @@ fn field_candidate(name: SmolStr) -> Candidate {
         kind: CompletionItemKind::FIELD,
         sort_group: 0,
         data: CompletionData::Field,
-        origin: None,
+        origin: Some("inferred".into()),
     }
 }
 
@@ -928,7 +739,14 @@ fn build_response(
                     detail,
                     description,
                 });
+            let member = matches!(
+                c.data,
+                CompletionData::ClassMember { .. } | CompletionData::Field
+            );
+            let insert_text = (member && !navigation::is_syntactic_r_name(&c.label))
+                .then(|| format!("`{}`", c.label.replace('\\', "\\\\").replace('`', "\\`")));
             CompletionItem {
+                insert_text,
                 sort_text: Some(format!("{}{}", c.sort_group, c.label)),
                 filter_text: Some(c.label.clone()),
                 kind: Some(c.kind),
@@ -952,6 +770,7 @@ fn signature_detail(data: &CompletionData, indexed: &IndexedProvider) -> Option<
     if let CompletionData::ClassMember {
         signature,
         declared_type,
+        ..
     } = data
     {
         return signature
@@ -1000,7 +819,7 @@ fn token_text_unquoted(token: &SyntaxToken<RLanguage>) -> SmolStr {
             return SmolStr::new(&text[1..text.len() - 1]);
         }
     }
-    SmolStr::new(token.text())
+    SmolStr::new(crate::semantic::symbols::unbacktick(token.text()))
 }
 
 fn is_trivia_kind(kind: SyntaxKind) -> bool {
@@ -1346,13 +1165,9 @@ mod tests {
     #[test]
     fn field_partial_prefix_filters() {
         let src = "df$foo <- 1\ndf$bar <- 2\ndf$f\n";
-        let off = at_end(src, "df$f");
+        let off = src.trim_end().len();
         let got = labels(compute_completions(src, off, &IndexedProvider::empty()).unwrap());
-        assert!(got.contains(&"foo".to_string()), "{got:?}");
-        assert!(
-            !got.contains(&"bar".to_string()),
-            "prefix filters bar: {got:?}"
-        );
+        assert_eq!(got, ["foo"]);
     }
 
     // --- label details ----------------------------------------------------

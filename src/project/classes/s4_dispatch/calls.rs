@@ -33,6 +33,157 @@ fn selection_signature(generic: &S4Generic, supplied: &[DispatchArgument]) -> S4
 }
 
 impl ClassIndex {
+    /// Resolve the callable binding independently of whether the actual dispatch
+    /// arguments are complete enough to select a method.
+    pub(in crate::project::classes) fn s4_ordinary_call(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        call: &CallExpr,
+    ) -> Option<(&S4Generic, Option<String>)> {
+        if self
+            .s4
+            .generics
+            .iter()
+            .all(|generic| generic.declaration.is_none())
+        {
+            return None;
+        }
+        let base = call.base()?;
+        let token = call.callee_token()?;
+        let function = call.syntax().ancestors().find_map(FunctionExpr::cast);
+        let extracted = extract(model, root, true);
+        let owner = owner_at(call.syntax(), &extracted.owners);
+        let lookup = function_ref(model, root, &base, &mut BTreeSet::new());
+        let (package, name) = match &lookup {
+            Some(FunctionRef::Qualified { package, name }) => (Some(package.clone()), name.clone()),
+            _ => (None, unbacktick(token.text()).into()),
+        };
+        let mut reference = GenericRef {
+            system: OopSystem::S4,
+            owner: owner.clone(),
+            name: ClassName::Known(name.clone()),
+            package,
+            by_binding: true,
+            local: None,
+            lookup: lookup.clone(),
+        };
+        if reference.package.is_none() {
+            reference.local = s4_local_call_target(model, root, &extracted, &token, &owner)?;
+        }
+        let site = S4CallSite {
+            range: call.syntax().text_range(),
+            kind: S4CallKind::StandardGeneric,
+            callee: lookup.unwrap_or_else(|| FunctionRef::Unresolved(Vec::new())),
+            reference: None,
+            frames: Vec::new(),
+            default_frames: Vec::new(),
+            named_frame: None,
+            function: function
+                .as_ref()
+                .map(|function| function.syntax().text_range()),
+            dispatch: Vec::new(),
+            dispatch_factory: None,
+            inheritance: S4Inheritance::Default,
+            uncertainty: BTreeSet::new(),
+        };
+        let mut context = S4DispatchContext::new(path);
+        context.owner = owner;
+        context.deferred = function.is_some();
+        self.s4_package_loads_at(&mut context, &extracted.s4_package_load_sites, &site);
+        if let Some(package) = &reference.package {
+            self.s4_add_loaded_package(&mut context, Some(package));
+        }
+        context.execution =
+            Some(self.s4_execution_at(path, &site, &extracted, &source_sites(root, model)));
+        let (loaded, _) = self.s4_dispatch_packages(&context, &context.loaded_packages);
+        let candidates = self.s4_generic_candidates_at(&context, &reference, &loaded);
+        let [generic] = candidates.as_slice() else {
+            return None;
+        };
+        let selected = self
+            .s4_called_method(&context, generic, path, root, model, call, &extracted)
+            .map(|arguments| super::super::editor::method_note(&name, &arguments));
+        Some((generic, selected))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn s4_called_method(
+        &self,
+        context: &S4DispatchContext,
+        generic: &S4Generic,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        call: &CallExpr,
+        extracted: &Extracted,
+    ) -> Option<Vec<DispatchArgument>> {
+        if generic.skeleton != Some(S4GenericSkeleton::Standard)
+            || generic.dispatches_on_dots()
+            || generic.dispatch_arguments.is_empty()
+            || call
+                .syntax()
+                .parent()
+                .and_then(BinaryExpr::cast)
+                .is_some_and(|binary| binary.op().is_some_and(|op| op.text() == "|>"))
+        {
+            return None;
+        }
+        let signature = generic.signature.as_ref()?;
+        let formals = signature
+            .parameters
+            .iter()
+            .map(|formal| formal.name.as_str())
+            .collect::<Vec<_>>();
+        let args = matched_args(call, &formals)?;
+        let supplied = generic
+            .dispatch_arguments
+            .iter()
+            .map(|name| {
+                let ClassName::Known(name) = name else {
+                    return None;
+                };
+                let class = if let Some(value) = argument(&args, name) {
+                    if let Some(receiver) =
+                        self.dispatch_receiver(path, root, model, &value, extracted)
+                        && receiver.access == ClassAccess::Public
+                        && matches!(
+                            receiver.class.key.system,
+                            ClassSystem::S4 | ClassSystem::RefClass
+                        )
+                        && let ClassName::Known(class) =
+                            &self.declarations.get(&receiver.class)?.declaration.name
+                    {
+                        DispatchClass::Formal(class.clone())
+                    } else {
+                        let class = s7::dispatch::literal_class(&value)?;
+                        DispatchClass::Formal(
+                            if class == "double" { "numeric" } else { class }.into(),
+                        )
+                    }
+                } else {
+                    DispatchClass::Missing
+                };
+                Some(DispatchArgument {
+                    argument: Some(name.clone()),
+                    class,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let query = s4_method_signature(generic, &supplied);
+        let resolved = self.s4_resolve_methods_with(context, &query, S4Inheritance::Default);
+        if !resolved.complete() {
+            return None;
+        }
+        let selected = resolved.selected?;
+        resolved
+            .candidates
+            .into_iter()
+            .find(|candidate| candidate.method == selected && candidate.certain)
+            .map(|candidate| candidate.signature.arguments)
+    }
+
     /// Link live operations to declaration identities, resolve literal
     /// selectMethod signatures, and recover declared callNextMethod targets.
     pub fn s4_dispatch_calls(
@@ -371,4 +522,75 @@ impl ClassIndex {
         }
         self.callee_identity(path, reference).is_some()
     }
+}
+
+/// Match the local read to the last visible installation event. Lexical
+/// ordinary writes can retire a generic even when registrations remain.
+fn s4_local_call_target(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+    extracted: &Extracted,
+    token: &SyntaxToken,
+    owner: &ClassOwner,
+) -> Option<Option<OopKey>> {
+    let name = unbacktick(token.text());
+    let offset = token.text_range().start();
+    let binding = read_binding(model, token).map(|id| model.binding(id));
+    for (event, range) in extracted
+        .facts
+        .oop
+        .events
+        .iter()
+        .zip(&extracted.oop_event_ranges)
+        .rev()
+    {
+        if range.end() > offset {
+            continue;
+        }
+        match event {
+            OopEvent::Generic {
+                name: ClassName::Known(binding_name),
+                target,
+            } if name == binding_name && owner.0.starts_with(&target.owner.0) => {
+                if binding.is_none_or(|binding| {
+                    binding.def_range.start() < range.start()
+                        && matches!(binding.kind, BindingKind::Local | BindingKind::Implicit)
+                        && owner_at(
+                            &root
+                                .covering_element(binding.def_range)
+                                .parent()
+                                .unwrap_or_else(|| root.clone()),
+                            &extracted.owners,
+                        ) == target.owner
+                }) {
+                    return Some(Some(target.clone()));
+                }
+            }
+            OopEvent::InvalidateBindings if owner.0.is_empty() => return None,
+            _ => {}
+        }
+    }
+    if let Some(binding) = binding {
+        if binding.available_from > offset {
+            return None;
+        }
+        let mut aliases = extracted.facts.oop.generic_bindings.iter().filter(|alias| {
+            alias.name == name
+                && alias.target.system == OopSystem::S4
+                && owner.0.starts_with(&alias.owner.0)
+                && extracted
+                    .facts
+                    .oop
+                    .events
+                    .iter()
+                    .zip(&extracted.oop_event_ranges)
+                    .any(|(event, range)| {
+                        matches!(event, OopEvent::Generic { target, .. } if target == &alias.target)
+                            && range.end() <= binding.def_range.start()
+                    })
+        });
+        let alias = aliases.next()?;
+        return aliases.next().is_none().then(|| Some(alias.target.clone()));
+    }
+    Some(None)
 }

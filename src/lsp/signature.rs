@@ -1,4 +1,6 @@
 use super::*;
+use crate::project::classes::{EditorCallable, EditorRead};
+use crate::rindex::schema::HelpDoc;
 
 /// Resolve signature help off the snapshot's cached parse when the db's tracked
 /// buffer for `path` still matches `text`; otherwise re-parse. Falls back on
@@ -70,17 +72,17 @@ fn signature_help_in(
 ) -> Option<SignatureHelp> {
     let offset = TextSize::new(offset as u32);
     let call = enclosing_call(root, offset)?;
-    let help = oop::with_class_index(root, context, |index, model, path| {
-        let (name, signature) = index.class_call_signature(path, root, model, &call)?;
-        help_for_callable(&call, offset, &name, &signature)
+    let remote = context
+        .and_then(|context| context.snapshot.remote_exports())
+        .unwrap_or_default();
+    let (help, masked) = oop::with_class_index(root, context, |index, model, path| {
+        let read = EditorRead::new(index, root, model, path, indexed, &remote);
+        let help = read
+            .callable(&call)
+            .and_then(|callable| help_for_callable(&call, offset, callable, indexed));
+        (help, read.masks_indexed_callable(&call))
     });
-    if help.is_some()
-        || call
-            .base()
-            .and_then(crate::syntax::SyntaxElement::into_node)
-            .and_then(BinaryExpr::cast)
-            .is_some_and(|binary| binary.op_kind() == Some(SyntaxKind::DOLLAR))
-    {
+    if help.is_some() || masked {
         return help;
     }
     let callee = call.callee_token()?;
@@ -95,16 +97,21 @@ fn signature_help_in(
 fn help_for_callable(
     call: &CallExpr,
     offset: TextSize,
-    name: &str,
-    signature: &crate::project::classes::CallableSignature,
+    callable: EditorCallable,
+    indexed: &IndexedProvider,
 ) -> Option<SignatureHelp> {
     let entry = SymbolEntry {
-        name: name.into(),
+        name: callable.name.into(),
         kind: SymbolKind::Function,
         exported: false,
-        help: None,
+        help: callable
+            .help
+            .as_ref()
+            .and_then(|help| help.resolve(indexed))
+            .cloned(),
         formals: Some(
-            signature
+            callable
+                .signature
                 .parameters
                 .iter()
                 .map(|formal| Formal {
@@ -114,7 +121,14 @@ fn help_for_callable(
                 .collect(),
         ),
     };
-    help_for_entry(call, offset, &entry)
+    let mut help = help_for_entry(call, offset, &entry)?;
+    if !callable.notes.is_empty() {
+        help.signatures[0].documentation = help_documentation(
+            entry.help.as_ref().unwrap_or(&HelpDoc::default()),
+            &callable.notes,
+        );
+    }
+    Some(help)
 }
 
 fn help_for_entry(call: &CallExpr, offset: TextSize, entry: &SymbolEntry) -> Option<SignatureHelp> {
@@ -160,18 +174,19 @@ fn enclosing_call(root: &SyntaxNode, offset: TextSize) -> Option<CallExpr> {
         TokenAtOffset::Single(t) => t,
         TokenAtOffset::Between(_left, right) => right,
     };
-    let call = token.parent_ancestors().find_map(CallExpr::cast)?;
-    // Reject a cursor past the closing paren: signature help is for *inside* the
-    // call. An unclosed call (no `)`) has no such bound and always qualifies.
-    if let Some(rparen) = call.arg_list().and_then(|al| {
-        al.syntax()
-            .children_with_tokens()
-            .find(|el| el.kind() == SyntaxKind::RPAREN)
-    }) && offset > rparen.text_range().start()
-    {
-        return None;
-    }
-    Some(call)
+    token
+        .parent_ancestors()
+        .filter_map(CallExpr::cast)
+        .find(|call| {
+            let mut tokens = call.syntax().children_with_tokens();
+            let Some(open) = tokens.find(|token| token.kind() == SyntaxKind::LPAREN) else {
+                return false;
+            };
+            open.text_range().end() <= offset
+                && tokens
+                    .find(|token| token.kind() == SyntaxKind::RPAREN)
+                    .is_none_or(|close| offset <= close.text_range().start())
+        })
 }
 
 /// The signature label and its parameters. When formals are known the label is
@@ -321,7 +336,10 @@ fn parameter_documentation(entry: &SymbolEntry, name: &str) -> Option<Documentat
 
 /// Signature-level documentation: the indexed title and description.
 fn signature_documentation(entry: &SymbolEntry) -> Option<Documentation> {
-    let help = entry.help.as_ref()?;
+    help_documentation(entry.help.as_ref()?, &[])
+}
+
+pub(super) fn help_documentation(help: &HelpDoc, notes: &[String]) -> Option<Documentation> {
     let mut out = String::new();
     if let Some(title) = &help.title {
         out.push_str(title);
@@ -331,6 +349,12 @@ fn signature_documentation(entry: &SymbolEntry) -> Option<Documentation> {
             out.push_str("\n\n");
         }
         out.push_str(description);
+    }
+    for note in notes {
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str(note);
     }
     (!out.is_empty()).then_some(Documentation::MarkupContent(MarkupContent {
         kind: MarkupKind::Markdown,

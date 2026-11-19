@@ -141,6 +141,27 @@ pub fn package_indexed(indexed: &IndexedProvider, remote: &RemoteExports, pkg: &
         || BUNDLED.has_package(pkg)
 }
 
+pub(crate) fn package_exports_name(
+    indexed: &IndexedProvider,
+    remote: &RemoteExports,
+    package: &str,
+    name: &str,
+) -> bool {
+    if indexed.has_package(package) {
+        indexed.exports(package, name)
+    } else if remote.has_package(package) {
+        remote.exports(package, name)
+    } else if BASE_R.package_indexed(package) {
+        match BASE_R.origin(name, &[]) {
+            PackageOrigin::Resolved(owner) => owner == package,
+            PackageOrigin::Ambiguous(owners) => owners.iter().any(|owner| owner == package),
+            PackageOrigin::Unknown => false,
+        }
+    } else {
+        BUNDLED.exports(package, name)
+    }
+}
+
 /// True if `name` is exported by one of R's default packages.
 pub fn is_base(name: &str) -> bool {
     BASE_R.is_base(name)

@@ -801,7 +801,7 @@ g("text", 1L)
 }
 
 #[test]
-fn incomplete_s7_properties_keep_observed_field_completions() {
+fn incomplete_s7_properties_complete_only_declared_properties() {
     use lsp_types::{CompletionItemKind, CompletionResponse};
 
     let source = r#"
@@ -820,14 +820,11 @@ obj@
         panic!("completion list");
     };
     assert!(items.is_incomplete);
-    assert!(items.items.iter().any(|item| item.label == "known"));
-    let ids: Vec<_> = items
-        .items
-        .iter()
-        .filter(|item| item.label == "id")
-        .collect();
-    assert_eq!(ids.len(), 1);
-    assert_eq!(ids[0].kind, Some(CompletionItemKind::PROPERTY));
+    let [id] = items.items.as_slice() else {
+        panic!("expected only the inherited property: {:?}", items.items);
+    };
+    assert_eq!(id.label, "id");
+    assert_eq!(id.kind, Some(CompletionItemKind::PROPERTY));
 }
 
 #[test]

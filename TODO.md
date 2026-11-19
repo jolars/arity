@@ -846,7 +846,7 @@ coverage need not block useful workspace support.
 
 #### 8. Editor and documentation features
 
-- [ ] Replace textual receiver harvesting with class-owned member resolution
+- [x] Replace textual receiver harvesting with class-owned member resolution
   when identity is known. Complete visible and inherited fields, slots,
   properties, and methods with correct kinds, signatures, and help. Scope
   `self` and `private` to their owning class, distinguish generator and
