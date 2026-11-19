@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.1](https://github.com/jolars/arity/compare/arity-zed-v0.3.0...arity-zed-v0.3.1) (2026-11-19)
+
+### Bug Fixes
+
+- **zed:** let the R extension define Rd ([`eceb744`](https://github.com/jolars/arity/commit/eceb74459a9a90bd12f07e3cb5b6d53f787a4bcc))
+
 ## [0.3.0](https://github.com/jolars/arity/compare/arity-zed-v0.2.0...arity-zed-v0.3.0) (2026-10-27)
 
 ### Features

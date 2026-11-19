@@ -1,6 +1,6 @@
 {
   "manifest-version": 1,
-  "baseline-sha": "41d02be9cbf0cabd1bd539bc7eac3b7a0ac0f9f2",
+  "baseline-sha": "eceb74459a9a90bd12f07e3cb5b6d53f787a4bcc",
   "release-targets": [
     {
       "path": ".",
@@ -30,31 +30,15 @@
     },
     {
       "path": "editors/zed",
-      "version": "0.3.0",
-      "tag": "arity-zed-v0.3.0"
+      "version": "0.3.1",
+      "tag": "arity-zed-v0.3.1"
     }
   ],
   "pending-release-targets": [
     {
-      "path": ".",
-      "version": "0.31.0",
-      "tag": "v0.31.0",
-      "dependencies": [
-        "crates/arity-formatter"
-      ]
-    },
-    {
-      "path": "crates/arity-formatter",
-      "version": "0.9.0",
-      "tag": "arity-formatter-v0.9.0"
-    },
-    {
-      "path": "editors/code",
-      "version": "0.31.0",
-      "tag": "arity-code-v0.31.0",
-      "dependencies": [
-        "."
-      ]
+      "path": "editors/zed",
+      "version": "0.3.1",
+      "tag": "arity-zed-v0.3.1"
     }
   ]
 }
