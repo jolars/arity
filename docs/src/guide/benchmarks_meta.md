@@ -5,4 +5,4 @@
 - **styler**: `1.11.0`
 - **backend**: hyperfine (min runs: 3)
 - **host**: linux/x86_64, AMD Ryzen 9 7900 12-Core Processor
-- **generated**: 2026-11-20T15:26:23Z
+- **generated**: 2026-11-20T21:05:27Z
