@@ -512,8 +512,11 @@ methods::setClass("Alternate")
 public <- function(x) UseMethod("public")
 impl <- function(x) x
 impl(1)
+other <- function(x) x
+other(1)
+alone <- function(x) x
 "#;
-    let saved = "exportClasses(Existing)\nS3method(public, example, impl)\n";
+    let saved = "exportClasses(Existing)\nS3method(public, example, impl)\nS3method(public, single, alone)\n";
     let live = saved.replace("Existing", "Alternate");
     fs::create_dir(path.parent().unwrap()).unwrap();
     fs::write(dir.path().join("DESCRIPTION"), super::COMPLETE_DESCRIPTION).unwrap();
@@ -572,6 +575,16 @@ impl(1)
             .iter()
             .any(|location| location["uri"] == namespace_uri)
     );
+    let result = references(&mut harness, &uri, source, "other");
+    let locations = result.as_array().unwrap();
+    assert_eq!(locations.len(), 1, "{result}");
+    assert_eq!(locations[0]["uri"], uri);
+    assert_eq!(locations[0]["range"]["start"]["line"], 6);
+    let result = references(&mut harness, &uri, source, "alone");
+    let locations = result.as_array().unwrap();
+    assert_eq!(locations.len(), 1, "{result}");
+    assert_eq!(locations[0]["uri"], namespace_uri);
+    assert_eq!(locations[0]["range"]["start"]["line"], 2);
     harness.shutdown();
 }
 

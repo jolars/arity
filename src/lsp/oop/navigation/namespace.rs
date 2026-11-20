@@ -3,10 +3,28 @@
 use super::*;
 use crate::ast::BinaryExpr;
 use crate::namespace::DirectiveKind;
-use crate::project::classes::{ClassName, ClassSystem, S3GenericId, S3MethodSource};
+use crate::project::classes::{
+    ClassName, ClassSystem, MethodImplementationSource, S3GenericId, S3MethodSource,
+};
+use crate::semantic::symbols::unbacktick;
 use crate::syntax::SyntaxElement;
 
 pub(super) fn sites(index: &ClassIndex, root: &Path, text: &str) -> Vec<(TextRange, Identity)> {
+    collect_sites(index, root, text, SiteFilter::All)
+}
+
+#[derive(Clone, Copy)]
+enum SiteFilter<'a> {
+    All,
+    Callable(Option<&'a str>),
+}
+
+fn collect_sites(
+    index: &ClassIndex,
+    root: &Path,
+    text: &str,
+    filter: SiteFilter<'_>,
+) -> Vec<(TextRange, Identity)> {
     let parsed = crate::namespace::parse(text);
     let mut sites = Vec::new();
     let mut registration = 0;
@@ -17,7 +35,11 @@ pub(super) fn sites(index: &ClassIndex, root: &Path, text: &str) -> Vec<(TextRan
             };
             let occurrence = registration;
             registration += 1;
-            if spec.conditional {
+            if spec.conditional
+                || matches!(filter, SiteFilter::Callable(binding) if
+                    binding.is_some_and(|binding| binding != unbacktick(&spec.method))
+                        || directive.arguments().nth(2).is_none())
+            {
                 continue;
             }
             let mut arguments = directive.arguments();
@@ -41,12 +63,16 @@ pub(super) fn sites(index: &ClassIndex, root: &Path, text: &str) -> Vec<(TextRan
                     && method.class == ClassName::Known(spec.class.clone())
             });
             if let Some(method) = methods.into_iter().next() {
-                sites.extend(method.generics.iter().filter_map(|id| match id {
-                    S3GenericId::Declaration(id) => Some((range, Identity::Generic(id.clone()))),
-                    S3GenericId::Known { .. } => None,
-                }));
+                if matches!(filter, SiteFilter::All) {
+                    sites.extend(method.generics.iter().filter_map(|id| match id {
+                        S3GenericId::Declaration(id) => {
+                            Some((range, Identity::Generic(id.clone())))
+                        }
+                        S3GenericId::Known { .. } => None,
+                    }));
+                }
                 if let Some(span) = arguments.nth(1).and_then(|argument| argument.value_range())
-                    && matches!(&method.implementation, Some(crate::project::classes::MethodImplementationSource::Binding { name, .. }) if *name == spec.method)
+                    && matches!(&method.implementation, Some(MethodImplementationSource::Binding { name, .. }) if *name == spec.method)
                     && let Some((path, origin)) =
                         index.namespace_callable_origin(root, &spec.method)
                 {
@@ -62,6 +88,9 @@ pub(super) fn sites(index: &ClassIndex, root: &Path, text: &str) -> Vec<(TextRan
                     sites.push((span, identity));
                 }
             }
+            continue;
+        }
+        if matches!(filter, SiteFilter::Callable(_)) {
             continue;
         }
         if directive.r_paren().is_none()
@@ -256,15 +285,21 @@ pub(super) fn references(
     encoding: PositionEncoding,
     open_namespaces: &[(PathBuf, Arc<TextBuffer>)],
 ) -> Vec<Location> {
-    reference_sites(snapshot, index, encoding, open_namespaces, |id| {
-        ids.contains(id)
-    })
+    reference_sites(
+        snapshot,
+        index,
+        encoding,
+        open_namespaces,
+        SiteFilter::All,
+        |id| ids.contains(id),
+    )
 }
 
 pub(in crate::lsp) fn callable_references(
     snapshot: &Analysis,
     encoding: PositionEncoding,
     open_namespaces: &[(PathBuf, Arc<TextBuffer>)],
+    binding: Option<&str>,
     lexical_with_declarations: impl FnOnce() -> Vec<Location>,
 ) -> Vec<Location> {
     salsa::Cancelled::catch(AssertUnwindSafe(|| {
@@ -278,12 +313,23 @@ pub(in crate::lsp) fn callable_references(
         {
             return Vec::new();
         }
+        let binding = binding.map(unbacktick);
+        let index = snapshot.class_index_ref();
+        // A live registration can only produce a callable site when its
+        // implementation matches the registry entry at that occurrence.
+        if binding.is_some_and(|binding| {
+            !index.s3.methods.iter().any(|method| {
+                matches!(method.source, S3MethodSource::Namespace { .. })
+                    && matches!(&method.implementation, Some(MethodImplementationSource::Binding { name, .. }) if unbacktick(name) == binding)
+            })
+        }) {
+            return Vec::new();
+        }
         let lexical = lexical_with_declarations();
         if lexical.is_empty() {
             return Vec::new();
         }
-        let index = snapshot.class_index();
-        reference_sites(snapshot, &index, encoding, open_namespaces, |id| {
+        reference_sites(snapshot, index, encoding, open_namespaces, SiteFilter::Callable(binding), |id| {
             let Identity::Callable {
                 binding,
                 package_root,
@@ -292,7 +338,7 @@ pub(in crate::lsp) fn callable_references(
             else {
                 return false;
             };
-            callable_binding_files(&index, package_root, binding).any(|path| {
+            callable_binding_files(index, package_root, binding).any(|path| {
                 let Some(file) = snapshot.lookup_file(path) else {
                     return false;
                 };
@@ -329,6 +375,7 @@ fn reference_sites(
     index: &ClassIndex,
     encoding: PositionEncoding,
     open_namespaces: &[(PathBuf, Arc<TextBuffer>)],
+    filter: SiteFilter<'_>,
     matches: impl Fn(&Identity) -> bool,
 ) -> Vec<Location> {
     let mut locations = Vec::new();
@@ -348,7 +395,7 @@ fn reference_sites(
             (text.as_str(), &disk_index)
         };
         locations.extend(
-            sites(index, root, text)
+            collect_sites(index, root, text, filter)
                 .into_iter()
                 .filter(|(_, id)| matches(id))
                 .map(|(range, _)| {

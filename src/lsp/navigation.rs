@@ -196,15 +196,22 @@ pub(crate) fn references_via_db(
                 encoding,
             )
         };
-        let mut locations = lexical(include_declaration).unwrap_or_default();
-        let registrations =
-            oop::namespace_callable_references(snapshot, encoding, open_namespaces, || {
+        let (mut locations, binding) = lexical(include_declaration)?;
+        let registrations = oop::namespace_callable_references(
+            snapshot,
+            encoding,
+            open_namespaces,
+            binding.as_deref(),
+            || {
                 if include_declaration {
                     locations.clone()
                 } else {
-                    lexical(true).unwrap_or_default()
+                    lexical(true)
+                        .map(|(locations, _)| locations)
+                        .unwrap_or_default()
                 }
-            });
+            },
+        );
         if !registrations.is_empty() {
             locations.extend(registrations);
             dedup_locations(&mut locations);
@@ -224,9 +231,9 @@ fn lexical_reference_locations(
     offset: TextSize,
     include_declaration: bool,
     encoding: PositionEncoding,
-) -> Option<Vec<Location>> {
+) -> Option<(Vec<Location>, Option<SmolStr>)> {
     if let Some(ranges) = generated_occurrences(root, model, offset) {
-        return Some(
+        return Some((
             ranges
                 .into_iter()
                 .map(|range| Location {
@@ -234,7 +241,8 @@ fn lexical_reference_locations(
                     range: text_range_to_lsp_range(line_index, range, encoding),
                 })
                 .collect(),
-        );
+            None,
+        ));
     }
     // Intra-file: the cursor names a local binding (or sits on its definition).
     if let Some((target, occ)) = local_occurrences(root, model, offset) {
@@ -252,7 +260,8 @@ fn lexical_reference_locations(
                 range: text_range_to_lsp_range(line_index, *range, encoding),
             }));
         }
-        if model.binding_is_file_scope(target.binding) {
+        let file_scope = model.binding_is_file_scope(target.binding);
+        if file_scope {
             locations.extend(cross_file_reference_locations(
                 snapshot,
                 path,
@@ -262,7 +271,10 @@ fn lexical_reference_locations(
                 encoding,
             ));
         }
-        return (!locations.is_empty()).then_some(locations);
+        return Some((
+            locations,
+            file_scope.then(|| model.binding(target.binding).name.clone()),
+        ));
     }
 
     // The cursor sits on a bare free read of a workspace name (no local binding).
@@ -302,7 +314,7 @@ fn lexical_reference_locations(
         })
         .collect();
     dedup_locations(&mut locations);
-    (!locations.is_empty()).then_some(locations)
+    Some((locations, Some(name)))
 }
 
 /// Resolve `textDocument/rename` against a db `snapshot` — the write mirror of
