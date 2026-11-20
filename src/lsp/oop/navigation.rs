@@ -212,6 +212,37 @@ pub(in crate::lsp) fn name_locations(
                             Some(name.as_str())
                         })
                         .collect();
+                    let generic_systems: HashSet<_> = ids
+                        .iter()
+                        .filter_map(|id| match id {
+                            Identity::Generic(id) => Some(id.key.system),
+                            _ => None,
+                        })
+                        .collect();
+                    let has_methods = ids.iter().any(|id| matches!(id, Identity::Method(_)));
+                    let may_match_generic = |source: &OopSourceSite| {
+                        if generic_systems.is_empty() {
+                            return false;
+                        }
+                        let system = match &source.site.target {
+                            OopTarget::Declaration(key) | OopTarget::BindingDeclaration(key)
+                                if key.kind == OopKind::Generic =>
+                            {
+                                key.system
+                            }
+                            OopTarget::Generic(reference)
+                            | OopTarget::InternalGeneric(reference)
+                                if source.registration.is_none() && reference.local.is_none() =>
+                            {
+                                reference.system
+                            }
+                            // Registrations can bridge object systems and a
+                            // resolved local key can override the reference.
+                            OopTarget::Generic(_) | OopTarget::InternalGeneric(_) => return true,
+                            _ => return false,
+                        };
+                        generic_systems.contains(&system)
+                    };
                     let matching_ranges =
                         |file_path: &Path,
                          sites: &ClassSourceSites,
@@ -285,13 +316,17 @@ pub(in crate::lsp) fn name_locations(
                                     .filter(|site| {
                                         (include_declaration
                                             || site.site.role != OopSiteRole::Declaration)
-                                            && (resolve_generic_site(index, file_path, site)
-                                                .into_iter()
-                                                .any(|id| ids.contains(&Identity::Generic(id)))
-                                                || resolve_method_site(index, file_path, site)
-                                                    .is_some_and(|id| {
-                                                        ids.contains(&Identity::Method(id))
+                                            && ((may_match_generic(site)
+                                                && resolve_generic_site(index, file_path, site)
+                                                    .into_iter()
+                                                    .any(|id| {
+                                                        ids.contains(&Identity::Generic(id))
                                                     }))
+                                                || (has_methods
+                                                    && resolve_method_site(index, file_path, site)
+                                                        .is_some_and(|id| {
+                                                            ids.contains(&Identity::Method(id))
+                                                        })))
                                     })
                                     .map(|site| site.site.range)
                                     .collect()

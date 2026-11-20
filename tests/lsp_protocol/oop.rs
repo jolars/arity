@@ -589,6 +589,43 @@ alone <- function(x) x
 }
 
 #[test]
+fn generic_references_include_cross_system_registrations() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("generics.R");
+    let source = r#"
+Parent <- S7::new_class("Parent")
+S7::S4_register(Parent)
+methods::setGeneric("probeS4", function(x) methods::standardGeneric("probeS4"))
+S7::method(probeS4, Parent) <- function(x) "s4"
+other <- function(x) UseMethod("other")
+other(1)
+"#;
+    fs::write(&path, source).unwrap();
+    let uri = path_uri(&path);
+    let mut harness = Harness::start_push();
+    harness.did_open(&uri, source, 1);
+    harness.recv_publish_for(&uri, 1);
+    let result = request(
+        &mut harness,
+        "textDocument/references",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": position(source, source.find("probeS4").unwrap() + 1),
+            "context": { "includeDeclaration": false }
+        }),
+    );
+    let registration = source.find("S7::method(probeS4").unwrap() + "S7::method(".len();
+    assert!(
+        result.as_array().unwrap().iter().any(|location| {
+            location["uri"] == uri
+                && byte_range(source, &location["range"]) == [registration, registration + 7]
+        }),
+        "{result}"
+    );
+    harness.shutdown();
+}
+
+#[test]
 fn oop_presentation_uses_live_document_roles_and_spans() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("presentation.R");
