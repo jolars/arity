@@ -27,6 +27,24 @@
 //! setup.
 //!
 //! Run with `cargo bench --bench salsa_keystroke`.
+//!
+//! To gate a change, record the baseline before changing the code (or in a
+//! separate checkout), then record the candidate on the same machine with the
+//! same settings. Use a fresh output directory for each comparison so a
+//! filtered or interrupted run cannot reuse old estimates:
+//!
+//! ```sh
+//! bench_output=$(mktemp -d)
+//! CRITERION_HOME="$bench_output/baseline" cargo bench --bench salsa_keystroke
+//! # Switch to the candidate revision.
+//! CRITERION_HOME="$bench_output/candidate" cargo bench --bench salsa_keystroke
+//! python3 benches/check_salsa_keystroke.py "$bench_output/baseline" "$bench_output/candidate"
+//! ```
+//!
+//! The checker requires all six rows from both runs. It compares median time
+//! ratios with per-case budgets. The two control phases allow 5% drift in
+//! either direction, and the whole keystroke allows at most a 5% slowdown.
+//! A change that intentionally moves a control phase will fail that check.
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;

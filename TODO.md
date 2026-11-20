@@ -1375,10 +1375,10 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
   otherwise well-benchmarked PR. Run it with
   `cargo bench --bench salsa_keystroke`; there is no `task` target.
 
-- [ ] **Mechanize the keystroke bench's gate.** Both entries above are read off
-  an eyeballed table, which is how a control row drifting 3% and a real row
-  moving 9% end up needing a paragraph to tell apart. Consider panache's
-  approach: declared per-case expectations plus a corpus-presence check.
+- [x] **Mechanize the keystroke bench's gate.** The opt-in
+  `benches/check_salsa_keystroke.py` compares Criterion median ratios against
+  per-case budgets and requires all six benchmark rows in both runs.
+  `benches/salsa_keystroke.rs` documents how to record and compare the runs.
 
 #### The jarl gap (measured 2026-08-17)
 
