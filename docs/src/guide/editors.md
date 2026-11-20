@@ -258,6 +258,13 @@ in your client's filetype or document selector settings. The `rd` language id
 also identifies pathless Rd buffers. This enables workspace symbol search
 without opening an R file first.
 
+## OOP implementation navigation
+
+Go to Implementation can open a registered method body for a recognized generic
+or method registration. On a class name, it opens source declarations for
+confirmed direct subclasses. Results require source locations in the workspace
+or current buffer.
+
 ## R6 classes
 
 Arity completes declared R6 fields, methods, and active bindings for workspace

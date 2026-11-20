@@ -6,10 +6,8 @@
 
 use super::*;
 use crate::incremental::normalize_path;
-use crate::project::classes::locate_class_def_in;
-use crate::project::{
-    ClassId, ClassIndex, ClassOccurrence, class_occurrence_at_offset, file_class_defs,
-};
+use crate::project::classes::{class_name_at, class_source_sites_at, locate_class_def_in};
+use crate::project::{ClassId, ClassIndex, file_class_defs};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ItemData {
@@ -98,22 +96,13 @@ pub(crate) fn prepare_type_hierarchy_via_db(
             .min(text.len()) as u32,
     );
     let root = parse(text).cst;
+    let (_, value) = class_name_at(&root, offset)?;
     let prepare = |snapshot: &Analysis| {
         let model = snapshot.semantic_model_in(path, &root);
-        let facts = file_class_defs(&model, &root);
-        let occurrence = class_occurrence_at_offset(&model, &root, offset)?;
+        let (facts, sites, occurrence) = class_source_sites_at(&model, &root, &value);
+        let candidate = oop::class_candidate(&sites, occurrence, value.text_range())?;
         let index = snapshot.class_index_in(path, &facts, &root, &model);
-        let ids = match &occurrence {
-            ClassOccurrence::Declaration(key) => vec![ClassId {
-                path: path.to_path_buf(),
-                key: key.clone(),
-            }],
-            ClassOccurrence::Reference {
-                owner,
-                reference,
-                deferred,
-            } => index.resolve_reference(path, owner, reference, *deferred),
-        };
+        let ids = candidate.resolve(&index, path);
         let items: Vec<_> = ids
             .iter()
             .filter_map(|id| {
@@ -233,6 +222,28 @@ mod tests {
     }
 
     // --- prepare ------------------------------------------------------------
+
+    #[test]
+    fn hierarchy_misses_do_not_read_workspace_class_facts() {
+        use crate::incremental::QueryKind;
+
+        let source = "# A comment\nvalue <- 'ordinary string'\n";
+        let mut db = IncrementalDatabase::default();
+        let path = ws_path("a.R");
+        let a = db.upsert_file(&path, source);
+        let b = db.upsert_file(&ws_path("b.R"), "Parent <- R6::R6Class('Parent')\n");
+        db.set_workspace_members(vec![a, b], vec![ws_root()]);
+        db.clear_query_log();
+        let snapshot = db.snapshot();
+        for needle in ["comment", "ordinary string"] {
+            assert!(prepare_at(&snapshot, &path, source, source.find(needle).unwrap()).is_empty());
+        }
+        assert!(
+            !db.query_log()
+                .iter()
+                .any(|entry| entry.kind == QueryKind::FileClassDefs)
+        );
+    }
 
     #[test]
     fn hierarchy_round_trips_lexically_equivalent_paths() {

@@ -5,7 +5,9 @@ use crate::config::CompatVersion;
 use crate::project::classes::{ClassIndex, file_class_defs};
 
 mod navigation;
-pub(super) use navigation::{NameNavigation, name_locations};
+pub(super) use navigation::{
+    NameNavigation, class_candidate, implementation_locations, name_locations,
+};
 
 #[derive(Clone, Copy)]
 pub(super) struct ReadContext<'a> {
@@ -53,6 +55,352 @@ mod tests {
     use crate::project::PackageInfo;
     use crate::text::TextBuffer;
     use std::collections::BTreeSet;
+
+    fn implementations_at(
+        snapshot: &Analysis,
+        path: &Path,
+        source: &str,
+        offset: usize,
+    ) -> Vec<Location> {
+        let uri = uri::from_path(path).unwrap();
+        let buffer = TextBuffer::from(source);
+        let encoding = PositionEncoding::Utf16;
+        let position = buffer.line_index().byte_to_position(offset, encoding);
+        match implementation_via_db(snapshot, path, &uri, &buffer, position, encoding, None) {
+            Some(GotoDefinitionResponse::Scalar(location)) => vec![location],
+            Some(GotoDefinitionResponse::Array(locations)) => locations,
+            None => Vec::new(),
+            other => panic!("expected locations, got {other:?}"),
+        }
+    }
+
+    fn implementation_lines(locations: Vec<Location>) -> Vec<u32> {
+        let mut lines: Vec<_> = locations
+            .into_iter()
+            .map(|loc| loc.range.start.line)
+            .collect();
+        lines.sort_unstable();
+        lines
+    }
+
+    #[test]
+    fn implementation_follows_calls_to_promoted_s4_generics() {
+        let source = r#"describe <- function(x) "ordinary"
+methods::setMethod("describe", "numeric", function(x) 1)
+methods::setMethod("describe", "character", function(x) 2)
+describe(1)
+alias <- describe
+alias("x")
+"#;
+        let snapshot = rename_workspace(source, "");
+        for call in ["describe(1)", "alias(\"x\")"] {
+            let locations = implementations_at(
+                &snapshot,
+                &ws_path("a.R"),
+                source,
+                source.find(call).unwrap() + 1,
+            );
+            assert_eq!(implementation_lines(locations), [1, 2], "{call}");
+        }
+    }
+
+    #[test]
+    fn implementation_keeps_replaced_s4_generic_objects_separate() {
+        let source = r#"methods::setGeneric("describe", function(x) standardGeneric("describe"))
+old <- describe
+methods::setMethod("describe", "character", function(x) "first")
+methods::setGeneric("describe", function(y) standardGeneric("describe"))
+methods::setMethod(old, "numeric", function(x) "old")
+methods::setMethod(describe, "numeric", function(y) "new")
+"#;
+        let snapshot = rename_workspace(source, "");
+        for ((offset, _), expected) in source
+            .match_indices("setGeneric(\"describe\"")
+            .zip([&[2, 4][..], &[5]])
+        {
+            let locations = implementations_at(
+                &snapshot,
+                &ws_path("a.R"),
+                source,
+                offset + "setGeneric(\"".len(),
+            );
+            assert_eq!(implementation_lines(locations), expected);
+        }
+        let offset = source.find("setMethod(\"describe\"").unwrap() + "setMethod(\"".len();
+        let locations = implementations_at(&snapshot, &ws_path("a.R"), source, offset);
+        assert_eq!(implementation_lines(locations), [2, 4]);
+    }
+
+    #[test]
+    fn implementation_follows_the_body_bound_when_s4_registers() {
+        let source = r#"impl <- function(x) "before"
+source("b.R")
+methods::setGeneric("describe", function(x) standardGeneric("describe"))
+methods::setMethod("describe", "numeric", (impl))
+impl <- function(x) "after"
+"#;
+        let snapshot = rename_workspace(source, "impl <- function(x) 'sourced'\n");
+        for needle in ["\"describe\"", "setMethod"] {
+            let locations = implementations_at(
+                &snapshot,
+                &ws_path("a.R"),
+                source,
+                source.find(needle).unwrap() + 1,
+            );
+            assert_eq!(locations.len(), 1, "{needle}: {locations:?}");
+            assert_eq!(locations[0].uri, uri::from_path(&ws_path("b.R")).unwrap());
+            assert_eq!(locations[0].range.start, Position::new(0, 8));
+        }
+    }
+
+    #[test]
+    fn implementation_withholds_an_ambiguous_deferred_s4_body() {
+        let prefix = r#"methods::setGeneric("describe", function(x) standardGeneric("describe"))
+impl <- function(x) "before"
+"#;
+        for tail in [
+            r#"register <- function() methods::setMethod("describe", "numeric", impl)
+register()
+impl <- function(x) "after"
+register()
+"#,
+            r#"register <- function() {
+    source("b.R")
+    methods::setMethod("describe", "numeric", impl)
+}
+"#,
+        ] {
+            let source = format!("{prefix}{tail}");
+            let snapshot = rename_workspace(&source, "impl <- function(x) 'sourced'\n");
+            for needle in ["\"describe\"", "setMethod"] {
+                assert!(
+                    implementations_at(
+                        &snapshot,
+                        &ws_path("a.R"),
+                        &source,
+                        source.find(needle).unwrap() + 1,
+                    )
+                    .is_empty(),
+                    "{needle} in {source}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn implementation_uses_the_s3_namespace_registry() {
+        let source = "describe <- function(x) UseMethod('describe')\n";
+        let package = ws_path("pkg");
+        let path = package.join("R/a.R");
+        let body_path = package.join("R/b.R");
+        let mut db = IncrementalDatabase::default();
+        let a = db.upsert_file(&path, source);
+        let b = db.upsert_file(
+            &body_path,
+            "handler <- function(x) x\ndescribe_number <- handler\n",
+        );
+        db.set_workspace_members(vec![a, b], vec![ws_root()]);
+        db.refresh_descriptions([package.clone()]);
+        db.upsert_description(&package, "Package: pkg\n");
+        db.set_package_metadata(vec![PackageInfo {
+            root: package,
+            namespace: Some("S3method(describe, numeric, describe_number)\n".into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        let locations = implementations_at(&db.snapshot(), &path, source, 1);
+        assert_eq!(locations.len(), 1, "{locations:?}");
+        assert_eq!(locations[0].uri, uri::from_path(&body_path).unwrap());
+        assert_eq!(locations[0].range.start, Position::new(0, 11));
+    }
+
+    #[test]
+    fn implementation_keeps_s3_group_registrations_off_local_generics() {
+        let source = "Ops <- function(x) UseMethod('Ops')\nbase::registerS3method('Ops', 'foo', function(e1, e2) e1)\n";
+        let snapshot = rename_workspace(source, "");
+        let path = ws_path("a.R");
+        assert!(implementations_at(&snapshot, &path, source, 1).is_empty());
+        let registration = source.find("registerS3method").unwrap() + 1;
+        assert_eq!(
+            implementation_lines(implementations_at(&snapshot, &path, source, registration)),
+            [1]
+        );
+        let generic = source.find("registerS3method('Ops'").unwrap() + "registerS3method('".len();
+        assert_eq!(
+            implementation_lines(implementations_at(&snapshot, &path, source, generic)),
+            [1]
+        );
+    }
+
+    #[test]
+    fn implementation_confirms_the_s4_registrar() {
+        let source = "source('b.R')\nmethods::setGeneric('describe', function(x) standardGeneric('describe'))\nsetMethod('describe', 'numeric', function(x) 1)\n";
+        let snapshot = rename_workspace(source, "setMethod <- function(...) NULL\n");
+        let offset = source.find("setMethod").unwrap() + 1;
+        assert!(implementations_at(&snapshot, &ws_path("a.R"), source, offset).is_empty());
+    }
+
+    #[test]
+    fn implementation_follows_class_uses_across_source_files() {
+        let source =
+            "source('b.R')\nChild <- R6::R6Class('Child', inherit = Parent)\nParent$new()\n";
+        let snapshot = rename_workspace(source, "Parent <- R6::R6Class('Parent')\n");
+        let offset = source.find("Parent$new").unwrap() + 1;
+        let locations = implementations_at(&snapshot, &ws_path("a.R"), source, offset);
+        assert_eq!(implementation_lines(locations), [1]);
+    }
+
+    #[test]
+    fn implementation_follows_qualified_class_references() {
+        let source = "pkg::Parent$new()\n";
+        let package = ws_path("pkg");
+        let definitions = package.join("R/a.R");
+        let path = ws_path("a.R");
+        let mut db = IncrementalDatabase::default();
+        let a = db.upsert_file(&path, source);
+        let b = db.upsert_file(
+            &definitions,
+            "Parent <- R6::R6Class('Parent')\nChild <- R6::R6Class('Child', inherit = Parent)\n",
+        );
+        db.set_workspace_members(vec![a, b], vec![ws_root()]);
+        db.refresh_descriptions([package.clone()]);
+        db.upsert_description(&package, "Package: pkg\n");
+        db.set_package_metadata(vec![PackageInfo {
+            root: package,
+            namespace: Some("export(Parent)\n".into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        let snapshot = db.snapshot();
+        let locations = implementations_at(&snapshot, &path, source, "pkg::P".len());
+        assert_eq!(locations.len(), 1, "{locations:?}");
+        assert_eq!(locations[0].uri, uri::from_path(&definitions).unwrap());
+        assert_eq!(locations[0].range.start.line, 1);
+        assert!(implementations_at(&snapshot, &path, source, 1).is_empty());
+    }
+
+    #[test]
+    fn implementation_follows_an_implicit_s3method_binding() {
+        let source = "describe <- function(x) UseMethod('describe')\ndescribe.number <- function(x) 1\n.S3method('describe', 'number')\ndescribe.number <- function(x) 2\n";
+        let snapshot = rename_workspace(source, "");
+        let offset = source.find(".S3method").unwrap() + 1;
+        let locations = implementations_at(&snapshot, &ws_path("a.R"), source, offset);
+        assert_eq!(implementation_lines(locations), [1]);
+    }
+
+    #[test]
+    fn implementation_follows_a_local_implicit_s3method_binding() {
+        let source = r#"describe <- function(x) UseMethod("describe")
+describe.number <- function(x) 1
+register <- function() {
+    describe.number <- function(x) 2
+    .S3method("describe", "number")
+}
+"#;
+        let snapshot = rename_workspace(source, "");
+        let offset = source.find(".S3method").unwrap() + 1;
+        let locations = implementations_at(&snapshot, &ws_path("a.R"), source, offset);
+        assert_eq!(implementation_lines(locations), [3]);
+    }
+
+    #[test]
+    fn implementation_resolves_nested_sources_in_their_execution_directory() {
+        let source = r#"source("sub/load.R")
+methods::setGeneric("describe", function(x) standardGeneric("describe"))
+methods::setMethod("describe", "numeric", impl)
+"#;
+        let snapshot = rename_workspace_files(&[
+            ("a.R", source),
+            ("sub/load.R", "source('body.R')\n"),
+            ("body.R", "impl <- function(x) 'expected'\n"),
+            ("sub/body.R", "impl <- function(x) 'other directory'\n"),
+        ]);
+        let offset = source.find("setMethod").unwrap() + 1;
+        let locations = implementations_at(&snapshot, &ws_path("a.R"), source, offset);
+        assert_eq!(locations.len(), 1, "{locations:?}");
+        assert_eq!(
+            locations[0].uri,
+            uri::from_path(&ws_path("body.R")).unwrap()
+        );
+    }
+
+    #[test]
+    fn implementation_finds_registered_method() {
+        let source = "methods::setGeneric('describe', function(x) standardGeneric('describe'))\nmethods::setMethod('describe', 'numeric', function(x) x)\n";
+        let snapshot = IncrementalDatabase::default().snapshot();
+        let path = ws_path("classes.R");
+        let uri = uri::from_path(&path).unwrap();
+        let buffer = TextBuffer::from(source);
+        let encoding = PositionEncoding::Utf16;
+        for name in ["describe", "setMethod"] {
+            let position = buffer
+                .line_index()
+                .byte_to_position(source.find(name).unwrap(), encoding);
+            let response =
+                implementation_via_db(&snapshot, &path, &uri, &buffer, position, encoding, None);
+            let Some(GotoDefinitionResponse::Scalar(location)) = response else {
+                panic!("expected the registered implementation for {name}, got {response:?}");
+            };
+            assert_eq!(location.range.start.line, 1);
+        }
+    }
+
+    #[test]
+    fn implementation_respects_s4_generic_package_identity() {
+        let source = "methods::setGeneric('describe', function(x) standardGeneric('describe'), package = 'foo')\nmethods::setGeneric('describe', function(x) standardGeneric('describe'), package = 'bar')\nmethods::setMethod('describe', 'numeric', function(x) x)\n";
+        let snapshot = IncrementalDatabase::default().snapshot();
+        let path = ws_path("classes.R");
+        let uri = uri::from_path(&path).unwrap();
+        let buffer = TextBuffer::from(source);
+        for line in [0, 1] {
+            let response = implementation_via_db(
+                &snapshot,
+                &path,
+                &uri,
+                &buffer,
+                Position::new(line, 23),
+                PositionEncoding::Utf16,
+                None,
+            );
+            assert!(response.is_none(), "{response:?}");
+        }
+    }
+
+    #[test]
+    fn implementation_follows_sourced_function() {
+        let source = "source('body.R')\nmethods::setGeneric('describe', function(x) standardGeneric('describe'))\nmethods::setMethod('describe', 'numeric', impl)\n";
+        let path = ws_path("classes.R");
+        let body_path = path.with_file_name("body.R");
+        let mut db = IncrementalDatabase::default();
+        let registration = db.upsert_file(&path, source);
+        let body = db.upsert_file(
+            &body_path,
+            "impl <- function(x) x\nalias <- impl\nimpl <- alias\n",
+        );
+        db.set_workspace_members(
+            vec![registration, body],
+            vec![path.parent().unwrap().into()],
+        );
+        let snapshot = db.snapshot();
+        let uri = uri::from_path(&path).unwrap();
+        let buffer = TextBuffer::from(source);
+        for name in ["describe", "setMethod"] {
+            let encoding = PositionEncoding::Utf16;
+            let position = buffer
+                .line_index()
+                .byte_to_position(source.find(name).unwrap() + 1, encoding);
+            let response =
+                implementation_via_db(&snapshot, &path, &uri, &buffer, position, encoding, None);
+            let Some(GotoDefinitionResponse::Scalar(location)) = response else {
+                panic!("expected the sourced implementation for {name}, got {response:?}");
+            };
+            assert_eq!(location.uri, uri::from_path(&body_path).unwrap());
+            assert_eq!(
+                location.range,
+                Range::new(Position::new(0, 8), Position::new(0, 21))
+            );
+        }
+    }
 
     #[test]
     fn formal_class_navigation_uses_registrations_and_ignores_unrelated_strings() {

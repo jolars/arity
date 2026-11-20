@@ -113,6 +113,7 @@ impl Projection<'_> {
                         (callee.clone(), package)
                     }),
                     None,
+                    None,
                 );
             }
             sites.push(S4CallSite {

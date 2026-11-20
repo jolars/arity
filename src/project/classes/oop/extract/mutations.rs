@@ -54,15 +54,17 @@ impl Projection<'_> {
                 OopEvent::Generic { name: binding, .. } => {
                     matches!(binding, ClassName::Known(binding) if binding == name)
                 }
-                OopEvent::Method(target) => self.facts.methods.iter().any(|method| {
-                    method.key == *target
-                        && matches!(&method.name, ClassName::Known(binding) if binding == name)
-                        && method.generic.as_ref().is_some_and(|reference| {
-                            reference.local.is_none()
-                                && reference.package.is_none()
-                                && !reference.by_binding
-                        })
-                }),
+                OopEvent::Method(target) if target.system == OopSystem::S4 => {
+                    self.facts.methods.iter().any(|method| {
+                        method.key == *target
+                            && matches!(&method.name, ClassName::Known(binding) if binding == name)
+                            && method.generic.as_ref().is_some_and(|reference| {
+                                reference.local.is_none()
+                                    && reference.package.is_none()
+                                    && !reference.by_binding
+                            })
+                    })
+                }
                 OopEvent::Callable(index) => self.facts.callables[*index].name == name,
                 OopEvent::Binding(binding)
                 | OopEvent::Generator { name: binding, .. }
@@ -162,11 +164,12 @@ impl Projection<'_> {
             self.events
                 .push((location.call_range, OopEvent::Class(class.key.clone())));
         }
-        for node in self.root.children() {
-            if let Some(edge) = crate::project::source::top_level_source_edge_key(&node, None) {
-                self.events
-                    .push((node.text_range(), OopEvent::Source(edge)));
-            }
+        let sources = crate::project::source::collect_source_edges_in(self.root, None, self.model);
+        let source_ranges: std::collections::HashSet<_> =
+            sources.iter().map(|source| source.range).collect();
+        for source in sources {
+            self.events
+                .push((source.range, OopEvent::Source(source.key())));
         }
         for call in self.root.descendants().filter_map(CallExpr::cast) {
             if call
@@ -185,7 +188,9 @@ impl Projection<'_> {
             } else {
                 name.to_string()
             };
-            if crate::semantic::calls::changes_bindings(&name) && name != "source" {
+            if crate::semantic::calls::changes_bindings(&name)
+                && !source_ranges.contains(&call.syntax().text_range())
+            {
                 self.events
                     .push((call.syntax().text_range(), OopEvent::InvalidateBindings));
             }
@@ -202,7 +207,13 @@ impl Projection<'_> {
                 continue;
             };
             let name = unbacktick(&binding.name).to_string();
-            if !unconditional(assignment.syntax()) {
+            if !unconditional(assignment.syntax())
+                || binding.kind == BindingKind::Implicit
+                    && assignment
+                        .syntax()
+                        .ancestors()
+                        .any(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
+            {
                 self.events.push((
                     value.text_range(),
                     OopEvent::UncertainGenerator {

@@ -94,6 +94,42 @@ pub(crate) fn definition_via_db(
     })
 }
 
+pub(crate) fn implementation_via_db(
+    snapshot: &Analysis,
+    path: &Path,
+    uri: &Uri,
+    buffer: &TextBuffer,
+    position: Position,
+    encoding: PositionEncoding,
+    s7_floor: Option<&crate::config::CompatVersion>,
+) -> Option<GotoDefinitionResponse> {
+    let line_index = buffer.line_index();
+    let offset = TextSize::new(
+        line_index
+            .position_to_byte(position, encoding)
+            .min(buffer.text().len()) as u32,
+    );
+    with_document_semantics(snapshot, path, buffer, s7_floor, |root, _| {
+        let mut locations = oop::implementation_locations(
+            oop::ReadContext {
+                snapshot,
+                path,
+                s7_floor,
+            },
+            uri,
+            root,
+            line_index,
+            offset,
+            encoding,
+        );
+        match locations.len() {
+            0 => None,
+            1 => locations.pop().map(GotoDefinitionResponse::Scalar),
+            _ => Some(GotoDefinitionResponse::Array(locations)),
+        }
+    })
+}
+
 /// Resolve `textDocument/references` against a db `snapshot`. The inverse of
 /// [`definition_via_db`] and the read mirror of [`rename_via_db`], in the same
 /// two phases, but **scope-aware**: cross-file reads come from the visibility

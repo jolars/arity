@@ -290,6 +290,7 @@ impl LintWorker {
                         if let ReadJob::Completion { path, s7_floor, .. }
                         | ReadJob::SignatureHelp { path, s7_floor, .. }
                         | ReadJob::Definition { path, s7_floor, .. }
+                        | ReadJob::Implementation { path, s7_floor, .. }
                         | ReadJob::DocumentSymbol { path, s7_floor, .. } = &mut job
                             && s7_floor.is_none()
                         {

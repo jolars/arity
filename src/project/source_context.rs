@@ -81,6 +81,7 @@ pub(crate) struct SourceGraph {
     /// Normalize for matching while preserving the spelling used by the rest
     /// of the project graph and diagnostics (including relative CLI paths).
     paths: HashMap<PathBuf, PathBuf>,
+    entry_directories: BTreeMap<PathBuf, Option<PathBuf>>,
     directories: BTreeMap<PathBuf, BTreeSet<Option<PathBuf>>>,
     edges: BTreeMap<SourceContext, Vec<ResolvedSource>>,
 }
@@ -93,11 +94,15 @@ impl SourceGraph {
         let mut by_path = HashMap::new();
         let mut pending = Vec::new();
         for (path, directory, edges) in files {
+            let directory = directory.map(normalize_path);
             graph.paths.insert(normalize_path(path), path.to_path_buf());
+            graph
+                .entry_directories
+                .insert(path.to_path_buf(), directory.clone());
             by_path.insert(path, edges);
             pending.push(SourceContext {
                 path: path.to_path_buf(),
-                directory: directory.map(normalize_path),
+                directory,
             });
         }
         while let Some(context) = pending.pop() {
@@ -112,15 +117,12 @@ impl SourceGraph {
                 .entry(context.path.clone())
                 .or_default()
                 .insert(context.directory.clone());
-            let mut edges: Vec<_> = edges
+            let edges: Vec<_> = edges
                 .iter()
-                .map(|edge| edge.resolve(context.directory.as_deref()))
+                .map(|edge| graph.resolve_edge(edge, &context))
                 .collect();
-            for edge in &mut edges {
-                if let SourceTarget::Path(path) = &mut edge.target {
-                    if let Some(member) = graph.paths.get(&normalize_path(path)) {
-                        *path = member.clone();
-                    }
+            for edge in &edges {
+                if let SourceTarget::Path(path) = &edge.target {
                     pending.push(SourceContext {
                         path: path.clone(),
                         directory: edge.directory.clone(),
@@ -130,6 +132,23 @@ impl SourceGraph {
             graph.edges.insert(context, edges);
         }
         graph
+    }
+
+    pub fn entry_context(&self, path: &Path) -> SourceContext {
+        SourceContext {
+            path: path.to_path_buf(),
+            directory: self.entry_directories.get(path).cloned().flatten(),
+        }
+    }
+
+    pub fn resolve_edge(&self, edge: &SourceEdgeKey, context: &SourceContext) -> ResolvedSource {
+        let mut edge = edge.resolve(context.directory.as_deref());
+        if let SourceTarget::Path(path) = &mut edge.target
+            && let Some(member) = self.paths.get(&normalize_path(path))
+        {
+            *path = member.clone();
+        }
+        edge
     }
 
     pub fn directories(&self, path: &Path) -> impl Iterator<Item = Option<&Path>> {

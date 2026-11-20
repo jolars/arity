@@ -855,15 +855,27 @@ coverage need not block useful workspace support.
   project generic signatures; generic calls should show their generic
   surface and only claim a selected method when dispatch evidence permits
   it.
+- [x] Resolve recognized quoted class references and generic registration names
+  in definition and references. Ignore arbitrary matching strings.
+- [x] Add Go to Implementation for recognized source generics with traceable
+  registered method bodies, method registrations with traceable bodies, and
+  classes with confirmed direct subclasses. Resolve supported class names in
+  registration arguments when preparing type hierarchy.
 - [ ] Add class, generic, method, and member document and workspace symbols,
-  semantic token roles, hover, definition, references, and implementation
-  navigation. Connect string-based registrations and class references to
-  semantic identities without treating arbitrary matching strings as uses.
-  Extend type hierarchy to the supported S3 evidence and S7 declarations,
-  qualified parents, and aliases. Give member and registered methods their
-  own call-hierarchy items; keep ordinary generic calls, candidate dispatch
-  edges, and superclass calls distinguishable. Keep incoming/outgoing edges
-  consistent and do not invent source locations for installed metadata.
+  semantic token roles, and hover. Use installed metadata for hover when
+  available.
+- [ ] Extend definition and references to class and generic identifier uses,
+  aliases, qualified names, members, methods, and remaining registration sites,
+  including supported `NAMESPACE` directives. Extend Go to Implementation to
+  member overrides and visible source implementations of known external
+  generics. Require real source spans for location-bearing results.
+- [ ] Show source-backed S3 class vectors as observed dispatch order in type
+  hierarchy. Verify S7 declarations, qualified parents, and aliases across
+  workspace files.
+- [ ] Give member and registered methods their own call-hierarchy items.
+  Distinguish ordinary generic calls, possible dispatch targets, and superclass
+  calls. Keep incoming and outgoing edges consistent and require real source
+  spans.
 - [ ] Add conservative class, member, and generic rename only after definitions
   and references are reliable. Update linked declarations, proven string
   registrations, member accesses, and method signatures within the known

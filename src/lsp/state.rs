@@ -384,7 +384,9 @@ impl GlobalState {
             SignatureHelpRequest::METHOD => self.on_signature_help(req),
             Completion::METHOD => self.on_completion(req),
             ResolveCompletionItem::METHOD => self.on_resolve_completion(req),
-            GotoDefinition::METHOD => self.on_definition(req),
+            GotoDefinition::METHOD | lsp_types::request::GotoImplementation::METHOD => {
+                self.on_definition(req)
+            }
             References::METHOD => self.on_references(req),
             DocumentHighlightRequest::METHOD => self.on_document_highlight(req),
             DocumentSymbolRequest::METHOD => self.on_document_symbol(req),
@@ -702,8 +704,10 @@ impl GlobalState {
     /// the read pool. See [`definition_via_db`].
     fn on_definition(&mut self, req: Request) {
         let id = req.id.clone();
-        let Ok((_, params)) = req.extract::<GotoDefinitionParams>(GotoDefinition::METHOD) else {
-            self.respond_err(id, "invalid definition params");
+        let method = req.method.clone();
+        let implementation = method == lsp_types::request::GotoImplementation::METHOD;
+        let Ok((_, params)) = req.extract::<GotoDefinitionParams>(&method) else {
+            self.respond_err(id, "invalid navigation params");
             return;
         };
         let uri = params.text_document_position_params.text_document.uri;
@@ -719,15 +723,28 @@ impl GlobalState {
             .ok()
             .and_then(|settings| settings.lint.compat.s7_version());
         self.register_read(id.clone(), Some((uri.clone(), version)));
-        self.dispatch_read(ReadJob::Definition {
-            id,
-            path,
-            uri,
-            buffer,
-            position,
-            s7_floor,
-            out: self.out_tx.clone(),
-        });
+        let job = if implementation {
+            ReadJob::Implementation {
+                id,
+                path,
+                uri,
+                buffer,
+                position,
+                s7_floor,
+                out: self.out_tx.clone(),
+            }
+        } else {
+            ReadJob::Definition {
+                id,
+                path,
+                uri,
+                buffer,
+                position,
+                s7_floor,
+                out: self.out_tx.clone(),
+            }
+        };
+        self.dispatch_read(job);
     }
 
     /// `textDocument/references`: every read site of the name under the cursor. A
@@ -1321,7 +1338,9 @@ impl GlobalState {
                 ReadJob::Completion { id, out, .. } => (id, out),
                 ReadJob::SignatureHelp { id, out, .. } => (id, out),
                 ReadJob::ResolveCompletion { id, out, .. } => (id, out),
-                ReadJob::Definition { id, out, .. } => (id, out),
+                ReadJob::Definition { id, out, .. } | ReadJob::Implementation { id, out, .. } => {
+                    (id, out)
+                }
                 ReadJob::References { id, out, .. } => (id, out),
                 ReadJob::Rename { id, out, .. } => (id, out),
                 ReadJob::WillRenameFiles { id, out, .. } => (id, out),

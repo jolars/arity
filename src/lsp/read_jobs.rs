@@ -134,6 +134,17 @@ pub(crate) enum ReadJob {
         s7_floor: Option<crate::config::CompatVersion>,
         out: Sender<Outbound>,
     },
+    Implementation {
+        id: RequestId,
+        path: PathBuf,
+        /// The current document's URI — an intra-file hit reports a `Location`
+        /// back into it, so unlike the other jobs this one needs the URI too.
+        uri: Uri,
+        buffer: Arc<TextBuffer>,
+        position: Position,
+        s7_floor: Option<crate::config::CompatVersion>,
+        out: Sender<Outbound>,
+    },
     References {
         id: RequestId,
         path: PathBuf,
@@ -323,6 +334,26 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             out,
         } => {
             let result = definition_via_db(
+                &snapshot,
+                &path,
+                &uri,
+                &buffer,
+                position,
+                encoding,
+                s7_floor.as_ref(),
+            );
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
+        }
+        ReadJob::Implementation {
+            id,
+            path,
+            uri,
+            buffer,
+            position,
+            s7_floor,
+            out,
+        } => {
+            let result = implementation_via_db(
                 &snapshot,
                 &path,
                 &uri,

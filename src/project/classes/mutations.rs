@@ -4,7 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use super::*;
-use crate::project::source::{SourceEdgeKey, SourceTarget};
+use crate::project::source::SourceTarget;
+use crate::project::source_context::SourceContext;
 
 #[derive(Clone)]
 pub(super) struct InstalledMember {
@@ -126,50 +127,41 @@ impl ClassIndex {
             _ => None,
         }
     }
-    fn source_path(path: &Path, edge: &SourceEdgeKey) -> Option<PathBuf> {
-        let SourceTarget::Path(target) = &edge.target else {
-            return None;
-        };
-        let joined = if target.is_absolute() {
-            target.clone()
+    fn append_execution(
+        &self,
+        context: SourceContext,
+        out: &mut Execution,
+        visiting: &mut BTreeSet<SourceContext>,
+    ) {
+        if visiting.len() >= 64 || !visiting.insert(context.clone()) {
+            out.complete = false;
+            return;
+        }
+        if let Some(file) = self.file(&context.path) {
+            for (index, event) in file.facts.oop.events.iter().enumerate() {
+                out.events.push((context.path.clone(), index));
+                if let OopEvent::Source(edge) = event {
+                    let edge = self.source_graph().resolve_edge(edge, &context);
+                    if !edge.local
+                        && let SourceTarget::Path(path) = edge.target
+                    {
+                        self.append_execution(
+                            SourceContext {
+                                path,
+                                directory: edge.directory,
+                            },
+                            out,
+                            visiting,
+                        );
+                    } else {
+                        out.complete = false;
+                    }
+                }
+            }
         } else {
-            path.parent()?.join(target)
-        };
-        let mut normalized = PathBuf::new();
-        for component in joined.components() {
-            match component {
-                std::path::Component::ParentDir => {
-                    normalized.pop();
-                }
-                std::path::Component::CurDir => {}
-                component => normalized.push(component.as_os_str()),
-            }
-        }
-        Some(normalized)
-    }
-
-    fn append_execution(&self, path: &Path, out: &mut Execution, visiting: &mut BTreeSet<PathBuf>) {
-        if visiting.len() >= 64 || !visiting.insert(path.into()) {
             out.complete = false;
-            return;
         }
-        let Some(file) = self.file(path) else {
-            out.complete = false;
-            return;
-        };
-        for (index, event) in file.facts.oop.events.iter().enumerate() {
-            out.events.push((path.into(), index));
-            if let OopEvent::Source(edge) = event {
-                if !edge.local
-                    && let Some(target) = Self::source_path(path, edge)
-                {
-                    self.append_execution(&target, out, visiting);
-                } else {
-                    out.complete = false;
-                }
-            }
-        }
-        visiting.remove(path);
+        visiting.remove(&context);
     }
 
     pub(super) fn execution(&self, path: &Path) -> Execution {
@@ -177,11 +169,16 @@ impl ClassIndex {
             complete: true,
             ..Execution::default()
         };
+        let graph = self.source_graph();
         if let Some(root) = self.file(path).and_then(|file| file.package_root.as_ref()) {
             match self.load_orders.get(root) {
                 Some(Some(order)) => {
                     for path in order {
-                        self.append_execution(path, &mut out, &mut BTreeSet::new());
+                        self.append_execution(
+                            graph.entry_context(path),
+                            &mut out,
+                            &mut BTreeSet::new(),
+                        );
                     }
                 }
                 _ => {
@@ -190,7 +187,11 @@ impl ClassIndex {
                         .oop_files()
                         .filter(|file| file.package_root.as_ref() == Some(root))
                     {
-                        self.append_execution(&file.path, &mut out, &mut BTreeSet::new());
+                        self.append_execution(
+                            graph.entry_context(&file.path),
+                            &mut out,
+                            &mut BTreeSet::new(),
+                        );
                     }
                 }
             }
@@ -198,39 +199,28 @@ impl ClassIndex {
         }
         // A sourced file executes in its caller's sequence. Independent scripts
         // must never acquire one another's mutations merely by sharing a folder.
-        let sourced: BTreeSet<_> = self
-            .oop_files()
-            .flat_map(|file| {
-                file.facts.oop.events.iter().filter_map(|event| {
-                    if let OopEvent::Source(edge) = event {
-                        Self::source_path(&file.path, edge)
-                    } else {
-                        None
-                    }
-                })
+        let sourced: BTreeSet<_> = graph
+            .direct_edges()
+            .filter_map(|(_, edge)| match &edge.target {
+                SourceTarget::Path(path) if !edge.local => Some(path.as_path()),
+                _ => None,
             })
             .collect();
-        let mut candidates = Vec::new();
-        for file in self
-            .oop_files()
-            .filter(|file| file.package_root.is_none() && !sourced.contains(&file.path))
-        {
-            let mut candidate = Execution {
-                complete: true,
-                ..Execution::default()
-            };
-            self.append_execution(&file.path, &mut candidate, &mut BTreeSet::new());
-            if candidate.events.iter().any(|(file, _)| file == path) {
-                candidates.push(candidate);
+        let mut entry = graph.entry_context(path);
+        if sourced.contains(path) {
+            let mut callers = self
+                .oop_files()
+                .filter(|file| {
+                    file.package_root.is_none() && !sourced.contains(file.path.as_path())
+                })
+                .map(|file| graph.entry_context(&file.path))
+                .filter(|context| graph.closure(context.clone()).paths.contains(path));
+            match (callers.next(), callers.next()) {
+                (Some(caller), None) => entry = caller,
+                _ => out.complete = false,
             }
         }
-        if candidates.len() == 1 {
-            return candidates.pop().unwrap();
-        }
-        self.append_execution(path, &mut out, &mut BTreeSet::new());
-        if candidates.len() > 1 {
-            out.complete = false;
-        }
+        self.append_execution(entry, &mut out, &mut BTreeSet::new());
         out
     }
 

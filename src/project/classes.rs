@@ -36,6 +36,7 @@ pub(crate) use calls::class_lookups;
 use calls::*;
 mod r6;
 pub use r6::{R6Access, R6Api, R6Member, R6Members, R6Options, R6Receiver};
+mod callables;
 mod member_access;
 mod mutations;
 mod receiver;
@@ -422,7 +423,21 @@ pub(crate) fn class_source_sites(
     model: &SemanticModel,
     root: &SyntaxNode,
 ) -> (FileClassFacts, ClassSourceSites) {
+    into_class_source_sites(extract(model, root, true))
+}
+
+pub(crate) fn class_source_sites_at(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+    value: &SyntaxElement,
+) -> (FileClassFacts, ClassSourceSites, Option<ClassOccurrence>) {
     let extracted = extract(model, root, true);
+    let occurrence = class_occurrence(model, root, value, &extracted);
+    let (facts, sites) = into_class_source_sites(extracted);
+    (facts, sites, occurrence)
+}
+
+fn into_class_source_sites(extracted: Extracted) -> (FileClassFacts, ClassSourceSites) {
     (
         extracted.facts,
         ClassSourceSites {
@@ -431,6 +446,38 @@ pub(crate) fn class_source_sites(
             class_reference_factories: extracted.class_reference_factories,
         },
     )
+}
+
+pub(crate) struct MethodNavigationSites {
+    pub implementations: HashMap<OopKey, TextRange>,
+    pub sources: HashMap<OopKey, MethodImplementationSource>,
+    pub callables: HashMap<usize, TextRange>,
+}
+
+pub(crate) fn method_navigation_sites(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+) -> MethodNavigationSites {
+    let extracted = extract(model, root, false);
+    MethodNavigationSites {
+        implementations: extracted
+            .method_implementations
+            .into_iter()
+            .map(|site| (site.method, site.function_range))
+            .collect(),
+        sources: extracted
+            .facts
+            .oop
+            .method_implementations
+            .into_iter()
+            .map(|implementation| (implementation.method, implementation.source))
+            .collect(),
+        callables: extracted
+            .callable_frames
+            .into_iter()
+            .map(|(range, origin)| (origin, range))
+            .collect(),
+    }
 }
 
 pub fn locate_class_def(root: &SyntaxNode, key: &ClassKey) -> Option<ClassLocation> {
@@ -456,7 +503,20 @@ pub fn class_occurrence_at_offset(
     root: &SyntaxNode,
     offset: TextSize,
 ) -> Option<ClassOccurrence> {
+    let (_, value) = class_name_at(root, offset)?;
+    class_occurrence(model, root, &value, &extract(model, root, false))
+}
+
+/// Return the name token and the value it denotes, including the namespace
+/// access when the cursor is on its member.
+pub(crate) fn class_name_at(
+    root: &SyntaxNode,
+    offset: TextSize,
+) -> Option<(SyntaxToken, SyntaxElement)> {
     let token = token_at(root, offset)?;
+    if !matches!(token.kind(), SyntaxKind::IDENT | SyntaxKind::STRING) {
+        return None;
+    }
     let value = if let Some(binary) = token.parent().and_then(BinaryExpr::cast)
         && let Some(namespace) = binary.namespace_access()
     {
@@ -467,7 +527,15 @@ pub fn class_occurrence_at_offset(
     } else {
         SyntaxElement::Token(token.clone())
     };
-    let extracted = extract(model, root, false);
+    Some((token, value))
+}
+
+fn class_occurrence(
+    model: &SemanticModel,
+    root: &SyntaxNode,
+    value: &SyntaxElement,
+    extracted: &Extracted,
+) -> Option<ClassOccurrence> {
     if let Some((_, occurrence)) = extracted
         .occurrences
         .iter()
@@ -475,10 +543,13 @@ pub fn class_occurrence_at_offset(
     {
         return Some(occurrence.clone());
     }
-    if value
-        .as_token()
-        .is_some_and(|token| token.kind() != SyntaxKind::IDENT)
-    {
+    if value.as_token().is_some_and(|token| {
+        token.kind() != SyntaxKind::IDENT
+            || !model
+                .idents()
+                .iter()
+                .any(|ident| ident.range == token.text_range())
+    }) {
         return None;
     }
     let keys: HashMap<_, _> = extracted
@@ -491,11 +562,11 @@ pub fn class_occurrence_at_offset(
         .collect();
     // Resolve ordinary generator uses through the same lexical binding proof as
     // inheritance, rather than treating an arbitrary identifier as a class name.
-    let parent = token.parent()?;
+    let parent = value.parent()?;
     let deferred = parent
         .ancestors()
         .any(|node| node.kind() == SyntaxKind::FUNCTION_EXPR);
-    let target = generator_ref(model, root, &value, &keys, &mut BTreeSet::new(), deferred);
+    let target = generator_ref(model, root, value, &keys, &mut BTreeSet::new(), deferred);
     let owner = owner_at(
         &parent,
         &owner_map(root, &extracted.facts.declarations, &extracted.locations),

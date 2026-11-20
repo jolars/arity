@@ -468,3 +468,36 @@ fn r6() {
 fn s7() {
     check_system("s7");
 }
+
+#[test]
+fn implementation_opens_registered_method_body() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("classes.R");
+    let source = "methods::setGeneric('describe', function(x) standardGeneric('describe'))
+methods::setMethod('describe', 'numeric', function(x) x)
+label <- 'describe'
+";
+    fs::write(&path, source).unwrap();
+    let uri = path_uri(&path);
+    let mut harness = Harness::start_push();
+    assert_eq!(harness.capabilities["implementationProvider"], true);
+    harness.did_open(&uri, source, 1);
+    harness.recv_publish_for(&uri, 1);
+
+    for (name, expected) in [("describe", true), ("label <- 'describe", false)] {
+        let offset = source.find(name).unwrap() + name.len() - 1;
+        let result = request(
+            &mut harness,
+            "textDocument/implementation",
+            json!({ "textDocument": { "uri": uri }, "position": position(source, offset) }),
+        );
+        if expected {
+            assert_eq!(result["uri"], uri);
+            let [start, end] = byte_range(source, &result["range"]);
+            assert_eq!(&source[start..end], "function(x) x");
+        } else {
+            assert!(result.is_null(), "{result}");
+        }
+    }
+    harness.shutdown();
+}

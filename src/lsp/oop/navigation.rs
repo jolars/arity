@@ -3,9 +3,13 @@
 use super::*;
 use crate::incremental::normalize_path;
 use crate::project::classes::{
-    ClassId, ClassOccurrence, ClassSourceSites, FunctionRef, OopId, OopKey, OopKind, OopSiteRole,
-    OopSourceSite, OopSystem, OopTarget, class_source_sites, locate_class_def_in, oop_sites,
+    ClassId, ClassOccurrence, ClassSourceSites, FunctionRef, GeneratorRef, OopId, OopKey, OopKind,
+    OopSiteRole, OopSourceSite, OopSystem, OopTarget, ParentRef, class_source_sites,
+    locate_class_def_in, oop_sites,
 };
+
+mod implementation;
+pub(in crate::lsp) use implementation::implementation_locations;
 
 pub(in crate::lsp) enum NameNavigation {
     Definition,
@@ -16,20 +20,21 @@ pub(in crate::lsp) enum NameNavigation {
 enum Identity {
     Class(ClassId),
     Generic(OopId),
+    Method(OopId),
 }
 
 impl Identity {
     fn path(&self) -> &Path {
         match self {
             Self::Class(id) => &id.path,
-            Self::Generic(id) => &id.path,
+            Self::Generic(id) | Self::Method(id) => &id.path,
         }
     }
 
     fn definition(&self, model: &SemanticModel, root: &SyntaxNode) -> Option<TextRange> {
         match self {
             Self::Class(id) => Some(locate_class_def_in(model, root, &id.key)?.name_range),
-            Self::Generic(id) => oop_sites(model, root)
+            Self::Generic(id) | Self::Method(id) => oop_sites(model, root)
                 .into_iter()
                 .find(|site| {
                     site.role == OopSiteRole::Declaration
@@ -71,7 +76,7 @@ pub(in crate::lsp) fn name_locations(
                         OopTarget::Generic(_)
                             | OopTarget::ClassReference(_)
                             | OopTarget::Declaration(OopKey {
-                                kind: OopKind::Generic,
+                                kind: OopKind::Generic | OopKind::Method,
                                 ..
                             })
                     )
@@ -104,6 +109,13 @@ pub(in crate::lsp) fn name_locations(
                 resolve_registration_class(&index, &path, site?)
                     .into_iter()
                     .map(Identity::Class)
+                    .collect()
+            } else if let OopTarget::Declaration(key) = &site?.site.target
+                && key.kind == OopKind::Method
+            {
+                resolve_method_site(&index, &path, site?)
+                    .into_iter()
+                    .map(Identity::Method)
                     .collect()
             } else {
                 resolve_generic_site(&index, &path, site?)
@@ -174,9 +186,13 @@ pub(in crate::lsp) fn name_locations(
                                 .filter(|site| {
                                     (include_declaration
                                         || site.site.role != OopSiteRole::Declaration)
-                                        && resolve_generic_site(&index, file_path, site)
+                                        && (resolve_generic_site(&index, file_path, site)
                                             .into_iter()
                                             .any(|id| ids.contains(&Identity::Generic(id)))
+                                            || resolve_method_site(&index, file_path, site)
+                                                .is_some_and(|id| {
+                                                    ids.contains(&Identity::Method(id))
+                                                }))
                                 })
                                 .map(|site| site.site.range)
                                 .collect()
@@ -205,6 +221,54 @@ pub(in crate::lsp) fn name_locations(
             Some(locations)
         },
     )
+}
+
+pub(in crate::lsp) enum ClassCandidate<'a> {
+    Occurrence(ClassOccurrence, Option<&'a FunctionRef>),
+    Registration(Vec<&'a OopSourceSite>),
+}
+
+impl ClassCandidate<'_> {
+    pub(in crate::lsp) fn resolve(self, index: &ClassIndex, path: &Path) -> Vec<ClassId> {
+        match self {
+            Self::Occurrence(occurrence, factory) => {
+                resolve_class_occurrence(index, path, &occurrence, factory)
+            }
+            Self::Registration(sites) => sites
+                .into_iter()
+                .flat_map(|site| resolve_registration_class(index, path, site))
+                .collect(),
+        }
+    }
+}
+
+pub(in crate::lsp) fn class_candidate(
+    sites: &ClassSourceSites,
+    occurrence: Option<ClassOccurrence>,
+    range: TextRange,
+) -> Option<ClassCandidate<'_>> {
+    if let Some(occurrence) = occurrence
+        && !matches!(
+            occurrence,
+            ClassOccurrence::Reference {
+                reference: ParentRef::Unknown | ParentRef::Generator(GeneratorRef::Unknown),
+                ..
+            }
+        )
+    {
+        return Some(ClassCandidate::Occurrence(
+            occurrence,
+            sites.class_reference_factories.get(&range),
+        ));
+    }
+    let registrations: Vec<_> = sites
+        .oop
+        .iter()
+        .filter(|source| {
+            source.site.range == range && matches!(source.site.target, OopTarget::ClassReference(_))
+        })
+        .collect();
+    (!registrations.is_empty()).then_some(ClassCandidate::Registration(registrations))
 }
 
 fn resolve_class_occurrence(
@@ -266,6 +330,34 @@ fn resolve_generic_site(index: &ClassIndex, path: &Path, site: &OopSourceSite) -
     }
 }
 
+fn resolve_method_site(index: &ClassIndex, path: &Path, site: &OopSourceSite) -> Option<OopId> {
+    let OopTarget::Declaration(key) = &site.site.target else {
+        return None;
+    };
+    if key.kind != OopKind::Method {
+        return None;
+    }
+    let id = OopId {
+        path: path.to_path_buf(),
+        key: key.clone(),
+    };
+    let method = index.method(&id)?;
+    let confirmed = match key.system {
+        OopSystem::S3 => index.s3.methods.iter().any(|method| {
+            matches!(&method.source,
+            crate::project::classes::S3MethodSource::Declaration(source) if *source == id)
+                && !method.generics.is_empty()
+        }),
+        OopSystem::S4 => index.s4.methods.iter().any(|method| {
+            matches!(&method.id,
+            crate::project::classes::S4MethodId::Registration(source) if *source == id)
+        }),
+        OopSystem::S7 => index.s7_registration(&id).is_some(),
+        _ => method.registration.is_none(),
+    };
+    confirmed.then_some(id)
+}
+
 fn resolve_registration_class(
     index: &ClassIndex,
     path: &Path,
@@ -273,7 +365,9 @@ fn resolve_registration_class(
 ) -> Vec<ClassId> {
     match &site.site.target {
         OopTarget::ClassReference(reference)
-            if callee_confirmed(index, path, site)
+            if (callee_confirmed(index, path, site)
+                || (site.required_callee.is_none()
+                    && matches!(reference, crate::project::classes::ParentRef::Generator(_))))
                 && index.dispatch_helper_confirmed(path, site.dispatch_factory.as_ref()) =>
         {
             index.resolve_reference(path, &site.site.owner, reference, site.site.in_function)

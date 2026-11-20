@@ -116,6 +116,22 @@ impl Projection<'_> {
     }
 
     fn implementation(&mut self, key: &OopKey, value: Option<SyntaxElement>, keep_original: bool) {
+        if let Some(source) = self.implementation_site(key, value, keep_original) {
+            self.facts
+                .method_implementations
+                .push(MethodImplementationDef {
+                    method: key.clone(),
+                    source,
+                });
+        }
+    }
+
+    fn implementation_site(
+        &mut self,
+        key: &OopKey,
+        value: Option<SyntaxElement>,
+        keep_original: bool,
+    ) -> Option<MethodImplementationSource> {
         let Some(function) = self
             .implementation_value(
                 value.clone(),
@@ -132,16 +148,10 @@ impl Projection<'_> {
                 .and_then(BinaryExpr::cast)
                 .and_then(|binary| binary.namespace_access())
             {
-                self.facts
-                    .method_implementations
-                    .push(MethodImplementationDef {
-                        method: key.clone(),
-                        source: MethodImplementationSource::Qualified {
-                            package: namespace.package.to_string(),
-                            name: namespace.name.to_string(),
-                        },
-                    });
-                return;
+                return Some(MethodImplementationSource::Qualified {
+                    package: namespace.package.to_string(),
+                    name: namespace.name.to_string(),
+                });
             }
             if let Some(token) = value.as_ref().and_then(SyntaxElement::as_token)
                 && (token.kind() == SyntaxKind::IDENT
@@ -152,14 +162,9 @@ impl Projection<'_> {
                 })
                 && let Some(name) = literal(&SyntaxElement::Token(token.clone()))
             {
-                self.facts
-                    .method_implementations
-                    .push(MethodImplementationDef {
-                        method: key.clone(),
-                        source: MethodImplementationSource::Reference { name },
-                    });
+                return Some(MethodImplementationSource::Reference { name });
             }
-            return;
+            return None;
         };
         let source = direct_assignment(&SyntaxElement::Node(function.syntax().clone()))
             .and_then(|assignment| {
@@ -170,12 +175,6 @@ impl Projection<'_> {
             })
             .unwrap_or(MethodImplementationSource::Inline);
         let keep_original = keep_original && !matches!(source, MethodImplementationSource::Inline);
-        self.facts
-            .method_implementations
-            .push(MethodImplementationDef {
-                method: key.clone(),
-                source,
-            });
         self.method_implementations.push(MethodImplementationSite {
             method: key.clone(),
             function_range: function.syntax().text_range(),
@@ -187,6 +186,7 @@ impl Projection<'_> {
                 .map_or(self.root.text_range(), |owner| owner.syntax().text_range()),
             keep_original,
         });
+        Some(source)
     }
 
     fn key(&mut self, node: &SyntaxNode, system: OopSystem, kind: OopKind) -> OopKey {
@@ -206,7 +206,7 @@ impl Projection<'_> {
     }
 
     fn site(&mut self, range: TextRange, role: OopSiteRole, target: OopTarget) {
-        self.site_with_callee(range, role, target, None, None);
+        self.site_with_callee(range, role, target, None, None, None);
     }
 
     fn site_with_callee(
@@ -216,6 +216,7 @@ impl Projection<'_> {
         target: OopTarget,
         required_callee: Option<(FunctionRef, &'static str)>,
         dispatch_factory: Option<FunctionRef>,
+        registration: Option<OopKey>,
     ) {
         if !self.include_sites {
             return;
@@ -237,6 +238,7 @@ impl Projection<'_> {
                 owner,
                 in_function,
             },
+            registration,
             required_callee,
             dispatch_factory,
         });
@@ -1775,32 +1777,33 @@ impl Projection<'_> {
                     .push((call.syntax().text_range(), OopEvent::RemoveS4Method(key)));
                 continue;
             }
+            let implicit = if name == ".S3method"
+                && implementation.is_none()
+                && let ClassName::Known(generic) = &generic.name
+                && let Some((
+                    DispatchArgument {
+                        class: DispatchClass::S3(class),
+                        ..
+                    },
+                    _,
+                )) = dispatch.arguments.first()
+            {
+                let name = format!("{generic}.{class}");
+                let binding = call
+                    .callee_token()
+                    .and_then(|token| read_named_binding(self.model, &token, &name));
+                Some((name, binding))
+            } else {
+                None
+            };
             if system == OopSystem::S3 {
                 let supplied = implementation
                     .clone()
                     .and_then(|value| self.supplied_implementation(value))
                     .or_else(|| {
-                        if name != ".S3method" || implementation.is_some() {
-                            return None;
-                        }
-                        let ClassName::Known(generic) = &generic.name else {
-                            return None;
-                        };
-                        let (
-                            DispatchArgument {
-                                class: DispatchClass::S3(class),
-                                ..
-                            },
-                            _,
-                        ) = dispatch.arguments.first()?
-                        else {
-                            return None;
-                        };
-                        let name = format!("{generic}.{class}");
-                        let binding = call
-                            .callee_token()
-                            .and_then(|token| read_named_binding(self.model, &token, &name));
-                        Some(self.implementation_binding(name, binding))
+                        implicit.as_ref().map(|(name, binding)| {
+                            self.implementation_binding(name.clone(), *binding)
+                        })
                     });
                 if let Some(source) = supplied {
                     self.facts.s3_implementations.push(MethodImplementationDef {
@@ -1819,27 +1822,49 @@ impl Projection<'_> {
             if signature.is_none() && !s7_removal {
                 issues.insert(OopUncertainty::UnresolvedImplementation);
             }
-            if matches!(system, OopSystem::S3 | OopSystem::S4 | OopSystem::S7) && !s7_removal {
-                self.implementation(&key, implementation.clone(), true);
-                if name == ".S3method"
-                    && implementation.is_none()
-                    && let ClassName::Known(generic) = &generic.name
-                    && let Some((
-                        DispatchArgument {
-                            class: DispatchClass::S3(class),
-                            ..
-                        },
-                        _,
-                    )) = dispatch.arguments.first()
+            if system == OopSystem::S4 {
+                // Keep the supplied name for project lookup. The lexical site
+                // alone cannot establish which closure is live at registration.
+                self.implementation_site(&key, implementation.clone(), true);
+                if let Some(source) = implementation
+                    .filter(|value| value.kind() != SyntaxKind::STRING)
+                    .and_then(|value| self.supplied_implementation(value))
+                    && (key.owner.0.is_empty()
+                        || matches!(
+                            source,
+                            MethodImplementationSource::Inline
+                                | MethodImplementationSource::Qualified { .. }
+                        )
+                        || !crate::semantic::calls::has_dynamic_bindings(self.model)
+                        || !opaque_binding_frame(self.root, call.syntax().text_range()))
                 {
                     self.facts
                         .method_implementations
                         .push(MethodImplementationDef {
                             method: key.clone(),
-                            source: MethodImplementationSource::Reference {
-                                name: format!("{generic}.{class}"),
-                            },
+                            source,
                         });
+                }
+            } else if !s7_removal {
+                self.implementation(&key, implementation.clone(), true);
+                if let Some((name, binding)) = implicit {
+                    if let Some(value) = binding
+                        .filter(|binding| {
+                            !self.model.binding_is_file_scope(*binding)
+                                && self.model.binding(*binding).available_from
+                                    <= call.syntax().text_range().start()
+                        })
+                        .and_then(|binding| stable_value(self.model, self.root, binding))
+                    {
+                        self.implementation(&key, Some(value), true);
+                    } else {
+                        self.facts
+                            .method_implementations
+                            .push(MethodImplementationDef {
+                                method: key.clone(),
+                                source: MethodImplementationSource::Reference { name },
+                            });
+                    }
                 }
             }
             if system == OopSystem::S7 {
@@ -1873,7 +1898,7 @@ impl Projection<'_> {
                 registration: Some(reference.clone()),
                 uncertainty: issues,
             });
-            if system == OopSystem::S4 {
+            if matches!(system, OopSystem::S3 | OopSystem::S4) {
                 self.events
                     .push((call.syntax().text_range(), OopEvent::Method(key.clone())));
             }
@@ -1881,7 +1906,7 @@ impl Projection<'_> {
                 call.callee_token()
                     .map_or(call.syntax().text_range(), |token| token.text_range()),
                 OopSiteRole::Declaration,
-                OopTarget::Declaration(key),
+                OopTarget::Declaration(key.clone()),
             );
             let package = match system {
                 OopSystem::S4 => "methods",
@@ -1895,6 +1920,7 @@ impl Projection<'_> {
                     OopTarget::Generic(generic),
                     registration_environment_known.then(|| (reference.clone(), package)),
                     None,
+                    Some(key),
                 );
             }
             for (arg, range) in dispatch.arguments {
@@ -1918,6 +1944,7 @@ impl Projection<'_> {
                     OopTarget::ClassReference(class_reference),
                     registration_environment_known.then(|| (reference.clone(), package)),
                     dispatch.factory.clone(),
+                    None,
                 );
             }
         }
@@ -2070,6 +2097,7 @@ impl Projection<'_> {
                     OopSiteRole::Use,
                     OopTarget::ClassReference(ParentRef::Formal(class)),
                     Some((callee, "methods")),
+                    None,
                     None,
                 );
             }

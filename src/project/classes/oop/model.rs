@@ -274,7 +274,7 @@ pub enum OopEvent {
         name: ClassName,
         target: OopKey,
     },
-    /// Capture named S4 implementations before later bindings replace them.
+    /// Capture named S3 and S4 implementations at their registration point.
     Method(OopKey),
     RemoveS4Method(OopKey),
     S7Generic(OopKey),
@@ -464,6 +464,7 @@ pub struct OopSite {
 #[derive(PartialEq, Eq)]
 pub(crate) struct OopSourceSite {
     pub site: OopSite,
+    pub registration: Option<OopKey>,
     pub required_callee: Option<(FunctionRef, &'static str)>,
     pub dispatch_factory: Option<FunctionRef>,
 }

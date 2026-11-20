@@ -267,6 +267,23 @@ impl ClassIndex {
         })
     }
 
+    pub(crate) fn s7_method_callable_origin(
+        &self,
+        method: &OopId,
+        source: &MethodImplementationSource,
+    ) -> Option<(PathBuf, usize)> {
+        if !matches!(
+            source,
+            MethodImplementationSource::Reference { .. }
+                | MethodImplementationSource::Qualified { .. }
+        ) {
+            return None;
+        }
+        let callable = self.s4_callable_at(&method.path, source, Some(&method.key))?;
+        let origin = self.file(&callable.path)?.facts.oop.callables[callable.binding].origin;
+        Some((callable.path, origin))
+    }
+
     fn s4_import_package(&self, path: &Path, name: &str) -> Option<String> {
         let file = self.file(path)?;
         let imports = self

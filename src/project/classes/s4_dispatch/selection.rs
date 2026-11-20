@@ -97,7 +97,7 @@ pub(super) fn generic_name(id: &S4GenericId) -> Option<&str> {
     }
 }
 
-pub(super) type Table<'a> = (&'a S4GenericId, Option<&'a OopId>);
+pub(crate) type Table<'a> = (&'a S4GenericId, Option<&'a OopId>);
 
 fn matches_table_name(reference: &GenericRef, tables: &BTreeMap<Table<'_>, usize>) -> bool {
     reference.name == ClassName::Unknown
@@ -107,8 +107,27 @@ fn matches_table_name(reference: &GenericRef, tables: &BTreeMap<Table<'_>, usize
 }
 
 impl S4Generic {
-    pub(super) fn table(&self) -> Table<'_> {
+    pub(crate) fn table(&self) -> Table<'_> {
         (&self.id, self.object.as_ref())
+    }
+}
+
+impl S4Method {
+    pub(crate) fn confirmed_registration(&self) -> Option<&OopId> {
+        let S4MethodId::Registration(id) = &self.id else {
+            return None;
+        };
+        (!self.uncertainty.contains(&OopUncertainty::UnresolvedCallee)).then_some(id)
+    }
+
+    /// A redeclaration can contribute another signature for the same table.
+    /// The package and name alone cannot distinguish replacement objects.
+    pub(crate) fn unique_table(&self) -> Option<Table<'_>> {
+        let (first, rest) = self.dispatch.split_first()?;
+        let table = first.table();
+        rest.iter()
+            .all(|signature| signature.table() == table)
+            .then_some(table)
     }
 }
 

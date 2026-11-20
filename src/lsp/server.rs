@@ -219,6 +219,7 @@ pub(crate) fn server_capabilities(position_encoding: PositionEncoding) -> Server
             work_done_progress_options: Default::default(),
         }),
         definition_provider: Some(OneOf::Left(true)),
+        implementation_provider: Some(lsp_types::ImplementationProviderCapability::Simple(true)),
         references_provider: Some(OneOf::Left(true)),
         call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
