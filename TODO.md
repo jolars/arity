@@ -77,7 +77,7 @@ Reproduced against ggplot2 `87a95d9` with R 4.6.1.
   registration, roxygen2 8.1.0 accepts the tag and emits an Aesthetics
   section. Use the registration or an explicit declaration for extensions
   whose names cannot be resolved statically.
-- [ ] Count direct reads in roxygen `@eval` toward package binding use.
+- [x] Count direct reads in roxygen `@eval` toward package binding use.
   `doc <- function() "@param x Input."` followed by a documented function
   with `@eval doc()` triggers `unused-binding` on `doc`. Roxygen2 8.0.0
   emits the parameter documentation. ggplot2's `subtheme_param_doc` has

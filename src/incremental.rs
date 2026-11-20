@@ -973,6 +973,17 @@ fn class_index_with_file_body(db: &dyn IncrementalDb, file: SourceFile) -> Class
     crate::project::graph::build_class_index(db, None, BodyClassLookups::File(file))
 }
 
+/// The range-free package binding reads in a file's `@eval` tags.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn file_roxygen_eval_reads(
+    db: &dyn IncrementalDb,
+    file: SourceFile,
+) -> Arc<crate::project::roxygen::RoxygenEvalReads> {
+    Arc::new(crate::project::roxygen::file_roxygen_eval_reads(
+        &parsed_tree_root(db, file),
+    ))
+}
+
 /// The file's roxygen blocks grouped by the Rd topic they merge into
 /// ([`crate::project::file_roxygen_topics`]), as a tracked query. Range-free
 /// like [`file_class_defs`] — it turns on the documentation and the documented

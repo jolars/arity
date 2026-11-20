@@ -403,6 +403,60 @@ fn interpolation_marks_a_package_sibling_binding_used() {
 }
 
 #[test]
+fn roxygen_eval_reads_package_bindings() {
+    let result = lint_package_files(
+        "export(topic)\n",
+        &[
+            (
+                "helpers.R",
+                "doc <- function() \"@param x Input.\"\nqualified_doc <- function() \"More.\"\n",
+            ),
+            (
+                "topic.R",
+                concat!(
+                    "local_doc <- function() \"Details.\"\n",
+                    "unused <- function() \"Unused.\"\n",
+                    "shadowed <- function() \"Shadowed.\"\n",
+                    "#' Topic\n",
+                    "#' @eval doc()\n",
+                    "#' @eval testpkg:::qualified_doc()\n",
+                    "#' @eval unused(\n",
+                    "#' @eval {\n",
+                    "#'   shadowed <- local_doc()\n",
+                    "#'   shadowed\n",
+                    "#' }\n",
+                    "#' @examples unused()\n",
+                    "topic <- function(x) x\n",
+                ),
+            ),
+        ],
+        &LintConfig {
+            select: Some(vec!["unused-binding".into()]),
+            ..LintConfig::default()
+        },
+    );
+    assert!(!rules_for(&result, "helpers.R").contains(&"unused-binding"));
+    let report = result
+        .reports
+        .iter()
+        .find(|report| report.path.ends_with("topic.R"))
+        .unwrap();
+    assert_eq!(report.diagnostics.len(), 2, "{report:?}");
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diag| diag.message.body.contains("`unused`"))
+    );
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diag| diag.message.body.contains("`shadowed`"))
+    );
+}
+
+#[test]
 fn super_assignment_is_not_unused() {
     // `done <<- TRUE` mutates the enclosing `done` (read via `if (done)`), so it
     // is a stateful write, not a dead local. A super-assignment must never flag

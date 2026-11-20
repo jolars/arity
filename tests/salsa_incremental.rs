@@ -3037,6 +3037,36 @@ const TOPIC_B: &str =
 const ALIAS_TOPIC: &str = "#' Manual\n#' @name manual\n#' @aliases g\n#' @usage g(x)\n#' @param x Value.\n#' @return Value.\nNULL\n";
 
 #[test]
+fn roxygen_eval_reads_update_with_the_expression_and_backdate_across_prose() {
+    let (mut db, helper, topic) = package_ab(
+        "doc <- function() \"Input.\"\n",
+        "#' Topic\n#' @eval doc()\ntopic <- function() NULL\n",
+    );
+    assert!(visible_symbols(&db, helper).scope().read_elsewhere("doc"));
+
+    db.clear_query_log();
+    db.set_file_text(
+        topic,
+        "#' Longer title\n#' @eval doc()\ntopic <- function() NULL\n",
+    );
+    assert!(visible_symbols(&db, helper).scope().read_elsewhere("doc"));
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ProjectGraph),
+        None
+    );
+
+    db.set_file_text(
+        topic,
+        "#' Longer title\n#' @eval other()\ntopic <- function() NULL\n",
+    );
+    assert!(!visible_symbols(&db, helper).scope().read_elsewhere("doc"));
+    assert_eq!(
+        count_by_kind(&db.query_log()).get(&QueryKind::ProjectGraph),
+        Some(&1)
+    );
+}
+
+#[test]
 fn roxygen_alias_projection_backdates_across_prose_offsets_and_bodies() {
     let exported = "#' @export\ng <- function(x) x\n";
     let (mut db, a, b) = package_ab(ALIAS_TOPIC, exported);

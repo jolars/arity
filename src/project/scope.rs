@@ -191,6 +191,8 @@ pub struct FileFacts {
     /// Names read through runtime syntax. These mark definitions used but do
     /// not participate in name resolution.
     pub use_only_reads: Arc<BTreeSet<String>>,
+    /// Reads from the documentation environment of a package.
+    pub roxygen_eval_reads: Option<Arc<super::roxygen::RoxygenEvalReads>>,
     /// Top-level `source()` edges this file declares (range-free).
     pub source_edges: Arc<Vec<SourceEdgeKey>>,
     /// This file's top-level execution sequence (range-free, order-bearing): the
@@ -580,6 +582,30 @@ impl ProjectScope {
             }
         }
 
+        // Documentation runs in a package environment, so these reads apply
+        // even when a helper and its `@eval` tag are in the same file.
+        let mut documentation_reads: HashMap<&Path, BTreeSet<&str>> = HashMap::new();
+        for file in files {
+            let (Some(root), Some(reads)) = (
+                file.package_root.as_deref(),
+                file.roxygen_eval_reads.as_deref(),
+            ) else {
+                continue;
+            };
+            documentation_reads
+                .entry(root)
+                .or_default()
+                .extend(reads.bare.iter().map(String::as_str));
+            for read in &reads.qualified {
+                if let Some(&Some(root)) = roots_by_name.get(read.package.as_str()) {
+                    documentation_reads
+                        .entry(root)
+                        .or_default()
+                        .insert(read.name.as_str());
+                }
+            }
+        }
+
         // A file's reads, normalized once here rather than once per file that
         // sees it. Backticking is a *spelling*, not a different name: `foo` and
         // `` `foo` `` are one binding. Reads are recorded as spelled, so
@@ -771,6 +797,7 @@ impl ProjectScope {
                                     .into_iter()
                                     .flat_map(|names| names.iter().copied()),
                             )
+                            .chain(documentation_reads.get(root).into_iter().flatten().copied())
                             .map(str::to_string)
                             .collect(),
                     ),
@@ -787,6 +814,7 @@ impl ProjectScope {
                 .clone();
             let added = read_added.remove(f.path.as_path()).unwrap_or_default();
             let external = root.and_then(|r| qualified_from_outside.get(r));
+            let documentation = root.and_then(|r| documentation_reads.get(r));
             // A name with two or more readers survives the exclusion of any
             // single one; a name with one reader survives unless that reader is
             // us — and even then, a file that `source()`s us may read it, which
@@ -800,6 +828,7 @@ impl ProjectScope {
                         counts.get(*name) == Some(&1)
                             && !added.contains(*name)
                             && !external.is_some_and(|names| names.contains(*name))
+                            && !documentation.is_some_and(|names| names.contains(*name))
                     })
                     .map(str::to_string)
                     .collect(),
@@ -1323,6 +1352,7 @@ mod tests {
             free_reads: Arc::new(set(reads)),
             qualified_reads: Arc::new(BTreeSet::new()),
             use_only_reads: Arc::new(BTreeSet::new()),
+            roxygen_eval_reads: None,
             source_edges: Arc::new(edges),
             top_level_events: Arc::new(Vec::new()),
             source_program: None,
@@ -1364,6 +1394,7 @@ mod tests {
             free_reads: Arc::new(BTreeSet::new()),
             qualified_reads: Arc::new(BTreeSet::new()),
             use_only_reads: Arc::new(BTreeSet::new()),
+            roxygen_eval_reads: None,
             source_edges: Arc::new(edges),
             top_level_events: Arc::new(events),
             source_program: None,

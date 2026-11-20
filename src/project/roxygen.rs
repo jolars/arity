@@ -18,7 +18,7 @@
 //! [`file_class_defs`]: crate::project::file_class_defs
 //! [`file_def_sites`]: crate::project::file_def_sites
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rowan::ast::AstNode as _;
 use rowan::{TextRange, TextSize};
@@ -26,12 +26,72 @@ use smol_str::SmolStr;
 
 use crate::ast::{AssignmentExpr, FunctionExpr, RoxygenBlock, RoxygenSection};
 use crate::semantic::symbols::unbacktick;
+use crate::semantic::{QualifiedRead, SemanticModel};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 
 mod registered_tags;
 mod usage;
 pub(crate) use registered_tags::registered_tags;
 pub use usage::{TopicUsage, UsageSignature};
+
+/// Package binding reads from code in `@eval` tags, independent of source ranges.
+#[derive(Debug, Default, PartialEq, Eq, salsa::SalsaValue)]
+pub struct RoxygenEvalReads {
+    pub(crate) bare: BTreeSet<String>,
+    pub(crate) qualified: BTreeSet<QualifiedRead>,
+}
+
+pub(crate) fn file_roxygen_eval_reads(root: &SyntaxNode) -> RoxygenEvalReads {
+    let mut reads = RoxygenEvalReads::default();
+    for block in root.descendants().filter_map(RoxygenBlock::cast) {
+        for section in block.sections() {
+            let mut tokens = section
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|el| el.into_token());
+            let tag_name = tokens.find(|token| token.kind() == SyntaxKind::ROXYGEN_TAG_NAME);
+            if !tag_name.is_some_and(|token| token.text() == "eval") {
+                continue;
+            }
+            let mut code = String::new();
+            let mut after_marker = true;
+            for token in tokens {
+                if token.kind() == SyntaxKind::ROXYGEN_MARKER {
+                    // Drop indentation before the marker. Roxygen2 also
+                    // consumes one whitespace character after it.
+                    if let Some(newline) = code.rfind('\n') {
+                        code.truncate(newline + 1);
+                    }
+                    after_marker = true;
+                    continue;
+                }
+                let mut text = token.text();
+                if after_marker {
+                    text = text.strip_prefix([' ', '\t']).unwrap_or(text);
+                    after_marker = false;
+                }
+                code.push_str(text);
+            }
+
+            let parsed = crate::parser::parse(&code.replace("@@", "@"));
+            if !parsed.diagnostics.is_empty() {
+                continue;
+            }
+            let model = SemanticModel::build(&parsed.cst);
+            reads.bare.extend(
+                model
+                    .idents()
+                    .iter()
+                    .filter(|ident| !ident.data_masked && model.may_read_externally(ident))
+                    .map(|ident| unbacktick(&ident.name).to_owned()),
+            );
+            reads
+                .qualified
+                .extend(model.qualified_reads().iter().cloned());
+        }
+    }
+    reads
+}
 
 /// One roxygen block's contribution to an Rd topic.
 ///

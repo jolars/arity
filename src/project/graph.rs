@@ -600,6 +600,10 @@ pub fn project_graph(db: &dyn IncrementalDb) -> ProjectScope {
             free_reads: Arc::clone(file_free_reads(db, m.file)),
             qualified_reads: Arc::clone(file_qualified_reads(db, m.file)),
             use_only_reads: Arc::clone(file_use_only_reads(db, m.file)),
+            roxygen_eval_reads: m
+                .package_root
+                .as_ref()
+                .map(|_| Arc::clone(crate::incremental::file_roxygen_eval_reads(db, m.file))),
             source_edges: Arc::clone(source_edges(db, m.file)),
             top_level_events: Arc::clone(top_level_events(db, m.file)),
             source_program: source_members
@@ -913,6 +917,7 @@ pub(crate) fn build_class_index(
                 free_reads: empty_names.clone(),
                 qualified_reads: Arc::default(),
                 use_only_reads: empty_names.clone(),
+                roxygen_eval_reads: None,
                 source_edges,
                 top_level_events,
                 // Class lookup uses top-level events so method-body edits backdate.
