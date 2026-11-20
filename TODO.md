@@ -869,7 +869,7 @@ coverage need not block useful workspace support.
   including supported `NAMESPACE` directives. Extend Go to Implementation to
   member overrides and visible source implementations of known external
   generics. Require real source spans for location-bearing results.
-- [ ] Show source-backed S3 class vectors as observed dispatch order in type
+- [x] Show source-backed S3 class vectors as observed dispatch order in type
   hierarchy. Verify S7 declarations, qualified parents, and aliases across
   workspace files.
 - [ ] Give member and registered methods their own call-hierarchy items.

@@ -6,7 +6,9 @@
 
 use super::*;
 use crate::incremental::normalize_path;
-use crate::project::classes::{class_name_at, class_source_sites_at, locate_class_def_in};
+use crate::project::classes::{
+    S3ClassEvidence, class_name_at, class_source_sites_at, locate_class_def_in,
+};
 use crate::project::{ClassId, ClassIndex, file_class_defs};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,26 +98,64 @@ pub(crate) fn prepare_type_hierarchy_via_db(
             .min(text.len()) as u32,
     );
     let root = parse(text).cst;
-    let (_, value) = class_name_at(&root, offset)?;
+    let (token, value) = class_name_at(&root, offset)?;
     let prepare = |snapshot: &Analysis| {
         let model = snapshot.semantic_model_in(path, &root);
         let (facts, sites, occurrence) = class_source_sites_at(&model, &root, &value);
-        let candidate = oop::class_candidate(&sites, occurrence, value.text_range())?;
+        let candidate = oop::class_candidate(&sites, occurrence, value.text_range());
+        let observed = (token.kind() == SyntaxKind::IDENT
+            && (value.as_node().is_some()
+                || model
+                    .idents()
+                    .iter()
+                    .any(|ident| ident.range == token.text_range())))
+        .then(|| {
+            value
+                .parent()
+                .and_then(CallExpr::cast)
+                .filter(|call| call.base().as_ref() == Some(&value))
+                .map_or_else(|| value.clone(), |call| call.syntax().clone().into())
+        });
+        if candidate.is_none() && observed.is_none() {
+            return None;
+        }
         let index = snapshot.class_index_in(path, &facts, &root, &model);
-        let ids = candidate.resolve(&index, path);
-        let items: Vec<_> = ids
-            .iter()
+        let items: Vec<_> = candidate
+            .into_iter()
+            .flat_map(|candidate| candidate.resolve(&index, path))
             .filter_map(|id| {
                 class_item(
                     snapshot,
                     &index,
-                    id,
+                    &id,
                     Some((path, uri, &root, line_index)),
                     encoding,
                 )
             })
             .collect();
-        (!items.is_empty()).then_some(items)
+        if !items.is_empty() {
+            return Some(items);
+        }
+        let observed = observed?;
+        let S3ClassEvidence::Explicit(classes) =
+            index.s3_class_evidence(path, &root, &model, &observed)
+        else {
+            return None;
+        };
+        if classes.is_empty() {
+            return None;
+        }
+        Some(vec![TypeHierarchyItem {
+            name: classes.join(" → "),
+            kind: LspSymbolKind::CLASS,
+            tags: None,
+            detail: Some("Observed S3 dispatch order".into()),
+            uri: uri.clone(),
+            range: text_range_to_lsp_range(line_index, observed.text_range(), encoding),
+            selection_range: text_range_to_lsp_range(line_index, token.text_range(), encoding),
+            // An observation describes this value, so it has no declaration edges.
+            data: None,
+        }])
     };
     salsa::Cancelled::catch(AssertUnwindSafe(|| prepare(snapshot))).unwrap_or_else(|_| {
         // A write elsewhere can cancel this snapshot without changing the live
@@ -222,6 +262,57 @@ mod tests {
     }
 
     // --- prepare ------------------------------------------------------------
+
+    #[test]
+    fn s3_hierarchy_shows_each_observed_vector_in_dispatch_order() {
+        let source =
+            "source('b.R')\nx <- make()\ny <- structure(1, class = c('Z', 'Other'))\nconsume(y)\n";
+        let snapshot = rename_workspace(
+            source,
+            "make <- function() structure(1, class = c('Z', 'A', 'Z'))\n",
+        );
+        for (needle, order) in [("make()", "Z → A → Z"), ("consume(y)", "Z → Other")] {
+            let offset =
+                source.find(needle).unwrap() + if needle.starts_with("consume") { 8 } else { 0 };
+            let items = prepare_at(&snapshot, &ws_path("a.R"), source, offset);
+            assert_eq!(items.len(), 1, "{needle}");
+            assert_eq!(items[0].name, order);
+            assert_eq!(
+                items[0].detail.as_deref(),
+                Some("Observed S3 dispatch order")
+            );
+            assert_eq!(items[0].selection_range.start, pos_at(source, offset));
+            for relatives in [supertypes_via_db, subtypes_via_db] {
+                assert!(
+                    relatives(&snapshot, &items[0], PositionEncoding::Utf16)
+                        .unwrap()
+                        .is_empty()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn s3_hierarchy_requires_explicit_proven_classes() {
+        for source in [
+            "x <- 1\nconsume(x)\n",
+            "x <- structure(1, class = dynamic())\nconsume(x)\n",
+            "structure <- function(...) 1\nx <- structure(1, class = 'A')\nconsume(x)\n",
+            "x <- structure(1, class = 'A')\nclass(x) <- dynamic()\nconsume(x)\n",
+        ] {
+            let snapshot = rename_workspace(source, "");
+            assert!(
+                prepare_at(
+                    &snapshot,
+                    &ws_path("a.R"),
+                    source,
+                    source.rfind("x)").unwrap()
+                )
+                .is_empty(),
+                "{source}"
+            );
+        }
+    }
 
     #[test]
     fn hierarchy_misses_do_not_read_workspace_class_facts() {
@@ -410,6 +501,54 @@ mod tests {
         assert_eq!(items[0].name, "Display");
         assert_eq!(items[0].uri, uri::from_path(&parent).unwrap());
         assert!(prepare_at(&snapshot, &child, source, source.find("one::").unwrap()).is_empty());
+    }
+
+    #[test]
+    fn s7_hierarchy_follows_qualified_parents_and_exported_aliases_across_files() {
+        let mut db = IncrementalDatabase::default();
+        let package = ws_path("one");
+        let parent = package.join("R/base.R");
+        let aliases = package.join("R/alias.R");
+        let child = ws_path("child.R");
+        let parent_source = "Parent <- S7::new_class('Display')\n";
+        let source = "LocalAlias <- one::ExportedAlias\nDirect <- S7::new_class('Direct', parent = one::Parent)\nChild <- S7::new_class('Child', parent = LocalAlias)\n";
+        let a = db.upsert_file(&parent, parent_source);
+        let b = db.upsert_file(&aliases, "ExportedAlias <- Parent\n");
+        let c = db.upsert_file(&child, source);
+        db.set_workspace_members(vec![a, b, c], vec![ws_root()]);
+        db.refresh_descriptions([package.clone()]);
+        db.upsert_description(&package, "Package: one\nCollate: 'base.R' 'alias.R'\n");
+        db.set_package_metadata(vec![crate::project::PackageInfo {
+            root: package,
+            namespace: Some("export(Parent, ExportedAlias)\n".into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        let snapshot = db.snapshot();
+        let base = &prepare_at(
+            &snapshot,
+            &parent,
+            parent_source,
+            parent_source.find("Display").unwrap(),
+        )[0];
+        assert_eq!(base.name, "Display");
+        for (needle, skip) in [("::Parent", 2), ("::ExportedAlias", 2), ("= LocalAlias", 2)] {
+            let items = prepare_at(
+                &snapshot,
+                &child,
+                source,
+                source.find(needle).unwrap() + skip,
+            );
+            assert_eq!(items.as_slice(), std::slice::from_ref(base), "{needle}");
+        }
+        let children = subtypes_via_db(&snapshot, base, PositionEncoding::Utf16).unwrap();
+        let names: BTreeSet<_> = children.iter().map(|item| item.name.as_str()).collect();
+        assert_eq!(names, BTreeSet::from(["Direct", "Child"]));
+        for item in children {
+            assert_eq!(item.uri, uri::from_path(&child).unwrap());
+            let parents = supertypes_via_db(&snapshot, &item, PositionEncoding::Utf16).unwrap();
+            assert_eq!(parents.as_slice(), std::slice::from_ref(base));
+        }
     }
 
     #[test]
