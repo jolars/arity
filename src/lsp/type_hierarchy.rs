@@ -72,7 +72,10 @@ fn class_item(
         selection_range: text_range_to_lsp_range(line_index, loc.name_range, encoding),
         data: Some(
             serde_json::to_value(ItemData {
-                id: id.clone(),
+                id: ClassId {
+                    path: normalize_path(&id.path),
+                    key: id.key.clone(),
+                },
                 fingerprint: format!("{:016x}", class.fingerprint),
             })
             .ok()?,

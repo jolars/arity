@@ -470,11 +470,11 @@ impl ClassIndex {
     fn s4_load_workspace_root(&self, package: Option<&str>, roots: &mut BTreeSet<PathBuf>) -> bool {
         match package {
             Some("base" | "methods") => true,
-            Some(package) if let Some(root) = self.s4_workspace_root(package) => {
+            Some(package) => self.s4_workspace_root(package).is_some_and(|root| {
                 roots.insert(root.clone());
                 true
-            }
-            _ => false,
+            }),
+            None => false,
         }
     }
 

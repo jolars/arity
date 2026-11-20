@@ -1891,6 +1891,13 @@ pub struct CrossFileBinding {
 pub struct Analysis(IncrementalDatabase);
 
 impl Analysis {
+    pub(crate) fn pending_write_cancelled(&self) -> bool {
+        salsa::Cancelled::catch(std::panic::AssertUnwindSafe(|| {
+            salsa::Database::unwind_if_revision_cancelled(&self.0);
+        }))
+        .is_err_and(|reason| matches!(reason, salsa::Cancelled::PendingWrite))
+    }
+
     pub(crate) fn semantic_model_in(&self, path: &Path, root: &SyntaxNode) -> SemanticModel {
         let file = self.lookup_file(path);
         let floor = file.and_then(|file| file.s7_floor(&self.0).as_ref());

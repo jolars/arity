@@ -169,6 +169,10 @@ pub(crate) enum Outbound {
     /// or replace it with `ContentModified` (superseded). See
     /// [`GlobalState::on_read_reply`].
     ReadReply(Response),
+    RetryRename {
+        id: RequestId,
+        job: Box<ReadJob>,
+    },
     RenameReply {
         response: Response,
         workspace: bool,
@@ -1155,6 +1159,7 @@ impl GlobalState {
             buffer,
             offset,
             peers,
+            retried: false,
             out: self.out_tx.clone(),
         });
     }
@@ -1214,6 +1219,7 @@ impl GlobalState {
             new_name,
             target,
             peers,
+            retried: false,
             out: self.out_tx.clone(),
         });
     }
@@ -1714,6 +1720,11 @@ impl GlobalState {
                     read.peers.clear();
                 }
                 self.on_read_reply(response);
+            }
+            Outbound::RetryRename { id, job } => {
+                if self.live_reads.contains_key(&id) {
+                    self.dispatch_read(*job);
+                }
             }
             Outbound::ReadReply(response) => self.on_read_reply(response),
             Outbound::RelintAll => self.request_relint_all(),

@@ -172,6 +172,7 @@ pub(crate) enum ReadJob {
         buffer: Arc<TextBuffer>,
         offset: usize,
         peers: Vec<(PathBuf, Arc<TextBuffer>)>,
+        retried: bool,
         out: Sender<Outbound>,
     },
     Rename {
@@ -186,6 +187,7 @@ pub(crate) enum ReadJob {
         new_name: String,
         target: Option<ObjectRenameAnchor>,
         peers: Vec<(PathBuf, Arc<TextBuffer>)>,
+        retried: bool,
         out: Sender<Outbound>,
     },
     WillRenameFiles {
@@ -432,12 +434,32 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             buffer,
             offset,
             peers,
+            retried,
             out,
         } => {
-            let prepared = prepare_rename_via_db(&snapshot, &path, &uri, &buffer, offset, encoding)
-                .filter(|prepared| {
-                    prepared.anchor.local || rename_peers_current(&snapshot, &peers)
+            let prepared = if snapshot.pending_write_cancelled() {
+                None
+            } else {
+                prepare_rename_via_db(&snapshot, &path, &uri, &buffer, offset, encoding).filter(
+                    |prepared| prepared.anchor.local || rename_peers_current(&snapshot, &peers),
+                )
+            };
+            if prepared.is_none() && !retried && snapshot.pending_write_cancelled() {
+                let _ = out.send(Outbound::RetryRename {
+                    id: id.clone(),
+                    job: Box::new(ReadJob::PrepareRename {
+                        id,
+                        path,
+                        uri,
+                        buffer,
+                        offset,
+                        peers,
+                        retried: true,
+                        out: out.clone(),
+                    }),
                 });
+                return;
+            }
             let _ = out.send(Outbound::PreparedRename {
                 id,
                 uri,
@@ -453,9 +475,12 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             new_name,
             target,
             peers,
+            retried,
             out,
         } => {
-            let result = if let Some(target) = target {
+            let result = if snapshot.pending_write_cancelled() {
+                None
+            } else if let Some(target) = &target {
                 if is_syntactic_r_name(&new_name) && rename_peers_current(&snapshot, &peers) {
                     oop::object_rename(
                         &snapshot,
@@ -482,6 +507,24 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
                 rename_with_scope(&snapshot, &path, &uri, &buffer, offset, &new_name, encoding)
                     .filter(|(_, workspace)| !workspace || rename_peers_current(&snapshot, &peers))
             };
+            if result.is_none() && !retried && snapshot.pending_write_cancelled() {
+                let _ = out.send(Outbound::RetryRename {
+                    id: id.clone(),
+                    job: Box::new(ReadJob::Rename {
+                        id,
+                        path,
+                        uri,
+                        buffer,
+                        offset,
+                        new_name,
+                        target,
+                        peers,
+                        retried: true,
+                        out: out.clone(),
+                    }),
+                });
+                return;
+            }
             let workspace = result.as_ref().is_none_or(|(_, workspace)| *workspace);
             let _ = out.send(Outbound::RenameReply {
                 response: Response::new_ok(id, result.map(|(edit, _)| edit)),
@@ -680,6 +723,76 @@ fn rename_peers_current(snapshot: &Analysis, peers: &[(PathBuf, Arc<TextBuffer>)
 #[cfg(test)]
 mod document_semantics_tests {
     use super::*;
+
+    #[test]
+    fn rename_retries_after_a_pending_write() {
+        let path = ws_path("a.R");
+        let uri = uri::from_path(&path).unwrap();
+        let source = "f <- function(x) x + 1";
+        let mut db = IncrementalDatabase::default();
+        let origin = db.upsert_file(&path, source);
+        let peer = db.upsert_file(&ws_path("b.R"), "y <- 1");
+        db.set_workspace_members(vec![origin, peer], vec![ws_root()]);
+        let (out, rx) = crossbeam_channel::unbounded();
+        let buffer = Arc::new(TextBuffer::from(source));
+        let offset = source.find('x').unwrap();
+        let jobs = [
+            ReadJob::PrepareRename {
+                id: RequestId::from(1),
+                path: path.clone(),
+                uri: uri.clone(),
+                buffer: buffer.clone(),
+                offset,
+                peers: vec![],
+                retried: false,
+                out: out.clone(),
+            },
+            ReadJob::Rename {
+                id: RequestId::from(2),
+                path,
+                uri: uri.clone(),
+                buffer,
+                offset,
+                new_name: "value".into(),
+                target: None,
+                peers: vec![],
+                retried: false,
+                out,
+            },
+        ];
+        for (version, job) in jobs.into_iter().enumerate() {
+            let snapshot = db.snapshot();
+            let writer = std::thread::spawn(move || {
+                db.set_file_text(peer, format!("y <- {}", version + 2));
+                db
+            });
+            while !snapshot.pending_write_cancelled() {
+                std::thread::yield_now();
+            }
+            run_read(snapshot, PositionEncoding::Utf16, job);
+            db = writer.join().unwrap();
+            let Outbound::RetryRename { job, .. } = rx.try_recv().unwrap() else {
+                panic!("expected a rename retry");
+            };
+            run_read(db.snapshot(), PositionEncoding::Utf16, *job);
+            match rx.try_recv().unwrap() {
+                Outbound::PreparedRename { prepared, .. } if version == 0 => {
+                    assert_eq!(prepared.unwrap().placeholder, "x");
+                }
+                Outbound::RenameReply {
+                    response,
+                    workspace,
+                } if version == 1 => {
+                    assert!(!workspace);
+                    let result = response.response_result.unwrap();
+                    let edits = result["changes"][uri.as_str()].as_array().unwrap();
+                    assert_eq!(edits.len(), 2);
+                    assert!(edits.iter().all(|edit| edit["newText"] == "value"));
+                }
+                _ => panic!("expected a successful rename reply"),
+            }
+        }
+    }
 
     #[test]
     fn rename_checks_peer_buffer_against_the_snapshot() {
