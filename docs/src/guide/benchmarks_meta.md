@@ -1,8 +1,8 @@
-- **arity**: `0.23.0`
-- **air**: `0.11.0`
+- **arity**: `0.31.0`
+- **air**: `0.13.0`
 - **jarl**: `0.5.0`
 - **lintr**: `3.3.0.1`
 - **styler**: `1.11.0`
 - **backend**: hyperfine (min runs: 3)
 - **host**: linux/x86_64, AMD Ryzen 9 7900 12-Core Processor
-- **generated**: 2026-09-16T17:40:41Z
+- **generated**: 2026-11-20T15:26:23Z
