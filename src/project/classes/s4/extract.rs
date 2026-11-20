@@ -483,6 +483,31 @@ pub(in super::super) fn class_shape(
     Some(shape)
 }
 
+pub(in crate::project::classes) fn relation_formals(
+    name: &str,
+) -> Option<(&'static [&'static str], &'static str, &'static str)> {
+    match name {
+        "setIs" => Some((
+            &[
+                "class1",
+                "class2",
+                "test",
+                "coerce",
+                "replace",
+                "by",
+                "where",
+                "classDef",
+                "extensionObject",
+                "doComplete",
+            ],
+            "class1",
+            "class2",
+        )),
+        "setAs" => Some((&["from", "to", "def", "replace", "where"], "from", "to")),
+        _ => None,
+    }
+}
+
 pub(in super::super) fn project(
     model: &SemanticModel,
     root: &SyntaxNode,
@@ -532,24 +557,8 @@ pub(in super::super) fn project(
         }
     }
     for (call, factory, name) in factories(model, root) {
-        if !matches!(name.as_str(), "setIs" | "setAs") {
+        let Some((formals, from_argument, to_argument)) = relation_formals(&name) else {
             continue;
-        }
-        let formals: &[&str] = if name == "setIs" {
-            &[
-                "class1",
-                "class2",
-                "test",
-                "coerce",
-                "replace",
-                "by",
-                "where",
-                "classDef",
-                "extensionObject",
-                "doComplete",
-            ]
-        } else {
-            &["from", "to", "def", "replace", "where"]
         };
         let args = matched_args(&call, formals);
         let mut uncertainty = BTreeSet::new();
@@ -566,14 +575,8 @@ pub(in super::super) fn project(
         {
             uncertainty.insert(OopUncertainty::CustomEnvironment);
         }
-        let from = string(argument(
-            &args,
-            if name == "setIs" { "class1" } else { "from" },
-        ));
-        let to = string(argument(
-            &args,
-            if name == "setIs" { "class2" } else { "to" },
-        ));
+        let from = string(argument(&args, from_argument));
+        let to = string(argument(&args, to_argument));
         if !matches!(from, ClassName::Known(_)) || !matches!(to, ClassName::Known(_)) {
             uncertainty.insert(OopUncertainty::DynamicName);
         }

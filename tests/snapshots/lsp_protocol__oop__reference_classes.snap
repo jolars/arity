@@ -29,8 +29,8 @@ Completion ".self$value + increment": [[".objectPackage",5],[".objectParent",5],
 diagnostic: unused-binding severity=2 0..4 "Base"
 symbols: [["Base",5,"reference class"],["Base::value",8,"RefClass field"],["Child",5,"reference class"],["Child::read",6,"RefClass method ()"],["obj",13,null]]
 TypeHierarchy "\"Child\"": [{"children":[],"detail":"reference class","name":"Child","parents":["Base"],"selection":[104,111]}]
-Definition "Child$new": [{"range":[71,76],"text":"Child"}]
-Definition "obj$read()": null
+Definition "Child$new": [{"range":[104,111],"text":"\"Child\""}]
+Definition "obj$read()": [{"range":[147,151],"text":"read"}]
 TypeHierarchy "setRefClass(\"Base\"": [{"children":["Child"],"detail":"reference class","name":"Base","parents":[],"selection":[29,35]}]
 
 === reference_classes/declaration_identity ===
@@ -41,13 +41,12 @@ TypeHierarchy "Class = \"Child\"": [{"children":[],"detail":"S4 class","name":"C
 TypeHierarchy "contains = \"Formal\"": [{"children":["Reference"],"detail":"S4 class","name":"Formal","parents":[],"selection":[36,44]}]
 
 === reference_classes/use_sites ===
-known gap: Reference methods have no member definition navigation.
 diagnostics: []
 symbols: [["AuditCounter",5,"reference class"],["AuditCounter::value",8,"RefClass field"],["AuditCounter::read",6,"RefClass method ()"],["AuditCounter::get",6,"RefClass method ()"],["obj",13,null]]
-Definition "obj$read()": null
+Definition "obj$read()": [{"range":[102,106],"text":"read"}]
 SignatureHelp "obj$get()": {"active_parameter":null,"signatures":["get()"]}
 Completion ".self$read()": [[".objectPackage",5],[".objectParent",5],[".refClassDef",5],[".self",5],["callSuper",2],["copy",2],["export",2],["field",2],["get",2],["getClass",2],["getRefClass",2],["import",2],["initFields",2],["read",2],["show",2],["trace",2],["untrace",2],["usingMethods",2],["value",5]]
-References "Counter$new": [{"range":[167,174],"text":"Counter"},{"range":[0,7],"text":"Counter"}]
+References "Counter$new": [{"range":[0,7],"text":"Counter"},{"range":[35,49],"text":"\"AuditCounter\""},{"range":[167,174],"text":"Counter"}]
 
 === reference_classes/incomplete ===
 diagnostic: syntax-error severity=1 114..115 "$"

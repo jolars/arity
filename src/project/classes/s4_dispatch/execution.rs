@@ -159,7 +159,7 @@ impl ClassIndex {
                 return if context.deferred {
                     Present
                 } else {
-                    match self.s4_package_order(root, path, &context.path) {
+                    match self.package_file_order(root, path, &context.path) {
                         Some(std::cmp::Ordering::Less) => Present,
                         Some(_) => Absent,
                         None => Unknown,
@@ -230,18 +230,6 @@ impl ClassIndex {
         Unknown
     }
 
-    pub(super) fn s4_package_order(
-        &self,
-        root: &Path,
-        left: &Path,
-        right: &Path,
-    ) -> Option<std::cmp::Ordering> {
-        let order = self.load_orders.get(root)?.as_ref()?;
-        let left = order.iter().position(|path| path == left)?;
-        let right = order.iter().position(|path| path == right)?;
-        Some(left.cmp(&right))
-    }
-
     pub(super) fn s4_event_order(
         &self,
         (left, left_event): (&Path, usize),
@@ -254,7 +242,7 @@ impl ClassIndex {
         if self.file(right)?.package_root.as_ref()? != root {
             return None;
         }
-        self.s4_package_order(root, left, right)
+        self.package_file_order(root, left, right)
     }
 }
 

@@ -13,7 +13,7 @@ diagnostics: []
 symbols: [["describe",12,"S3 generic (x)"],["describe.point",6,"S3 method for point (x)"],["obj",13,null]]
 Definition "describe(obj)": [{"range":[0,8],"text":"describe"}]
 Completion "obj$value": []
-References "describe(obj)": [{"range":[208,216],"text":"describe"},{"range":[0,8],"text":"describe"}]
+References "describe(obj)": [{"range":[0,8],"text":"describe"},{"range":[34,44],"text":"\"describe\""},{"range":[208,216],"text":"describe"}]
 Definition ".Generic,": null
 References ".Generic,": [{"range":[85,93],"text":".Generic"}]
 PrepareRename ".Generic,": null

@@ -230,9 +230,6 @@
     ]
   },
   "reference_classes/use_sites": {
-    "known_gaps": [
-      "Reference methods have no member definition navigation."
-    ],
     "probes": [
       {
         "method": "definition",
@@ -329,9 +326,6 @@
     ]
   },
   "r6/use_sites": {
-    "known_gaps": [
-      "Declared members have no member definition."
-    ],
     "probes": [
       {
         "method": "type-hierarchy",

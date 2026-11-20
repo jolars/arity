@@ -965,6 +965,77 @@ impl ClassIndex {
             generics: builtins::generics().to_vec(),
             ..S4Registry::default()
         };
+        use crate::rindex::schema::ObjectSystem;
+        for package in resolution.indexed.packages() {
+            if self.s4_workspace_package(package) {
+                continue;
+            }
+            let Some(index) = resolution.indexed.package_if_resident(package) else {
+                continue;
+            };
+            for generic in &index.objects.generics {
+                if generic.system != ObjectSystem::S4
+                    || generic.origin.binding != generic.identity.name
+                    || generic
+                        .identity
+                        .package
+                        .as_ref()
+                        .is_some_and(|owner| owner != package)
+                    || !index
+                        .symbols
+                        .iter()
+                        .any(|symbol| symbol.exported && symbol.name == generic.origin.binding)
+                {
+                    continue;
+                }
+                let id = S4GenericId::Named {
+                    package: package.to_string(),
+                    name: generic.identity.name.to_string(),
+                };
+                if registry.generics.iter().any(|generic| generic.id == id) {
+                    continue;
+                }
+                let signature = generic.formals.as_ref().map(|formals| CallableSignature {
+                    parameters: formals
+                        .iter()
+                        .map(|formal| CallableParameter {
+                            name: formal.name.to_string(),
+                            default: formal.default.clone(),
+                        })
+                        .collect(),
+                });
+                let mut uncertainty = BTreeSet::new();
+                let dispatch_arguments = generic.dispatch_arguments.as_ref().map_or_else(
+                    || {
+                        uncertainty.insert(OopUncertainty::DynamicSignature);
+                        vec![ClassName::Unknown]
+                    },
+                    |arguments| {
+                        arguments
+                            .iter()
+                            .map(|name| ClassName::Known(name.to_string()))
+                            .collect()
+                    },
+                );
+                registry.generics.push(S4Generic {
+                    id,
+                    declaration: None,
+                    object: None,
+                    signature,
+                    skeleton: None,
+                    dispatch_arguments,
+                    groups: Vec::new(),
+                    group: false,
+                    simple_inheritance_only: None,
+                    uncertainty,
+                    default: S4DefaultMethod {
+                        kind: S4DefaultKind::Unknown,
+                        signature: None,
+                        implementation: None,
+                    },
+                });
+            }
+        }
         for file in self.oop_files() {
             for declaration in file
                 .facts
@@ -1688,6 +1759,29 @@ impl ClassIndex {
                 return reexported;
             }
         }
+        if reference.by_binding {
+            let package = reference.package.clone().or_else(|| {
+                if self.s4_preceding_binding(path, name, point).is_some()
+                    || !self
+                        .definition_files(path, name, lookup.deferred)
+                        .is_empty()
+                    || !self.class_file_complete(path)
+                {
+                    return None;
+                }
+                self.s4_import_package(path, name)
+            });
+            if let Some(package) = package {
+                let indexed = registry.generics.iter().filter(|generic| {
+                    generic.declaration.is_none()
+                        && matches!(&generic.id, S4GenericId::Named { package: owner, name: binding }
+                            if *owner == package && binding == name)
+                }).collect::<Vec<_>>();
+                if !indexed.is_empty() {
+                    return indexed;
+                }
+            }
+        }
         // Qualified objects require exported values even if their method table
         // is visible through a registration or a methods import.
         if reference.by_binding
@@ -1823,16 +1917,45 @@ impl ClassIndex {
                 return installed;
             }
         }
-        // String lookup still finds registered group objects through an
-        // ordinary same-named binding. Replacement S4 declarations were
-        // resolved above and take precedence over this fallback.
+        // Installed tables need an explicit qualifier or a proven import.
+        // Built-in string lookup also accepts the pinned group objects.
+        let package = reference.package.clone().or_else(|| {
+            let root = self.file(path)?.package_root.as_ref()?;
+            let methods = self
+                .s4_namespace(root)?
+                .imported_methods
+                .iter()
+                .filter(|(_, names)| names.contains(name))
+                .map(|(package, _)| package.clone());
+            let mut packages = methods
+                .chain(self.s4_import_package(path, name))
+                .collect::<BTreeSet<_>>()
+                .into_iter();
+            let first = packages.next()?;
+            packages.next().is_none().then_some(first)
+        });
         registry
             .generics
             .iter()
             .filter(|generic| {
-                !reference.by_binding && generic.declaration.is_none()
-                    && matches!(&generic.id, S4GenericId::Named { name: candidate, package }
-                    if candidate == name && reference.package.as_ref().is_none_or(|wanted| wanted == package))
+                let S4GenericId::Named {
+                    name: candidate,
+                    package: origin,
+                } = &generic.id
+                else {
+                    return false;
+                };
+                generic.declaration.is_none()
+                    && candidate == name
+                    && (if matches!(origin.as_str(), "base" | "methods") {
+                        !reference.by_binding
+                            && reference
+                                .package
+                                .as_ref()
+                                .is_none_or(|wanted| wanted == origin)
+                    } else {
+                        package.as_ref() == Some(origin)
+                    })
             })
             .collect()
     }

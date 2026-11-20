@@ -50,10 +50,92 @@ impl ClassIndex {
         {
             return None;
         }
+        let extracted = extract(model, root, true);
+        let (name, context, _, generic) =
+            self.s4_call_generic(path, root, model, call, &extracted)?;
+        let selected = self
+            .s4_called_method(&context, generic, path, root, model, call, &extracted)
+            .map(|arguments| super::super::editor::method_note(&name, &arguments));
+        Some((generic, selected))
+    }
+
+    pub(crate) fn s4_external_implementations(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        call: &CallExpr,
+    ) -> Vec<&S4Method> {
+        let extracted = extract(model, root, true);
+        let Some((_, context, loaded, generic)) =
+            self.s4_call_generic(path, root, model, call, &extracted)
+        else {
+            return Vec::new();
+        };
+        if generic.declaration.is_some() || generic.object.is_some() {
+            return Vec::new();
+        }
+        let active: Vec<_> = self
+            .s4
+            .methods
+            .iter()
+            .filter(|method| {
+                method.unique_table() == Some(generic.table())
+                    && self.s4_method_activity(&context, method, &loaded) == Present
+                    && !method
+                        .uncertainty
+                        .contains(&OopUncertainty::InvalidArguments)
+            })
+            .collect();
+        let removals: Vec<_> = self
+            .s4
+            .removals
+            .iter()
+            .filter(|removal| {
+                self.s4_generic_activity(&context, &removal.source, &loaded) == Present
+                    && removal.uncertainty.is_empty()
+                    && matches!(removal.dispatch.as_slice(), [signature]
+                        if signature.complete && signature.valid && signature.table() == generic.table())
+            })
+            .map(|removal| (removal, true))
+            .collect();
+        active
+            .iter()
+            .copied()
+            .filter(|method| {
+                method.dispatch.iter().any(|signature| {
+                    signature.valid
+                        && self.s4_registration_removed(&context, method, signature, &removals)
+                            != Present
+                        && !active.iter().any(|later| {
+                            let S4MethodId::Registration(id) = &later.id else {
+                                return false;
+                            };
+                            self.class_file_complete(&later.owner.path)
+                                && later.uncertainty.iter().copied().all(|issue| {
+                                    super::selection::registration_issue(issue).is_none()
+                                })
+                                && matches!(later.dispatch.as_slice(), [replacement]
+                                    if replacement.valid && signature.same_classes(replacement))
+                                && self.s4_installation_order(&context, method.id.source(), id)
+                                    == Some(std::cmp::Ordering::Less)
+                        })
+                })
+            })
+            .collect()
+    }
+
+    fn s4_call_generic(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        call: &CallExpr,
+        extracted: &Extracted,
+    ) -> Option<(String, S4DispatchContext, BTreeSet<PathBuf>, &S4Generic)> {
         let base = call.base()?;
         let token = call.callee_token()?;
         let function = call.syntax().ancestors().find_map(FunctionExpr::cast);
-        let extracted = extract(model, root, true);
         let owner = owner_at(call.syntax(), &extracted.owners);
         let lookup = function_ref(model, root, &base, &mut BTreeSet::new());
         let (package, name) = match &lookup {
@@ -70,7 +152,7 @@ impl ClassIndex {
             lookup: lookup.clone(),
         };
         if reference.package.is_none() {
-            reference.local = s4_local_call_target(model, root, &extracted, &token, &owner)?;
+            reference.local = s4_local_call_target(model, root, extracted, &token, &owner)?;
         }
         let site = S4CallSite {
             range: call.syntax().text_range(),
@@ -96,16 +178,13 @@ impl ClassIndex {
             self.s4_add_loaded_package(&mut context, Some(package));
         }
         context.execution =
-            Some(self.s4_execution_at(path, &site, &extracted, &source_sites(root, model)));
+            Some(self.s4_execution_at(path, &site, extracted, &source_sites(root, model)));
         let (loaded, _) = self.s4_dispatch_packages(&context, &context.loaded_packages);
         let candidates = self.s4_generic_candidates_at(&context, &reference, &loaded);
         let [generic] = candidates.as_slice() else {
             return None;
         };
-        let selected = self
-            .s4_called_method(&context, generic, path, root, model, call, &extracted)
-            .map(|arguments| super::super::editor::method_note(&name, &arguments));
-        Some((generic, selected))
+        Some((name, context, loaded, generic))
     }
 
     #[allow(clippy::too_many_arguments)]

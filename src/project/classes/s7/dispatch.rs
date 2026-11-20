@@ -125,6 +125,111 @@ impl ClassIndex {
         })
     }
 
+    pub(in crate::project::classes) fn s7_external_methods(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        call: &CallExpr,
+        package: &str,
+        name: &str,
+    ) -> Vec<OopId> {
+        let target = S7GenericTarget::External {
+            package: package.into(),
+            name: name.into(),
+        };
+        let extracted = extract(model, root, false);
+        let point = extracted.oop_point_at(path, call.syntax().text_range().start());
+        let execution = self.execution(path);
+        let owner = self.file(path).and_then(|file| file.package_root.as_ref());
+        let deferred = call
+            .syntax()
+            .ancestors()
+            .any(|node| node.kind() == SyntaxKind::FUNCTION_EXPR);
+        let prior_events = execution
+            .events
+            .iter()
+            .take_while(|(file, index)| file != path || *index < point.event);
+        let eager = BTreeSet::from([package.to_owned()]);
+        let mut methods = Vec::new();
+        for file in self.oop_files() {
+            for (event, occurrence) in file.facts.oop.events.iter().enumerate() {
+                let OopEvent::S7Method(key) = occurrence else {
+                    continue;
+                };
+                if !key.owner.0.is_empty() {
+                    continue;
+                }
+                let id = OopId {
+                    path: file.path.clone(),
+                    key: key.clone(),
+                };
+                let Some(registration) = self.s7_registration(&id) else {
+                    continue;
+                };
+                if registration.targets.as_slice() != [target.clone()]
+                    || registration.implementation.is_none()
+                {
+                    continue;
+                }
+                let Some(method) = self.method(&id) else {
+                    continue;
+                };
+                if method.uncertainty.iter().any(|issue| {
+                    !matches!(
+                        issue,
+                        OopUncertainty::UnresolvedCallee | OopUncertainty::UnresolvedImplementation
+                    )
+                }) || !self.s7_signature_list_is_base(&file.path, method)
+                    || file
+                        .facts
+                        .oop
+                        .s7
+                        .methods
+                        .get(key)
+                        .and_then(|method| method.external.as_ref())
+                        .is_some_and(|external| {
+                            self.s7_helper(&id.path, &external.factory, "S7").is_none()
+                                || !self.s7_external_version(
+                                    &external.package,
+                                    external.version.as_deref(),
+                                )
+                        })
+                {
+                    continue;
+                }
+                let same_package = owner.is_some() && file.package_root.as_ref() == owner;
+                let before = if file.path == path {
+                    event < point.event
+                } else if let Some(owner) = owner.filter(|_| same_package) {
+                    self.package_file_order(owner, &file.path, path)
+                        == Some(std::cmp::Ordering::Less)
+                } else {
+                    true
+                };
+                let visible = before
+                    && prior_events
+                        .clone()
+                        .any(|(origin, index)| *origin == file.path && *index == event)
+                    || (deferred || !same_package)
+                        && file.package_root.as_ref().is_some_and(|root_path| {
+                            self.s7_runtime_package_activity(
+                                path,
+                                root_path,
+                                call,
+                                &extracted,
+                                &eager,
+                                (root, model),
+                            ) == Present
+                        });
+                if visible {
+                    methods.push(id);
+                }
+            }
+        }
+        methods
+    }
+
     fn s7_signature_list_is_base(&self, path: &Path, method: &MethodDef) -> bool {
         method
             .dispatch_factory

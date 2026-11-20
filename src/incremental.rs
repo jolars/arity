@@ -939,7 +939,7 @@ pub fn file_class_defs(db: &dyn IncrementalDb, file: SourceFile) -> FileClassFac
     crate::project::file_class_defs(semantic_model(db, file), &parsed_tree_root(db, file))
 }
 
-/// Current spans for quoted navigation. Keep them separate from the range-free
+/// Current spans for object system navigation. Keep them separate from the range-free
 /// class facts so moving a site does not invalidate the project class graph.
 #[salsa::tracked(returns(ref))]
 pub(crate) fn file_class_source_sites(
@@ -2047,8 +2047,32 @@ impl Analysis {
     }
 
     /// The shared, identity-based class graph for this snapshot.
+    pub(crate) fn namespace_sources(&self) -> &[(PathBuf, String)] {
+        &crate::project::graph::workspace_project(&self.0).namespaces
+    }
+
     pub fn class_index(&self) -> ClassIndex {
         project_classes(&self.0).clone()
+    }
+
+    pub(crate) fn tracked_class_source(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+    ) -> Option<(&FileClassFacts, &crate::project::classes::ClassSourceSites)> {
+        let file = self.lookup_file(path)?;
+        let tracked = &*parsed_document(&self.0, file).green;
+        if (std::ptr::eq(root.green(), tracked) || root.green() == tracked)
+            && model.s7_version == semantic_model(&self.0, file).s7_version
+        {
+            Some((
+                file_class_defs(&self.0, file),
+                file_class_source_sites(&self.0, file),
+            ))
+        } else {
+            None
+        }
     }
 
     /// Borrow the tracked graph when its file projection describes this read.

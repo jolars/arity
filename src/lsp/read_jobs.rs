@@ -162,6 +162,7 @@ pub(crate) enum ReadJob {
         buffer: Arc<TextBuffer>,
         position: Position,
         include_declaration: bool,
+        open_namespaces: Vec<(PathBuf, Arc<TextBuffer>)>,
         out: Sender<Outbound>,
     },
     Rename {
@@ -399,6 +400,7 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             buffer,
             position,
             include_declaration,
+            open_namespaces,
             out,
         } => {
             let result = references_via_db(
@@ -409,6 +411,7 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
                 position,
                 include_declaration,
                 encoding,
+                &open_namespaces,
             );
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }

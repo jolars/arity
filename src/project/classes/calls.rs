@@ -12,7 +12,7 @@ pub(super) fn expected_package(name: &str) -> Option<&'static str> {
         "setClass" | "setRefClass" | "setGeneric" | "setMethod" | "setReplaceMethod"
         | "signature" | "new" | "getRefClass" | "setClassUnion" | "setOldClass" | "setIs"
         | "setAs" | "representation" | "prototype" | "slot" | "slot<-" | "as" | "as<-"
-        | "callNextMethod" | "selectMethod" | "removeMethod" => "methods",
+        | "callNextMethod" | "selectMethod" | "removeMethod" | "setValidity" => "methods",
         "new_class"
         | "new_generic"
         | "method<-"
@@ -36,7 +36,7 @@ pub(super) fn expected_package(name: &str) -> Option<&'static str> {
         | "S7_on_load"
         | "S7_on_unload"
         | "S7_on_build" => "S7",
-        "getClass" | "getClassDef" => "methods",
+        "getClass" | "getClassDef" | "isClass" | "extends" | "is" => "methods",
         name if super::s7::is_builtin(name) => "S7",
         "UseMethod" | "NextMethod" | ".S3method" | "registerS3method" | "c" | "list"
         | "character" | "structure" | "class" | "class<-" | "oldClass" | "oldClass<-"
@@ -142,6 +142,15 @@ pub(crate) fn class_lookups(
             (matches!(
                 name.as_str(),
                 "getRefClass"
+                    | "getClass"
+                    | "getClassDef"
+                    | "isClass"
+                    | "extends"
+                    | "is"
+                    | "setIs"
+                    | "setAs"
+                    | "setValidity"
+                    | "new_external_class"
                     | "new"
                     | "slot"
                     | "slot<-"

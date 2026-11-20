@@ -925,6 +925,21 @@ impl Projection<'_> {
                 .map(|value| DispatchClass::Generator(self.generator(&value))),
             _ => None,
         };
+        if matches!(system, ClassSystem::RefClass | ClassSystem::S4)
+            && let Some(value) = &arg.value
+            && let ClassName::Known(name) = string_name(Some(value.clone()))
+            && matches!(&declared_type, Some(DispatchClass::Formal(class)) if *class == name)
+            && let Some(callee) = call_function_ref(self.model, self.root, call)
+        {
+            self.site_with_callee(
+                value.text_range(),
+                OopSiteRole::Use,
+                OopTarget::ClassReference(ParentRef::Formal(name)),
+                Some((callee, "methods")),
+                None,
+                None,
+            );
+        }
         self.facts.members.push(MemberDef {
             key: key.clone(),
             class: class.clone(),
@@ -1182,7 +1197,7 @@ impl Projection<'_> {
             let generic_value = if system == OopSystem::S3 {
                 function
             } else {
-                Some(SyntaxElement::Node(node))
+                Some(SyntaxElement::Node(node.clone()))
             };
             if binding_possible && let Some(value) = generic_value {
                 self.generic_values.insert(value.text_range(), key.clone());
@@ -1192,8 +1207,20 @@ impl Projection<'_> {
                     .as_ref()
                     .map_or(call.syntax().text_range(), SyntaxElement::text_range),
                 OopSiteRole::Declaration,
-                OopTarget::Declaration(key),
+                OopTarget::Declaration(key.clone()),
             );
+            if let Some(token) = match system {
+                OopSystem::S3 => AssignmentExpr::cast(node.clone())
+                    .and_then(|assignment| assignment.target_name_token()),
+                OopSystem::S7 => assigned_binding(self.model, &node),
+                _ => None,
+            } {
+                self.site(
+                    token.text_range(),
+                    OopSiteRole::Declaration,
+                    OopTarget::BindingDeclaration(key),
+                );
+            }
         }
     }
 
@@ -1343,10 +1370,15 @@ impl Projection<'_> {
             if !self.facts.generic_bindings.contains(&fact) {
                 self.facts.generic_bindings.push(fact);
             }
-            if target.system != OopSystem::S4
-                || self
-                    .generic_value(&value, &mut BTreeSet::new(), false)
-                    .is_some()
+            let declares_generic = self.sites.iter().any(|source| {
+                source.site.range == binding.def_range
+                    && matches!(&source.site.target, OopTarget::BindingDeclaration(key) if *key == target)
+            });
+            if !declares_generic
+                && (target.system != OopSystem::S4
+                    || self
+                        .generic_value(&value, &mut BTreeSet::new(), false)
+                        .is_some())
             {
                 self.site(
                     binding.def_range,
@@ -1779,6 +1811,30 @@ impl Projection<'_> {
                         .as_ref()
                         .is_some_and(|value| constant_atom(value, "NULL")))
             {
+                if !issues.contains(&OopUncertainty::CustomEnvironment) {
+                    if let Some(value) = &generic_value {
+                        self.site_with_callee(
+                            value.text_range(),
+                            OopSiteRole::Use,
+                            OopTarget::Generic(generic.clone()),
+                            Some((reference.clone(), "methods")),
+                            None,
+                            None,
+                        );
+                    }
+                    for (argument, range) in &dispatch.arguments {
+                        if let DispatchClass::Formal(name) = &argument.class {
+                            self.site_with_callee(
+                                *range,
+                                OopSiteRole::Use,
+                                OopTarget::ClassReference(ParentRef::Formal(name.clone())),
+                                Some((reference.clone(), "methods")),
+                                dispatch.factory.clone(),
+                                None,
+                            );
+                        }
+                    }
+                }
                 self.facts.s4_removals.push(S4RemovalDef {
                     key: key.clone(),
                     generic,
@@ -1945,13 +2001,15 @@ impl Projection<'_> {
                 let class_reference = match arg.class {
                     DispatchClass::Formal(name) => ParentRef::Formal(name),
                     DispatchClass::Generator(generator) => ParentRef::Generator(generator),
-                    class
-                    @ (DispatchClass::S3(_) | DispatchClass::Any | DispatchClass::Missing) => {
+                    class @ (DispatchClass::S3(_)
+                    | DispatchClass::S7(_)
+                    | DispatchClass::Any
+                    | DispatchClass::Missing) => {
                         self.site_with_callee(
                             range,
                             OopSiteRole::Use,
                             OopTarget::DispatchClass { system, class },
-                            Some((reference.clone(), package)),
+                            registration_environment_known.then(|| (reference.clone(), package)),
                             dispatch.factory.clone(),
                             None,
                         );
@@ -2090,6 +2148,82 @@ impl Projection<'_> {
         }
     }
 
+    fn generic_use_sites(
+        &mut self,
+        range: TextRange,
+        role: OopSiteRole,
+        value: &SyntaxElement,
+        methods: &HashMap<TextRange, OopKey>,
+    ) {
+        if value.kind() == SyntaxKind::STRING {
+            return;
+        }
+        let mut target = value.clone();
+        let mut visited = BTreeSet::new();
+        loop {
+            if let Some(paren) = target
+                .as_node()
+                .cloned()
+                .and_then(crate::ast::ParenExpr::cast)
+                && let Some(inner) = paren.inner()
+            {
+                target = inner;
+                continue;
+            }
+            let Some(binding) = target
+                .as_token()
+                .and_then(|token| read_binding(self.model, token))
+            else {
+                break;
+            };
+            let definition = self.model.binding(binding).def_range;
+            if definition.start() >= target.text_range().start() || !visited.insert(binding.0) {
+                break;
+            }
+            let Some(value) = stable_value(self.model, self.root, binding) else {
+                break;
+            };
+            if let Some(key) = methods.get(&definition) {
+                self.site(range, role, OopTarget::Declaration(key.clone()));
+                return;
+            }
+            target = value;
+        }
+        let Some(lookup) = function_ref(self.model, self.root, value, &mut BTreeSet::new()) else {
+            return;
+        };
+        let (name, package) = match &lookup {
+            FunctionRef::Bare { name, .. } => (name.clone(), None),
+            FunctionRef::Qualified { name, package } => (name.clone(), Some(package.clone())),
+            FunctionRef::Unresolved(_) => return,
+        };
+        let Some(node) = value.parent() else { return };
+        let owner = owner_at(&node, self.owners);
+        let internal = target
+            .as_node()
+            .cloned()
+            .and_then(BinaryExpr::cast)
+            .and_then(|binary| binary.namespace_access())
+            .is_some_and(|access| access.internal);
+        for system in [OopSystem::S3, OopSystem::S4, OopSystem::S7] {
+            let reference = GenericRef {
+                system,
+                owner: owner.clone(),
+                name: ClassName::Known(name.clone()),
+                package: package.clone(),
+                by_binding: true,
+                local: None,
+                lookup: Some(lookup.clone()),
+            };
+            let target = if internal {
+                OopTarget::InternalGeneric(reference)
+            } else {
+                OopTarget::Generic(reference)
+            };
+            self.site(range, role, target);
+        }
+    }
+
     fn use_sites(&mut self) {
         for (range, occurrence) in &self.classes.occurrences {
             match occurrence {
@@ -2123,42 +2257,89 @@ impl Projection<'_> {
                 );
             }
         }
+        let mut known_sites: std::collections::HashSet<_> =
+            self.sites.iter().map(|source| source.site.range).collect();
+        let declarations: std::collections::HashSet<_> = self
+            .sites
+            .iter()
+            .filter(|source| source.site.role == OopSiteRole::Declaration)
+            .map(|source| source.site.range)
+            .collect();
+        let methods = self
+            .sites
+            .iter()
+            .filter_map(|source| match &source.site.target {
+                OopTarget::Declaration(key)
+                    if source.site.role == OopSiteRole::Declaration
+                        && key.kind == OopKind::Method
+                        && key.system == OopSystem::S3 =>
+                {
+                    Some((source.site.range, key.clone()))
+                }
+                _ => None,
+            })
+            .collect();
         for (index, binding) in self.model.bindings().iter().enumerate() {
             let Some(value) = stable_value(self.model, self.root, BindingId::from_index(index))
             else {
                 continue;
             };
-            if let GeneratorRef::Local(key) = self.generator(&value)
-                && !self.sites.iter().map(|source| &source.site).any(|site| {
-                    site.range == binding.def_range && site.role == OopSiteRole::Declaration
-                })
-            {
-                self.site(binding.def_range, OopSiteRole::Alias, OopTarget::Class(key));
+            if !known_sites.contains(&binding.def_range) {
+                self.generic_use_sites(binding.def_range, OopSiteRole::Alias, &value, &methods);
+            }
+            let generator = self.generator(&value);
+            if generator != GeneratorRef::Unknown && !declarations.contains(&binding.def_range) {
+                self.site(
+                    binding.def_range,
+                    OopSiteRole::Alias,
+                    match generator {
+                        GeneratorRef::Local(key) => OopTarget::Class(key),
+                        _ => OopTarget::ClassReference(ParentRef::Generator(generator)),
+                    },
+                );
             }
         }
+        known_sites.extend(self.sites.iter().map(|source| source.site.range));
         for ident in self.model.idents() {
-            if self
-                .sites
-                .iter()
-                .any(|source| source.site.range == ident.range)
-            {
+            if !known_sites.insert(ident.range) {
                 continue;
             }
             let Some(token) = self.root.covering_element(ident.range).into_token() else {
                 continue;
             };
             let value = SyntaxElement::Token(token);
-            if let GeneratorRef::Local(key) = self.generator(&value) {
-                self.site(
-                    ident.range,
-                    OopSiteRole::Use,
-                    OopTarget::ClassReference(ParentRef::Generator(GeneratorRef::Local(key))),
-                );
-            } else if let Some(key) = self.generic_value(&value, &mut BTreeSet::new(), false) {
+            if let Some(key) = self.generic_value(&value, &mut BTreeSet::new(), false) {
                 self.site(ident.range, OopSiteRole::Use, OopTarget::Declaration(key));
+            } else {
+                self.generic_use_sites(ident.range, OopSiteRole::Use, &value, &methods);
+                let generator = self.generator(&value);
+                if generator != GeneratorRef::Unknown {
+                    self.site(
+                        ident.range,
+                        OopSiteRole::Use,
+                        OopTarget::ClassReference(ParentRef::Generator(generator)),
+                    );
+                }
             }
         }
         for binary in self.root.descendants().filter_map(BinaryExpr::cast) {
+            if let Some(namespace) = binary.namespace_access() {
+                if !known_sites.contains(&binary.syntax().text_range()) {
+                    self.generic_use_sites(
+                        namespace.name_token.text_range(),
+                        OopSiteRole::Use,
+                        &SyntaxElement::Node(binary.syntax().clone()),
+                        &methods,
+                    );
+                }
+                let generator = self.generator(&SyntaxElement::Node(binary.syntax().clone()));
+                self.site(
+                    namespace.name_token.text_range(),
+                    OopSiteRole::Use,
+                    OopTarget::ClassReference(ParentRef::Generator(generator)),
+                );
+                continue;
+            }
             let slot = match binary.op_kind() {
                 Some(SyntaxKind::DOLLAR) => false,
                 Some(SyntaxKind::AT) => true,
@@ -2208,6 +2389,97 @@ impl Projection<'_> {
             let Some((reference, name)) = factory(self.model, self.root, &call) else {
                 continue;
             };
+            let member_package =
+                if matches!(name.as_str(), "slot" | "slot<-") && accepts(&reference, "methods") {
+                    Some("methods")
+                } else if matches!(name.as_str(), "prop" | "prop<-") && accepts(&reference, "S7") {
+                    Some("S7")
+                } else {
+                    None
+                };
+            if let Some(package) = member_package {
+                let formals: &[_] = if name.ends_with("<-") {
+                    &["object", "name", "check", "value"]
+                } else {
+                    &["object", "name"]
+                };
+                if let Some(value) = registration_args(&call, &name, formals)
+                    .and_then(|args| argument(&args, "name"))
+                    && let ClassName::Known(name) = string_name(Some(value.clone()))
+                {
+                    self.site_with_callee(
+                        value.text_range(),
+                        OopSiteRole::Use,
+                        OopTarget::Member {
+                            receiver: MemberReceiver::Unknown,
+                            name,
+                            slot: true,
+                        },
+                        Some((reference.clone(), package)),
+                        None,
+                        None,
+                    );
+                }
+            }
+            if name == "new_external_class"
+                && accepts(&reference, "S7")
+                && let Some(args) = matched_args(&call, &["package", "name", "version"])
+                && let Some(name) = argument(&args, "name")
+            {
+                let class = self.s7_spec(&SyntaxElement::Node(call.syntax().clone()), 0);
+                if matches!(class, S7ClassSpec::External { .. }) {
+                    self.site_with_callee(
+                        name.text_range(),
+                        OopSiteRole::Use,
+                        OopTarget::DispatchClass {
+                            system: OopSystem::S7,
+                            class: DispatchClass::S7(class),
+                        },
+                        Some((reference.clone(), "S7")),
+                        None,
+                        None,
+                    );
+                }
+            }
+            let class_formals: Option<(&[_], &str, Option<&str>)> = match name.as_str() {
+                "getClass" => Some((&["Class", ".Force", "where", "package"], "Class", None)),
+                "getClassDef" => Some((&["Class", "where", "package", "inherits"], "Class", None)),
+                "isClass" => Some((&["Class", "formal", "where"], "Class", None)),
+                "getRefClass" => Some((&["Class", "where"], "Class", None)),
+                "extends" => Some((
+                    &["class1", "class2", "maybe", "fullInfo"],
+                    "class1",
+                    Some("class2"),
+                )),
+                "as" => Some((&["object", "Class", "strict", "ext"], "Class", None)),
+                "is" => Some((&["object", "class2"], "class2", None)),
+                "setValidity" => Some((&["Class", "method", "where"], "Class", None)),
+                name => {
+                    s4::relation_formals(name).map(|(formals, from, to)| (formals, from, Some(to)))
+                }
+            };
+            if accepts(&reference, "methods")
+                && let Some((formals, first, second)) = class_formals
+                && let Some(args) = matched_args(&call, formals)
+                && ["where", "package", "classDef", "extensionObject"]
+                    .into_iter()
+                    .all(|argument| !args.contains_key(argument))
+            {
+                for name in [Some(first), second].into_iter().flatten() {
+                    if let Some(value) = argument(&args, name)
+                        && let ClassName::Known(class) = string_name(Some(value.clone()))
+                    {
+                        self.site_with_callee(
+                            value.text_range(),
+                            OopSiteRole::Use,
+                            OopTarget::ClassReference(ParentRef::Formal(class)),
+                            Some((reference.clone(), "methods")),
+                            None,
+                            None,
+                        );
+                    }
+                }
+            }
             if name == "new" && accepts(&reference, "methods") {
                 let value = matched_args(&call, &["Class", "..."])
                     .and_then(|args| argument(&args, "Class"));

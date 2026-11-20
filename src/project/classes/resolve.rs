@@ -97,7 +97,7 @@ impl ClassIndex {
         self.namespace.s4_reexports(package, name)
     }
 
-    pub(super) fn s4_workspace_root(&self, package: &str) -> Option<&PathBuf> {
+    pub(crate) fn s4_workspace_root(&self, package: &str) -> Option<&PathBuf> {
         let mut roots = self
             .s3_origins
             .package_names
@@ -225,6 +225,17 @@ impl ClassIndex {
     /// provenance and uncertainty before treating them as resolved definitions.
     pub fn file(&self, path: &Path) -> Option<&ClassFile> {
         self.files.get(path)
+    }
+
+    pub(crate) fn has_source_navigation_targets(&self) -> bool {
+        self.files.values().any(|file| {
+            let facts = &file.facts;
+            !facts.declarations.is_empty()
+                || !facts.oop.generics.is_empty()
+                || !facts.oop.methods.is_empty()
+                || !facts.oop.possible_methods.is_empty()
+                || !facts.oop.members.is_empty()
+        })
     }
 
     pub fn oop_files(&self) -> impl Iterator<Item = &ClassFile> {
@@ -571,7 +582,9 @@ impl ClassIndex {
                 self.definition_files(path, name, deferred).len() == 1
                     || self.imported_binding_files(path, name).len() == 1
             }
-            ParentRef::Generator(GeneratorRef::Qualified { .. }) => {
+            ParentRef::Generator(
+                GeneratorRef::Qualified { .. } | GeneratorRef::Internal { .. },
+            ) => {
                 self.resolve_reference(path, owner, reference, deferred)
                     .len()
                     == 1
@@ -688,8 +701,22 @@ impl ClassIndex {
                 .iter()
                 .flat_map(|path| self.generator_targets(path, name, aliases))
                 .collect(),
+            ParentRef::Generator(GeneratorRef::Internal { package, name }) => {
+                let Some(root) = self.s4_workspace_root(package) else {
+                    return Vec::new();
+                };
+                self.files
+                    .values()
+                    .filter(|file| file.package_root.as_ref() == Some(root))
+                    .flat_map(|file| self.generator_targets(&file.path, name, aliases))
+                    .collect()
+            }
             ParentRef::Generator(GeneratorRef::Unknown) | ParentRef::Unknown => Vec::new(),
         }
+    }
+
+    pub(crate) fn namespace_generator_targets(&self, path: &Path, name: &str) -> Vec<ClassId> {
+        self.generator_targets(path, name, &mut BTreeSet::new())
     }
 
     fn generator_targets(
@@ -734,6 +761,18 @@ impl ClassIndex {
         targets.sort();
         targets.dedup();
         targets
+    }
+
+    pub(super) fn package_file_order(
+        &self,
+        root: &Path,
+        left: &Path,
+        right: &Path,
+    ) -> Option<std::cmp::Ordering> {
+        let order = self.load_orders.get(root)?.as_ref()?;
+        let left = order.iter().position(|path| path == left)?;
+        let right = order.iter().position(|path| path == right)?;
+        Some(left.cmp(&right))
     }
 
     pub(super) fn definition_files(

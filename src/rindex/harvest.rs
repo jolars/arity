@@ -513,7 +513,7 @@ pub struct S3Registration {
     pub conditional: bool,
 }
 
-fn s3_registration(directive: &NamespaceDirective) -> Option<S3Registration> {
+pub(crate) fn s3_registration(directive: &NamespaceDirective) -> Option<S3Registration> {
     use crate::ast::{AstNode, BinaryExpr, token_name};
     use crate::syntax::{SyntaxElement, SyntaxKind};
     let args: Vec<_> = directive.arguments().collect();

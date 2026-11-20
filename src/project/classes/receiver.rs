@@ -202,7 +202,20 @@ impl ClassIndex {
         model: &SemanticModel,
         base: &SyntaxElement,
     ) -> Option<CallableSignature> {
-        let token = base.as_token()?;
+        let member = self.implicit_reference_member(path, root, model, base)?;
+        (member.kind == MemberKind::Method)
+            .then_some(member.signature)
+            .flatten()
+    }
+
+    pub(crate) fn implicit_reference_member(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        value: &SyntaxElement,
+    ) -> Option<ReferenceMember> {
+        let token = value.as_token()?;
         let runtime = apply_method_environments(model, root, &self.method_environments(path))?;
         let ident = runtime
             .idents()
@@ -259,10 +272,7 @@ impl ClassIndex {
             };
             member.clone()
         };
-        if member.kind != MemberKind::Method {
-            return None;
-        }
-        member.signature
+        Some(member)
     }
 }
 

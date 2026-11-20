@@ -50,6 +50,7 @@ mod s3_dispatch;
 pub use s3_dispatch::*;
 mod s4;
 mod s4_dispatch;
+pub(crate) use s4::slot_call;
 pub use s4::{
     S4Class, S4Coercion, S4Default, S4Definition, S4Facts, S4OldClass, S4Prototype, S4Relation,
     S4RelationKind, S4Slot, S4Slots,
@@ -253,6 +254,7 @@ pub enum GeneratorRef {
     Local(ClassKey),
     Free(String),
     Qualified { package: String, name: String },
+    Internal { package: String, name: String },
     Unknown,
 }
 
@@ -1027,7 +1029,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
             });
         } else if matches!(
             target,
-            GeneratorRef::Free(_) | GeneratorRef::Qualified { .. }
+            GeneratorRef::Free(_) | GeneratorRef::Qualified { .. } | GeneratorRef::Internal { .. }
         ) {
             result.facts.generator_aliases.push(GeneratorAlias {
                 owner,
@@ -1396,9 +1398,12 @@ fn generator_ref(
         .and_then(BinaryExpr::cast)
         .and_then(|binary| binary.namespace_access())
     {
-        return GeneratorRef::Qualified {
-            package: namespace.package.to_string(),
-            name: namespace.name.to_string(),
+        let package = namespace.package.to_string();
+        let name = namespace.name.to_string();
+        return if namespace.internal {
+            GeneratorRef::Internal { package, name }
+        } else {
+            GeneratorRef::Qualified { package, name }
         };
     }
     let Some(token) = value

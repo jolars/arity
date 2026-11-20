@@ -8,6 +8,7 @@ mod navigation;
 pub(super) mod presentation;
 pub(super) use navigation::{
     NameNavigation, class_candidate, implementation_locations, name_locations,
+    namespace_callable_references,
 };
 
 #[derive(Clone, Copy)]
@@ -82,6 +83,458 @@ mod tests {
             .collect();
         lines.sort_unstable();
         lines
+    }
+
+    fn lazy_index(
+        package: &crate::rindex::schema::PackageIndex,
+        directory: &Path,
+    ) -> IndexedProvider {
+        let cache = crate::rindex::cache::Cache::new(directory.to_path_buf());
+        cache.write_package(package).unwrap();
+        IndexedProvider::from_cache_lazy(&cache)
+    }
+
+    #[test]
+    fn s3_reassignments_preserve_lexical_references() {
+        let source = "describe <- function(x) UseMethod('describe')
+describe.example <- function(x) x
+describe.example <- 2
+describe.example(1)
+describe(1)
+";
+        let path = ws_path("a.R");
+        let snapshot = rename_workspace(source, "");
+        let uri = uri::from_path(&path).unwrap();
+        let buffer = TextBuffer::from(source);
+        let references = |line, include_declaration| {
+            implementation_lines(
+                references_via_db(
+                    &snapshot,
+                    &path,
+                    &uri,
+                    &buffer,
+                    Position::new(line, 1),
+                    include_declaration,
+                    PositionEncoding::Utf16,
+                    &[],
+                )
+                .unwrap(),
+            )
+        };
+        assert_eq!(references(3, true), [1, 2, 3]);
+        assert_eq!(references(4, false), [4]);
+        let offset = source.find("describe.example(1)").unwrap() + 1;
+        assert!(implementations_at(&snapshot, &path, source, offset).is_empty());
+    }
+
+    #[test]
+    fn s7_generic_declaration_is_excluded_from_use_only_references() {
+        let source = r#"describe <- S7::new_generic("describe", "x")
+describe(1)
+"#;
+        let path = ws_path("a.R");
+        let snapshot = rename_workspace(source, "");
+        let references = references_via_db(
+            &snapshot,
+            &path,
+            &uri::from_path(&path).unwrap(),
+            &TextBuffer::from(source),
+            Position::new(1, 1),
+            false,
+            PositionEncoding::Utf16,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(implementation_lines(references), [1]);
+    }
+
+    #[test]
+    fn is_class_navigation_accepts_formal() {
+        let source = "methods::setClass('Example')
+methods::isClass('Example', formal = TRUE)
+methods::isClass('Example', TRUE)
+";
+        let path = ws_path("a.R");
+        let snapshot = rename_workspace(source, "");
+        let result = references_via_db(
+            &snapshot,
+            &path,
+            &uri::from_path(&path).unwrap(),
+            &TextBuffer::from(source),
+            Position::new(0, 20),
+            false,
+            PositionEncoding::Utf16,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(implementation_lines(result), [1, 2]);
+    }
+
+    #[test]
+    fn external_implementations_follow_registration_order() {
+        let source = r#"methods::setClass("Example")
+methods::setMethod("show", "Example", function(object) 1)
+methods::setMethod("show", "Example", function(object) 2)
+methods::show(x)
+methods::removeMethod("show", "Example")
+methods::show(x)
+base::registerS3method("print", "example", function(x, ...) 1)
+base::registerS3method("print", "example", function(x, ...) 2)
+base::print(x)
+"#;
+        let path = ws_path("a.R");
+        let snapshot = rename_workspace(source, "");
+        let show = |offset| implementations_at(&snapshot, &path, source, offset);
+        assert_eq!(
+            implementation_lines(show(source.find("show(x)").unwrap() + 1)),
+            [2]
+        );
+        assert!(show(source.rfind("show(x)").unwrap() + 1).is_empty());
+        assert_eq!(
+            implementation_lines(show(source.find("print(x)").unwrap() + 1)),
+            [7]
+        );
+    }
+
+    #[test]
+    fn imported_non_r6_factory_does_not_define_r6_members() {
+        let consumer = ws_path("consumer");
+        let provider = ws_path("provider");
+        let path = consumer.join("R/source.R");
+        let source = r#"A <- R6Class("A", public = list(read = function() 1))
+"#;
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(&path, source);
+        let factory = db.upsert_file(
+            &provider.join("R/factory.R"),
+            "R6Class <- function(...) NULL",
+        );
+        db.set_workspace_members(vec![file, factory], vec![ws_root()]);
+        db.upsert_description(&consumer, "Package: consumer\nImports: provider\n");
+        db.upsert_description(&provider, "Package: provider\n");
+        db.set_package_metadata(vec![
+            PackageInfo {
+                root: consumer,
+                namespace: Some("importFrom(provider, R6Class)\n".into()),
+                dir_sources: BTreeSet::new(),
+                native_routines: BTreeSet::new(),
+            },
+            PackageInfo {
+                root: provider,
+                namespace: Some("export(R6Class)\n".into()),
+                dir_sources: BTreeSet::new(),
+                native_routines: BTreeSet::new(),
+            },
+        ]);
+        let buffer = TextBuffer::from(source);
+        let encoding = PositionEncoding::Utf16;
+        let position = buffer
+            .line_index()
+            .byte_to_position(source.find("read").unwrap() + 1, encoding);
+        assert!(
+            definition_via_db(
+                &db.snapshot(),
+                &path,
+                &uri::from_path(&path).unwrap(),
+                &buffer,
+                position,
+                encoding,
+                None,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn implementation_follows_private_r6_overrides() {
+        let source = r#"Parent <- R6::R6Class("Parent", private = list(read = function() 1))
+Child <- R6::R6Class("Child", inherit = Parent, private = list(read = function() 2))
+"#;
+        let path = ws_path("a.R");
+        let snapshot = rename_workspace(source, "");
+        let offset = source.find("read =").unwrap() + 1;
+        assert_eq!(
+            implementation_lines(implementations_at(&snapshot, &path, source, offset)),
+            [1]
+        );
+    }
+
+    #[test]
+    fn implementation_finds_member_overrides_and_visible_external_methods() {
+        let source = r#"Parent <- R6::R6Class("Parent", public = list(read = function() 1))
+Child <- R6::R6Class("Child", inherit = Parent, public = list(read = function() 2))
+Other <- R6::R6Class("Other", public = list(read = function() 3))
+print.example <- function(x, ...) x
+base::print(x)
+"#;
+        let path = ws_path("a.R");
+        let snapshot = rename_workspace(source, "print.unrelated <- function(x, ...) x");
+        for (name, line) in [("read = ", 1), ("print(x)", 3)] {
+            let offset = source.find(name).unwrap() + 1;
+            assert_eq!(
+                implementation_lines(implementations_at(&snapshot, &path, source, offset)),
+                [line],
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn implementation_uses_known_generics_from_installed_metadata() {
+        use crate::rindex::harvest::{HarvestOptions, harvest_package};
+        use crate::rindex::schema::ObjectSystem;
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rindex/oopfixture");
+        let mut package = harvest_package(&fixture, HarvestOptions::default(), 0).unwrap();
+        let generic = package
+            .objects
+            .generics
+            .iter_mut()
+            .find(|generic| generic.origin.binding == "area")
+            .unwrap();
+        generic.system = ObjectSystem::S3;
+        let source = "library(oopfixture)\nbase::.S3method('area', 'example', function(x) x)\noopfixture::area(x)\n";
+        let path = ws_path("a.R");
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(&path, source);
+        db.set_workspace_members(vec![file], vec![ws_root()]);
+        let offset = source.find("area(x)").unwrap() + 1;
+        assert!(implementations_at(&db.snapshot(), &path, source, offset).is_empty());
+        let directory = tempfile::tempdir().unwrap();
+        db.set_library_index(lazy_index(&package, directory.path()));
+        assert_eq!(
+            implementation_lines(implementations_at(&db.snapshot(), &path, source, offset)),
+            [1]
+        );
+    }
+
+    #[test]
+    fn implementation_finds_visible_methods_of_installed_s7_generics() {
+        use crate::rindex::harvest::{HarvestOptions, harvest_package};
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rindex/oopfixture");
+        let package = harvest_package(&fixture, HarvestOptions::default(), 0).unwrap();
+        let source = "oopfixture::measure(x)\nS7::method(oopfixture::measure, S7::class_integer) <- function(x, scale = 1) x\noopfixture::measure(x)\n";
+        let path = ws_path("a.R");
+        let mut db = IncrementalDatabase::default();
+        db.set_library_index(IndexedProvider::from_indices([package]));
+        let file = db.upsert_file(&path, source);
+        db.set_workspace_members(vec![file], vec![ws_root()]);
+        let before = source.find("measure(x)").unwrap() + 1;
+        let after = source.rfind("measure(x)").unwrap() + 1;
+        let check = |db: &IncrementalDatabase, path| {
+            let snapshot = db.snapshot();
+            assert!(implementations_at(&snapshot, path, source, before).is_empty());
+            assert_eq!(
+                implementation_lines(implementations_at(&snapshot, path, source, after)),
+                [1]
+            );
+        };
+        check(&db, &path);
+
+        let package = ws_path("consumer");
+        let path = package.join("R/source.R");
+        let file = db.upsert_file(&path, source);
+        db.set_workspace_members(vec![file], vec![ws_root()]);
+        let set_package = |db: &mut IncrementalDatabase| {
+            db.upsert_description(&package, "Package: consumer\nImports: oopfixture, S7\n");
+            db.set_package_metadata(vec![PackageInfo {
+                root: package.clone(),
+                namespace: Some(String::new()),
+                dir_sources: BTreeSet::new(),
+                native_routines: BTreeSet::new(),
+            }]);
+        };
+        set_package(&mut db);
+        check(&db, &path);
+
+        let first = path.with_file_name("a.R");
+        let last = path.with_file_name("z.R");
+        let call = "oopfixture::measure(1L)\n";
+        let registration = source.lines().nth(1).unwrap();
+        let files = [
+            db.upsert_file(&first, call),
+            db.upsert_file(&path, registration),
+            db.upsert_file(&last, call),
+        ];
+        db.set_workspace_members(files.to_vec(), vec![ws_root()]);
+        set_package(&mut db);
+        let snapshot = db.snapshot();
+        assert!(implementations_at(&snapshot, &first, call, 15).is_empty());
+        let locations = implementations_at(&snapshot, &last, call, 15);
+        assert_eq!(locations.len(), 1, "{locations:?}");
+        assert_eq!(locations[0].uri, uri::from_path(&path).unwrap());
+    }
+
+    #[test]
+    fn implementation_finds_external_s4_methods() {
+        let source = "methods::setClass('Example')\nmethods::setMethod('show', 'Example', function(object) object)\nmethods::show(x)\n";
+        let snapshot = rename_workspace(source, "");
+        let path = ws_path("a.R");
+        let offset = source.find("show(x)").unwrap() + 1;
+        assert_eq!(
+            implementation_lines(implementations_at(&snapshot, &path, source, offset)),
+            [1]
+        );
+    }
+
+    #[test]
+    fn implementation_finds_methods_of_indexed_s4_generics() {
+        use crate::rindex::harvest::{HarvestOptions, harvest_package};
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rindex/oopfixture");
+        let indexed = harvest_package(&fixture, HarvestOptions::default(), 0).unwrap();
+        let package = ws_path("consumer");
+        let path = package.join("R/source.R");
+        let source = "methods::setClass('Example')\nmethods::setMethod('area', 'Example', function(x, scale = 1) x)\noopfixture::area(x)\narea(x)\n";
+        let mut db = IncrementalDatabase::default();
+        let directory = tempfile::tempdir().unwrap();
+        db.set_library_index(lazy_index(&indexed, directory.path()));
+        let file = db.upsert_file(&path, source);
+        db.set_workspace_members(vec![file], vec![ws_root()]);
+        db.refresh_descriptions([package.clone()]);
+        db.upsert_description(&package, "Package: consumer\nImports: oopfixture\n");
+        db.set_package_metadata(vec![PackageInfo {
+            root: package,
+            namespace: Some(
+                "importMethodsFrom(oopfixture,area)\nimportFrom(oopfixture,area)\n".into(),
+            ),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        for (offset, _) in source.match_indices("area(x)") {
+            assert_eq!(
+                implementation_lines(implementations_at(
+                    &db.snapshot(),
+                    &path,
+                    source,
+                    offset + 1
+                )),
+                [1]
+            );
+        }
+    }
+
+    #[test]
+    fn namespace_class_export_links_in_both_directions() {
+        let package = ws_path("pkg");
+        let path = package.join("R/classes.R");
+        let namespace = package.join("NAMESPACE");
+        let source = "methods::setClass('Example')\n";
+        let text = "exportClasses(Example)\n";
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(&path, source);
+        db.set_workspace_members(vec![file], vec![ws_root()]);
+        db.upsert_description(&package, "Package: pkg\n");
+        db.set_package_metadata(vec![PackageInfo {
+            root: package,
+            namespace: Some(text.into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        let snapshot = db.snapshot();
+        let encoding = PositionEncoding::Utf16;
+        let namespace_uri = uri::from_path(&namespace).unwrap();
+        let source_uri = uri::from_path(&path).unwrap();
+        let result = definition_via_db(
+            &snapshot,
+            &namespace,
+            &namespace_uri,
+            &TextBuffer::from(text),
+            Position::new(0, 15),
+            encoding,
+            None,
+        );
+        let Some(GotoDefinitionResponse::Scalar(definition)) = result else {
+            panic!("expected class source, got {result:?}");
+        };
+        assert_eq!(definition.uri, source_uri);
+        assert_eq!(definition.range.start, Position::new(0, 18));
+        let references = references_via_db(
+            &snapshot,
+            &path,
+            &source_uri,
+            &TextBuffer::from(source),
+            Position::new(0, 20),
+            false,
+            encoding,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            references,
+            [Location::new(
+                namespace_uri,
+                Range::new(Position::new(0, 14), Position::new(0, 21))
+            )]
+        );
+    }
+
+    #[test]
+    fn member_navigation_follows_inheritance_and_receiver_ownership() {
+        let source = r#"Parent <- R6::R6Class("Parent", public = list(read = function() 1))
+Child <- R6::R6Class("Child", inherit = Parent)
+Other <- R6::R6Class("Other", public = list(read = function() 2))
+Child$new()$read()
+Other$new()$read()
+"#;
+        let snapshot = rename_workspace(source, "");
+        let path = ws_path("a.R");
+        let uri = uri::from_path(&path).unwrap();
+        let buffer = TextBuffer::from(source);
+        let encoding = PositionEncoding::Utf16;
+        let position = Position::new(3, 13);
+        let Some(GotoDefinitionResponse::Scalar(definition)) =
+            definition_via_db(&snapshot, &path, &uri, &buffer, position, encoding, None)
+        else {
+            panic!("expected the inherited member declaration");
+        };
+        assert_eq!(definition.range.start, Position::new(0, 46));
+        let references = references_via_db(
+            &snapshot,
+            &path,
+            &uri,
+            &buffer,
+            position,
+            true,
+            encoding,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(implementation_lines(references), [0, 3]);
+    }
+
+    #[test]
+    fn generator_alias_navigation_follows_the_class_and_excludes_shadowed_names() {
+        let source = r#"Builder <- R6::R6Class("Example")
+Alias <- Builder
+Alias$new()
+function(Alias) Alias$new()
+"#;
+        let snapshot = rename_workspace(source, "");
+        let path = ws_path("a.R");
+        let uri = uri::from_path(&path).unwrap();
+        let buffer = TextBuffer::from(source);
+        let encoding = PositionEncoding::Utf16;
+        let position = Position::new(2, 1);
+        let Some(GotoDefinitionResponse::Scalar(definition)) =
+            definition_via_db(&snapshot, &path, &uri, &buffer, position, encoding, None)
+        else {
+            panic!("expected the source class declaration");
+        };
+        assert_eq!(definition.range.start, Position::new(0, 23));
+        let references = references_via_db(
+            &snapshot,
+            &path,
+            &uri,
+            &buffer,
+            position,
+            false,
+            encoding,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(implementation_lines(references), [1, 1, 2]);
     }
 
     #[test]
@@ -281,6 +734,117 @@ register()
     }
 
     #[test]
+    fn navigation_follows_qualified_generics_and_aliases() {
+        let caller = ws_path("caller.R");
+        let package = ws_path("pkg");
+        let declaration = package.join("R/generic.R");
+        let source = "alias <- pkg::describe\nalias(x)\nfunction(alias) alias(x)\npkg::describe.example(x)\npkg:::hidden(x)\npkg::hidden(x)\nhidden_alias <- (pkg:::hidden)\nhidden_alias(x)\npkg:::describe.hidden(x)\n";
+        let mut db = IncrementalDatabase::default();
+        let a = db.upsert_file(&caller, source);
+        let b = db.upsert_file(
+            &declaration,
+            "describe <- function(x) UseMethod('describe')\ndescribe.example <- function(x) x\nhidden <- function(x) UseMethod('hidden')\ndescribe.hidden <- function(x) x\n",
+        );
+        db.set_workspace_members(vec![a, b], vec![ws_root()]);
+        db.refresh_descriptions([package.clone()]);
+        db.upsert_description(&package, "Package: pkg\n");
+        db.set_package_metadata(vec![PackageInfo {
+            root: package.clone(),
+            namespace: Some("export(describe, describe.example)\n".into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        let snapshot = db.snapshot();
+        let uri = uri::from_path(&caller).unwrap();
+        let buffer = TextBuffer::from(source);
+        let encoding = PositionEncoding::Utf16;
+        for position in [
+            Position::new(0, 1),
+            Position::new(0, 15),
+            Position::new(1, 1),
+        ] {
+            let Some(GotoDefinitionResponse::Scalar(location)) =
+                definition_via_db(&snapshot, &caller, &uri, &buffer, position, encoding, None)
+            else {
+                panic!("expected a source generic at {position:?}");
+            };
+            assert_eq!(
+                location.uri,
+                uri::from_path(&declaration).unwrap(),
+                "{position:?}"
+            );
+            assert_eq!(location.range.start, Position::new(0, 0));
+        }
+        for (line, column, expected) in [
+            (3, 6, Some(1)),
+            (4, 7, Some(2)),
+            (5, 6, None),
+            (6, 1, Some(2)),
+            (7, 1, Some(2)),
+            (8, 7, Some(3)),
+        ] {
+            match definition_via_db(
+                &snapshot,
+                &caller,
+                &uri,
+                &buffer,
+                Position::new(line, column),
+                encoding,
+                None,
+            ) {
+                Some(GotoDefinitionResponse::Scalar(location)) => {
+                    assert_eq!(location.uri, uri::from_path(&declaration).unwrap());
+                    assert_eq!(Some(location.range.start.line), expected);
+                }
+                None => assert_eq!(expected, None, "qualified call on line {line}"),
+                other => panic!("unexpected definition response {other:?}"),
+            }
+        }
+        let method = source.find(":::describe.hidden").unwrap() + 4;
+        let implementations = implementations_at(&snapshot, &caller, source, method);
+        assert_eq!(implementations.len(), 1, "{implementations:?}");
+        assert_eq!(
+            implementations[0].uri,
+            uri::from_path(&declaration).unwrap()
+        );
+        assert_eq!(implementations[0].range.start.line, 3);
+        let method_references = references_via_db(
+            &snapshot,
+            &caller,
+            &uri,
+            &buffer,
+            buffer.line_index().byte_to_position(method, encoding),
+            false,
+            encoding,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(implementation_lines(method_references), [8]);
+
+        let refs = references_via_db(
+            &snapshot,
+            &caller,
+            &uri,
+            &buffer,
+            Position::new(1, 1),
+            false,
+            encoding,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            implementation_lines(
+                refs.iter()
+                    .filter(|location| location.uri == uri)
+                    .cloned()
+                    .collect()
+            ),
+            [0, 0, 1]
+        );
+        assert!(refs.iter().any(|location| location.uri == uri::from_path(&package.join("NAMESPACE")).unwrap()));
+    }
+
+    #[test]
     fn implementation_follows_an_implicit_s3method_binding() {
         let source = "describe <- function(x) UseMethod('describe')\ndescribe.number <- function(x) 1\n.S3method('describe', 'number')\ndescribe.number <- function(x) 2\n";
         let snapshot = rename_workspace(source, "");
@@ -435,6 +999,7 @@ methods::setMethod("describe", "numeric", impl)
             position(use_offset),
             true,
             encoding,
+            &[],
         )
         .unwrap();
         assert_eq!(
@@ -505,6 +1070,7 @@ methods::setMethod("describe", "numeric", impl)
             position,
             false,
             encoding,
+            &[],
         )
         .unwrap();
         let [reference] = references.as_slice() else {
@@ -556,7 +1122,16 @@ methods::setMethod("describe", "numeric", impl)
             let position = buffer.line_index().byte_to_position(offset, encoding);
             (
                 definition_via_db(&snapshot, path, &uri, &buffer, position, encoding, None),
-                references_via_db(&snapshot, path, &uri, &buffer, position, false, encoding),
+                references_via_db(
+                    &snapshot,
+                    path,
+                    &uri,
+                    &buffer,
+                    position,
+                    false,
+                    encoding,
+                    &[],
+                ),
             )
         };
         let body_uri = uri::from_path(&body_path).unwrap();
@@ -608,8 +1183,17 @@ methods::setMethod("describe", "numeric", impl)
             definition.range.start.character,
             "methods::setGeneric(".len() as u32
         );
-        let references =
-            references_via_db(&snapshot, path, &uri, &buffer, position, true, encoding).unwrap();
+        let references = references_via_db(
+            &snapshot,
+            path,
+            &uri,
+            &buffer,
+            position,
+            true,
+            encoding,
+            &[],
+        )
+        .unwrap();
         assert!(references.iter().any(|loc| loc.range.start.line == 1));
         assert!(references.iter().all(|loc| loc.range.start.line < 2));
     }

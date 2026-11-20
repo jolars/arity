@@ -185,6 +185,45 @@ impl<'a> EditorRead<'a> {
         ))
     }
 
+    /// Load only the installed package that owns this callable. The class
+    /// registries inspect resident metadata to avoid loading every package.
+    pub(crate) fn indexed_dispatch_system(
+        &self,
+        value: &SyntaxElement,
+    ) -> Option<crate::rindex::schema::ObjectSystem> {
+        let (_, generic) = self
+            .installed
+            .generic(self.index, self.path, self.root, self.model, value)?;
+        Some(generic.system)
+    }
+
+    pub(crate) fn external_s7_implementations(&self, call: &CallExpr) -> Vec<OopId> {
+        let Some(value) = call.base() else {
+            return Vec::new();
+        };
+        let Some((package, generic)) = self
+            .installed
+            .generic(self.index, self.path, self.root, self.model, &value)
+        else {
+            return Vec::new();
+        };
+        if generic.system != crate::rindex::schema::ObjectSystem::S7 {
+            return Vec::new();
+        }
+        self.index.s7_external_methods(
+            self.path,
+            self.root,
+            self.model,
+            call,
+            generic
+                .identity
+                .package
+                .as_deref()
+                .unwrap_or(package.package.as_str()),
+            &generic.identity.name,
+        )
+    }
+
     pub(crate) fn generic_hover(
         &self,
         value: &SyntaxElement,
@@ -716,6 +755,7 @@ fn generator_label(
 ) -> String {
     match reference {
         GeneratorRef::Qualified { package, name } => format!("{package}::{name}"),
+        GeneratorRef::Internal { package, name } => format!("{package}:::{name}"),
         GeneratorRef::Free(name) => name.clone(),
         GeneratorRef::Local(key) => local_name(key).unwrap_or_else(|| "?".into()),
         GeneratorRef::Unknown => "?".into(),

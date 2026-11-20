@@ -215,19 +215,18 @@ fn shape(model: &SemanticModel, root: &SyntaxNode, value: &SyntaxElement) -> Opt
 }
 
 impl ClassIndex {
-    fn s3_known_call(&self, path: &Path, reference: &FunctionRef) -> Option<S3GenericId> {
+    pub(crate) fn s3_known_call(
+        &self,
+        path: &Path,
+        reference: &FunctionRef,
+    ) -> Option<S3GenericId> {
         let (name, package) = match reference {
-            FunctionRef::Qualified { name, package }
-                if known_generic_package(name) == Some(package) =>
-            {
-                (name, package.as_str())
-            }
+            FunctionRef::Qualified { name, package } => (name, package.clone()),
             FunctionRef::Bare {
                 name,
                 attached,
                 attachment_uncertain: false,
             } => {
-                let expected = known_generic_package(name)?;
                 let file = self.file(path)?;
                 if file.exports.contains(name)
                     || !self.definition_files(path, name, true).is_empty()
@@ -260,26 +259,26 @@ impl ClassIndex {
                         }
                     }
                 }
-                if !imports.is_empty() {
-                    if imports.len() != 1 || !imports.contains(expected) {
-                        return None;
-                    }
-                } else {
+                if imports.is_empty() {
                     loaded.extend(attached.iter().cloned());
                     for package in loaded {
-                        if self.s3_origins.exports.get(&package)?.contains(name)
-                            && package != expected
-                        {
-                            return None;
+                        if self.s3_origins.exports.get(&package)?.contains(name) {
+                            imports.insert(package);
                         }
                     }
+                    if let Some(expected) = known_generic_package(name) {
+                        imports.insert(expected.into());
+                    }
                 }
-                (name, expected)
+                if imports.len() != 1 {
+                    return None;
+                }
+                (name, imports.into_iter().next()?)
             }
             _ => return None,
         };
         let id = S3GenericId::Known {
-            package: package.into(),
+            package,
             name: name.clone(),
         };
         self.s3
@@ -776,6 +775,46 @@ impl ClassIndex {
             result.fallback = S3Fallback::Unknown;
         }
         result
+    }
+
+    pub(crate) fn visible_s3_methods<'a>(
+        &'a self,
+        context: &S3DispatchContext,
+        generic: &S3GenericId,
+    ) -> impl Iterator<Item = &'a S3Method> {
+        let executed = context
+            .executed_registrations
+            .iter()
+            .enumerate()
+            .map(|(order, source)| (source, order))
+            .collect::<std::collections::HashMap<_, _>>();
+        let visible: Vec<_> = self
+            .s3
+            .methods
+            .iter()
+            .filter(|method| method.generics.contains(generic))
+            .filter_map(|method| Some((method, self.s3_visibility(context, method)?.1)))
+            .collect();
+        let mut latest = HashMap::new();
+        for &(method, activity) in &visible {
+            if activity == Availability::Present
+                && matches!(method.class, ClassName::Known(_))
+                && let Some(&order) = executed.get(&method.source)
+            {
+                latest
+                    .entry(&method.class)
+                    .and_modify(|previous: &mut usize| *previous = (*previous).max(order))
+                    .or_insert(order);
+            }
+        }
+        visible.into_iter().filter_map(move |(method, _)| {
+            let superseded = executed.get(&method.source).is_some_and(|order| {
+                latest
+                    .get(&method.class)
+                    .is_some_and(|latest| latest > order)
+            });
+            (!superseded).then_some(method)
+        })
     }
 
     fn s3_visibility(

@@ -315,7 +315,7 @@ impl ClassIndex {
         (classes, unknown || !pending.is_empty())
     }
 
-    fn s7_spec_class(
+    pub(crate) fn s7_spec_class(
         &self,
         path: &Path,
         owner: &ClassOwner,

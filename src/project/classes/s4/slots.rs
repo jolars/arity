@@ -723,7 +723,7 @@ impl ClassIndex {
     }
 }
 
-pub(in super::super) fn slot_call(
+pub(crate) fn slot_call(
     index: &ClassIndex,
     path: &std::path::Path,
     root: &SyntaxNode,

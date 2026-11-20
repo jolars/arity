@@ -9,11 +9,18 @@ use crate::project::classes::{
 };
 
 mod implementation;
+mod member;
+mod namespace;
 pub(in crate::lsp) use implementation::implementation_locations;
+pub(in crate::lsp) use namespace::callable_references as namespace_callable_references;
 
-pub(in crate::lsp) enum NameNavigation {
+#[derive(Clone, Copy)]
+pub(in crate::lsp) enum NameNavigation<'a> {
     Definition,
-    References { include_declaration: bool },
+    References {
+        include_declaration: bool,
+        open_namespaces: &'a [(PathBuf, Arc<TextBuffer>)],
+    },
 }
 
 #[derive(PartialEq, Eq)]
@@ -21,24 +28,38 @@ enum Identity {
     Class(ClassId),
     Generic(OopId),
     Method(OopId),
+    Member(OopId),
+    Callable {
+        path: PathBuf,
+        origin: usize,
+        package_root: PathBuf,
+        binding: String,
+    },
 }
 
 impl Identity {
     fn path(&self) -> &Path {
         match self {
             Self::Class(id) => &id.path,
-            Self::Generic(id) | Self::Method(id) => &id.path,
+            Self::Callable { path, .. } => path,
+            Self::Generic(id) | Self::Method(id) | Self::Member(id) => &id.path,
         }
     }
 
     fn definition(&self, model: &SemanticModel, root: &SyntaxNode) -> Option<TextRange> {
         match self {
+            Self::Callable { origin, .. } => {
+                crate::project::classes::method_navigation_sites(model, root)
+                    .callables
+                    .get(origin)
+                    .copied()
+            }
             Self::Class(id) => Some(locate_class_def_in(model, root, &id.key)?.name_range),
-            Self::Generic(id) | Self::Method(id) => oop_sites(model, root)
+            Self::Generic(id) | Self::Method(id) | Self::Member(id) => oop_sites(model, root)
                 .into_iter()
                 .find(|site| {
                     site.role == OopSiteRole::Declaration
-                        && matches!(&site.target, OopTarget::Declaration(key) if *key == id.key)
+                        && matches!(&site.target, OopTarget::Declaration(key) | OopTarget::BindingDeclaration(key) if *key == id.key)
                 })
                 .map(|site| site.range),
         }
@@ -52,12 +73,18 @@ pub(in crate::lsp) fn name_locations(
     line_index: &LineIndex,
     offset: TextSize,
     encoding: PositionEncoding,
-    request: NameNavigation,
+    request: NameNavigation<'_>,
 ) -> Option<Vec<Location>> {
-    let range = root
-        .token_at_offset(offset)
-        .find(|token| token.kind() == SyntaxKind::STRING)?
-        .text_range();
+    if context
+        .path
+        .file_name()
+        .is_some_and(|name| name == "NAMESPACE")
+    {
+        return namespace::navigate(context, uri, root, line_index, offset, encoding, request);
+    }
+    let (token, value) = crate::project::classes::class_name_at(root, offset)?;
+    let range = value.text_range();
+    let token_range = token.text_range();
     let path = normalize_path(context.path);
     with_live_model(
         root,
@@ -66,66 +93,69 @@ pub(in crate::lsp) fn name_locations(
             ..context
         }),
         |snapshot, model, _| {
-            let (facts, sites) = class_source_sites(model, root);
+            let live;
+            let (facts, sites) = match snapshot.tracked_class_source(&path, root, model) {
+                Some(tracked) => tracked,
+                None => {
+                    live = class_source_sites(model, root);
+                    (&live.0, &live.1)
+                }
+            };
             let class = sites.classes.iter().find(|(site, _)| *site == range);
-            let site = sites.oop.iter().find(|source| {
-                let site = &source.site;
-                site.range == range
-                    && matches!(
-                        &site.target,
-                        OopTarget::Generic(_)
-                            | OopTarget::ClassReference(_)
-                            | OopTarget::Declaration(OopKey {
-                                kind: OopKind::Generic | OopKind::Method,
-                                ..
-                            })
-                    )
-            });
-            if class.is_none() && site.is_none() {
+            let mut candidates = sites
+                .oop
+                .iter()
+                .filter(|source| {
+                    let site = &source.site;
+                    site.range == range || site.range == token_range
+                })
+                .peekable();
+            if class.is_none() && candidates.peek().is_none() {
                 return None;
             }
 
-            let index = snapshot.class_index_with_body_lookups(
-                &path,
-                &facts,
-                root,
-                model,
-                matches!(request, NameNavigation::References { .. }),
-            );
-            let class_query = class.is_some()
-                || site
-                    .is_some_and(|site| matches!(site.site.target, OopTarget::ClassReference(_)));
-            let ids: Vec<_> = if let Some((_, occurrence)) = class {
-                resolve_class_occurrence(
-                    &index,
-                    &path,
-                    occurrence,
-                    sites.class_reference_factories.get(&range),
-                )
-                .into_iter()
-                .map(Identity::Class)
-                .collect()
-            } else if class_query {
-                resolve_registration_class(&index, &path, site?)
+            let index = snapshot.class_index_for_presentation(&path, facts, root, model);
+            if !index.has_source_navigation_targets() {
+                return None;
+            }
+            let mut ids = Vec::new();
+            if let Some((_, occurrence)) = class {
+                ids.extend(
+                    resolve_class_occurrence(
+                        &index,
+                        &path,
+                        occurrence,
+                        sites.class_reference_factories.get(&range),
+                    )
                     .into_iter()
-                    .map(Identity::Class)
-                    .collect()
-            } else if let OopTarget::Declaration(key) = &site?.site.target
-                && key.kind == OopKind::Method
-            {
-                resolve_method_site(&index, &path, site?)
-                    .into_iter()
-                    .map(Identity::Method)
-                    .collect()
-            } else {
-                resolve_generic_site(&index, &path, site?)
-                    .into_iter()
-                    .map(Identity::Generic)
-                    .collect()
-            };
+                    .map(Identity::Class),
+                );
+            }
+            for site in candidates {
+                if class.is_none() {
+                    ids.extend(
+                        resolve_registration_class(&index, &path, site)
+                            .into_iter()
+                            .map(Identity::Class),
+                    );
+                }
+                ids.extend(
+                    resolve_generic_site(&index, &path, site)
+                        .into_iter()
+                        .map(Identity::Generic),
+                );
+                ids.extend(resolve_method_site(&index, &path, site).map(Identity::Method));
+                ids.extend(
+                    resolve_member_site(&index, &path, root, model, site).map(Identity::Member),
+                );
+            }
             if ids.is_empty() {
                 return None;
             }
+            if ids.iter().any(|id| matches!(id, Identity::Member(_))) {
+                ids.retain(|id| matches!(id, Identity::Member(_)));
+            }
+            let class_query = ids.iter().any(|id| matches!(id, Identity::Class(_)));
             let live_location = |range| {
                 Location::new(
                     uri.clone(),
@@ -153,53 +183,127 @@ pub(in crate::lsp) fn name_locations(
                 }
                 NameNavigation::References {
                     include_declaration,
+                    open_namespaces,
                 } => {
-                    let matching_ranges = |file_path: &Path, sites: &ClassSourceSites| {
-                        if class_query {
-                            sites
-                                .classes
-                                .iter()
-                                .filter(|(range, occurrence)| {
-                                    (include_declaration
-                                        || !matches!(occurrence, ClassOccurrence::Declaration(_)))
-                                        && resolve_class_occurrence(
-                                            &index,
-                                            file_path,
-                                            occurrence,
-                                            sites.class_reference_factories.get(range),
-                                        )
-                                        .into_iter()
-                                        .any(|id| ids.contains(&Identity::Class(id)))
-                                })
-                                .map(|(range, _)| *range)
-                                .chain(sites.oop.iter().filter_map(|site| {
-                                    resolve_registration_class(&index, file_path, site)
-                                        .into_iter()
-                                        .any(|id| ids.contains(&Identity::Class(id)))
-                                        .then_some(site.site.range)
-                                }))
-                                .collect::<Vec<_>>()
+                    // Confirm body-local helper provenance across the workspace
+                    // only after resolving a target that needs it.
+                    let workspace_index;
+                    let index =
+                        if class_query || ids.iter().any(|id| matches!(id, Identity::Member(_))) {
+                            workspace_index = snapshot
+                                .class_index_with_body_lookups(&path, facts, root, model, true);
+                            &workspace_index
                         } else {
-                            sites
-                                .oop
-                                .iter()
-                                .filter(|site| {
-                                    (include_declaration
-                                        || site.site.role != OopSiteRole::Declaration)
-                                        && (resolve_generic_site(&index, file_path, site)
+                            &*index
+                        };
+                    let member_names: HashSet<_> = ids
+                        .iter()
+                        .filter_map(|id| {
+                            let Identity::Member(id) = id else {
+                                return None;
+                            };
+                            let crate::project::classes::ClassName::Known(name) =
+                                &index.member(id)?.name
+                            else {
+                                return None;
+                            };
+                            Some(name.as_str())
+                        })
+                        .collect();
+                    let matching_ranges =
+                        |file_path: &Path,
+                         sites: &ClassSourceSites,
+                         syntax: &SyntaxNode,
+                         semantics: &SemanticModel| {
+                            if class_query {
+                                sites
+                                    .classes
+                                    .iter()
+                                    .filter(|(range, occurrence)| {
+                                        (include_declaration
+                                            || !matches!(
+                                                occurrence,
+                                                ClassOccurrence::Declaration(_)
+                                            ))
+                                            && resolve_class_occurrence(
+                                                index,
+                                                file_path,
+                                                occurrence,
+                                                sites.class_reference_factories.get(range),
+                                            )
                                             .into_iter()
-                                            .any(|id| ids.contains(&Identity::Generic(id)))
-                                            || resolve_method_site(&index, file_path, site)
-                                                .is_some_and(|id| {
-                                                    ids.contains(&Identity::Method(id))
-                                                }))
-                                })
-                                .map(|site| site.site.range)
-                                .collect()
-                        }
-                    };
+                                            .any(|id| ids.contains(&Identity::Class(id)))
+                                    })
+                                    .map(|(range, _)| *range)
+                                    .chain(sites.oop.iter().filter_map(|site| {
+                                        if !include_declaration
+                                            && site.site.role == OopSiteRole::Declaration
+                                        {
+                                            return None;
+                                        }
+                                        resolve_registration_class(index, file_path, site)
+                                            .into_iter()
+                                            .any(|id| ids.contains(&Identity::Class(id)))
+                                            .then_some(site.site.range)
+                                    }))
+                                    .collect::<Vec<_>>()
+                            } else if ids.iter().any(|id| matches!(id, Identity::Member(_))) {
+                                sites
+                                    .oop
+                                    .iter()
+                                    .filter_map(|site| {
+                                        if !include_declaration
+                                            && site.site.role == OopSiteRole::Declaration
+                                        {
+                                            return None;
+                                        }
+                                        let name = match &site.site.target {
+                                            OopTarget::Member { name, .. }
+                                            | OopTarget::ClassReference(ParentRef::Generator(
+                                                GeneratorRef::Free(name),
+                                            )) => Some(name.as_str()),
+                                            _ => None,
+                                        };
+                                        if name.is_some_and(|name| {
+                                            name != "callSuper" && !member_names.contains(name)
+                                        }) {
+                                            return None;
+                                        }
+                                        resolve_member_site(
+                                            index, file_path, syntax, semantics, site,
+                                        )
+                                        .filter(|id| ids.contains(&Identity::Member(id.clone())))
+                                        .map(|_| site.site.range)
+                                    })
+                                    .collect()
+                            } else {
+                                sites
+                                    .oop
+                                    .iter()
+                                    .filter(|site| {
+                                        (include_declaration
+                                            || site.site.role != OopSiteRole::Declaration)
+                                            && (resolve_generic_site(index, file_path, site)
+                                                .into_iter()
+                                                .any(|id| ids.contains(&Identity::Generic(id)))
+                                                || resolve_method_site(index, file_path, site)
+                                                    .is_some_and(|id| {
+                                                        ids.contains(&Identity::Method(id))
+                                                    }))
+                                    })
+                                    .map(|site| site.site.range)
+                                    .collect()
+                            }
+                        };
+                    locations.extend(namespace::references(
+                        snapshot,
+                        index,
+                        &ids,
+                        encoding,
+                        open_namespaces,
+                    ));
                     locations.extend(
-                        matching_ranges(&path, &sites)
+                        matching_ranges(&path, sites, root, model)
                             .into_iter()
                             .map(live_location),
                     );
@@ -208,11 +312,16 @@ pub(in crate::lsp) fn name_locations(
                             continue;
                         };
                         locations.extend(
-                            matching_ranges(&other.path, snapshot.class_source_sites(file))
-                                .into_iter()
-                                .filter_map(|range| {
-                                    location_in(snapshot, &other.path, range, encoding)
-                                }),
+                            matching_ranges(
+                                &other.path,
+                                snapshot.class_source_sites(file),
+                                &snapshot.parsed_tree(file),
+                                snapshot.semantic_model(file),
+                            )
+                            .into_iter()
+                            .filter_map(|range| {
+                                location_in(snapshot, &other.path, range, encoding)
+                            }),
                         );
                     }
                 }
@@ -221,6 +330,39 @@ pub(in crate::lsp) fn name_locations(
             Some(locations)
         },
     )
+}
+
+fn resolve_member_site(
+    index: &ClassIndex,
+    path: &Path,
+    root: &SyntaxNode,
+    model: &SemanticModel,
+    site: &OopSourceSite,
+) -> Option<OopId> {
+    if let OopTarget::Declaration(key) = &site.site.target
+        && key.kind == OopKind::Member
+    {
+        let id = OopId {
+            path: path.into(),
+            key: key.clone(),
+        };
+        return index
+            .member(&id)
+            .filter(|member| index.member_declaration_confirmed(path, member))
+            .map(|_| id);
+    }
+    if site.site.role == OopSiteRole::Use
+        && matches!(
+            site.site.target,
+            OopTarget::ClassReference(ParentRef::Generator(GeneratorRef::Free(_)))
+        )
+    {
+        let value = root.covering_element(site.site.range);
+        return index
+            .implicit_reference_member(path, root, model, &value)?
+            .declaration;
+    }
+    member::member_at(index, path, root, model, site)
 }
 
 pub(in crate::lsp) enum ClassCandidate<'a> {
@@ -265,7 +407,11 @@ pub(in crate::lsp) fn class_candidate(
         .oop
         .iter()
         .filter(|source| {
-            source.site.range == range && matches!(source.site.target, OopTarget::ClassReference(_))
+            source.site.range == range
+                && matches!(
+                    source.site.target,
+                    OopTarget::ClassReference(_) | OopTarget::DispatchClass { .. }
+                )
         })
         .collect();
     (!registrations.is_empty()).then_some(ClassCandidate::Registration(registrations))
@@ -307,19 +453,121 @@ pub(super) fn resolve_generic_site(
     site: &OopSourceSite,
 ) -> Vec<OopId> {
     match &site.site.target {
-        OopTarget::Declaration(key) if key.kind == OopKind::Generic => {
+        OopTarget::Declaration(key) | OopTarget::BindingDeclaration(key)
+            if key.kind == OopKind::Generic =>
+        {
             let id = OopId {
                 path: path.to_path_buf(),
                 key: key.clone(),
             };
             index
                 .generic(&id)
-                .is_some_and(|generic| index.generic_confirmed(path, generic))
+                .is_some_and(|generic| {
+                    index.generic_confirmed(path, generic)
+                        && !generic
+                            .uncertainty
+                            .contains(&crate::project::classes::OopUncertainty::DynamicName)
+                })
                 .then_some(id)
                 .into_iter()
                 .collect()
         }
-        OopTarget::Generic(reference) if callee_confirmed(index, path, site) => {
+        OopTarget::InternalGeneric(reference) => {
+            use crate::project::classes::ClassName;
+            let (Some(package), ClassName::Known(_)) = (&reference.package, &reference.name) else {
+                return Vec::new();
+            };
+            let Some(root) = index.s4_workspace_root(package) else {
+                return Vec::new();
+            };
+            index
+                .oop_files()
+                .filter(|file| file.package_root.as_ref() == Some(root))
+                .flat_map(|file| {
+                    index
+                        .generic_candidates(
+                            &file.path,
+                            &crate::project::classes::GenericRef {
+                                package: None,
+                                owner: Default::default(),
+                                ..reference.clone()
+                            },
+                            false,
+                        )
+                        .into_iter()
+                        .filter(|id| id.path == file.path)
+                })
+                .collect()
+        }
+        OopTarget::Generic(reference)
+            if callee_confirmed(index, path, site)
+                || (site.required_callee.is_none()
+                    && site.registration.is_none()
+                    && reference.by_binding
+                    && reference.lookup.is_some()) =>
+        {
+            if let Some(key) = &site.registration {
+                use crate::project::classes::{S3GenericId, S3MethodSource, S7GenericTarget};
+                let id = OopId {
+                    path: path.into(),
+                    key: key.clone(),
+                };
+                match key.system {
+                    OopSystem::S3 => {
+                        return index
+                            .s3
+                            .methods
+                            .iter()
+                            .filter(|method| {
+                                method.source == S3MethodSource::Declaration(id.clone())
+                            })
+                            .flat_map(|method| &method.generics)
+                            .filter_map(|generic| match generic {
+                                S3GenericId::Declaration(id) => Some(id.clone()),
+                                _ => None,
+                            })
+                            .collect();
+                    }
+                    OopSystem::S4 => {
+                        if let Some(table) = index
+                            .s4
+                            .methods
+                            .iter()
+                            .find(|method| method.confirmed_registration() == Some(&id))
+                            .and_then(|method| method.unique_table())
+                        {
+                            return index
+                                .s4
+                                .generics
+                                .iter()
+                                .filter(|generic| generic.table() == table)
+                                .filter_map(|generic| generic.declaration.clone())
+                                .collect();
+                        }
+                    }
+                    OopSystem::S7 => {
+                        if let Some(registration) = index.s7_registration(&id) {
+                            return registration
+                                .targets
+                                .into_iter()
+                                .flat_map(|target| match target {
+                                    S7GenericTarget::S7(id)
+                                    | S7GenericTarget::S3(S3GenericId::Declaration(id)) => vec![id],
+                                    S7GenericTarget::S4(id) => index
+                                        .s4
+                                        .generics
+                                        .iter()
+                                        .filter(|generic| generic.id == id)
+                                        .filter_map(|generic| generic.declaration.clone())
+                                        .collect(),
+                                    _ => Vec::new(),
+                                })
+                                .collect();
+                        }
+                    }
+                    _ => {}
+                }
+            }
             if reference.system == OopSystem::S4 {
                 index
                     .s4_generic_candidates(path, reference, site.site.in_function)
@@ -339,6 +587,20 @@ pub(super) fn resolve_method_site(
     path: &Path,
     site: &OopSourceSite,
 ) -> Option<OopId> {
+    if let OopTarget::Generic(reference) | OopTarget::InternalGeneric(reference) = &site.site.target
+        && reference.system == OopSystem::S3
+        && reference.by_binding
+        && reference.lookup.is_some()
+        && site.registration.is_none()
+        && site.required_callee.is_none()
+    {
+        return index.s3_method_binding(
+            path,
+            reference,
+            site.site.in_function,
+            matches!(&site.site.target, OopTarget::InternalGeneric(_)),
+        );
+    }
     let OopTarget::Declaration(key) = &site.site.target else {
         return None;
     };
@@ -372,6 +634,41 @@ pub(super) fn resolve_registration_class(
     site: &OopSourceSite,
 ) -> Vec<ClassId> {
     match &site.site.target {
+        OopTarget::Class(key) => resolve_class_occurrence(
+            index,
+            path,
+            &ClassOccurrence::Declaration(key.clone()),
+            None,
+        ),
+        OopTarget::DispatchClass { class, .. }
+            if callee_confirmed(index, path, site)
+                && index.dispatch_helper_confirmed(path, site.dispatch_factory.as_ref()) =>
+        {
+            use crate::project::classes::{DispatchClass, S4Definition};
+            match class {
+                DispatchClass::S7(spec) => index
+                    .s7_spec_class(path, &site.site.owner, spec)
+                    .into_iter()
+                    .collect(),
+                DispatchClass::S3(name) => index
+                    .resolve_reference(
+                        path,
+                        &site.site.owner,
+                        &ParentRef::Formal(name.clone()),
+                        site.site.in_function,
+                    )
+                    .into_iter()
+                    .filter(|id| {
+                        index
+                            .declarations
+                            .get(id)
+                            .and_then(|class| class.declaration.s4.as_ref())
+                            .is_some_and(|class| class.definition == S4Definition::OldClass)
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            }
+        }
         OopTarget::ClassReference(reference)
             if (callee_confirmed(index, path, site)
                 || (site.required_callee.is_none()

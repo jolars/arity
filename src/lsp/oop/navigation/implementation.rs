@@ -28,22 +28,39 @@ pub(in crate::lsp) fn implementation_locations(
         |snapshot, model, path| {
             let (facts, sites, occurrence) = class_source_sites_at(model, root, &value);
             let class = class_candidate(&sites, occurrence, range);
-            let site = sites.oop.iter().find(|source| {
-                let site = &source.site;
-                (site.range == range || site.range == token.text_range())
+            let mut candidates = sites
+                .oop
+                .iter()
+                .filter(|source| {
+                    let site = &source.site;
+                    (site.range == range || site.range == token.text_range())
+                        && matches!(
+                            &site.target,
+                            OopTarget::Generic(_)
+                                | OopTarget::InternalGeneric(_)
+                                | OopTarget::BindingDeclaration(_)
+                                | OopTarget::Declaration(OopKey {
+                                    kind: OopKind::Generic | OopKind::Method,
+                                    ..
+                                })
+                        )
+                })
+                .peekable();
+            let member = sites.oop.iter().find(|source| {
+                source.site.range == token.text_range()
                     && matches!(
-                        &site.target,
-                        OopTarget::Generic(_)
+                        source.site.target,
+                        OopTarget::Member { .. }
                             | OopTarget::Declaration(OopKey {
-                                kind: OopKind::Generic | OopKind::Method,
+                                kind: OopKind::Member,
                                 ..
                             })
                     )
             });
-            if class.is_none() && site.is_none() {
+            if class.is_none() && candidates.peek().is_none() && member.is_none() {
                 return Vec::new();
             }
-            let index = snapshot.class_index_in(path, &facts, root, model);
+            let index = snapshot.class_index_for_presentation(path, &facts, root, model);
             let classes = class.map_or_else(Vec::new, |class| class.resolve(&index, path));
             let location = |target: &Path, range| {
                 if target == path {
@@ -55,7 +72,27 @@ pub(in crate::lsp) fn implementation_locations(
                     location_in(snapshot, target, range, encoding)
                 }
             };
-            let mut locations = if classes.is_empty() {
+            let mut locations = if let Some(member) =
+                member.and_then(|site| resolve_member_site(&index, path, root, model, site))
+            {
+                member::overrides(&index, &member)
+                    .into_iter()
+                    .filter_map(|id| {
+                        let target = &id.path;
+                        let declaration = Identity::Member(id.clone());
+                        let range = if target == path {
+                            declaration.definition(model, root)?
+                        } else {
+                            let file = snapshot.lookup_file(target)?;
+                            declaration.definition(
+                                snapshot.semantic_model(file),
+                                &snapshot.parsed_tree(file),
+                            )?
+                        };
+                        location(target, range)
+                    })
+                    .collect()
+            } else if classes.is_empty() {
                 let method_sites = |target: &Path| {
                     if target == path {
                         Some(method_navigation_sites(model, root))
@@ -66,8 +103,67 @@ pub(in crate::lsp) fn implementation_locations(
                     }
                 };
                 let mut files = HashMap::new();
-                site.into_iter()
+                let mut bodies = candidates
+                    .clone()
                     .flat_map(|site| method_bodies(&index, path, site))
+                    .collect::<Vec<_>>();
+                if bodies.is_empty() {
+                    let refreshed;
+                    let mut index = &*index;
+                    if let Some(call) = value.parent().and_then(crate::ast::CallExpr::cast)
+                        && call.base().as_ref() == Some(&value)
+                    {
+                        use crate::rindex::schema::ObjectSystem;
+                        let indexed = snapshot.library_data().unwrap_or_default();
+                        let remote = snapshot.remote_exports().unwrap_or_default();
+                        let read = crate::project::classes::EditorRead::new(
+                            index, root, model, path, &indexed, &remote,
+                        );
+                        match read.indexed_dispatch_system(&value) {
+                            Some(ObjectSystem::S3 | ObjectSystem::S4) => {
+                                refreshed = snapshot.class_index_in(path, &facts, root, model);
+                                index = &refreshed;
+                            }
+                            Some(ObjectSystem::S7) => {
+                                bodies.extend(
+                                    read.external_s7_implementations(&call)
+                                        .into_iter()
+                                        .map(MethodBody::Site),
+                                );
+                            }
+                            _ => {}
+                        }
+                        bodies.extend(
+                            index
+                                .s4_external_implementations(path, root, model, &call)
+                                .into_iter()
+                                .filter_map(|method| s4_body(index, method)),
+                        );
+                    }
+                    for site in candidates {
+                        let OopTarget::Generic(reference) = &site.site.target else {
+                            continue;
+                        };
+                        if site.required_callee.is_some() || !reference.by_binding {
+                            continue;
+                        }
+                        if reference.system == OopSystem::S3
+                            && let Some(generic) = reference
+                                .lookup
+                                .as_ref()
+                                .and_then(|lookup| index.s3_known_call(path, lookup))
+                        {
+                            let context = index.s3_dispatch_context_at(path, root, model, &value);
+                            bodies.extend(
+                                index
+                                    .visible_s3_methods(&context, &generic)
+                                    .filter_map(|method| s3_body(index, method)),
+                            );
+                        }
+                    }
+                }
+                bodies
+                    .into_iter()
                     .filter_map(|body| {
                         let (path, site) = match body {
                             MethodBody::Site(id) => {
@@ -186,6 +282,17 @@ fn method_bodies(index: &ClassIndex, path: &Path, site: &OopSourceSite) -> Vec<M
             .flat_map(|method| method.generics.iter().cloned())
             .collect();
         return s3_bodies(index, &generics);
+    }
+
+    if let Some(id) = resolve_method_site(index, path, site) {
+        return index
+            .s3
+            .methods
+            .iter()
+            .find(|method| method.source == S3MethodSource::Declaration(id.clone()))
+            .and_then(|method| s3_body(index, method))
+            .into_iter()
+            .collect();
     }
 
     let generics = resolve_generic_site(index, path, site);

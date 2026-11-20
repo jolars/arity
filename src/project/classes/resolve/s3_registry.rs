@@ -25,7 +25,7 @@ pub struct S3Generic {
     pub uncertainty: BTreeSet<OopUncertainty>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, salsa::SalsaValue)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum S3MethodSource {
     Declaration(OopId),
     Namespace { root: PathBuf, occurrence: usize },
@@ -140,12 +140,58 @@ impl S3NamespaceImports {
     }
 }
 
+fn installed_s3_generics(resolution: &ClassResolution<'_>) -> BTreeSet<(String, String)> {
+    use crate::rindex::schema::ObjectSystem;
+    resolution
+        .indexed
+        .packages()
+        .filter(|package| {
+            !resolution
+                .package_names
+                .values()
+                .any(|name| name == package.as_str())
+        })
+        .filter_map(|name| resolution.indexed.package_if_resident(name))
+        .flat_map(|package| {
+            package
+                .objects
+                .generics
+                .iter()
+                .filter(|generic| {
+                    generic.system == ObjectSystem::S3
+                        && generic.identity.name == generic.origin.binding
+                        && generic
+                            .identity
+                            .package
+                            .as_ref()
+                            .is_none_or(|owner| *owner == package.package)
+                        && package
+                            .symbols
+                            .iter()
+                            .any(|symbol| symbol.exported && symbol.name == generic.origin.binding)
+                })
+                .map(|generic| {
+                    (
+                        package.package.to_string(),
+                        generic.identity.name.to_string(),
+                    )
+                })
+        })
+        .collect()
+}
+
 impl S3LookupOrigins {
     pub fn build(resolution: &ClassResolution<'_>) -> Self {
         use crate::rindex::provider::{bundled_exports, bundled_packages};
         let mut exports = BTreeMap::new();
-        let relevant =
-            |name: &str| super::super::s3_dispatch::known_generic_package(name).is_some();
+        let installed: BTreeSet<_> = installed_s3_generics(resolution)
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect();
+        let relevant = |name: &str| {
+            super::super::s3_dispatch::known_generic_package(name).is_some()
+                || installed.contains(name)
+        };
         for package in bundled_packages() {
             if let Some(names) = bundled_exports(package) {
                 exports.insert(
@@ -228,6 +274,21 @@ impl ClassIndex {
                     _ => S3GenericKind::Known,
                 },
             });
+        }
+        for (package, name) in installed_s3_generics(resolution) {
+            let id = S3GenericId::Known {
+                package,
+                name: name.clone(),
+            };
+            if !registry.generics.iter().any(|generic| generic.id == id) {
+                registry.generics.push(S3Generic {
+                    id,
+                    name,
+                    binding: None,
+                    kind: S3GenericKind::Known,
+                    uncertainty: BTreeSet::new(),
+                });
+            }
         }
         for file in self.files.values() {
             for generic in &file.facts.oop.generics {
@@ -430,6 +491,56 @@ impl ClassIndex {
             }
         }
         registry
+    }
+
+    pub(crate) fn s3_method_binding(
+        &self,
+        path: &Path,
+        reference: &GenericRef,
+        in_function: bool,
+        internal: bool,
+    ) -> Option<OopId> {
+        let ClassName::Known(name) = &reference.name else {
+            return None;
+        };
+        if !name.contains('.') {
+            return None;
+        }
+        let files = if internal {
+            let root = self.s4_workspace_root(reference.package.as_deref()?)?;
+            self.files
+                .values()
+                .filter(|file| {
+                    file.package_root.as_ref() == Some(root) && file.exports.contains(name)
+                })
+                .map(|file| file.path.clone())
+                .collect()
+        } else if let Some(package) = &reference.package {
+            self.implementation_files(path, name, Some(package))
+        } else {
+            self.definition_files(path, name, in_function)
+        };
+        let mut candidates = self
+            .s3
+            .methods
+            .iter()
+            .filter_map(|method| {
+                let S3MethodSource::Declaration(id) = &method.source else {
+                    return None;
+                };
+                (!method.registered
+                    && !method.generics.is_empty()
+                    && files.contains(&id.path)
+                    && id.key.owner.0.is_empty()
+                    && self
+                        .method(id)
+                        .is_some_and(|definition| definition.name == reference.name))
+                .then_some(id)
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter();
+        let first = candidates.next()?;
+        candidates.next().is_none().then(|| first.clone())
     }
 
     fn s3_generic_candidates(

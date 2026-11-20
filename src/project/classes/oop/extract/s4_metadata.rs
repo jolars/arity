@@ -116,6 +116,22 @@ impl Projection<'_> {
                     None,
                 );
             }
+            if kind == S4CallKind::SelectMethod
+                && !uncertainty.contains(&S4CallUncertainty::CustomMethodTable)
+            {
+                for (argument, range) in &dispatch.arguments {
+                    if let DispatchClass::Formal(name) = &argument.class {
+                        self.site_with_callee(
+                            *range,
+                            OopSiteRole::Use,
+                            OopTarget::ClassReference(ParentRef::Formal(name.clone())),
+                            Some((callee.clone(), "methods")),
+                            dispatch.factory.clone(),
+                            None,
+                        );
+                    }
+                }
+            }
             sites.push(S4CallSite {
                 range: call.syntax().text_range(),
                 kind,

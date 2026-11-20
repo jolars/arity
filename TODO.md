@@ -864,7 +864,7 @@ coverage need not block useful workspace support.
 - [x] Add class, generic, method, and member document and workspace symbols,
   semantic token roles, and hover. Use installed metadata for hover when
   available.
-- [ ] Extend definition and references to class and generic identifier uses,
+- [x] Extend definition and references to class and generic identifier uses,
   aliases, qualified names, members, methods, and remaining registration sites,
   including supported `NAMESPACE` directives. Extend Go to Implementation to
   member overrides and visible source implementations of known external

@@ -5,8 +5,8 @@ use super::*;
 
 mod extract;
 mod slots;
-pub(super) use extract::{class_shape, declaration_count, formals, project};
-pub(super) use slots::slot_call;
+pub(super) use extract::{class_shape, declaration_count, formals, project, relation_formals};
+pub(crate) use slots::slot_call;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum S4Definition {

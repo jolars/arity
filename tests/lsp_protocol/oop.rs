@@ -503,6 +503,79 @@ label <- 'describe'
 }
 
 #[test]
+fn namespace_references_follow_open_buffers_and_explicit_methods() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("R/classes.R");
+    let namespace_path = dir.path().join("NAMESPACE");
+    let source = r#"methods::setClass("Existing")
+methods::setClass("Alternate")
+public <- function(x) UseMethod("public")
+impl <- function(x) x
+impl(1)
+"#;
+    let saved = "exportClasses(Existing)\nS3method(public, example, impl)\n";
+    let live = saved.replace("Existing", "Alternate");
+    fs::create_dir(path.parent().unwrap()).unwrap();
+    fs::write(dir.path().join("DESCRIPTION"), super::COMPLETE_DESCRIPTION).unwrap();
+    fs::write(&path, source).unwrap();
+    fs::write(&namespace_path, saved).unwrap();
+    let uri = path_uri(&path);
+    let namespace_uri = path_uri(&namespace_path);
+    let mut harness = Harness::start_push();
+    harness.did_open(&uri, source, 1);
+    harness.recv_publish_for(&uri, 1);
+    harness.did_open(&namespace_uri, &live, 1);
+    harness.recv_publish_for(&namespace_uri, 1);
+
+    let references = |harness: &mut Harness, uri: &str, text: &str, name: &str| {
+        request(
+            harness,
+            "textDocument/references",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": position(text, text.find(name).unwrap() + 1),
+                "context": { "includeDeclaration": false }
+            }),
+        )
+    };
+    let result = references(&mut harness, &namespace_uri, &live, "impl");
+    let locations = result.as_array().unwrap();
+    assert_eq!(locations.len(), 2, "{result}");
+    assert!(
+        locations
+            .iter()
+            .any(|location| location["uri"] == uri && location["range"]["start"]["line"] == 4)
+    );
+    assert_eq!(
+        references(&mut harness, &uri, source, "Alternate")[0]["uri"],
+        namespace_uri
+    );
+    harness.notify(
+        "textDocument/didClose",
+        json!({ "textDocument": { "uri": namespace_uri } }),
+    );
+
+    let result = references(&mut harness, &uri, source, "Alternate");
+    assert!(
+        result.is_null() || result.as_array().is_some_and(Vec::is_empty),
+        "{result}"
+    );
+    assert_eq!(
+        references(&mut harness, &uri, source, "Existing")[0]["uri"],
+        namespace_uri
+    );
+    let result = references(&mut harness, &uri, source, "impl");
+    let locations = result.as_array().unwrap();
+    assert_eq!(locations.len(), 2, "{result}");
+    assert!(
+        locations
+            .iter()
+            .any(|location| location["uri"] == namespace_uri)
+    );
+    harness.shutdown();
+}
+
+#[test]
 fn oop_presentation_uses_live_document_roles_and_spans() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("presentation.R");

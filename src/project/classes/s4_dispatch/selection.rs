@@ -136,7 +136,7 @@ impl S4MethodSignature {
         (&self.generic, self.object.as_ref())
     }
 
-    fn same_classes(&self, other: &Self) -> bool {
+    pub(super) fn same_classes(&self, other: &Self) -> bool {
         self.complete && other.complete && self.classes().eq(other.classes())
     }
 
@@ -145,7 +145,7 @@ impl S4MethodSignature {
     }
 }
 
-fn registration_issue(issue: OopUncertainty) -> Option<S4SelectionUncertainty> {
+pub(super) fn registration_issue(issue: OopUncertainty) -> Option<S4SelectionUncertainty> {
     match issue {
         OopUncertainty::Conditional => Some(S4SelectionUncertainty::ConditionalRegistration),
         OopUncertainty::CustomEnvironment
@@ -247,7 +247,7 @@ impl ClassIndex {
         (tables, complete)
     }
 
-    fn s4_method_activity(
+    pub(super) fn s4_method_activity(
         &self,
         context: &S4DispatchContext,
         method: &S4Method,
@@ -260,7 +260,7 @@ impl ClassIndex {
         self.s4_generic_activity(context, id, loaded)
     }
 
-    fn s4_registration_removed(
+    pub(super) fn s4_registration_removed(
         &self,
         context: &S4DispatchContext,
         method: &S4Method,
@@ -287,7 +287,7 @@ impl ClassIndex {
         status
     }
 
-    fn s4_installation_order(
+    pub(super) fn s4_installation_order(
         &self,
         context: &S4DispatchContext,
         left: &OopId,

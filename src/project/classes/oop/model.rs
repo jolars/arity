@@ -432,12 +432,14 @@ pub enum MemberReceiver {
 pub enum OopTarget {
     Class(ClassKey),
     Declaration(OopKey),
+    BindingDeclaration(OopKey),
     ClassReference(ParentRef),
     DispatchClass {
         system: OopSystem,
         class: DispatchClass,
     },
     Generic(GenericRef),
+    InternalGeneric(GenericRef),
     Member {
         receiver: MemberReceiver,
         name: String,

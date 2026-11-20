@@ -3,11 +3,11 @@ use super::*;
 /// Resolve go-to-definition for the name at `position`. The current file is
 /// read from cached syntax and semantics when they match the live buffer, with
 /// a fresh analysis on a cache miss or cancellation. An intra-file
-/// binding wins and reports a `Location` back into `uri`. Otherwise a bare
+/// binding wins and reports a `Location` back into `uri`. Recognized object
+/// system names first resolve through the class index. Otherwise a bare
 /// top-level name falls back to the workspace index ([`Analysis::workspace_def_sites`]),
-/// reporting the sibling file(s) it is defined in. Namespaced (`pkg::name`) and
-/// base-R names have no in-tree location, so they resolve to nothing (hover still
-/// documents them). Snapshot reads are wrapped in [`salsa::Cancelled::catch`].
+/// reporting the sibling file(s) it is defined in. Snapshot reads are wrapped
+/// in [`salsa::Cancelled::catch`].
 pub(crate) fn definition_via_db(
     snapshot: &Analysis,
     path: &Path,
@@ -53,8 +53,7 @@ pub(crate) fn definition_via_db(
             return Some(GotoDefinitionResponse::Scalar(location));
         }
 
-        // Cross-file: a bare top-level name defined in a sibling workspace file. A
-        // namespaced name is a package export with no in-tree source location.
+        // Cross-file fallback for bare top-level bindings.
         let token = pick_name_token(root, offset)?;
         if token.kind() != SyntaxKind::IDENT
             || model.blocks_source_navigation(token.text_range())
@@ -147,6 +146,7 @@ pub(crate) fn implementation_via_db(
 /// `source()`) rather than risk missing a reference. Namespaced (`pkg::name`) and
 /// base-R names have no in-tree reads. Snapshot reads are wrapped in
 /// [`salsa::Cancelled::catch`].
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn references_via_db(
     snapshot: &Analysis,
     path: &Path,
@@ -155,6 +155,7 @@ pub(crate) fn references_via_db(
     position: Position,
     include_declaration: bool,
     encoding: PositionEncoding,
+    open_namespaces: &[(PathBuf, Arc<TextBuffer>)],
 ) -> Option<Vec<Location>> {
     let text = buffer.text();
     let line_index = buffer.line_index();
@@ -177,89 +178,131 @@ pub(crate) fn references_via_db(
             encoding,
             oop::NameNavigation::References {
                 include_declaration,
+                open_namespaces,
             },
         ) {
             return Some(locations);
         }
-        if let Some(ranges) = generated_occurrences(root, model, offset) {
-            return Some(
-                ranges
-                    .into_iter()
-                    .map(|range| Location {
-                        uri: uri.clone(),
-                        range: text_range_to_lsp_range(line_index, range, encoding),
-                    })
-                    .collect(),
-            );
-        }
-        // Intra-file: the cursor names a local binding (or sits on its definition).
-        if let Some((target, occ)) = local_occurrences(root, model, offset) {
-            let mut locations: Vec<Location> = occ
-                .reads
-                .iter()
-                .map(|range| Location {
-                    uri: uri.clone(),
-                    range: text_range_to_lsp_range(line_index, *range, encoding),
-                })
-                .collect();
-            if include_declaration {
-                locations.extend(occ.defs.iter().map(|range| Location {
-                    uri: uri.clone(),
-                    range: text_range_to_lsp_range(line_index, *range, encoding),
-                }));
-            }
-            if model.binding_is_file_scope(target.binding) {
-                locations.extend(cross_file_reference_locations(
-                    snapshot,
-                    path,
-                    target.name.as_str(),
-                    include_declaration,
-                    Some(path),
-                    encoding,
-                ));
-            }
-            return (!locations.is_empty()).then_some(locations);
-        }
-
-        // The cursor sits on a bare free read of a workspace name (no local binding).
-        // A namespaced name is a package export with no in-tree reads to collect.
-        let token = pick_name_token(root, offset)?;
-        if token.kind() != SyntaxKind::IDENT
-            || model.blocks_source_navigation(token.text_range())
-            || matches!(
-                symbol_query_at(root, offset),
-                Some(SymbolQuery::Namespaced { .. })
+        let lexical = |include_declaration| {
+            lexical_reference_locations(
+                snapshot,
+                path,
+                uri,
+                root,
+                model,
+                line_index,
+                offset,
+                include_declaration,
+                encoding,
             )
-        {
-            return None;
+        };
+        let mut locations = lexical(include_declaration).unwrap_or_default();
+        let registrations =
+            oop::namespace_callable_references(snapshot, encoding, open_namespaces, || {
+                if include_declaration {
+                    locations.clone()
+                } else {
+                    lexical(true).unwrap_or_default()
+                }
+            });
+        if !registrations.is_empty() {
+            locations.extend(registrations);
+            dedup_locations(&mut locations);
         }
-        let name = SmolStr::new(token.text());
-        let visible_defs = salsa::Cancelled::catch(AssertUnwindSafe(|| {
-            snapshot.visible_def_files(path, name.as_str())
-        }))
-        .unwrap_or_default();
-        if visible_defs.is_empty() {
-            return None;
-        }
-        // A unique resolution reports its component; an ambiguous one reports the
-        // union (references over-reports rather than refuse). Include this file's own
-        // read (skip = None).
-        let mut locations: Vec<Location> = visible_defs
-            .iter()
-            .flat_map(|def_file| {
-                cross_file_reference_locations(
-                    snapshot,
-                    def_file,
-                    name.as_str(),
-                    include_declaration,
-                    None,
-                    encoding,
-                )
-            })
-            .collect();
-        dedup_locations(&mut locations);
         (!locations.is_empty()).then_some(locations)
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lexical_reference_locations(
+    snapshot: &Analysis,
+    path: &Path,
+    uri: &Uri,
+    root: &SyntaxNode,
+    model: &SemanticModel,
+    line_index: &LineIndex,
+    offset: TextSize,
+    include_declaration: bool,
+    encoding: PositionEncoding,
+) -> Option<Vec<Location>> {
+    if let Some(ranges) = generated_occurrences(root, model, offset) {
+        return Some(
+            ranges
+                .into_iter()
+                .map(|range| Location {
+                    uri: uri.clone(),
+                    range: text_range_to_lsp_range(line_index, range, encoding),
+                })
+                .collect(),
+        );
+    }
+    // Intra-file: the cursor names a local binding (or sits on its definition).
+    if let Some((target, occ)) = local_occurrences(root, model, offset) {
+        let mut locations: Vec<Location> = occ
+            .reads
+            .iter()
+            .map(|range| Location {
+                uri: uri.clone(),
+                range: text_range_to_lsp_range(line_index, *range, encoding),
+            })
+            .collect();
+        if include_declaration {
+            locations.extend(occ.defs.iter().map(|range| Location {
+                uri: uri.clone(),
+                range: text_range_to_lsp_range(line_index, *range, encoding),
+            }));
+        }
+        if model.binding_is_file_scope(target.binding) {
+            locations.extend(cross_file_reference_locations(
+                snapshot,
+                path,
+                target.name.as_str(),
+                include_declaration,
+                Some(path),
+                encoding,
+            ));
+        }
+        return (!locations.is_empty()).then_some(locations);
+    }
+
+    // The cursor sits on a bare free read of a workspace name (no local binding).
+    // A namespaced name is a package export with no in-tree reads to collect.
+    let token = pick_name_token(root, offset)?;
+    if token.kind() != SyntaxKind::IDENT
+        || model.blocks_source_navigation(token.text_range())
+        || matches!(
+            symbol_query_at(root, offset),
+            Some(SymbolQuery::Namespaced { .. })
+        )
+    {
+        return None;
+    }
+    let name = SmolStr::new(token.text());
+    let visible_defs = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        snapshot.visible_def_files(path, name.as_str())
+    }))
+    .unwrap_or_default();
+    if visible_defs.is_empty() {
+        return None;
+    }
+    // A unique resolution reports its component; an ambiguous one reports the
+    // union (references over-reports rather than refuse). Include this file's own
+    // read (skip = None).
+    let mut locations: Vec<Location> = visible_defs
+        .iter()
+        .flat_map(|def_file| {
+            cross_file_reference_locations(
+                snapshot,
+                def_file,
+                name.as_str(),
+                include_declaration,
+                None,
+                encoding,
+            )
+        })
+        .collect();
+    dedup_locations(&mut locations);
+    (!locations.is_empty()).then_some(locations)
 }
 
 /// Resolve `textDocument/rename` against a db `snapshot` — the write mirror of
@@ -1044,6 +1087,7 @@ mod tests {
                         position,
                         include_declaration,
                         encoding,
+                        &[],
                     );
                     let sort = |locations: Option<Vec<Location>>| {
                         locations.map(|mut locations| {
@@ -1740,6 +1784,7 @@ mod tests {
             position,
             true,
             PositionEncoding::Utf16,
+            &[],
         )
         .expect("references present");
         let uris = ref_uris(&locations);
@@ -1890,6 +1935,7 @@ mod tests {
             position,
             true,
             PositionEncoding::Utf16,
+            &[],
         )
         .expect("the definition has at least itself");
         let uris = ref_uris(&locations);
@@ -1914,6 +1960,7 @@ mod tests {
             position,
             true,
             PositionEncoding::Utf16,
+            &[],
         )
         .expect("references present");
         let uris = ref_uris(&locations);
@@ -1938,6 +1985,7 @@ mod tests {
             position,
             true,
             PositionEncoding::Utf16,
+            &[],
         )
         .expect("references present");
         let uris = ref_uris(&locations);
@@ -1964,6 +2012,7 @@ mod tests {
             position,
             true,
             PositionEncoding::Utf16,
+            &[],
         )
         .expect("references present");
         let uris = ref_uris(&locations);
@@ -1993,6 +2042,7 @@ mod tests {
             position,
             true,
             PositionEncoding::Utf16,
+            &[],
         )
         .expect("references present");
         let uris = ref_uris(&locations);
@@ -2031,6 +2081,7 @@ mod tests {
             position,
             true,
             PositionEncoding::Utf16,
+            &[],
         )
         .expect("the bare read resolves to a.R");
         let uris = ref_uris(&locations);

@@ -774,6 +774,19 @@ impl GlobalState {
         };
         let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
         self.register_read(id.clone(), Some((uri.clone(), version)));
+        let open_namespaces = self
+            .documents
+            .iter()
+            .filter_map(|(uri, document)| {
+                let path = uri::to_path(uri)?;
+                (path.file_name()? == "NAMESPACE").then(|| {
+                    (
+                        crate::incremental::normalize_path(&path),
+                        Arc::clone(&document.buffer),
+                    )
+                })
+            })
+            .collect();
         self.dispatch_read(ReadJob::References {
             id,
             path,
@@ -781,6 +794,7 @@ impl GlobalState {
             buffer,
             position,
             include_declaration,
+            open_namespaces,
             out: self.out_tx.clone(),
         });
     }
