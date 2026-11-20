@@ -329,7 +329,7 @@ warning: sprintf
 
 Flag the vectorized `&`/`|` used directly in an `if`/`while` condition, where the scalar `&&`/`||` is meant.
 
-A condition needs a single `TRUE`/`FALSE`: R only looks at the first element (a length > 1 condition is an error since R 4.2), and `&&`/`||` short-circuit. The fix doubles the operator. Operators inside a function call (`if (any(a | b))`) are left alone—a vector result is the point there.
+A condition needs a single `TRUE`/`FALSE`: R only looks at the first element (a length > 1 condition is an error since R 4.2), and `&&`/`||` short-circuit. The fix doubles the operator and is unsafe because it can skip evaluation of the right operand. Operators inside a function call (`if (any(a | b))`) are left alone—a vector result is the point there.
 
 This rule is **enabled by default**.
 
@@ -348,14 +348,6 @@ warning: vector-logic
 1 | if (a & b) {
   |       ^ `&` in a condition; use `&&`
   = help: Use the scalar `&&` in an `if`/`while` condition.
-```
-
-After applying the fix:
-
-```r
-if (a && b) {
-  go()
-}
 ```
 
 ### `unreachable-code`
@@ -1689,7 +1681,7 @@ i <- grep("^a", x)
 
 ### `rep-len`
 
-Flag the exact `rep(x, length.out = n)` shape, for which `rep_len(x, n)` is the direct base primitive. Calls with `times`, `each`, or other arguments are excluded.
+Flag the exact `rep(x, length.out = n)` shape, for which `rep_len(x, n)` is the direct base primitive. Calls with `times`, `each`, or other arguments are excluded. The fix is unsafe because `rep_len()` can drop names that `rep()` preserves.
 
 This rule is **enabled by default**.
 
@@ -1706,12 +1698,6 @@ warning: rep-len
 1 | y <- rep(x, length.out = n)
   |      ^^^^^^^^^^^^^^^^^^^^^^ Use `rep_len(x, n)` instead of this indirect base call.
   = help: Use `rep_len(x, n)`.
-```
-
-After applying the fix:
-
-```r
-y <- rep_len(x, n)
 ```
 
 ### `system-file`

@@ -4,7 +4,7 @@ expression: render_rule_doc(&rule)
 ---
 ### `rep-len`
 
-Flag the exact `rep(x, length.out = n)` shape, for which `rep_len(x, n)` is the direct base primitive. Calls with `times`, `each`, or other arguments are excluded.
+Flag the exact `rep(x, length.out = n)` shape, for which `rep_len(x, n)` is the direct base primitive. Calls with `times`, `each`, or other arguments are excluded. The fix is unsafe because `rep_len()` can drop names that `rep()` preserves.
 
 This rule is **enabled by default**.
 
@@ -21,10 +21,4 @@ warning: rep-len
 1 | y <- rep(x, length.out = n)
   |      ^^^^^^^^^^^^^^^^^^^^^^ Use `rep_len(x, n)` instead of this indirect base call.
   = help: Use `rep_len(x, n)`.
-```
-
-After applying the fix:
-
-```r
-y <- rep_len(x, n)
 ```

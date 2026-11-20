@@ -247,6 +247,7 @@ fn is_namespace_or_toggle_tag(name: &str) -> bool {
             | "importMethodsFrom"
             | "include"
             | "md"
+            | "method"
             | "noMd"
             | "noRd"
             | "rawNamespace"

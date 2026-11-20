@@ -215,7 +215,7 @@ impl WhichGrepl {
 rule_meta!(
     RepLen,
     "rep-len",
-    "Flag the exact `rep(x, length.out = n)` shape, for which `rep_len(x, n)` is the direct base primitive. Calls with `times`, `each`, or other arguments are excluded.",
+    "Flag the exact `rep(x, length.out = n)` shape, for which `rep_len(x, n)` is the direct base primitive. Calls with `times`, `each`, or other arguments are excluded. The fix is unsafe because `rep_len()` can drop names that `rep()` preserves.",
     "Direct length-limited repetition:",
     "y <- rep(x, length.out = n)\n"
 );
@@ -243,7 +243,7 @@ impl RepLen {
             ),
             "rep_len(x, n)",
             &[x.text_range(), n.text_range()],
-            true,
+            false,
             sink,
         );
     }

@@ -5,8 +5,8 @@
 //! at the first element (and since R 4.2 a length > 1 condition is an error).
 //! The vectorized operators `&`/`|` build a whole logical vector and don't
 //! short-circuit, so `&&`/`||` are the operators actually intended there. The
-//! rewrite doubles the operator token (`&` → `&&`, `|` → `||`), a tight,
-//! format-clean edit, so the fix is `Safe`.
+//! rewrite doubles the operator token (`&` → `&&`, `|` → `||`). The fix is
+//! `Unsafe` because short-circuiting can skip evaluation of the right operand.
 //!
 //! Only operators in *conditional context* are flagged: the walk descends from
 //! the condition through the logical scaffolding that preserves the scalar
@@ -39,7 +39,8 @@ impl Rule for VectorLogic {
          condition, where the scalar `&&`/`||` is meant.\n\nA condition needs a \
          single `TRUE`/`FALSE`: R only looks at the first element (a length > 1 \
          condition is an error since R 4.2), and `&&`/`||` short-circuit. The \
-         fix doubles the operator. Operators inside a function call \
+         fix doubles the operator and is unsafe because it can skip evaluation \
+         of the right operand. Operators inside a function call \
          (`if (any(a | b))`) are left alone—a vector result is the point \
          there."
     }
@@ -65,7 +66,7 @@ impl Rule for VectorLogic {
                 _ => continue,
             };
             let range = op.text_range();
-            let fix = Fix::safe(
+            let fix = Fix::unsafe_(
                 usize::from(range.start()),
                 usize::from(range.end()),
                 scalar,

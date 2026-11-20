@@ -5299,13 +5299,23 @@ fn browser_withholds_fix_at_expression_position() {
 }
 
 #[test]
+fn vector_logic_short_circuit_rewrite_requires_unsafe_fixes() {
+    let input = "if (FALSE & stop(\"right\")) 1\n";
+    assert_eq!(fixed_output_all(input, "vector-logic"), input);
+    assert_eq!(
+        unsafe_fixed_output(input, "vector-logic"),
+        "if (FALSE && stop(\"right\")) 1\n"
+    );
+}
+
+#[test]
 fn vector_logic_rewrites_scalar_operators() {
     assert_eq!(
-        fixed_output("if (a & b) f()\n", "vector-logic"),
+        unsafe_fixed_output("if (a & b) f()\n", "vector-logic"),
         "if (a && b) f()\n"
     );
     assert_eq!(
-        fixed_output("while (a | b) f()\n", "vector-logic"),
+        unsafe_fixed_output("while (a | b) f()\n", "vector-logic"),
         "while (a || b) f()\n"
     );
 }
@@ -5315,16 +5325,22 @@ fn vector_logic_reaches_through_logical_scaffolding() {
     // `&`/`|` reachable through `&&`/`||`, `!`, and parens are all flagged; the
     // outer scalar operators are left alone.
     assert_eq!(
-        fixed_output_all("if (x && (a | b)) f()\n", "vector-logic"),
+        unsafe_fixed_output("if (x && (a | b)) f()\n", "vector-logic"),
         "if (x && (a || b)) f()\n"
     );
     assert_eq!(
-        fixed_output_all("if (!(a & b)) f()\n", "vector-logic"),
+        unsafe_fixed_output("if (!(a & b)) f()\n", "vector-logic"),
         "if (!(a && b)) f()\n"
     );
     // Two operators in one condition → two fixes.
+    let src = "if (a & b & c) f()\n";
+    let fixes: Vec<_> = diagnostics(src)
+        .into_iter()
+        .filter(|d| d.rule == "vector-logic")
+        .map(|d| d.fix.expect("finding should carry a fix"))
+        .collect();
     assert_eq!(
-        fixed_output_all("if (a & b & c) f()\n", "vector-logic"),
+        apply_fixes(src, &fixes, true).output,
         "if (a && b && c) f()\n"
     );
 }
@@ -5757,6 +5773,16 @@ fn lengths_withholds_fix_for_dropped_comment() {
 }
 
 #[test]
+fn rep_len_rewrite_that_can_drop_names_requires_unsafe_fixes() {
+    let input = "rep(c(a = 1), length.out = 2)\n";
+    assert_eq!(fixed_output_all(input, "rep-len"), input);
+    assert_eq!(
+        unsafe_fixed_output(input, "rep-len"),
+        "rep_len(c(a = 1), 2)\n"
+    );
+}
+
+#[test]
 fn call_rewrite_batch_rewrites_clean_shapes() {
     let cases = [
         ("apply(x, 1, sum)\n", "matrix-apply", "rowSums(x)\n"),
@@ -5785,7 +5811,7 @@ fn call_rewrite_batch_rewrites_clean_shapes() {
         ("length(levels(x))\n", "length-levels", "nlevels(x)\n"),
     ];
     for (input, rule, expected) in cases {
-        let output = if matches!(rule, "matrix-apply" | "list2df") {
+        let output = if matches!(rule, "matrix-apply" | "list2df" | "rep-len") {
             unsafe_fixed_output(input, rule)
         } else {
             fixed_output(input, rule)
@@ -7074,6 +7100,17 @@ fn coalesce_skips_the_operator_definition_with_a_braced_body() {
 }
 
 #[test]
+fn coalesce_skips_string_named_operator_definitions() {
+    for src in [
+        "\"%||%\" <- function(a, b) {\n  if (!is.null(a)) a else b\n}\n",
+        "(function(a, b) if (is.null(a)) b else a) -> '%||%'\n",
+    ] {
+        let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();
+        assert!(!rules.contains(&"coalesce"), "got: {rules:?} for {src}");
+    }
+}
+
+#[test]
 fn coalesce_withholds_fix_for_non_atom_operand() {
     // A non-atom fallback (`a + b`) would misbind under `%||%`, so the fix is
     // withheld while the finding still reports.
@@ -7458,11 +7495,13 @@ fn fixed_output_is_parseable_and_clean() {
         // repeat (`while (TRUE)` → `repeat`)
         "while (TRUE) f()\n",
         "while (TRUE) {\n  f()\n}\n",
-        // vector-logic (`&`/`|` → `&&`/`||` in a condition)
+        // vector-logic (`&`/`|` → `&&`/`||` in a condition, unsafe)
         "if (a & b) f()\n",
         "while (a | b) f()\n",
         "if (x && (a | b)) f()\n",
         "if (a & b & c) f()\n",
+        // rep-len (unsafe because the replacement can drop names)
+        "rep(c(a = 1), length.out = 2)\n",
         // comparison-negation (`!(a == b)` → `a != b`)
         "print(!(a == b))\n",
         "if (!(x < y)) f()\n",
@@ -8419,6 +8458,19 @@ fn roxygen_topic_rules_skip_s3_methods() {
             "{rule} should not fire on an S3 method: {rules:?}"
         );
     }
+}
+
+#[test]
+fn roxygen_title_skips_registered_s3_method_with_method_tag() {
+    let result = lint_package(
+        "S3method(print,widget)\n",
+        "#' @export\n#' @method print widget\nprint.widget <- function(x, ...) invisible(x)\n",
+    );
+    let rules = rules_for(&result, "a.R");
+    assert!(
+        !rules.contains(&"roxygen-title"),
+        "@method and @export produce only a NAMESPACE entry here: {rules:?}"
+    );
 }
 
 #[test]

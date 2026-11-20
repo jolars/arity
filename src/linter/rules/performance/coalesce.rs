@@ -29,7 +29,7 @@
 use rowan::ast::AstNode as _;
 
 use crate::ast::kinds::is_trivia;
-use crate::ast::{CallExpr, IfExpr, UnaryExpr};
+use crate::ast::{AssignmentExpr, CallExpr, IfExpr, UnaryExpr};
 use crate::linter::diagnostic::{Diagnostic, Fix, ViolationData};
 use crate::linter::rules::matchers;
 use crate::linter::rules::{Example, Rule, RuleContext};
@@ -149,21 +149,12 @@ impl Rule for Coalesce {
     }
 }
 
-/// Whether `node` sits inside an assignment that binds `%||%` — the operator
-/// this rule recommends. Both directions are accepted (`` `%||%` <- f `` and
-/// ``f -> `%||%` ``) by scanning the assignment's own identifier tokens: with
-/// `node` a descendant, the value side is a `function`, never a bare name, so a
-/// direct `IDENT` child can only be the target.
+/// Whether an enclosing assignment binds the operator the rule recommends.
 fn defines_coalesce_operator(node: &SyntaxNode) -> bool {
     node.ancestors()
-        .filter(|a| a.kind() == SyntaxKind::ASSIGNMENT_EXPR)
-        .any(|assign| {
-            assign
-                .children_with_tokens()
-                .filter_map(|e| e.into_token())
-                .filter(|t| t.kind() == SyntaxKind::IDENT)
-                .any(|t| t.text().trim_matches('`') == "%||%")
-        })
+        .filter_map(AssignmentExpr::cast)
+        .filter_map(|assign| assign.target_name())
+        .any(|name| name.trim_matches('`') == "%||%")
 }
 
 /// The `is.null(x)` call at the heart of the condition, plus whether it is

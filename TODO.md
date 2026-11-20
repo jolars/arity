@@ -67,6 +67,40 @@ output and semantic noise. Rule coverage and style options follow those fixes.
   branch each in `crates/arity-parser/src/directive.rs`, plus `Spelling` and the
   rule itself.
 
+### ggplot2 corpus audit
+
+Reproduced against ggplot2 `87a95d9` with R 4.6.1.
+
+- [ ] Recognize package-registered roxygen tags in `roxygen-unknown-tag`.
+  A block with `@aesthetics GeomPoint` warns in Arity. With ggplot2's
+  `vctrs::s3_register("roxygen2::roxy_tag_parse", "roxy_tag_aesthetics", ...)`
+  registration, roxygen2 8.1.0 accepts the tag and emits an Aesthetics
+  section. Use the registration or an explicit declaration for extensions
+  whose names cannot be resolved statically.
+- [ ] Count direct reads in roxygen `@eval` toward package binding use.
+  `doc <- function() "@param x Input."` followed by a documented function
+  with `@eval doc()` triggers `unused-binding` on `doc`. Roxygen2 8.0.0
+  emits the parameter documentation. ggplot2's `subtheme_param_doc` has
+  this shape. Parse the expression statically.
+- [ ] Support declared dynamic reads for computed names. In
+  `f <- function() { geom_foo <- function() 42; get(paste0("geom_", "foo"))() }`,
+  R returns `42` from `f()`, and `unused-binding` flags `geom_foo`.
+  ggplot2 tests exercise computed lookups for local geom and scale providers.
+- [ ] Refine `missing-argument` when a resolved project callee explicitly
+  handles an omitted formal. `f <- function(x, y, z) if (missing(y)) x + z`
+  accepts `f(1, , 3)` and returns `4`. ggplot2 intentionally omits
+  `table2` in calls to its table-weaving helpers. Its `aes()` tests also
+  use `aes(,, !!!list(y = 1))`, which yields the same mapping as `aes(y = 1)`.
+- [ ] Account for positional and partially matched arguments before adding
+  `fixed = TRUE`. R evaluates `grepl("a", "A", TRUE)` and
+  `grepl("a", "A", ign = TRUE)` to `TRUE`. The current rewrite turns
+  both into `FALSE` with a warning. For
+  `grepl(pattern = "a.", "ab")`, the rule underlines the subject and the
+  rewrite changes `TRUE` to `FALSE`. R also interprets replacement escapes
+  differently under fixed matching. In R source, `sub("abc", "\\1", "abc")`
+  returns an empty string, and adding `fixed = TRUE` returns a literal
+  backslash followed by `1`.
+
 ### Rule-candidate audit: RStudio (2026-10-11)
 
 Audited [RStudio](https://github.com/rstudio/rstudio) at

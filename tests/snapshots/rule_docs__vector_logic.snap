@@ -1,12 +1,12 @@
 ---
 source: tests/rule_docs.rs
-expression: render_rule_doc(rule.as_ref())
+expression: render_rule_doc(&rule)
 ---
 ### `vector-logic`
 
 Flag the vectorized `&`/`|` used directly in an `if`/`while` condition, where the scalar `&&`/`||` is meant.
 
-A condition needs a single `TRUE`/`FALSE`: R only looks at the first element (a length > 1 condition is an error since R 4.2), and `&&`/`||` short-circuit. The fix doubles the operator. Operators inside a function call (`if (any(a | b))`) are left alone—a vector result is the point there.
+A condition needs a single `TRUE`/`FALSE`: R only looks at the first element (a length > 1 condition is an error since R 4.2), and `&&`/`||` short-circuit. The fix doubles the operator and is unsafe because it can skip evaluation of the right operand. Operators inside a function call (`if (any(a | b))`) are left alone—a vector result is the point there.
 
 This rule is **enabled by default**.
 
@@ -25,12 +25,4 @@ warning: vector-logic
 1 | if (a & b) {
   |       ^ `&` in a condition; use `&&`
   = help: Use the scalar `&&` in an `if`/`while` condition.
-```
-
-After applying the fix:
-
-```r
-if (a && b) {
-  go()
-}
 ```
