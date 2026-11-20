@@ -37,12 +37,6 @@ output and semantic noise. Rule coverage and style options follow those fixes.
   consider whether verification needs a stronger comment invariant.
   Follow-up to [issue #125](https://github.com/jolars/arity/issues/125).
 
-- [ ] Honor `# arity-format skip` and `off`/`on` in a `DESCRIPTION`. Only
-  `skip-file` works there today; the other verbs need the field-class
-  planner (`formatter/description/plan.rs`) to learn to hand a field's lines
-  back verbatim. `misplaced-suppression` does not yet report the ones that
-  are inert there.
-
 ## Linter
 
 - [ ] Report calls to deprecated or defunct functions defined in project
