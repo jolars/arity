@@ -208,12 +208,12 @@ pub(crate) enum ReadJob {
         uri: Uri,
         buffer: Arc<TextBuffer>,
         position: Position,
+        s7_floor: Option<crate::config::CompatVersion>,
         out: Sender<Outbound>,
     },
     IncomingCalls {
         id: RequestId,
-        /// The prepared item, round-tripped from the client; the target function
-        /// is recovered from its `uri` + `name`.
+        /// The prepared item carries a source URI and a callable identity.
         item: Box<CallHierarchyItem>,
         out: Sender<Outbound>,
     },
@@ -469,10 +469,18 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             uri,
             buffer,
             position,
+            s7_floor,
             out,
         } => {
-            let result =
-                prepare_call_hierarchy_via_db(&snapshot, &path, &uri, &buffer, position, encoding);
+            let result = prepare_call_hierarchy_via_db(
+                &snapshot,
+                &path,
+                &uri,
+                &buffer,
+                position,
+                encoding,
+                s7_floor.as_ref(),
+            );
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::IncomingCalls { id, item, out } => {

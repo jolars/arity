@@ -338,6 +338,19 @@ impl ClassIndex {
         result
     }
 
+    pub(crate) fn is_s3_next_method_call(&self, frame: S3MethodFrame<'_>, call: &CallExpr) -> bool {
+        call_function_ref(frame.model, frame.root, call)
+            .as_ref()
+            .is_some_and(|reference| match reference {
+                FunctionRef::Qualified { package, name } => {
+                    package == "base" && name == "NextMethod"
+                }
+                _ => self
+                    .callee_identity(frame.path, reference)
+                    .is_some_and(|origin| origin.package == "base" && origin.name == "NextMethod"),
+            })
+    }
+
     /// Resolve a particular NextMethod call using its originating dispatch.
     /// The caller environment and class vector come from that dispatch, while
     /// argument overrides and metadata writes come from the current method.
@@ -349,18 +362,8 @@ impl ClassIndex {
         frame: S3MethodFrame<'_>,
         call: &CallExpr,
     ) -> S3Dispatch {
-        let S3MethodFrame {
-            path: source_path,
-            root,
-            model,
-        } = frame;
-        let reference = call_function_ref(model, root, call);
-        let confirmed = reference.as_ref().is_some_and(|reference| match reference {
-            FunctionRef::Qualified { package, name } => package == "base" && name == "NextMethod",
-            _ => self
-                .callee_identity(source_path, reference)
-                .is_some_and(|origin| origin.package == "base" && origin.name == "NextMethod"),
-        });
+        let S3MethodFrame { root, model, .. } = frame;
+        let confirmed = self.is_s3_next_method_call(frame, call);
         let args: Vec<_> = call
             .arg_list()
             .map(|args| args.args().collect())
@@ -918,8 +921,22 @@ impl ClassIndex {
         model: &SemanticModel,
         value: &SyntaxElement,
     ) -> Option<S3Dispatch> {
+        let sites = ClassCallSites::new(model, root);
+        self.s3_dispatch_with_sites(path, root, model, value, &sites)
+            .map(|(dispatch, _)| dispatch)
+    }
+
+    pub(crate) fn s3_dispatch_with_sites(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        value: &SyntaxElement,
+        sites: &ClassCallSites,
+    ) -> Option<(S3Dispatch, S3DispatchContext)> {
         let call = shape(model, root, value)?;
-        let mut context = self.s3_dispatch_context_at(path, root, model, value);
+        let mut context =
+            self.s3_dispatch_context_with_sites(path, root, model, value, &sites.extracted);
         let mut uncertain_callee = false;
         if let Some(syntax_call) = value.as_node().cloned().and_then(CallExpr::cast)
             && replacement_assignment(&syntax_call).is_none()
@@ -1017,7 +1034,7 @@ impl ClassIndex {
                 .insert(S3DispatchUncertainty::AmbiguousGeneric);
             result.selected = None;
         }
-        Some(result)
+        Some((result, context))
     }
 
     pub fn s3_dispatch_context_at(
@@ -1027,7 +1044,18 @@ impl ClassIndex {
         model: &SemanticModel,
         value: &SyntaxElement,
     ) -> S3DispatchContext {
-        let extracted = extract(model, root, true);
+        let sites = ClassCallSites::new(model, root);
+        self.s3_dispatch_context_with_sites(path, root, model, value, &sites.extracted)
+    }
+
+    fn s3_dispatch_context_with_sites(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        value: &SyntaxElement,
+        extracted: &Extracted,
+    ) -> S3DispatchContext {
         let owner = value
             .as_node()
             .map(|node| owner_at(node, &extracted.owners))

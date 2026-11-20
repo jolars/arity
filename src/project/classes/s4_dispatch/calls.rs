@@ -32,6 +32,9 @@ fn selection_signature(generic: &S4Generic, supplied: &[DispatchArgument]) -> S4
     s4_method_signature(generic, &positional)
 }
 
+/// Continuation targets retain the method frame they came from.
+type S4Continuations = Vec<(S4MethodId, S4MethodId)>;
+
 impl ClassIndex {
     /// Resolve the callable binding independently of whether the actual dispatch
     /// arguments are complete enough to select a method.
@@ -50,13 +53,57 @@ impl ClassIndex {
         {
             return None;
         }
-        let extracted = extract(model, root, true);
-        let (name, context, _, generic) =
-            self.s4_call_generic(path, root, model, call, &extracted)?;
+        let sites = ClassCallSites::new(model, root);
+        let (name, context, _, generic) = self.s4_call_generic(path, root, model, call, &sites)?;
         let selected = self
-            .s4_called_method(&context, generic, path, root, model, call, &extracted)
+            .s4_called_method(&context, generic, path, root, model, call, &sites.extracted)
             .map(|arguments| super::super::editor::method_note(&name, &arguments));
         Some((generic, selected))
+    }
+
+    pub(crate) fn s4_call_targets(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        call: &CallExpr,
+        sites: &ClassCallSites,
+    ) -> Option<(Option<OopId>, Vec<OopId>)> {
+        if self.s4.generics.is_empty() {
+            return None;
+        }
+        let (_, context, _, generic) = self.s4_call_generic(path, root, model, call, sites)?;
+        let signature = self
+            .s4_call_signature(generic, path, root, model, call, &sites.extracted)
+            .unwrap_or_else(|| {
+                let mut signature = s4_method_signature(generic, &[]);
+                for argument in &mut signature.arguments {
+                    argument.class = DispatchClass::Unknown;
+                }
+                signature.complete = false;
+                signature
+            });
+        let resolution = self.s4_resolve_methods_with(&context, &signature, S4Inheritance::Default);
+        let methods = resolution.selected.map_or_else(
+            || {
+                resolution
+                    .candidates
+                    .into_iter()
+                    .map(|candidate| candidate.method)
+                    .collect()
+            },
+            |id| vec![id],
+        );
+        Some((
+            generic.declaration.clone(),
+            methods
+                .into_iter()
+                .filter_map(|id| match id {
+                    S4MethodId::Registration(id) => Some(id),
+                    S4MethodId::Default(_) => None,
+                })
+                .collect(),
+        ))
     }
 
     pub(crate) fn s4_external_implementations(
@@ -66,9 +113,9 @@ impl ClassIndex {
         model: &SemanticModel,
         call: &CallExpr,
     ) -> Vec<&S4Method> {
-        let extracted = extract(model, root, true);
+        let sites = ClassCallSites::new(model, root);
         let Some((_, context, loaded, generic)) =
-            self.s4_call_generic(path, root, model, call, &extracted)
+            self.s4_call_generic(path, root, model, call, &sites)
         else {
             return Vec::new();
         };
@@ -131,8 +178,9 @@ impl ClassIndex {
         root: &SyntaxNode,
         model: &SemanticModel,
         call: &CallExpr,
-        extracted: &Extracted,
+        sites: &ClassCallSites,
     ) -> Option<(String, S4DispatchContext, BTreeSet<PathBuf>, &S4Generic)> {
+        let extracted = &sites.extracted;
         let base = call.base()?;
         let token = call.callee_token()?;
         let function = call.syntax().ancestors().find_map(FunctionExpr::cast);
@@ -177,8 +225,12 @@ impl ClassIndex {
         if let Some(package) = &reference.package {
             self.s4_add_loaded_package(&mut context, Some(package));
         }
-        context.execution =
-            Some(self.s4_execution_at(path, &site, extracted, &source_sites(root, model)));
+        context.execution = Some(self.s4_execution_at(
+            path,
+            &site,
+            extracted,
+            sites.s4_sources.get_or_init(|| source_sites(root, model)),
+        ));
         let (loaded, _) = self.s4_dispatch_packages(&context, &context.loaded_packages);
         let candidates = self.s4_generic_candidates_at(&context, &reference, &loaded);
         let [generic] = candidates.as_slice() else {
@@ -198,6 +250,28 @@ impl ClassIndex {
         call: &CallExpr,
         extracted: &Extracted,
     ) -> Option<Vec<DispatchArgument>> {
+        let query = self.s4_call_signature(generic, path, root, model, call, extracted)?;
+        let resolved = self.s4_resolve_methods_with(context, &query, S4Inheritance::Default);
+        if !resolved.complete() {
+            return None;
+        }
+        let selected = resolved.selected?;
+        resolved
+            .candidates
+            .into_iter()
+            .find(|candidate| candidate.method == selected && candidate.certain)
+            .map(|candidate| candidate.signature.arguments)
+    }
+
+    fn s4_call_signature(
+        &self,
+        generic: &S4Generic,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        call: &CallExpr,
+        extracted: &Extracted,
+    ) -> Option<S4MethodSignature> {
         if generic.skeleton != Some(S4GenericSkeleton::Standard)
             || generic.dispatches_on_dots()
             || generic.dispatch_arguments.is_empty()
@@ -250,17 +324,7 @@ impl ClassIndex {
                 })
             })
             .collect::<Option<Vec<_>>>()?;
-        let query = s4_method_signature(generic, &supplied);
-        let resolved = self.s4_resolve_methods_with(context, &query, S4Inheritance::Default);
-        if !resolved.complete() {
-            return None;
-        }
-        let selected = resolved.selected?;
-        resolved
-            .candidates
-            .into_iter()
-            .find(|candidate| candidate.method == selected && candidate.certain)
-            .map(|candidate| candidate.signature.arguments)
+        Some(s4_method_signature(generic, &supplied))
     }
 
     /// Link live operations to declaration identities, resolve literal
@@ -271,12 +335,27 @@ impl ClassIndex {
         root: &SyntaxNode,
         model: &SemanticModel,
     ) -> Vec<S4DispatchCall> {
-        let extracted = extract(model, root, true);
-        let sources = source_sites(root, model);
+        let sites = ClassCallSites::new(model, root);
+        self.s4_dispatch_calls_with_sites(path, root, model, &sites)
+            .into_iter()
+            .map(|(call, _)| call)
+            .collect()
+    }
+
+    pub(crate) fn s4_dispatch_calls_with_sites(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        sites: &ClassCallSites,
+    ) -> Vec<(S4DispatchCall, S4Continuations)> {
+        let extracted = &sites.extracted;
+        let sources = sites.s4_sources.get_or_init(|| source_sites(root, model));
         extracted
             .s4_calls
             .iter()
             .map(|site| {
+                let mut continuations = Vec::new();
                 let mut result = S4DispatchCall {
                     range: site.range,
                     kind: site.kind,
@@ -296,7 +375,7 @@ impl ClassIndex {
                     result
                         .uncertainty
                         .insert(S4CallUncertainty::UnresolvedCallee);
-                    return result;
+                    return (result, continuations);
                 }
                 if site.kind == S4CallKind::NextMethod {
                     for frame in &site.frames {
@@ -350,18 +429,20 @@ impl ClassIndex {
                             .insert(S4CallUncertainty::DynamicSignature);
                     }
                     let mut group_frame = false;
-                    for signature in &result.dispatch {
-                        let mut context = S4DispatchContext::new(path);
-                        context.continuation = true;
-                        self.s4_package_loads_at(
-                            &mut context,
-                            &extracted.s4_package_load_sites,
-                            site,
-                        );
-                        if let Some(method) = self.s4.methods.iter().find(|method| {
-                            result.methods.contains(&method.id)
-                                && method.dispatch.contains(signature)
-                        }) {
+                    for method in self
+                        .s4
+                        .methods
+                        .iter()
+                        .filter(|method| result.methods.contains(&method.id))
+                    {
+                        for signature in &method.dispatch {
+                            let mut context = S4DispatchContext::new(path);
+                            context.continuation = true;
+                            self.s4_package_loads_at(
+                                &mut context,
+                                &extracted.s4_package_load_sites,
+                                site,
+                            );
                             context.path = method.owner.path.clone();
                             context.owner = method.owner.lexical.clone();
                             if let Some(package) = &method.generic.package {
@@ -370,14 +451,19 @@ impl ClassIndex {
                             if matches!(method.id, S4MethodId::Default(_)) {
                                 context.excluded.insert(method.id.clone());
                             }
+                            let (origins, group) = self.s4_next_signatures(&context, signature);
+                            group_frame |= group;
+                            for origin in &origins {
+                                let resolution = self.s4_resolve_methods(&context, origin, true);
+                                continuations.extend(
+                                    resolution
+                                        .best
+                                        .iter()
+                                        .map(|target| (method.id.clone(), target.clone())),
+                                );
+                                result.resolutions.push(resolution);
+                            }
                         }
-                        let (origins, group) = self.s4_next_signatures(&context, signature);
-                        group_frame |= group;
-                        result.resolutions.extend(
-                            origins
-                                .iter()
-                                .map(|origin| self.s4_resolve_methods(&context, origin, true)),
-                        );
                     }
                     if group_frame {
                         result
@@ -398,7 +484,7 @@ impl ClassIndex {
                             self.s4_add_loaded_package(&mut context, Some(package));
                         }
                         context.execution =
-                            Some(self.s4_execution_at(path, site, &extracted, &sources));
+                            Some(self.s4_execution_at(path, site, extracted, sources));
                     }
                     let generics = if site.kind == S4CallKind::SelectMethod {
                         let (loaded, _) =
@@ -513,7 +599,7 @@ impl ClassIndex {
                         .uncertainty
                         .insert(S4CallUncertainty::UnresolvedGeneric);
                 }
-                result
+                (result, continuations)
             })
             .collect()
     }

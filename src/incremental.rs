@@ -2052,7 +2052,11 @@ impl Analysis {
     }
 
     pub fn class_index(&self) -> ClassIndex {
-        project_classes(&self.0).clone()
+        self.class_index_ref().clone()
+    }
+
+    pub(crate) fn class_index_ref(&self) -> &ClassIndex {
+        project_classes(&self.0)
     }
 
     pub(crate) fn tracked_class_source(

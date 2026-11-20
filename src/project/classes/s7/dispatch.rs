@@ -125,6 +125,31 @@ impl ClassIndex {
         })
     }
 
+    /// A workspace registration can name an external generic explicitly.
+    /// The registration supplies method identities even without a generic item.
+    pub(crate) fn s7_external_call_targets(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        call: &CallExpr,
+        sites: &ClassCallSites,
+    ) -> Vec<OopId> {
+        let Some(reference) = call_function_ref(model, root, call) else {
+            return Vec::new();
+        };
+        let (package, name) = match &reference {
+            FunctionRef::Qualified { package, name } => (package, name),
+            _ => {
+                let Some(origin) = self.callee_identity(path, &reference) else {
+                    return Vec::new();
+                };
+                (&origin.package, &origin.name)
+            }
+        };
+        self.s7_external_methods_at(path, call, (package, name), &sites.extracted, (root, model))
+    }
+
     pub(in crate::project::classes) fn s7_external_methods(
         &self,
         path: &Path,
@@ -134,11 +159,22 @@ impl ClassIndex {
         package: &str,
         name: &str,
     ) -> Vec<OopId> {
+        let extracted = extract(model, root, false);
+        self.s7_external_methods_at(path, call, (package, name), &extracted, (root, model))
+    }
+
+    fn s7_external_methods_at(
+        &self,
+        path: &Path,
+        call: &CallExpr,
+        (package, name): (&str, &str),
+        extracted: &Extracted,
+        (root, model): (&SyntaxNode, &SemanticModel),
+    ) -> Vec<OopId> {
         let target = S7GenericTarget::External {
             package: package.into(),
             name: name.into(),
         };
-        let extracted = extract(model, root, false);
         let point = extracted.oop_point_at(path, call.syntax().text_range().start());
         let execution = self.execution(path);
         let owner = self.file(path).and_then(|file| file.package_root.as_ref());
@@ -217,7 +253,7 @@ impl ClassIndex {
                                 path,
                                 root_path,
                                 call,
-                                &extracted,
+                                extracted,
                                 &eager,
                                 (root, model),
                             ) == Present
@@ -420,7 +456,20 @@ impl ClassIndex {
         model: &SemanticModel,
         call: &CallExpr,
     ) -> Option<S7Dispatch> {
-        let extracted = extract(model, root, true);
+        let sites = ClassCallSites::new(model, root);
+        self.s7_dispatch_with_sites(path, root, model, call, &sites)
+            .map(|(dispatch, _, _)| dispatch)
+    }
+
+    pub(crate) fn s7_dispatch_with_sites(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        call: &CallExpr,
+        sites: &ClassCallSites,
+    ) -> Option<(S7Dispatch, bool, bool)> {
+        let extracted = &sites.extracted;
         let dispatcher = call_function_ref(model, root, call)
             .and_then(|reference| self.s7_helper(path, &reference, "S7"))
             .as_deref()
@@ -447,7 +496,7 @@ impl ClassIndex {
                 key: site.method.clone(),
             }
         } else {
-            self.s7_live_generic(path, root, model, &extracted, &call.base()?)?
+            self.s7_live_generic(path, root, model, extracted, &call.base()?)?
         };
         let generic = self.generic(&generic_id)?;
         if !self.generic_confirmed(&generic_id.path, generic) {
@@ -480,6 +529,7 @@ impl ClassIndex {
             .flatten();
         let mut eager_packages = BTreeSet::new();
         eager_packages.extend(call.base().and_then(namespace_package));
+        let mut via_super = false;
         let evidence: Vec<_> = generic
             .dispatch_arguments
             .iter()
@@ -499,7 +549,10 @@ impl ClassIndex {
                                 .and_then(namespace_package),
                         );
                     }
-                    return self.s7_value_dispatch(path, root, model, &extracted, &value, 0);
+                    let (classes, superclass) =
+                        self.s7_value_dispatch(path, root, model, extracted, &value, 0)?;
+                    via_super |= superclass;
+                    return Some(classes);
                 }
                 let default = generic
                     .signature
@@ -593,7 +646,7 @@ impl ClassIndex {
                             path,
                             package,
                             call,
-                            &extracted,
+                            extracted,
                             &eager_packages,
                             (root, model),
                         )
@@ -687,12 +740,16 @@ impl ClassIndex {
             .flatten();
         candidates.sort();
         candidates.dedup();
-        Some(S7Dispatch {
-            generic: generic_id,
-            candidates,
-            selected,
-            complete,
-        })
+        Some((
+            S7Dispatch {
+                generic: generic_id,
+                candidates,
+                selected,
+                complete,
+            },
+            via_super,
+            dispatcher,
+        ))
     }
 
     fn s7_signature_ranks(
@@ -900,12 +957,12 @@ impl ClassIndex {
         extracted: &Extracted,
         value: &SyntaxElement,
         depth: usize,
-    ) -> Option<Vec<String>> {
+    ) -> Option<(Vec<String>, bool)> {
         if depth >= 32 {
             return None;
         }
         if let Some(class) = literal_class(value) {
-            return Some(vec![class.into()]);
+            return Some((vec![class.into()], false));
         }
         if let Some(call) = value.as_node().cloned().and_then(CallExpr::cast)
             && call_function_ref(model, root, &call)
@@ -925,11 +982,14 @@ impl ClassIndex {
             {
                 return None;
             }
-            let classes = self.s7_value_dispatch(path, root, model, extracted, &from, depth + 1)?;
+            let (classes, _) =
+                self.s7_value_dispatch(path, root, model, extracted, &from, depth + 1)?;
             let to = argument(&args, "to")?;
             let spec = oop::live_s7_spec(model, root, extracted, &to);
             let owner = owner_at(call.syntax(), &extracted.owners);
-            return self.s7_super_dispatch(path, &owner, &spec, &classes);
+            return self
+                .s7_super_dispatch(path, &owner, &spec, &classes)
+                .map(|classes| (classes, true));
         }
         if let Some(receiver) = self.dispatch_receiver(path, root, model, value, extracted)
             && receiver.access != ClassAccess::Generator
@@ -938,7 +998,9 @@ impl ClassIndex {
                 ClassSystem::S7 | ClassSystem::S4 | ClassSystem::RefClass
             )
         {
-            return self.s7_lineage(&receiver.class, &mut BTreeSet::new());
+            return self
+                .s7_lineage(&receiver.class, &mut BTreeSet::new())
+                .map(|classes| (classes, false));
         }
         if let Some(token) = value.as_token()
             && let Some(binding) = read_binding(model, token)
@@ -948,7 +1010,7 @@ impl ClassIndex {
             return self.s7_value_dispatch(path, root, model, extracted, &value, depth + 1);
         }
         match self.s3_class_evidence(path, root, model, value) {
-            S3ClassEvidence::Explicit(class) => Some(class),
+            S3ClassEvidence::Explicit(class) => Some((class, false)),
             _ => None,
         }
     }

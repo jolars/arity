@@ -872,7 +872,7 @@ coverage need not block useful workspace support.
 - [x] Show source-backed S3 class vectors as observed dispatch order in type
   hierarchy. Verify S7 declarations, qualified parents, and aliases across
   workspace files.
-- [ ] Give member and registered methods their own call-hierarchy items.
+- [x] Give member and registered methods their own call-hierarchy items.
   Distinguish ordinary generic calls, possible dispatch targets, and superclass
   calls. Keep incoming and outgoing edges consistent and require real source
   spans.

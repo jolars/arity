@@ -279,6 +279,14 @@ impl ClassIndex {
         ) {
             return None;
         }
+        self.s4_registration_callable_origin(method, source)
+    }
+
+    pub(crate) fn s4_registration_callable_origin(
+        &self,
+        method: &OopId,
+        source: &MethodImplementationSource,
+    ) -> Option<(PathBuf, usize)> {
         let callable = self.s4_callable_at(&method.path, source, Some(&method.key))?;
         let origin = self.file(&callable.path)?.facts.oop.callables[callable.binding].origin;
         Some((callable.path, origin))

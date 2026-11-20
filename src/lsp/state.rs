@@ -1214,8 +1214,8 @@ impl GlobalState {
         });
     }
 
-    /// `textDocument/prepareCallHierarchy`: resolve the cursor to the top-level
-    /// function(s) it names, returning items the client round-trips back to
+    /// `textDocument/prepareCallHierarchy`: resolve the callable
+    /// the cursor names, returning items the client round-trips back to
     /// incoming/outgoing. A read-only job dispatched like definition; the live
     /// buffer is parsed on the read pool. See [`prepare_call_hierarchy_via_db`].
     fn on_prepare_call_hierarchy(&mut self, req: Request) {
@@ -1232,7 +1232,12 @@ impl GlobalState {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
-        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        let path = uri::to_path(&uri)
+            .unwrap_or_else(|| PathBuf::from(DocumentKind::R.placeholder_file_name()));
+        let s7_floor = self
+            .resolve_settings(&uri)
+            .ok()
+            .and_then(|settings| settings.lint.compat.s7_version());
         self.register_read(id.clone(), Some((uri.clone(), version)));
         self.dispatch_read(ReadJob::PrepareCallHierarchy {
             id,
@@ -1240,14 +1245,13 @@ impl GlobalState {
             uri,
             buffer,
             position,
+            s7_floor,
             out: self.out_tx.clone(),
         });
     }
 
-    /// `callHierarchy/incomingCalls`: the top-level functions that call the item's
-    /// function. The item carries its own identity (`uri` + `name`), so unlike the
-    /// position-based requests this does no document lookup and works off the db
-    /// snapshot, like `workspace/symbol`. See [`incoming_calls_via_db`].
+    /// Resolve callers from the item's identity in the analysis snapshot.
+    /// See [`incoming_calls_via_db`].
     fn on_incoming_calls(&mut self, req: Request) {
         let id = req.id.clone();
         let Ok((_, params)) =
@@ -1264,8 +1268,7 @@ impl GlobalState {
         });
     }
 
-    /// `callHierarchy/outgoingCalls`: the top-level functions the item's function
-    /// calls. Like incoming, served off the db snapshot from the item's identity.
+    /// Resolve callees from the item's identity in the analysis snapshot.
     /// See [`outgoing_calls_via_db`].
     fn on_outgoing_calls(&mut self, req: Request) {
         let id = req.id.clone();

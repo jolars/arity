@@ -8,6 +8,7 @@ mod calls;
 mod execution;
 mod registry;
 mod selection;
+pub(super) use execution::S4SourceSite;
 pub(super) use execution::package_load_sites;
 pub use selection::*;
 

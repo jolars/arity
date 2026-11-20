@@ -4,6 +4,7 @@ use crate::syntax::SyntaxElement;
 use std::collections::BTreeSet;
 
 pub(in crate::lsp) struct Declaration {
+    pub key: Option<OopKey>,
     pub name: String,
     pub kind: LspSymbolKind,
     pub detail: String,
@@ -59,6 +60,7 @@ pub(in crate::lsp) fn declarations(
             name => name,
         };
         result.push(Declaration {
+            key: None,
             name: name.into(),
             kind: LspSymbolKind::CLASS,
             detail: class.system().label().into(),
@@ -250,6 +252,7 @@ pub(in crate::lsp) fn declarations(
             detail.push_str(&signature(sig));
         }
         result.push(Declaration {
+            key: Some(key.clone()),
             name: name.clone(),
             kind,
             detail,

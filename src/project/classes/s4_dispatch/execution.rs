@@ -23,7 +23,7 @@ pub(super) struct S4Execution {
     pub source_incomplete: bool,
 }
 
-pub(super) struct S4SourceSite {
+pub(in crate::project::classes) struct S4SourceSite {
     range: TextRange,
     function: Option<TextRange>,
     edge: Option<SourceEdge>,

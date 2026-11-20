@@ -814,3 +814,42 @@ S7::method(f, C) <- NULL
     assert_eq!(&source[start..end], "describe");
     harness.shutdown();
 }
+
+#[test]
+fn call_hierarchy_round_trips_member_method_data_and_callee_spans() {
+    let mut h = Harness::start_push();
+    let uri = super::doc_uri();
+    let source = r#"Parent <- R6::R6Class("Parent", public = list(run = function() 1))
+Child <- R6::R6Class("Child", inherit = Parent, public = list(run = function() super$run()))
+"#;
+    h.did_open(uri, source, 1);
+    h.recv_publish_for(uri, 1);
+    let id = h.request(
+        "textDocument/prepareCallHierarchy",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": position(source, source.rfind("run =").unwrap())
+        }),
+    );
+    let prepared = h.recv_response(&id).response_result.unwrap();
+    let child = &prepared[0];
+    assert_eq!(child["kind"], 6);
+    let id = h.request("callHierarchy/outgoingCalls", json!({ "item": child }));
+    let outgoing = h.recv_response(&id).response_result.unwrap();
+    let parent = &outgoing[0]["to"];
+    assert_eq!(parent["kind"], 6);
+    assert!(
+        parent["detail"]
+            .as_str()
+            .unwrap()
+            .contains("superclass call")
+    );
+    let span = &outgoing[0]["fromRanges"][0];
+    let [start, end] = byte_range(source, span);
+    assert_eq!(&source[start..end], "run");
+    let id = h.request("callHierarchy/incomingCalls", json!({ "item": parent }));
+    let incoming = h.recv_response(&id).response_result.unwrap();
+    assert_eq!(incoming[0]["from"]["data"], child["data"]);
+    assert_eq!(incoming[0]["fromRanges"], outgoing[0]["fromRanges"]);
+    h.shutdown();
+}

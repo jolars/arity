@@ -415,6 +415,21 @@ pub fn file_class_defs(model: &SemanticModel, root: &SyntaxNode) -> FileClassFac
     extract(model, root, false).facts
 }
 
+/// Body-level call lookups share the same current-file extraction.
+pub(crate) struct ClassCallSites {
+    extracted: Extracted,
+    s4_sources: std::cell::OnceCell<Vec<s4_dispatch::S4SourceSite>>,
+}
+
+impl ClassCallSites {
+    pub(crate) fn new(model: &SemanticModel, root: &SyntaxNode) -> Self {
+        Self {
+            extracted: extract(model, root, true),
+            s4_sources: std::cell::OnceCell::new(),
+        }
+    }
+}
+
 #[derive(PartialEq, Eq)]
 pub(crate) struct ClassSourceSites {
     pub classes: Vec<(TextRange, ClassOccurrence)>,

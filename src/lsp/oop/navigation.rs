@@ -332,7 +332,7 @@ pub(in crate::lsp) fn name_locations(
     )
 }
 
-fn resolve_member_site(
+pub(in crate::lsp) fn resolve_member_site(
     index: &ClassIndex,
     path: &Path,
     root: &SyntaxNode,
@@ -582,7 +582,7 @@ pub(super) fn resolve_generic_site(
     }
 }
 
-pub(super) fn resolve_method_site(
+pub(in crate::lsp) fn resolve_method_site(
     index: &ClassIndex,
     path: &Path,
     site: &OopSourceSite,

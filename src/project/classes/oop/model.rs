@@ -8,7 +8,19 @@ use super::super::{
     S7ClassSpec, S7Facts,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    salsa::SalsaValue,
+)]
 pub enum OopSystem {
     S3,
     S4,
@@ -28,7 +40,19 @@ impl From<ClassSystem> for OopSystem {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    salsa::SalsaValue,
+)]
 pub enum OopKind {
     Generic,
     Method,
@@ -37,7 +61,18 @@ pub enum OopKind {
     S7Function,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    salsa::SalsaValue,
+)]
 pub struct OopKey {
     pub owner: ClassOwner,
     pub system: OopSystem,
@@ -47,7 +82,18 @@ pub struct OopKey {
 
 /// Project identity adds a file to the lexical declaration identity. The package
 /// owner is supplied by `ClassFile::package_root`, never inferred in this module.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    salsa::SalsaValue,
+)]
 pub struct OopId {
     pub path: PathBuf,
     pub key: OopKey,

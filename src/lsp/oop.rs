@@ -8,7 +8,7 @@ mod navigation;
 pub(super) mod presentation;
 pub(super) use navigation::{
     NameNavigation, class_candidate, implementation_locations, name_locations,
-    namespace_callable_references,
+    namespace_callable_references, resolve_member_site, resolve_method_site,
 };
 
 #[derive(Clone, Copy)]
