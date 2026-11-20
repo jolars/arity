@@ -196,24 +196,9 @@ tasks:
       - python3 benches/lsp.py {{.CLI_ARGS}}
 
   profile:
-    desc: 'Profile one phase with perf and print a phase split (opt-in, local; e.g. task profile -- --mode lint --path pkg/R)'
+    desc: "Profile one phase with perf and print a phase split (opt-in, local; e.g. task profile -- --mode lint --path pkg/R)"
     cmds:
       - ./scripts/profile.sh {{.CLI_ARGS}}
-
-  bench-parse:
-    desc: Benchmark parse + incremental-reparse speed (criterion)
-    cmds:
-      - cargo bench -p arity-parser --bench parse
-
-  bench-line-index:
-    desc: Benchmark line-index build, patch, and conversion speed (criterion)
-    cmds:
-      - cargo bench --bench line_index
-
-  bench-format-edits:
-    desc: Measure what line-scoped LSP formatting edits cost and what they save
-    cmds:
-      - cargo bench --bench format_edits
 
   docs-gen:
     desc: Regenerate reference pages and the arity.toml schema
@@ -294,13 +279,3 @@ tasks:
         for(const k in r.categories)
         console.log(r.categories[k].title.padEnd(16),
         Math.round(r.categories[k].score*100));'
-
-  audit:
-    desc: Run security audit
-    cmds:
-      - cargo audit
-
-  deny:
-    desc: Run cargo deny to check for vulnerabilities and issues
-    cmds:
-      - cargo deny check
