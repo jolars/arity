@@ -16,7 +16,6 @@ use crate::linter::rules::{Example, Rule, RuleContext, matchers};
 use crate::semantic::calls::{has_dynamic_bindings, stable_closure};
 use crate::semantic::symbols::unbacktick;
 use crate::semantic::{BindingId, checked_match_args_to_formals};
-use crate::syntax::SyntaxKind;
 
 pub struct PartialArgumentMatch;
 
@@ -65,7 +64,7 @@ impl Rule for PartialArgumentMatch {
             else {
                 continue;
             };
-            if in_pipe(&call) {
+            if matchers::in_pipe(&call) {
                 continue;
             }
             let formals = if let Some(id) = ctx.model.resolve_local(ident) {
@@ -114,20 +113,6 @@ impl Rule for PartialArgumentMatch {
             check_call(&call, formals, sink);
         }
     }
-}
-
-fn in_pipe(call: &CallExpr) -> bool {
-    call.syntax()
-        .ancestors()
-        .skip(1)
-        .take_while(|node| node.kind() != SyntaxKind::FUNCTION_EXPR)
-        .any(|node| {
-            matchers::binary_parts(&node).is_some_and(|(_, op, _)| {
-                op.kind() == SyntaxKind::PIPE
-                    || (op.kind() == SyntaxKind::USER_OP
-                        && matches!(op.text(), "%>%" | "%T>%" | "%<>%" | "%$%"))
-            })
-        })
 }
 
 fn check_call(call: &CallExpr, formals: &[SmolStr], sink: &mut Vec<Diagnostic>) {

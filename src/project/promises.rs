@@ -28,6 +28,7 @@ pub struct FunctionPromiseSeed {
     pub formals: Vec<String>,
     /// A unique, unconditional closure signature, suitable for diagnostics.
     pub signature_known: bool,
+    pub omission_checks: BTreeSet<String>,
     pub directly_eager: BTreeSet<String>,
     pub opaque: BTreeSet<String>,
     /// Deduplicated and order-independent so that a second identical
@@ -40,6 +41,7 @@ pub struct FunctionPromiseSeed {
 pub struct FunctionPromiseSummary {
     pub formals: Vec<String>,
     pub signature_known: bool,
+    pub omission_checks: BTreeSet<String>,
     pub eager: BTreeSet<String>,
 }
 
@@ -176,6 +178,13 @@ fn seed_function(
         formals,
         ..FunctionPromiseSeed::default()
     };
+    seed.omission_checks = crate::semantic::calls::omission_checks(model, function, |call| {
+        call.callee_token().is_some_and(|token| {
+            model.idents().iter().any(|ident| {
+                ident.range == token.text_range() && !ident.data_masked && model.is_free_read(ident)
+            })
+        })
+    });
     let mut used = BTreeSet::new();
     for (index, ident) in model.idents().iter().enumerate() {
         let Some(source) = model
@@ -332,6 +341,7 @@ pub(crate) fn solve_package(seeds: BTreeMap<String, FunctionPromiseSeed>) -> Pro
                 FunctionPromiseSummary {
                     formals: seed.formals.clone(),
                     signature_known: seed.signature_known,
+                    omission_checks: seed.omission_checks.clone(),
                     eager: BTreeSet::new(),
                 },
             )

@@ -86,7 +86,7 @@ Reproduced against ggplot2 `87a95d9` with R 4.6.1.
   `f <- function() { geom_foo <- function() 42; get(paste0("geom_", "foo"))() }`,
   R returns `42` from `f()`, and `unused-binding` flags `geom_foo`.
   ggplot2 tests exercise computed lookups for local geom and scale providers.
-- [ ] Refine `missing-argument` when a resolved project callee explicitly
+- [x] Refine `missing-argument` when a resolved project callee explicitly
   handles an omitted formal. `f <- function(x, y, z) if (missing(y)) x + z`
   accepts `f(1, , 3)` and returns `4`. ggplot2 intentionally omits
   `table2` in calls to its table-weaving helpers. Its `aes()` tests also

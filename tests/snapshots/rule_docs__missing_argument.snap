@@ -4,7 +4,7 @@ expression: render_rule_doc(&rule)
 ---
 ### `missing-argument`
 
-Flag empty call arguments, including trailing and named holes in resolved base `list()` calls and `c()` calls with only atomic literal values. Unknown or potentially dispatching callees retain the trailing-hole exemption. Function-formal defaults are excluded.
+Flag empty call arguments, including trailing and named holes in resolved base `list()` calls and `c()` calls with only atomic literal values. A resolved closure can explicitly handle an omitted formal with a `missing()` guard. The first two arguments to ggplot2 `aes()` can be left empty before a tidy-evaluation splice. Unknown or potentially dispatching callees retain the trailing-hole exemption. Function-formal defaults are excluded.
 
 This rule is **enabled by default**.
 

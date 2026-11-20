@@ -138,6 +138,44 @@ impl ControlFlowGraph {
         }
     }
 
+    /// Whether every path to a read passes through one of the given statements.
+    /// Only whole statements establish the fact. Nested expressions can be lazy.
+    pub(crate) fn must_follow_statement(&self, read: TextRange, statements: &[TextRange]) -> bool {
+        if !self
+            .blocks
+            .iter()
+            .flat_map(|block| &block.stmts)
+            .any(|stmt| stmt.contains_range(read))
+        {
+            return false;
+        }
+        let mut seen = vec![false; self.blocks.len()];
+        let mut pending = vec![self.entry];
+        while let Some(id) = pending.pop() {
+            if std::mem::replace(&mut seen[id.index()], true) {
+                continue;
+            }
+            let block = self.block(id);
+            if let Some(stmt) = block
+                .stmts
+                .iter()
+                .find(|stmt| stmt.contains_range(read) || statements.contains(stmt))
+            {
+                if stmt.contains_range(read) {
+                    return false;
+                }
+                continue;
+            }
+            match &block.terminator {
+                Terminator::Goto(target) => pending.push(*target),
+                Terminator::Branch { then_blk, else_blk } => pending.extend([*then_blk, *else_blk]),
+                Terminator::MultiBranch { targets, .. } => pending.extend(targets),
+                Terminator::Return | Terminator::Diverge | Terminator::Unreachable => {}
+            }
+        }
+        true
+    }
+
     /// One plus the excess outcomes of reachable decisions. The callback lets
     /// semantic consumers exclude a shadowed `switch` without resolving names
     /// during syntactic graph construction.

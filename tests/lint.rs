@@ -9654,6 +9654,134 @@ fn bare_return_ignores_values_shadowing_and_quoted_code() {
 }
 
 #[test]
+fn missing_argument_respects_explicit_omission_checks() {
+    for (src, count) in [
+        ("f <- function(x, y, z) if (missing(y)) x + z; f(1, , 3)", 0),
+        (
+            "f <- function(x, value, z) if (!base::missing(value)) value; f(val = 1, 2, , 3)",
+            1,
+        ),
+        ("f <- function(x, y, z) if (missing(y)) z; f(, , 3)", 1),
+        (
+            "f <- function(x, y, z) { function() missing(y); y }; f(1, , 3)",
+            1,
+        ),
+        (
+            "f <- function(x, y, z) { missing <- identity; if (missing(y)) z }; f(1, , 3)",
+            1,
+        ),
+        ("f <- function(x, y, z) if (missing(y)) z; 1 |> f(, 3)", 1),
+        ("f <- function(x, y, z) if (missing(y)) z; f(..., , 3)", 1),
+        (
+            "f <- function(x, value, z) if (!base::missing(value)) value else z; f(z = 3, 1, , xtra = )",
+            1,
+        ),
+        (
+            "f <- function(x, value, zebra, rest) if (!base::missing(value)) value else zebra; f(ze = 3, 1, , 4)",
+            0,
+        ),
+        (
+            "f <- function(x, value, z) if (missing(value)) z; f(z = 3, 1, , 4)",
+            1,
+        ),
+    ] {
+        let findings: Vec<_> = diagnostics_selecting(src, &["missing-argument"]);
+        assert_eq!(findings.len(), count, "{src}: {findings:?}");
+    }
+}
+
+#[test]
+fn missing_argument_resolves_package_helpers_and_aliases() {
+    let helpers = "row <- function(x, y, z) if (!missing(y)) y else z
+col <- function(x, y, z) if (missing(y)) z";
+    let calls = "f <- function(by_row) {
+        if (by_row) weave <- row else weave <- col
+        weave(1, , 3)
+        row(1, , 3)
+        col(, , 3)
+    }";
+    let result = lint_package_files(
+        "export(f)\n",
+        &[("helpers.R", helpers), ("calls.R", calls)],
+        &LintConfig {
+            select: Some(vec!["missing-argument".into()]),
+            ..LintConfig::default()
+        },
+    );
+    assert_eq!(rules_for(&result, "calls.R"), vec!["missing-argument"]);
+
+    let findings = cross_file_findings(
+        "missing-argument",
+        "row <- function(x, y, z) if (missing(y)) z; col <- function(x, y, z) y",
+        "f <- function(by_row) { if (by_row) weave <- row else weave <- col; weave(1, , 3) }",
+        "b.R",
+    );
+    assert_eq!(findings.len(), 1);
+
+    let findings = diagnostics_selecting(
+        "helper <- function(x, y, z) if (missing(y)) z
+         weave <- function(x, y, z) y
+         f <- function(flag) { if (flag) weave <- helper; weave(1, , 3) }",
+        &["missing-argument"],
+    );
+    assert_eq!(findings.len(), 1);
+}
+
+#[test]
+fn missing_argument_allows_ggplot2_aes_spliced_mapping() {
+    for (src, count) in [
+        ("ggplot2::aes(,, !!!list(y = 1))", 0),
+        ("library(ggplot2); aes(,, !!!list(y = 1))", 0),
+        ("ggplot2::aes(,, !list(y = 1))", 2),
+        ("ggplot2::aes(1, 2, , !!!list(z = 1))", 1),
+        ("ggplot2::aes(y = 1, , , !!!list(z = 1))", 1),
+        ("other::aes(,, !!!list(y = 1))", 2),
+        (
+            "library(ggplot2); aes <- identity; aes(,, !!!list(y = 1))",
+            2,
+        ),
+        ("list(,, !!!list(y = 1))", 2),
+    ] {
+        let findings = diagnostics_selecting(src, &["missing-argument"]);
+        assert_eq!(findings.len(), count, "{src}: {findings:?}");
+    }
+}
+
+#[test]
+fn missing_argument_resolves_ggplot2_aes_in_testthat_blocks() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("DESCRIPTION"),
+        TEST_DESCRIPTION.replace("Package: testpkg", "Package: ggplot2"),
+    )
+    .unwrap();
+    std::fs::write(root.join("NAMESPACE"), "export(aes)\n").unwrap();
+    std::fs::create_dir(root.join("R")).unwrap();
+    std::fs::write(root.join("R/aes.R"), "aes <- function(x, y, ...) NULL\n").unwrap();
+    std::fs::create_dir_all(root.join("tests/testthat")).unwrap();
+    std::fs::write(
+        root.join("tests/testthat/test-aes.R"),
+        "test_that('local mapping', { aes <- aes(1, 2) })
+         test_that('splice', { aes(,, !!!list(y = 1)) })
+         test_that('shadowed', { aes <- identity; aes(,, !!!list(y = 1)) })",
+    )
+    .unwrap();
+    let result = check_paths_with_config(
+        &[root.to_path_buf()],
+        &LintConfig {
+            select: Some(vec!["missing-argument".into()]),
+            ..LintConfig::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        rules_for(&result, "test-aes.R"),
+        vec!["missing-argument"; 2]
+    );
+}
+
+#[test]
 fn missing_argument_rejecting_base_calls() {
     let src = "list(1,)\nbase::list(x = )\nc(1,)\nbase::c(x = )\n";
     let findings: Vec<_> = diagnostics(src)

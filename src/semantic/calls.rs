@@ -1,11 +1,16 @@
 //! Conservative recovery of signatures from local closure definitions.
 
+use std::collections::BTreeSet;
+
 use rowan::TextRange;
 use rowan::ast::AstNode as _;
 
-use crate::ast::{AssignmentExpr, FunctionExpr};
+use crate::ast::{
+    AssignmentExpr, BinaryExpr, CallExpr, FunctionExpr, HasArgList as _, IfExpr, ParenExpr,
+    UnaryExpr,
+};
 use crate::semantic::{BindingId, BindingKind, SemanticModel};
-use crate::syntax::{SyntaxKind, SyntaxNode};
+use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 
 /// Call effects gathered during the semantic walk, including quoted and
 /// qualified callees that do not appear among ordinary identifier reads.
@@ -118,4 +123,73 @@ pub(crate) fn stable_closure(
         return None;
     }
     Some(function)
+}
+
+/// Formals explicitly tested by a missingness guard in this closure's body.
+pub(crate) fn omission_checks(
+    model: &SemanticModel,
+    function: &FunctionExpr,
+    bare_missing: impl Fn(&CallExpr) -> bool,
+) -> BTreeSet<String> {
+    let Some(body) = function.body().and_then(SyntaxElement::into_node) else {
+        return BTreeSet::new();
+    };
+    body.descendants()
+        .filter_map(IfExpr::cast)
+        .filter_map(|branch| {
+            let condition = branch
+                .condition_elements()?
+                .into_iter()
+                .find_map(SyntaxElement::into_node)?;
+            let mut node = condition;
+            loop {
+                node = if let Some(paren) = ParenExpr::cast(node.clone()) {
+                    paren.inner()?.into_node()?
+                } else if let Some(not) = UnaryExpr::cast(node.clone())
+                    && not.op_kind() == Some(SyntaxKind::BANG)
+                {
+                    not.operand()?.into_node()?
+                } else {
+                    break;
+                };
+            }
+            let call = CallExpr::cast(node)?;
+            if call.callee_name()?.as_str() != "missing"
+                || call
+                    .syntax()
+                    .ancestors()
+                    .find(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
+                    .as_ref()
+                    != Some(function.syntax())
+                || super::builder::is_quoted(call.syntax())
+            {
+                return None;
+            }
+            let base = call.base()?;
+            let is_base = match base {
+                SyntaxElement::Node(node) => BinaryExpr::cast(node)?
+                    .namespace_access()
+                    .is_some_and(|access| access.package == "base"),
+                SyntaxElement::Token(_) => bare_missing(&call),
+            };
+            if !is_base {
+                return None;
+            }
+            let mut args = call.args();
+            let arg = args.next()?;
+            if arg.is_named() || args.next().is_some() {
+                return None;
+            }
+            let token = arg.value()?.into_token()?;
+            let ident = model
+                .idents()
+                .iter()
+                .find(|ident| ident.range == token.text_range())?;
+            let binding = model.binding(model.resolve_local(ident)?);
+            (binding.kind == BindingKind::Param
+                && model.scope(model.frame_scope(binding.scope)).range
+                    == function.syntax().text_range())
+            .then(|| binding.name.to_string())
+        })
+        .collect()
 }
