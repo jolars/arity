@@ -28,7 +28,9 @@ use crate::ast::{AssignmentExpr, FunctionExpr, RoxygenBlock, RoxygenSection};
 use crate::semantic::symbols::unbacktick;
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 
+mod registered_tags;
 mod usage;
+pub(crate) use registered_tags::registered_tags;
 pub use usage::{TopicUsage, UsageSignature};
 
 /// One roxygen block's contribution to an Rd topic.

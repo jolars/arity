@@ -39,6 +39,10 @@ extend-select = []
 [lint.rules.cyclomatic-complexity]
 max-complexity = 20
 
+# Declare custom roxygen tags whose registration Arity cannot resolve.
+# [lint.rules.roxygen-unknown-tag]
+# allowed-tags = ["aesthetics"]
+
 # Opt in to development S7 behavior when the project depends on it.
 # [compat]
 # s7 = "0.2.2.9000"

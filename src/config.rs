@@ -292,9 +292,21 @@ pub struct RulesConfig {
     /// `[lint.rules.cyclomatic-complexity]`
     #[serde(default)]
     pub cyclomatic_complexity: CyclomaticComplexityConfig,
+    /// `[lint.rules.roxygen-unknown-tag]`
+    #[serde(default)]
+    pub roxygen_unknown_tag: RoxygenUnknownTagConfig,
     /// `[lint.rules.undesirable-function]`
     #[serde(default)]
     pub undesirable_function: UndesirableFunctionConfig,
+}
+
+/// Explicit declarations for custom roxygen tags.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct RoxygenUnknownTagConfig {
+    /// Custom tag names without the leading `@`, matched case-sensitively.
+    pub allowed_tags: Vec<String>,
 }
 
 /// Maximum native CFG decision complexity allowed for a function body.

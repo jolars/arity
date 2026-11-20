@@ -23,7 +23,7 @@
 //! [`run_rules`], with the same single-shared-walk discipline.
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -530,11 +530,8 @@ impl EnabledRules {
 /// The cross-file facts the driver has already resolved for one file, bundled
 /// so they travel as a unit.
 ///
-/// Every field is `Option<&_>` and `None` on the single-file paths, which is
-/// exactly why they are a struct: passed flat they were three adjacent
-/// same-shaped arguments, and a transposed pair type-checked. They are moved
-/// onto [`RuleContext`] verbatim — rules keep reading `ctx.project`,
-/// `ctx.resolution`, `ctx.package`.
+/// Each field is optional. Single-file runs can supply registrations from the
+/// current buffer. Project runs can also supply facts from sibling files.
 #[derive(Default)]
 pub struct FileContext<'a> {
     /// See [`RuleContext::project`].
@@ -545,6 +542,8 @@ pub struct FileContext<'a> {
     pub package: Option<&'a DescriptionFacts>,
     /// See [`RuleContext::topics`].
     pub topics: Option<&'a PackageTopics>,
+    /// Custom tags registered by the package R sources available to this run.
+    pub registered_roxygen_tags: Option<&'a BTreeSet<String>>,
 }
 
 pub struct RuleContext<'a> {
@@ -577,6 +576,8 @@ pub struct RuleContext<'a> {
     /// a package, where [`RuleContext::roxygen_topics`] is the file-local
     /// fallback.
     pub topics: Option<&'a PackageTopics>,
+    /// Custom tags registered by the package R sources available to this run.
+    pub registered_roxygen_tags: Option<&'a BTreeSet<String>>,
     /// Per-rule option tables from `[lint.rules.<id>]`, resolved once per run and
     /// carried on [`ResolvedRules`]. Rules that take no options ignore this.
     pub config: &'a RulesConfig,
@@ -1057,6 +1058,7 @@ pub fn run_rules(
         resolution: file.resolution,
         package: file.package,
         topics: file.topics,
+        registered_roxygen_tags: file.registered_roxygen_tags,
         config: &resolved.rules_config,
         suppressions: &suppressions,
         enabled_rules: &enabled,
@@ -1550,6 +1552,7 @@ mod tests {
             resolution: None,
             package: None,
             topics: None,
+            registered_roxygen_tags: None,
             config: &RulesConfig::default(),
             suppressions: &SuppressionMap::default(),
             enabled_rules: &EnabledRules::default(),

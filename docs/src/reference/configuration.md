@@ -280,6 +280,19 @@ extend-select = ["cyclomatic-complexity"]
 max-complexity = 20
 ```
 
+#### `[lint.rules.roxygen-unknown-tag]`
+
+Arity recognizes literal `vctrs::s3_register()` registrations for
+`roxygen2::roxy_tag_parse` in the package's `R/` sources. Use `allowed-tags` for
+other custom tags, such as tags registered by a dependency or tags with computed
+names. List names without the leading `@` and match their case exactly. The list
+defaults to empty.
+
+```toml
+[lint.rules.roxygen-unknown-tag]
+allowed-tags = ["aesthetics"]
+```
+
 #### `[lint.rules.undesirable-function]`
 
 The function-name policy for

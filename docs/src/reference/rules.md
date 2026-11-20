@@ -1804,7 +1804,7 @@ warning: boolean-arithmetic
 
 Flag roxygen tags that roxygen2 does not understand.
 
-roxygen2 warns on an unknown tag and drops it from the generated `.Rd`, so a misspelled tag (`@exprot`, `@parma`) silently loses documentation—or worse, an intended `@export` never reaches the `NAMESPACE`. Custom tags from extension roclets can be suppressed with `# arity-lint skip roxygen-unknown-tag`.
+roxygen2 warns on an unknown tag and drops it from the generated `.Rd`, so a misspelled tag (`@exprot`, `@parma`) silently loses documentation—or worse, an intended `@export` never reaches the `NAMESPACE`. Arity recognizes literal `vctrs::s3_register()` registrations for `roxygen2::roxy_tag_parse` in package R sources. Declare other custom tags with `allowed-tags` under `[lint.rules.roxygen-unknown-tag]`.
 
 This rule is **enabled by default**.
 
@@ -1822,7 +1822,7 @@ warning: roxygen-unknown-tag
   |
 2 | #' @exprot
   |    ^^^^^^^ `@exprot` is not a tag roxygen2 understands
-  = help: Check the spelling against the roxygen2 tag index; suppress with `# arity-lint skip roxygen-unknown-tag` for extension-roclet tags.
+  = help: Check the spelling against the roxygen2 tag index or declare a custom tag in `[lint.rules.roxygen-unknown-tag].allowed-tags`.
 ```
 
 ### `roxygen-title`

@@ -7627,6 +7627,70 @@ fn roxygen_unknown_tag_accepts_registry_tags() {
 }
 
 #[test]
+fn roxygen_unknown_tag_uses_package_registrations() {
+    let dir = tempdir().unwrap();
+    let package = dir.path().join("package");
+    let unrelated = dir.path().join("unrelated");
+    let source =
+        "#' Title\n#' @aesthetics GeomPoint\n#' @aesthetcs GeomPoint\nf <- function() NULL\n";
+    for root in [&package, &unrelated] {
+        std::fs::create_dir_all(root.join("R")).unwrap();
+        std::fs::write(root.join("DESCRIPTION"), TEST_DESCRIPTION).unwrap();
+    }
+    let doc = package.join("R/doc.R");
+    let other_doc = unrelated.join("R/other.R");
+    std::fs::write(&doc, source).unwrap();
+    std::fs::write(&other_doc, source).unwrap();
+    std::fs::write(
+        package.join("R/zzz.R"),
+        r#".onLoad <- function(...) {
+  vctrs::s3_register(class = "roxy_tag_aesthetics", "roxygen2::roxy_tag_parse", handler)
+  other::s3_register("roxygen2::roxy_tag_parse", "roxy_tag_aesthetcs", handler)
+  vctrs::s3_register("other::roxy_tag_parse", "roxy_tag_aesthetcs", handler)
+}
+"#,
+    )
+    .unwrap();
+    let result = check_paths(&[doc.clone(), other_doc]).unwrap();
+    assert_eq!(
+        rules_for(&result, "doc.R")
+            .into_iter()
+            .filter(|rule| *rule == "roxygen-unknown-tag")
+            .count(),
+        1
+    );
+    assert_eq!(
+        rules_for(&result, "other.R")
+            .into_iter()
+            .filter(|rule| *rule == "roxygen-unknown-tag")
+            .count(),
+        2
+    );
+
+    let mut db = arity::incremental::IncrementalDatabase::default();
+    let active = db.upsert_file(&doc, source);
+    let provider = arity::semantic::StaticBaseR::new();
+    let config = LintConfig {
+        select: Some(vec!["roxygen-unknown-tag".into()]),
+        ..LintConfig::default()
+    };
+    let lint_doc = |db: &mut _| {
+        arity::linter::check_document_in_project(db, &doc, active, &config, &provider).unwrap()
+    };
+    let findings = lint_doc(&mut db);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(&source[findings[0].range], "@aesthetcs");
+
+    db.upsert_file(
+        &package.join("R/zzz.R"),
+        r#".onLoad <- function(...) vctrs::s3_register("roxygen2::roxy_tag_parse", paste0("roxy_tag_", "aesthetics"), handler)"#,
+    );
+    let findings = lint_doc(&mut db);
+    assert_eq!(findings.len(), 2);
+    assert_eq!(&source[findings[0].range], "@aesthetics");
+}
+
+#[test]
 fn roxygen_unknown_tag_ignores_escaped_and_bare_at() {
     // `@@` is the escape for a literal `@`, and `@ ` / `@1` are prose — none
     // lex as tags, so none can be flagged.

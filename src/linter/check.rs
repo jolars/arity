@@ -17,8 +17,9 @@ use crate::file_discovery::{
 };
 use crate::incremental::{
     Analysis, IncrementalDatabase, IncrementalDb, ParseDiagnosticData, SourceFile, control_flow,
-    file_exports, file_free_reads, file_qualified_reads, file_roxygen_topics, package_references,
-    parsed_tree_root, runtime_semantic_model, source_edges, top_level_events,
+    file_exports, file_free_reads, file_qualified_reads, file_registered_roxygen_tags,
+    file_roxygen_topics, package_references, parsed_tree_root, runtime_semantic_model,
+    source_edges, top_level_events,
 };
 use crate::project::collate::PackageSourceInventory;
 use crate::project::description::DescriptionFacts;
@@ -378,6 +379,7 @@ pub fn check_files_with_scope_configs<'a>(
                     let file_scope = visibility.scope();
                     let resolution = external_resolution(worker, manifest, file);
                     let package = package_facts_for(worker, &path);
+                    let topics = roxygen_topics_for(worker, &path);
                     let kept = lint_parsed_file(
                         worker,
                         file,
@@ -388,7 +390,8 @@ pub fn check_files_with_scope_configs<'a>(
                             project: Some(&file_scope),
                             resolution: Some(resolution),
                             package,
-                            topics: roxygen_topics_for(worker, &path),
+                            topics,
+                            registered_roxygen_tags: topics.map(|topics| &topics.registered_tags),
                         },
                     );
                     let status = if kept.is_empty() {
@@ -526,13 +529,19 @@ pub fn check_tracked_file(
     if !parse_diagnostics.is_empty() {
         return Ok(syntax_error_diagnostics(parse_diagnostics, path));
     }
+    let registered_roxygen_tags = package_root(path)
+        .filter(|root| path.parent() == Some(root.join("R").as_path()))
+        .map(|_| file_registered_roxygen_tags(db, file));
     Ok(lint_parsed_file(
         db,
         file,
         path,
         &rules,
         provider,
-        &FileContext::default(),
+        &FileContext {
+            registered_roxygen_tags,
+            ..FileContext::default()
+        },
     ))
 }
 
@@ -757,6 +766,7 @@ pub fn analyze_prepared(
     let resolution = analysis
         .library_index()
         .map(|manifest| external_resolution(db, manifest, prepared.active));
+    let topics = roxygen_topics_for(db, &active_path);
     lint_parsed_file(
         db,
         prepared.active,
@@ -767,7 +777,8 @@ pub fn analyze_prepared(
             project: Some(&file_scope),
             resolution,
             package: package_facts_for(db, &active_path),
-            topics: roxygen_topics_for(db, &active_path),
+            topics,
+            registered_roxygen_tags: topics.map(|topics| &topics.registered_tags),
         },
     )
 }

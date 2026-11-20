@@ -990,6 +990,18 @@ pub fn file_roxygen_topics(
     crate::project::file_roxygen_topics(&parsed_tree_root(db, file))
 }
 
+/// Range-free names of the custom roxygen parsers registered in this file.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn file_registered_roxygen_tags(
+    db: &dyn IncrementalDb,
+    file: SourceFile,
+) -> BTreeSet<String> {
+    if !parse_diagnostics(db, file).is_empty() {
+        return BTreeSet::new();
+    }
+    crate::project::roxygen::registered_tags(&parsed_tree_root(db, file))
+}
+
 /// Package-local function formals and their promise-use evidence. Range-free:
 /// unrelated body edits backdate, while a changed capture/forwarding contract
 /// invalidates the package callers that rely on it.

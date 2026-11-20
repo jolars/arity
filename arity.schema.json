@@ -200,6 +200,21 @@
       },
       "type": "object"
     },
+    "RoxygenUnknownTagConfig": {
+      "additionalProperties": false,
+      "description": "Explicit declarations for custom roxygen tags.",
+      "properties": {
+        "allowed-tags": {
+          "default": [],
+          "description": "Custom tag names without the leading `@`, matched case-sensitively.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "RulesConfig": {
       "additionalProperties": false,
       "description": "`[lint.rules]` — per-rule option tables, one field per *configurable* rule.\n\nDeliberately typed rather than a `Map<String, Value>` keyed by rule ID: the\n`deny_unknown_fields` convention then makes a mistyped rule ID a parse error\ninstead of a silently-ignored table. Note the asymmetry this creates with\n`select`, `extend-select`, and `ignore`, where an unknown ID is reported at\n*lint* time — there the IDs are free-form data, here they are schema.\n\nMost rules take no options and so have no field here.",
@@ -211,6 +226,14 @@
             }
           ],
           "description": "`[lint.rules.cyclomatic-complexity]`"
+        },
+        "roxygen-unknown-tag": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/RoxygenUnknownTagConfig"
+            }
+          ],
+          "description": "`[lint.rules.roxygen-unknown-tag]`"
         },
         "undesirable-function": {
           "allOf": [

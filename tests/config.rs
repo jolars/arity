@@ -697,6 +697,27 @@ fn cli_lint_unknown_selected_rule_errors() {
 }
 
 #[test]
+fn cli_lint_allows_explicit_custom_roxygen_tags() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        "[lint]\nselect = [\"roxygen-unknown-tag\"]\n\n[lint.rules.roxygen-unknown-tag]\nallowed-tags = [\"customTag\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("a.R"),
+        "#' Title\n#' @customTag Value\n#' @customtag Typo\nf <- function() NULL\n",
+    )
+    .unwrap();
+
+    let output = run_cli_in_no_stdin(dir.path(), ["lint", "--output", "concise", "a.R"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("`@customtag`"), "{stderr}");
+    assert!(!stderr.contains("`@customTag`"), "{stderr}");
+}
+
+#[test]
 fn cli_lint_rules_table_configures_a_rule() {
     // End-to-end proof that `[lint.rules.<id>]` reaches the rule: `sapply` is
     // not in the built-in set, so it only fires because the config added it.

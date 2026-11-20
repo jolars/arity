@@ -571,6 +571,17 @@ impl LintWorker {
         self.ensure_index(cache_root.as_deref());
         self.ensure_remote(cache_root.as_deref(), &req.index_config);
 
+        let is_package_source = anchor.file_name().is_some_and(|name| name == "R");
+        let previous_tags = if is_package_source {
+            self.db
+                .lookup_file(&req.path)
+                .map(|file| {
+                    crate::incremental::file_registered_roxygen_tags(&self.db, file).clone()
+                })
+                .unwrap_or_default()
+        } else {
+            Default::default()
+        };
         let active = self.db.upsert_file(&req.path, req.buffer.text_arc());
         self.db
             .set_s7_floor(active, req.lint_config.compat.s7_version());
@@ -579,6 +590,13 @@ impl LintWorker {
         // only walks disk when the file isn't already a member (the initialize
         // seed covers the common case), so discovery leaves the keystroke path.
         crate::linter::check::ensure_workspace_for(&mut self.db, &req.path, active);
+        // A registration change can change diagnostics in other R buffers.
+        if is_package_source
+            && crate::incremental::file_registered_roxygen_tags(&self.db, active) != &previous_tags
+        {
+            let _ = self.out_tx.send(Outbound::RelintAll);
+        }
+
         // Resolve the rule set (cached across keystrokes; rebuilt only on a config
         // change). An unknown-rule config error clears stale diagnostics and runs
         // no worker, leaving the slot free.

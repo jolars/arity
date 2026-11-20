@@ -71,7 +71,7 @@ output and semantic noise. Rule coverage and style options follow those fixes.
 
 Reproduced against ggplot2 `87a95d9` with R 4.6.1.
 
-- [ ] Recognize package-registered roxygen tags in `roxygen-unknown-tag`.
+- [x] Recognize package-registered roxygen tags in `roxygen-unknown-tag`.
   A block with `@aesthetics GeomPoint` warns in Arity. With ggplot2's
   `vctrs::s3_register("roxygen2::roxy_tag_parse", "roxy_tag_aesthetics", ...)`
   registration, roxygen2 8.1.0 accepts the tag and emits an Aesthetics

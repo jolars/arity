@@ -4,7 +4,7 @@
 //! so a misspelled tag (`@exprot`, `@parma`) silently loses documentation.
 //! The parser recognizes *any* `@name` as a tag, so this is a lint concern,
 //! not a parse error. There is no fix: the intended tag is unknowable.
-//! Custom tags from extension roclets can be suppressed with `# arity-lint skip`.
+//! Package registrations and explicit config declare custom tags.
 
 use rowan::ast::AstNode as _;
 
@@ -31,8 +31,10 @@ impl Rule for RoxygenUnknownTag {
          \n\nroxygen2 warns on an unknown tag and drops it from the generated \
          `.Rd`, so a misspelled tag (`@exprot`, `@parma`) silently loses \
          documentation—or worse, an intended `@export` never reaches the \
-         `NAMESPACE`. Custom tags from extension roclets can be suppressed \
-         with `# arity-lint skip roxygen-unknown-tag`."
+         `NAMESPACE`. Arity recognizes literal `vctrs::s3_register()` \
+         registrations for `roxygen2::roxy_tag_parse` in package R sources. \
+         Declare other custom tags with `allowed-tags` under \
+         `[lint.rules.roxygen-unknown-tag]`."
     }
 
     fn examples(&self) -> &'static [Example] {
@@ -43,14 +45,24 @@ impl Rule for RoxygenUnknownTag {
         &[SyntaxKind::ROXYGEN_TAG]
     }
 
-    fn check(&self, el: &SyntaxElement, _ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
+    fn check(&self, el: &SyntaxElement, ctx: &RuleContext<'_>, sink: &mut Vec<Diagnostic>) {
         let Some(tag) = el.as_node().cloned().and_then(RoxygenTag::cast) else {
             return;
         };
         let Some(name) = tag.name() else {
             return;
         };
-        if is_known_tag(&name) {
+        if is_known_tag(&name)
+            || ctx
+                .config
+                .roxygen_unknown_tag
+                .allowed_tags
+                .iter()
+                .any(|tag| tag == name.as_str())
+            || ctx
+                .registered_roxygen_tags
+                .is_some_and(|tags| tags.contains(name.as_str()))
+        {
             return;
         }
         // The span is `@` + name—not the tag's prose.
@@ -74,8 +86,8 @@ impl Rule for RoxygenUnknownTag {
                 format!("`@{name}` is not a tag roxygen2 understands"),
             )
             .with_suggestion(
-                "Check the spelling against the roxygen2 tag index; suppress with \
-                 `# arity-lint skip roxygen-unknown-tag` for extension-roclet tags.",
+                "Check the spelling against the roxygen2 tag index or declare a custom tag \
+                 in `[lint.rules.roxygen-unknown-tag].allowed-tags`.",
             ),
             fix: None,
         });

@@ -1038,6 +1038,52 @@ fn editing_description_prose_does_not_relint_other_documents() {
     h.shutdown();
 }
 
+#[test]
+fn editing_a_custom_roxygen_registration_relints_sibling_documents() {
+    let doc = "#' Title\n#' @aesthetics GeomPoint\nf <- function() NULL\n";
+    let (dir, _, doc_uri) = package_fixture(COMPLETE_DESCRIPTION, doc);
+    let registration = dir.path().join("R/zzz.R");
+    let registration_uri = path_uri(&registration);
+    std::fs::write(&registration, "").unwrap();
+    let registered = r#".onLoad <- function(...) {
+  vctrs::s3_register("roxygen2::roxy_tag_parse", "roxy_tag_aesthetics", handler)
+}
+"#;
+    let mut h = Harness::start_push();
+    h.did_open(&doc_uri, doc, 1);
+    let findings = h.recv_publish_for(&doc_uri, 1);
+    assert!(
+        rules_in(&findings)
+            .iter()
+            .any(|rule| rule == "roxygen-unknown-tag")
+    );
+
+    h.did_open(&registration_uri, "", 1);
+    let _ = h.recv_publish_for(&registration_uri, 1);
+    h.did_change(&registration_uri, registered, 2);
+    h.recv_publish_matching(
+        &doc_uri,
+        "custom tag accepted after registration",
+        |findings| {
+            !rules_in(findings)
+                .iter()
+                .any(|rule| rule == "roxygen-unknown-tag")
+        },
+    );
+
+    h.did_change(&registration_uri, "", 3);
+    h.recv_publish_matching(
+        &doc_uri,
+        "custom tag flagged after registration removal",
+        |findings| {
+            rules_in(findings)
+                .iter()
+                .any(|rule| rule == "roxygen-unknown-tag")
+        },
+    );
+    h.shutdown();
+}
+
 /// A facts change fans out with `RelintAll`, which re-lints *every* open
 /// document — including the DESCRIPTION that triggered it. That converges only
 /// because `upsert_description` short-circuits on unchanged text, so the second

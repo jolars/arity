@@ -1034,6 +1034,7 @@ pub(crate) fn build_class_index(
 pub struct PackageTopics {
     by_topic: BTreeMap<String, Vec<TopicMember>>,
     by_alias: BTreeMap<String, Vec<String>>,
+    pub(crate) registered_tags: BTreeSet<String>,
 }
 
 /// An alias can identify one topic, no topic, or several distinct topics.
@@ -1048,7 +1049,7 @@ impl PackageTopics {
     pub(crate) fn from_topics(by_topic: BTreeMap<String, Vec<TopicMember>>) -> Self {
         let mut topics = Self {
             by_topic,
-            by_alias: BTreeMap::new(),
+            ..Self::default()
         };
         topics.index_aliases();
         topics
@@ -1092,7 +1093,7 @@ impl PackageTopics {
     }
 }
 
-/// A project-wide roxygen topic index, keyed by package root.
+/// A project-wide index of roxygen topics and custom tags, keyed by package root.
 ///
 /// Keyed by *package* and not flat because roxygen2 merges topics within one
 /// package: two packages under one workspace each own their `add` topic, and
@@ -1120,8 +1121,8 @@ impl RoxygenTopicIndex {
 /// Aggregate every package member's [`file_roxygen_topics`] into the
 /// package-wide [`RoxygenTopicIndex`]. Built on the backdated
 /// [`workspace_project`] snapshot and the per-file firewall, so it backdates
-/// across body edits and re-runs only when some file's documentation actually
-/// changes.
+/// across unrelated body edits. Package sources also contribute their
+/// range-free custom tag registrations.
 ///
 /// Members are visited in `project.members` order, which is sorted by path, so
 /// a topic's member list is deterministic.
@@ -1137,6 +1138,13 @@ pub fn project_roxygen_topics(db: &dyn IncrementalDb) -> RoxygenTopicIndex {
             continue;
         };
         let package = index.by_package.entry(root.clone()).or_default();
+        if member.path.parent() == Some(root.join("R").as_path()) {
+            package.registered_tags.extend(
+                crate::incremental::file_registered_roxygen_tags(db, member.file)
+                    .iter()
+                    .cloned(),
+            );
+        }
         for (topic, members) in file_roxygen_topics(db, member.file) {
             package
                 .by_topic
