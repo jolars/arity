@@ -60,14 +60,34 @@ pub(crate) fn document_symbols_via_db(
     encoding: PositionEncoding,
     s7_floor: Option<&crate::config::CompatVersion>,
 ) -> (Vec<DocumentSymbol>, bool) {
+    let path = &crate::incremental::normalize_path(path);
     with_document_semantics(snapshot, path, buffer, s7_floor, |root, model| {
         // A binding candidate can appear or disappear after a config,
         // DESCRIPTION, or project scope change with the same buffer text.
-        let cache_by_text = !root
-            .descendants()
-            .any(|node| crate::semantic::s7::binding_parts(&node).is_some());
+        let (facts, sites) = crate::project::classes::class_source_sites(model, root);
+        let has_objects = sites.has_declarations();
+        let cache_by_text = !has_objects
+            && !root
+                .descendants()
+                .any(|node| crate::semantic::s7::binding_parts(&node).is_some());
         let symbols = document_symbols_from_model(root, model, buffer.line_index(), encoding);
-        (symbols, cache_by_text)
+        let declarations = if has_objects {
+            let index = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+                snapshot.class_index_in(path, &facts, root, model)
+            }))
+            .unwrap_or_else(|_| {
+                IncrementalDatabase::default()
+                    .snapshot()
+                    .class_index_in(path, &facts, root, model)
+            });
+            oop::presentation::declarations(root, model, &facts, &sites, &index, path)
+        } else {
+            Vec::new()
+        };
+        (
+            add_oop_symbols(symbols, declarations, buffer.line_index(), encoding),
+            cache_by_text,
+        )
     })
 }
 
@@ -94,7 +114,96 @@ pub(crate) fn compute_document_symbols_in(
     let text = buffer.text();
     let root = parse(text).cst;
     let model = crate::project::classes::standalone_semantic_model(&root);
-    document_symbols_from_model(&root, &model, buffer.line_index(), encoding)
+    let symbols = document_symbols_from_model(&root, &model, buffer.line_index(), encoding);
+    let (facts, sites) = crate::project::classes::class_source_sites(&model, &root);
+    let index = IncrementalDatabase::default().snapshot().class_index_in(
+        Path::new("buffer.R"),
+        &facts,
+        &root,
+        &model,
+    );
+    let declarations = oop::presentation::declarations(
+        &root,
+        &model,
+        &facts,
+        &sites,
+        &index,
+        Path::new("buffer.R"),
+    );
+    add_oop_symbols(symbols, declarations, buffer.line_index(), encoding)
+}
+
+#[expect(deprecated, reason = "DocumentSymbol::deprecated is a required field")]
+fn add_oop_symbols(
+    mut symbols: Vec<DocumentSymbol>,
+    mut declarations: Vec<oop::presentation::Declaration>,
+    line_index: &LineIndex,
+    encoding: PositionEncoding,
+) -> Vec<DocumentSymbol> {
+    declarations.sort_by_key(|decl| (decl.range.start(), std::cmp::Reverse(decl.range.end())));
+    for decl in declarations {
+        let range = text_range_to_lsp_range(line_index, decl.range, encoding);
+        let selection_range = text_range_to_lsp_range(line_index, decl.selection, encoding);
+        let binding = decl
+            .binding
+            .map(|range| text_range_to_lsp_range(line_index, range, encoding));
+        insert_oop_symbol(
+            &mut symbols,
+            DocumentSymbol {
+                name: decl.name,
+                detail: Some(decl.detail),
+                kind: decl.kind,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range,
+                children: None,
+            },
+            binding,
+        );
+    }
+    symbols
+}
+
+fn insert_oop_symbol(
+    symbols: &mut Vec<DocumentSymbol>,
+    mut symbol: DocumentSymbol,
+    binding: Option<Range>,
+) {
+    if let Some(existing) = symbols
+        .iter_mut()
+        .find(|existing| Some(existing.selection_range) == binding)
+    {
+        symbol.children = existing.children.take();
+        *existing = symbol;
+        return;
+    }
+    let contains = |outer: Range, inner: Range| {
+        outer != inner && outer.start <= inner.start && outer.end >= inner.end
+    };
+    if let Some(parent) = symbols
+        .iter_mut()
+        .find(|parent| contains(parent.range, symbol.range))
+    {
+        insert_oop_symbol(
+            parent.children.get_or_insert_with(Vec::new),
+            symbol,
+            binding,
+        );
+        return;
+    }
+    let mut children = Vec::new();
+    symbols.retain_mut(|existing| {
+        if contains(symbol.range, existing.range) {
+            children.push(existing.clone());
+            false
+        } else {
+            true
+        }
+    });
+    symbol.children = (!children.is_empty()).then_some(children);
+    let index = symbols.partition_point(|existing| existing.range.start <= symbol.range.start);
+    symbols.insert(index, symbol);
 }
 
 fn document_symbols_from_model(
@@ -263,6 +372,31 @@ fn default_preview(default: SyntaxElement) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oop_outline_includes_members_and_unassigned_registrations() {
+        let text = "G <- R6::R6Class('Display', public = list(value = 1, read = function() self$value))\nmethods::setGeneric('inspect', function(x) standardGeneric('inspect'))\nmethods::setMethod('inspect', 'Display', function(x) x)";
+        let symbols = compute_document_symbols(text, PositionEncoding::Utf16);
+        assert_eq!(
+            symbols.iter().map(|s| s.kind).collect::<Vec<_>>(),
+            [
+                LspSymbolKind::CLASS,
+                LspSymbolKind::FUNCTION,
+                LspSymbolKind::METHOD,
+            ]
+        );
+        let members = symbols[0].children.as_ref().unwrap();
+        assert_eq!(
+            members
+                .iter()
+                .map(|s| (s.name.as_str(), s.kind))
+                .collect::<Vec<_>>(),
+            [
+                ("value", LspSymbolKind::FIELD),
+                ("read", LspSymbolKind::METHOD),
+            ]
+        );
+    }
 
     #[test]
     fn document_symbols_preserve_source_order_nesting_and_spans() {

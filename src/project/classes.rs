@@ -10,7 +10,7 @@
 
 mod dispatch;
 mod editor;
-pub(crate) use editor::{EditorCallable, EditorRead, ObjectHelp};
+pub(crate) use editor::{EditorCallable, EditorRead, ObjectHelp, dispatch_labels};
 mod environments;
 pub use dispatch::{
     DispatchContexts, DispatchEnvironment, GenericEffect, NamedDispatchEnvironment,
@@ -363,10 +363,11 @@ impl FileClassFacts {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassLocation {
     pub name_range: TextRange,
     pub full_range: TextRange,
+    pub(crate) binding_range: Option<TextRange>,
     call_range: TextRange,
 }
 
@@ -415,8 +416,19 @@ pub fn file_class_defs(model: &SemanticModel, root: &SyntaxNode) -> FileClassFac
 #[derive(PartialEq, Eq)]
 pub(crate) struct ClassSourceSites {
     pub classes: Vec<(TextRange, ClassOccurrence)>,
+    pub locations: Vec<ClassLocation>,
     pub oop: Vec<OopSourceSite>,
     pub class_reference_factories: HashMap<TextRange, FunctionRef>,
+}
+
+impl ClassSourceSites {
+    pub(crate) fn has_declarations(&self) -> bool {
+        !self.locations.is_empty()
+            || self
+                .oop
+                .iter()
+                .any(|source| source.site.role == OopSiteRole::Declaration)
+    }
 }
 
 pub(crate) fn class_source_sites(
@@ -442,6 +454,7 @@ fn into_class_source_sites(extracted: Extracted) -> (FileClassFacts, ClassSource
         extracted.facts,
         ClassSourceSites {
             classes: extracted.occurrences,
+            locations: extracted.locations,
             oop: extracted.oop_sites,
             class_reference_factories: extracted.class_reference_factories,
         },
@@ -943,7 +956,7 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         if factory_name == "setOldClass" {
             def.binding = None;
         }
-        if let Some(token) = binding_token
+        if let Some(token) = &binding_token
             && def.returns_generator()
         {
             result
@@ -952,6 +965,9 @@ fn extract(model: &SemanticModel, root: &SyntaxNode, include_sites: bool) -> Ext
         }
         result.locations.push(ClassLocation {
             name_range: selection,
+            binding_range: binding_token
+                .filter(|_| def.binding.is_some())
+                .map(|token| token.text_range()),
             full_range: s7_binding_node(model, call.syntax())
                 .filter(|_| s7_named_target(model, call.syntax()).is_some())
                 .map_or_else(

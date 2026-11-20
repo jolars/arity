@@ -7,36 +7,83 @@ use super::*;
 /// empty vec when no workspace is seeded (single-file mode). Snapshot reads are
 /// wrapped in [`salsa::Cancelled::catch`] (as hover wraps its read).
 ///
-/// Scope is **file-scope top-level definitions only** — that is what the
-/// [`project_defs`](crate::project::project_defs) index holds and the right
-/// granularity for a project-wide search, unlike `textDocument/documentSymbol`
-/// (see [`compute_document_symbols`]) which also surfaces nested locals.
+/// Include classes, generics, method registrations, and class members alongside
+/// top-level definitions from the project index.
 pub(crate) fn workspace_symbols_via_db(
     snapshot: &Analysis,
     query: &str,
     encoding: PositionEncoding,
 ) -> Vec<WorkspaceSymbol> {
     let needle = query.to_lowercase();
-    let hits = salsa::Cancelled::catch(AssertUnwindSafe(|| {
-        snapshot.workspace_symbols(|name| fuzzy_subsequence(&needle, name))
-    }))
-    .unwrap_or_default();
-    hits.into_iter()
-        .filter_map(|(name, kind, path, range)| {
-            let location = location_in(snapshot, &path, range, encoding)?;
-            Some(WorkspaceSymbol {
-                name,
-                kind: match kind {
-                    DefKind::Function => LspSymbolKind::FUNCTION,
-                    DefKind::Value => LspSymbolKind::VARIABLE,
-                },
-                tags: None,
-                container_name: None,
-                location: OneOf::Left(location),
-                data: None,
+    salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        let hits = snapshot.workspace_symbols(|name| fuzzy_subsequence(&needle, name));
+        let matching_bindings: std::collections::HashSet<_> = hits
+            .iter()
+            .map(|(_, _, path, range)| (path.as_path(), *range))
+            .collect();
+        let mut replaced_bindings = std::collections::HashSet::new();
+        let index = snapshot.class_index();
+        let mut objects = Vec::new();
+        for file in index.oop_files().filter(|file| {
+            !file.facts.declarations.is_empty()
+                || !file.facts.oop.generics.is_empty()
+                || !file.facts.oop.methods.is_empty()
+                || !file.facts.oop.possible_methods.is_empty()
+                || !file.facts.oop.members.is_empty()
+        }) {
+            let path = &file.path;
+            let Some(source) = snapshot.lookup_file(path) else {
+                continue;
+            };
+            let root = snapshot.parsed_tree(source);
+            let model = snapshot.semantic_model(source);
+            let sites = snapshot.class_source_sites(source);
+            for decl in
+                oop::presentation::declarations(&root, model, &file.facts, sites, &index, path)
+                    .into_iter()
+                    .filter(|decl| decl.top_level)
+            {
+                let binding_matched = decl.binding.is_some_and(|binding| {
+                    replaced_bindings.insert((path.clone(), binding));
+                    matching_bindings.contains(&(path.as_path(), binding))
+                });
+                let qualified_match = decl.container.as_ref().is_some_and(|container| {
+                    fuzzy_subsequence(&needle, &format!("{container} {}", decl.name))
+                });
+                if (binding_matched || fuzzy_subsequence(&needle, &decl.name) || qualified_match)
+                    && let Some(location) = location_in(snapshot, path, decl.selection, encoding)
+                {
+                    objects.push(WorkspaceSymbol {
+                        name: decl.name,
+                        kind: decl.kind,
+                        tags: None,
+                        container_name: decl.container,
+                        location: OneOf::Left(location),
+                        data: None,
+                    });
+                }
+            }
+        }
+        hits.into_iter()
+            .filter(|(_, _, path, range)| !replaced_bindings.contains(&(path.clone(), *range)))
+            .filter_map(|(name, kind, path, range)| {
+                let location = location_in(snapshot, &path, range, encoding)?;
+                Some(WorkspaceSymbol {
+                    name,
+                    kind: match kind {
+                        DefKind::Function => LspSymbolKind::FUNCTION,
+                        DefKind::Value => LspSymbolKind::VARIABLE,
+                    },
+                    tags: None,
+                    container_name: None,
+                    location: OneOf::Left(location),
+                    data: None,
+                })
             })
-        })
-        .collect()
+            .chain(objects)
+            .collect()
+    }))
+    .unwrap_or_default()
 }
 
 /// Whether the lowercased `query` is a subsequence of `name` (matched
@@ -88,6 +135,40 @@ mod tests {
             OneOf::Left(location) => location,
             OneOf::Right(_) => panic!("expected a full Location, not a uri-only WorkspaceLocation"),
         }
+    }
+
+    #[test]
+    fn workspace_search_returns_oop_symbols_with_real_source_locations() {
+        let source =
+            "G <- R6::R6Class('Display', public = list(value = 1, read = function() self$value))";
+        let snapshot = workspace(
+            source,
+            "f <- function(x) UseMethod('f')\nf.Display <- function(x) x\nordinary.name <- function() 1",
+        );
+        let symbols = workspace_symbols_via_db(&snapshot, "", PositionEncoding::Utf16);
+        let find = |name: &str| symbols.iter().find(|symbol| symbol.name == name).unwrap();
+        assert_eq!(find("Display").kind, LspSymbolKind::CLASS);
+        assert_eq!(find("read").kind, LspSymbolKind::METHOD);
+        assert_eq!(find("read").container_name.as_deref(), Some("Display"));
+        assert_eq!(find("value").kind, LspSymbolKind::FIELD);
+        assert_eq!(find("f.Display").kind, LspSymbolKind::METHOD);
+        assert_eq!(find("ordinary.name").kind, LspSymbolKind::FUNCTION);
+        assert!(!names(&symbols).contains(&"G"));
+        let location = location_of(&symbols, "value");
+        assert_eq!(location.uri, uri::from_path(&ws_path("a.R")).unwrap());
+        let start = source.find("value").unwrap() as u32;
+        assert_eq!(
+            location.range,
+            Range::new(Position::new(0, start), Position::new(0, start + 5))
+        );
+        assert_eq!(
+            names(&workspace_symbols_via_db(
+                &snapshot,
+                "Display read",
+                PositionEncoding::Utf16
+            )),
+            ["read"]
+        );
     }
 
     #[test]

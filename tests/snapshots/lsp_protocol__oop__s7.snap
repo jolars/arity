@@ -3,16 +3,15 @@ source: tests/lsp_protocol/oop.rs
 expression: report
 ---
 === s7/definitions ===
-known gap: Registered S7 methods are absent from the outline.
 diagnostics: []
-symbols: [["Point",13,null],["ColoredPoint",13,null],["describe",13,null],["obj",13,null]]
+symbols: [["Point",5,"S7 class"],["Point::value",7,"S7 property"],["ColoredPoint",5,"S7 class"],["ColoredPoint::color",7,"S7 property"],["describe",12,"S7 generic (x, ...)"],["describe",6,"S7 method for Point (x)"],["obj",13,null]]
 TypeHierarchy "\"ColoredPoint\"": [{"children":[],"detail":"S7 class","name":"ColoredPoint","parents":["Point"],"selection":[111,125]}]
 Definition "describe(obj)": [{"range":[192,200],"text":"describe"}]
 SignatureHelp "describe(obj)": {"active_parameter":0,"signatures":["describe(x, ...)"]}
 
 === s7/use_sites ===
 diagnostics: []
-symbols: [["Foo",13,null],["audit_get",13,null],["obj",13,null]]
+symbols: [["Foo",5,"S7 class"],["Foo::value",7,"S7 property"],["audit_get",12,"S7 generic (x, ...)"],["audit_get",6,"S7 method for Foo (x)"],["obj",13,null]]
 Definition "audit_get(obj)": [{"range":[74,83],"text":"audit_get"}]
 SignatureHelp "Foo(value = 1)": {"active_parameter":0,"signatures":["Foo(value = integer(0))"]}
 Completion "obj@value": [["value",10]]
@@ -20,7 +19,7 @@ References "audit_get(obj)": [{"range":[132,141],"text":"audit_get"},{"range":[2
 
 === s7/incomplete ===
 diagnostic: syntax-error severity=1 105..106 "@"
-symbols: [["Point",13,null],["obj",13,null]]
+symbols: [["Point",5,"S7 class"],["Point::value",7,"S7 property"],["obj",13,null]]
 TypeHierarchy "\"Point\"": [{"children":[],"detail":"S7 class","name":"Point","parents":[],"selection":[23,30]}]
 Completion "obj@": [["value",10]]
 
@@ -33,7 +32,7 @@ TypeHierarchy "\"Pretend\"": null
 
 === s7/dynamic ===
 diagnostics: []
-symbols: [["class_name",13,null],["Point",13,null],["create_generic",13,null],["describe",13,null],["signature",13,null],["obj",13,null]]
+symbols: [["class_name",13,null],["Point",5,"S7 class"],["Point::value",7,"S7 property"],["create_generic",13,null],["describe",13,null],["signature",13,null],["obj",13,null]]
 Definition "describe(obj)": [{"range":[152,160],"text":"describe"}]
 TypeHierarchy "class_name, properties": null
 Completion "obj@value": [["value",10]]

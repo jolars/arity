@@ -771,7 +771,7 @@ pub fn project_classes(db: &dyn IncrementalDb) -> ClassIndex {
         kind: QueryKind::ProjectClasses,
         file: None,
     });
-    build_class_index(db, None, false)
+    build_class_index(db, None, BodyClassLookups::None)
 }
 
 pub(crate) struct LiveClassFile<'a> {
@@ -781,12 +781,18 @@ pub(crate) struct LiveClassFile<'a> {
     pub model: &'a crate::semantic::SemanticModel,
 }
 
+pub(crate) enum BodyClassLookups {
+    None,
+    File(SourceFile),
+    Workspace,
+}
+
 /// The live buffer replaces its declarations, bindings, and source events. Other
 /// files use tracked projections; both paths share the pure project resolver.
 pub(crate) fn build_class_index(
     db: &dyn IncrementalDb,
     live: Option<LiveClassFile<'_>>,
-    confirm_workspace_bodies: bool,
+    body_lookups: BodyClassLookups,
 ) -> ClassIndex {
     let project = workspace_project(db);
     let mut files: Vec<_> = project
@@ -867,14 +873,16 @@ pub(crate) fn build_class_index(
     // Depending on `project_graph` would pull arbitrary method-body reads through
     // the class firewall even when declarations and visibility stay unchanged.
     let empty_names: Arc<BTreeSet<String>> = Arc::default();
+    let members_by_path: HashMap<_, _> = project
+        .members
+        .iter()
+        .map(|member| (member.path.as_path(), member))
+        .collect();
     let scope_facts: Vec<_> = files
         .iter()
         .map(|file| {
             let live = live.as_ref().filter(|live| live.path == file.path);
-            let member = project
-                .members
-                .iter()
-                .find(|member| member.path == file.path);
+            let member = members_by_path.get(file.path.as_path()).copied();
             let execution_directory = member
                 .and_then(|member| member.file.execution_directory(db))
                 .or_else(|| file.path.parent());
@@ -991,16 +999,26 @@ pub(crate) fn build_class_index(
             &resolution,
         );
     }
-    if confirm_workspace_bodies {
-        for member in &project.members {
-            if live.as_ref().is_some_and(|live| live.path == member.path) {
-                continue;
+    let mut confirm_body = |path, file| {
+        index.confirm_body_class_lookups(
+            path,
+            crate::incremental::file_body_class_lookups(db, file),
+            &resolution,
+        );
+    };
+    match body_lookups {
+        BodyClassLookups::None => {}
+        BodyClassLookups::File(file) => {
+            if let Some(path) = file.path(db) {
+                confirm_body(path, file);
             }
-            index.confirm_body_class_lookups(
-                &member.path,
-                crate::incremental::file_body_class_lookups(db, member.file),
-                &resolution,
-            );
+        }
+        BodyClassLookups::Workspace => {
+            for member in &project.members {
+                if live.as_ref().is_none_or(|live| live.path != member.path) {
+                    confirm_body(&member.path, member.file);
+                }
+            }
         }
     }
     index

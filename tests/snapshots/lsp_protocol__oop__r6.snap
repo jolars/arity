@@ -4,7 +4,7 @@ expression: report
 ---
 === r6/definitions ===
 diagnostics: []
-symbols: [["Base",13,null],["Child",13,null],["obj",13,null]]
+symbols: [["Base",5,"R6 class"],["Base::read",6,"R6 method ()"],["Child",5,"R6 class"],["Child::value",8,"R6 field"],["obj",13,null]]
 TypeHierarchy "\"Child\"": [{"children":[],"detail":"R6 class","name":"Child","parents":["Base"],"selection":[85,92]}]
 Definition "Child$new()": [{"range":[64,69],"text":"Child"}]
 Definition "obj$read()": null
@@ -13,7 +13,7 @@ TypeHierarchy "\"Base\"": [{"children":["Child"],"detail":"R6 class","name":"Bas
 
 === r6/declaration_identity ===
 diagnostics: []
-symbols: [["make",13,null],["`Generator<-`",13,null],["Alias",13,null],["Child",13,null],["Other",13,null]]
+symbols: [["make",13,null],["Display",5,"R6 class"],["Alias",13,null],["Child",5,"R6 class"],["Display",5,"R6 class"]]
 TypeHierarchy "classname = \"Display\"": [{"children":["Child"],"detail":"R6 class via Generator<-","name":"Display","parents":[],"selection":[54,63]}]
 TypeHierarchy "Child <-": [{"children":[],"detail":"R6 class","name":"Child","parents":["Display"],"selection":[105,110]}]
 TypeHierarchy "inherit = Alias": [{"children":["Child"],"detail":"R6 class via Generator<-","name":"Display","parents":[],"selection":[54,63]}]
@@ -22,7 +22,7 @@ TypeHierarchy "R6::R6Class(\"Display\")": [{"children":[],"detail":"R6 class via
 === r6/use_sites ===
 known gap: Declared members have no member definition.
 diagnostics: []
-symbols: [["Base",13,null],["Child",13,null],["obj",13,null]]
+symbols: [["Base",5,"R6 class"],["Base::read",6,"R6 method ()"],["Child",5,"R6 class"],["Child::value",8,"R6 field"],["Child::read",6,"R6 method ()"],["Child::id",8,"R6 field"],["Child::double",7,"R6 active binding ()"],["obj",13,null]]
 TypeHierarchy "\"Child\"": [{"children":[],"detail":"R6 class","name":"Child","parents":["Base"],"selection":[88,95]}]
 Definition "obj$read()": null
 SignatureHelp "obj$read()": {"active_parameter":null,"signatures":["read()"]}
@@ -31,7 +31,7 @@ References "obj$read()": null
 
 === r6/incomplete ===
 diagnostic: syntax-error severity=1 84..85 "$"
-symbols: [["Counter",13,null],["obj",13,null]]
+symbols: [["Counter",5,"R6 class"],["Counter::value",8,"R6 field"],["obj",13,null]]
 TypeHierarchy "\"Counter\"": [{"children":[],"detail":"R6 class","name":"Counter","parents":[],"selection":[23,32]}]
 Completion "obj$": [["clone",2],["value",5]]
 
@@ -44,13 +44,13 @@ TypeHierarchy "\"Pretend\"": null
 
 === r6/dynamic ===
 diagnostics: []
-symbols: [["class_name",13,null],["factory",13,null],["Counter",13,null],["member_name",13,null],["obj",13,null]]
+symbols: [["class_name",13,null],["factory",13,null],["Counter",5,"R6 class"],["Counter::value",8,"R6 field"],["member_name",13,null],["obj",13,null]]
 TypeHierarchy "class_name, public": null
 Definition "obj$read()": null
 
 === r6/issue_183 ===
 diagnostics: []
-symbols: [["NewR6",13,null],["obj",13,null]]
+symbols: [["NewR6",5,"R6 class"],["NewR6::initialize",6,"R6 method (id = NULL)"],["NewR6::id",8,"R6 field"],["obj",13,null]]
 TypeHierarchy "\"NewR6\"": [{"children":[],"detail":"R6 class","name":"NewR6","parents":[],"selection":[24,31]}]
 Definition "NewR6$new()": [{"range":[0,5],"text":"NewR6"}]
 Completion "private$id": [["id",5]]
@@ -60,7 +60,7 @@ diagnostic: unused-binding severity=2 0..4 "self"
 diagnostic: unused-binding severity=2 10..17 "private"
 diagnostic: unused-binding severity=2 23..28 "super"
 diagnostic: undefined-symbol severity=2 659..668 "unrelated"
-symbols: [["self",13,null],["private",13,null],["super",13,null],["Base",13,null],["Child",13,null],["Child::nested",12,"()"],["Plain",13,null],["ordinary",12,"()"]]
+symbols: [["self",13,null],["private",13,null],["super",13,null],["Base",5,"R6 class"],["Base::value",8,"R6 field"],["Child",5,"R6 class"],["Child::read",6,"R6 method (value = private$value)"],["Child::read::nested",12,"()"],["Child::shadow",6,"R6 method (self)"],["Child::construct",6,"R6 method ()"],["Child::private_read",6,"R6 method ()"],["Child::doubled",7,"R6 active binding ()"],["Plain",5,"R6 class"],["Plain::read",6,"R6 method ()"],["ordinary",12,"()"]]
 Definition "list(self, private, super, value)": null
 References "list(self, private, super, value)": [{"range":[232,236],"text":"self"},{"range":[352,356],"text":"self"},{"range":[394,398],"text":"self"},{"range":[461,465],"text":"self"}]
 PrepareRename "list(self, private, super, value)": null
@@ -78,30 +78,30 @@ diagnostic: undefined-symbol severity=2 172..179 "unknown"
 diagnostic: undefined-symbol severity=2 276..280 "self"
 diagnostic: undefined-symbol severity=2 282..289 "private"
 diagnostic: undefined-symbol severity=2 291..296 "super"
-symbols: [["Container",13,null],["ordinary",12,"()"]]
+symbols: [["Container",5,"R6 class"],["Container::boxed",7,"R6 field"],["Container::evaluated",7,"R6 field"],["Container::read",6,"R6 method ()"],["Container::nested",6,"R6 method ()"],["ordinary",12,"()"]]
 References "list(self, private, super, unknown)": [{"range":[150,154],"text":"self"},{"range":[217,221],"text":"self"}]
 Definition "fn = function() self": null
 
 === r6/receiver_ownership ===
 diagnostics: []
-symbols: [["A",13,null],["B",13,null],["C",13,null]]
+symbols: [["A",5,"R6 class"],["A::read",6,"R6 method ()"],["B",5,"R6 class"],["B::read",6,"R6 method ()"],["C",5,"R6 class"],["C::gamma",8,"R6 field"],["C::read",6,"R6 method ()"]]
 Completion "self$gamma": [["clone",2],["gamma",5],["read",2]]
 
 === r6/generator_alias ===
 diagnostics: []
-symbols: [["Generator",13,null],["Child",13,null],["obj",13,null]]
+symbols: [["Display",5,"R6 class"],["Display::value",8,"R6 field"],["Child",5,"R6 class"],["obj",13,null]]
 TypeHierarchy "\"Child\"": [{"children":[],"detail":"R6 class","name":"Child","parents":["Display"],"selection":[83,90]}]
 Definition "inherit = Generator": [{"range":[0,9],"text":"Generator"}]
 
 === r6/named_arguments ===
 diagnostics: []
-symbols: [["Point",13,null],["obj",13,null]]
+symbols: [["Point",5,"R6 class"],["Point::value",8,"R6 field"],["obj",13,null]]
 TypeHierarchy "\"Point\"": [{"children":[],"detail":"R6 class","name":"Point","parents":[],"selection":[33,40]}]
 Definition "Point$new()": [{"range":[0,5],"text":"Point"}]
 
 === r6/member_apis ===
 diagnostics: []
-symbols: [["reader",12,"(scale = 2)"],["Original",13,null],["Alias",13,null],["Child",13,null],["base",13,null],["obj",13,null]]
+symbols: [["reader",12,"(scale = 2)"],["Display",5,"R6 class"],["Display::value",8,"R6 field"],["Display::read",6,"R6 method (scale = 2)"],["Display::initialize",6,"R6 method (value = 3)"],["Display::secret",8,"R6 field"],["Display::hidden",6,"R6 method ()"],["Display::doubled",7,"R6 active binding ()"],["Alias",13,null],["Child",5,"R6 class"],["Child::read",6,"R6 method (scale = 6)"],["Child::parent_private",6,"R6 method ()"],["base",13,null],["obj",13,null]]
 Completion "Alias$new": [["active",5],["class",5],["classname",5],["clone_method",2],["cloneable",5],["debug",2],["debug_names",5],["get_inherit",2],["has_private",2],["inherit",5],["is_locked",2],["lock",2],["lock_class",5],["lock_objects",5],["new",2],["parent_env",5],["portable",5],["private_fields",5],["private_methods",5],["public_fields",5],["public_methods",5],["self",5],["set",2],["undebug",2],["unlock",2]]
 SignatureHelp "Alias$new(value = 3)": {"active_parameter":0,"signatures":["new(value = 3)"]}
 Completion "obj$read": [["doubled",10],["initialize",2],["parent_private",2],["read",2],["value",5]]

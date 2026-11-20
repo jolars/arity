@@ -501,3 +501,243 @@ label <- 'describe'
     }
     harness.shutdown();
 }
+
+#[test]
+fn oop_presentation_uses_live_document_roles_and_spans() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("presentation.R");
+    let source = "G <- R6::R6Class('Display', public = list(read = function(n = 1) n))
+obj <- G$new()
+obj$read()
+";
+    fs::write(&path, source).unwrap();
+    let uri = path_uri(&path);
+    let mut harness = Harness::start_push();
+    harness.did_open(&uri, source, 1);
+    harness.recv_publish_for(&uri, 1);
+
+    let symbols = request(
+        &mut harness,
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    let class = &symbols[0];
+    assert_eq!(class["name"], "Display");
+    assert_eq!(class["kind"], 5);
+    let [start, end] = byte_range(source, &class["location"]["range"]);
+    assert_eq!(&source[start..end], "'Display'");
+    assert_eq!(symbols[1]["name"], "read");
+    assert_eq!(symbols[1]["kind"], 6);
+    assert_eq!(symbols[1]["containerName"], "Display");
+
+    let member_use = source.rfind("read").unwrap();
+    let hover = request(
+        &mut harness,
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": position(source, member_use) }),
+    );
+    let [start, end] = byte_range(source, &hover["range"]);
+    assert_eq!(&source[start..end], "read");
+    assert!(
+        hover["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .contains("(n = 1)")
+    );
+
+    let tokens = request(
+        &mut harness,
+        "textDocument/semanticTokens/full",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    let legend = harness.capabilities["semanticTokensProvider"]["legend"]["tokenTypes"]
+        .as_array()
+        .unwrap();
+    let data = tokens["data"].as_array().unwrap();
+    let (mut line, mut column) = (0, 0);
+    let mut method_use = false;
+    for token in data.as_chunks::<5>().0 {
+        let delta_line = token[0].as_u64().unwrap();
+        line += delta_line;
+        let delta_column = token[1].as_u64().unwrap();
+        column = if delta_line == 0 {
+            column + delta_column
+        } else {
+            delta_column
+        };
+        if (line, column) == (2, 4) {
+            assert_eq!(token[2], 4);
+            assert_eq!(legend[token[3].as_u64().unwrap() as usize], "method");
+            assert_eq!(token[4], 0);
+            method_use = true;
+        }
+    }
+    assert!(method_use);
+
+    let edited = format!("# shift the source\n{}", source.replace("n = 1", "n = 2"));
+    harness.did_change(&uri, &edited, 2);
+    harness.recv_publish_for(&uri, 2);
+    let hover = request(
+        &mut harness,
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": position(&edited, edited.rfind("read").unwrap()) }),
+    );
+    let [start, end] = byte_range(&edited, &hover["range"]);
+    assert_eq!(&edited[start..end], "read");
+    assert!(
+        hover["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .contains("(n = 2)")
+    );
+    harness.shutdown();
+}
+
+#[test]
+fn oop_presentation_preserves_declaration_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("presentation.R");
+    let source = r#"source("helpers.R")
+Counter <- R6::R6Class("Counter", public = base::list(make = function() {
+    Counter <- 1
+    Counter
+}))
+Counter$set("public", "read", function() { local <- 1; local })
+G <- R6::R6Class("")
+Shadow <- R6::R6Class("Shadow", public = list(fake = function() 1))
+configuration$set("public", "fake_mutation", function() 1)
+registration <- methods::setGeneric("say", function(x) standardGeneric("say"))
+registration
+"#;
+    fs::write(&path, source).unwrap();
+    fs::write(
+        dir.path().join("helpers.R"),
+        "list <- function(...) base::list()\nconfiguration <- base::list(set = function(...) NULL)\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        "[index]\nauto-build = false\ncache-dir = \"index\"\n",
+    )
+    .unwrap();
+    let uri = path_uri(&path);
+    let mut harness = Harness::start_in_workspace(
+        json!({ "textDocument": { "documentSymbol": { "hierarchicalDocumentSymbolSupport": true } } }),
+        Some(&path_uri(dir.path())),
+    );
+    harness.did_open(&uri, source, 1);
+    harness.recv_publish_for(&uri, 1);
+
+    let symbols = request(
+        &mut harness,
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    let symbols = symbols.as_array().unwrap();
+    let named = |name: &str| {
+        symbols
+            .iter()
+            .find(|symbol| symbol["name"] == name)
+            .unwrap_or_else(|| panic!("missing {name} in {symbols:#?}"))
+    };
+    let counter = named("Counter");
+    assert_eq!(counter["kind"], 5);
+    assert_eq!(
+        symbols
+            .iter()
+            .filter(|symbol| symbol["name"] == "Counter")
+            .count(),
+        1
+    );
+    assert_eq!(named("G")["kind"], 5);
+    assert_eq!(named("registration")["kind"], 13);
+    assert_eq!(named("say")["kind"], 12);
+    let method = named("read");
+    assert_eq!(method["children"][0]["name"], "local");
+    assert!(named("Shadow")["children"].is_null());
+    assert!(
+        symbols
+            .iter()
+            .all(|symbol| symbol["name"] != "fake_mutation")
+    );
+    let workspace = request(&mut harness, "workspace/symbol", json!({ "query": "" }));
+    let workspace = workspace.as_array().unwrap();
+    assert!(
+        workspace
+            .iter()
+            .any(|symbol| symbol["name"] == "registration" && symbol["kind"] == 13)
+    );
+    assert!(
+        workspace
+            .iter()
+            .all(|symbol| symbol["name"] != "fake" && symbol["name"] != "fake_mutation")
+    );
+
+    for offset in [
+        source.find("Counter <- 1").unwrap() + 1,
+        source.rfind("registration").unwrap() + 1,
+    ] {
+        let hover = request(
+            &mut harness,
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": position(source, offset) }),
+        );
+        assert!(hover.is_null(), "{hover}");
+    }
+    harness.shutdown();
+}
+
+#[test]
+fn oop_presentation_distinguishes_s7_bindings_and_method_removals() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("s7.R");
+    let source = r#"C <- S7::new_class("C")
+S7::`:=`(describe, S7::new_generic(dispatch_args = "x"))
+f <- S7::new_generic("f", "x")
+S7::method(f, C) <- function(x) 1
+S7::method(f, C) <- NULL
+"#;
+    fs::write(&path, source).unwrap();
+    fs::write(
+        dir.path().join("arity.toml"),
+        "[compat]\ns7 = \"0.2.2.9000\"\n[index]\nauto-build = false\ncache-dir = \"index\"\n",
+    )
+    .unwrap();
+    let uri = path_uri(&path);
+    let mut harness = Harness::start_in_workspace(
+        json!({ "textDocument": { "documentSymbol": { "hierarchicalDocumentSymbolSupport": true } } }),
+        Some(&path_uri(dir.path())),
+    );
+    harness.did_open(&uri, source, 1);
+    harness.recv_publish_for(&uri, 1);
+    let symbols = request(
+        &mut harness,
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    let symbols = symbols.as_array().unwrap();
+    let generic = symbols
+        .iter()
+        .find(|symbol| symbol["name"] == "describe")
+        .unwrap();
+    assert_eq!(generic["kind"], 12);
+    let [start, end] = byte_range(source, &generic["selectionRange"]);
+    assert_eq!(&source[start..end], "describe");
+    let methods: Vec<_> = symbols
+        .iter()
+        .filter(|symbol| symbol["name"] == "f" && symbol["kind"] == 6)
+        .collect();
+    let [method] = methods.as_slice() else {
+        panic!("{symbols:#?}")
+    };
+    let [start, end] = byte_range(source, &method["range"]);
+    assert!(source[start..end].contains("function(x) 1"));
+    let workspace = request(
+        &mut harness,
+        "workspace/symbol",
+        json!({ "query": "describe" }),
+    );
+    let [start, end] = byte_range(source, &workspace[0]["location"]["range"]);
+    assert_eq!(&source[start..end], "describe");
+    harness.shutdown();
+}

@@ -1,27 +1,21 @@
 //! `textDocument/semanticTokens/full`: scope-aware highlighting that augments
 //! the editor's grammar.
 //!
-//! We emit tokens *only* for identifiers that single-file scope analysis can add
-//! value to — functions, variables, parameters, properties, and package
-//! namespaces — and leave keywords, strings, numbers, comments, and operators to
-//! the editor's own grammar (so highlighting degrades gracefully). Classification
-//! reuses the [`SemanticModel`] (binding kinds + read resolution) plus the same
-//! structural CST shapes the model builder keys on (call callees, `::`/`:::`
-//! operands, `$`/`@` members, and named-argument names).
-//!
-//! This is a pure single-file computation with no salsa db, so the handler runs
-//! straight on the read pool like `documentSymbol`/`foldingRange`.
+//! Identifiers use binding and structural roles. Recognized class and
+//! registration names can also be quoted.
 
 use super::*;
 
 /// The token types we emit, in legend order. An index into this array is what
 /// goes on the wire as `SemanticToken::token_type`.
-const TOKEN_TYPES: [SemanticTokenType; 5] = [
+const TOKEN_TYPES: [SemanticTokenType; 7] = [
     SemanticTokenType::FUNCTION,
     SemanticTokenType::VARIABLE,
     SemanticTokenType::PARAMETER,
     SemanticTokenType::PROPERTY,
     SemanticTokenType::NAMESPACE,
+    SemanticTokenType::CLASS,
+    SemanticTokenType::METHOD,
 ];
 
 /// The token modifiers we emit, in legend order. A bit index into this array is
@@ -39,6 +33,8 @@ enum TokKind {
     Parameter,
     Property,
     Namespace,
+    Class,
+    Method,
 }
 
 impl TokKind {
@@ -50,6 +46,8 @@ impl TokKind {
             TokKind::Parameter => 2,
             TokKind::Property => 3,
             TokKind::Namespace => 4,
+            TokKind::Class => 5,
+            TokKind::Method => 6,
         }
     }
 }
@@ -70,21 +68,47 @@ pub(crate) fn semantic_tokens_legend() -> SemanticTokensLegend {
 /// structural shapes the model doesn't record as reads (callees, `::`/`$`
 /// operands, arg names), then plain reads via scope resolution.
 pub fn compute_semantic_tokens(text: &str, encoding: PositionEncoding) -> SemanticTokens {
-    compute_semantic_tokens_in(&TextBuffer::from(text), encoding)
+    let buffer = TextBuffer::from(text);
+    let root = parse(text).cst;
+    oop::with_live_model(&root, None, |snapshot, model, path| {
+        tokens_from_model(snapshot, path, &root, model, buffer.line_index(), encoding)
+    })
 }
 
-/// [`compute_semantic_tokens`] against a live buffer, reusing its maintained
-/// line index instead of rebuilding one per request.
-pub(crate) fn compute_semantic_tokens_in(
+pub(crate) fn semantic_tokens_via_db(
+    snapshot: &Analysis,
+    path: &Path,
     buffer: &TextBuffer,
     encoding: PositionEncoding,
+    s7_floor: Option<&crate::config::CompatVersion>,
 ) -> SemanticTokens {
-    let text = buffer.text();
-    let parsed = parse(text);
-    let root = &parsed.cst;
-    let model = SemanticModel::build(root);
-    let line_index = buffer.line_index();
+    let path = crate::incremental::normalize_path(path);
+    with_document_semantics(snapshot, &path, buffer, s7_floor, |root, model| {
+        salsa::Cancelled::catch(AssertUnwindSafe(|| {
+            tokens_from_model(snapshot, &path, root, model, buffer.line_index(), encoding)
+        }))
+        .unwrap_or_else(|_| {
+            tokens_from_model(
+                &IncrementalDatabase::default().snapshot(),
+                &path,
+                root,
+                model,
+                buffer.line_index(),
+                encoding,
+            )
+        })
+    })
+}
 
+fn tokens_from_model(
+    snapshot: &Analysis,
+    path: &Path,
+    root: &SyntaxNode,
+    model: &SemanticModel,
+    line_index: &LineIndex,
+    encoding: PositionEncoding,
+) -> SemanticTokens {
+    let oop_roles = oop::presentation::token_roles(snapshot, path, root, model);
     // Definition sites, keyed by the defining identifier's range.
     let mut def_kinds: HashMap<TextRange, TokKind> = HashMap::new();
     for binding in model.bindings() {
@@ -125,6 +149,20 @@ pub(crate) fn compute_semantic_tokens_in(
         let NodeOrToken::Token(tok) = element else {
             continue;
         };
+        let range = tok.text_range();
+        if let Some(&(kind, definition)) = oop_roles.get(&range) {
+            raw.push((
+                range,
+                match kind {
+                    LspSymbolKind::CLASS => TokKind::Class,
+                    LspSymbolKind::METHOD => TokKind::Method,
+                    LspSymbolKind::FUNCTION => TokKind::Function,
+                    _ => TokKind::Property,
+                },
+                if definition { MOD_DEFINITION } else { 0 },
+            ));
+            continue;
+        }
         if tok.kind() != SyntaxKind::IDENT {
             continue;
         }
@@ -134,7 +172,6 @@ pub(crate) fn compute_semantic_tokens_in(
         if is_dot_dot(name) || crate::parser::expr::ident_is_special_constant(name) {
             continue;
         }
-        let range = tok.text_range();
         if let Some(&kind) = def_kinds.get(&range) {
             raw.push((range, kind, MOD_DEFINITION));
         } else if let Some((kind, mods)) = classify_structural(&tok) {
@@ -339,13 +376,76 @@ mod tests {
     const NAMESPACE: u32 = 4;
 
     #[test]
+    fn oop_roles_override_generic_identifier_and_string_highlighting() {
+        let text = "G <- R6::R6Class('Display', public = list(n = 1, read = function() self$n))\nx <- G$new()\nx$read()\nf <- function(x) UseMethod('f')\nf.Display <- function(x) x\nlabel <- 'Display'";
+        let encoding = PositionEncoding::Utf16;
+        let tokens = decode(&compute_semantic_tokens(text, encoding));
+        let index = LineIndex::new(text);
+        for (offset, token, kind, flags) in [
+            (0, "G", TokKind::Class, MOD_DEFINITION),
+            (
+                text.find("'Display'").unwrap(),
+                "'Display'",
+                TokKind::Class,
+                MOD_DEFINITION,
+            ),
+            (
+                text.find("n =").unwrap(),
+                "n",
+                TokKind::Property,
+                MOD_DEFINITION,
+            ),
+            (
+                text.find("read =").unwrap(),
+                "read",
+                TokKind::Method,
+                MOD_DEFINITION,
+            ),
+            (text.find("$read").unwrap() + 1, "read", TokKind::Method, 0),
+            (
+                text.find("'f'").unwrap(),
+                "'f'",
+                TokKind::Function,
+                MOD_DEFINITION,
+            ),
+            (
+                text.find("f.Display").unwrap(),
+                "f.Display",
+                TokKind::Method,
+                MOD_DEFINITION,
+            ),
+        ] {
+            let pos = index.byte_to_position(offset, encoding);
+            assert!(
+                tokens.contains(&(
+                    pos.line,
+                    pos.character,
+                    token.len() as u32,
+                    kind.index(),
+                    flags
+                )),
+                "{token}: {tokens:?}"
+            );
+        }
+        assert!(!tokens.iter().any(|token| token.0 == 5 && token.1 > 0));
+    }
+
+    #[test]
     fn legend_order_matches_indices() {
         assert_eq!(TokKind::Function.index(), FUNCTION);
         assert_eq!(TokKind::Variable.index(), VARIABLE);
         assert_eq!(TokKind::Parameter.index(), PARAMETER);
         assert_eq!(TokKind::Property.index(), PROPERTY);
         assert_eq!(TokKind::Namespace.index(), NAMESPACE);
-        assert_eq!(TOKEN_TYPES.len(), 5);
+        assert_eq!(
+            TOKEN_TYPES[TokKind::Class.index() as usize],
+            SemanticTokenType::CLASS
+        );
+        assert_eq!(
+            TOKEN_TYPES[TokKind::Method.index() as usize],
+            SemanticTokenType::METHOD
+        );
+        assert_eq!(TOKEN_TYPES.len(), 7);
     }
 
     #[test]

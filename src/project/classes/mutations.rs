@@ -93,6 +93,101 @@ impl ClassIndex {
         installed
     }
 
+    pub(crate) fn member_declaration_confirmed(&self, path: &Path, member: &MemberDef) -> bool {
+        let Some(file) = self.file(path) else {
+            return false;
+        };
+        if let Some(key) = &member.class {
+            let class = ClassId {
+                path: path.into(),
+                key: key.clone(),
+            };
+            let Some(class) = self.declarations.get(&class) else {
+                return false;
+            };
+            if let Some(s4) = &class.declaration.s4 {
+                return s4
+                    .slot_helpers
+                    .iter()
+                    .all(|helper| self.callee_identity(path, helper).is_some());
+            }
+            let group_name = match (key.system, member.kind, member.visibility) {
+                (ClassSystem::R6, MemberKind::ActiveBinding, _) => "active",
+                (ClassSystem::R6, _, MemberVisibility::Private) => "private",
+                (ClassSystem::R6, _, MemberVisibility::Public) => "public",
+                (ClassSystem::RefClass, MemberKind::Method, _) => "methods",
+                (ClassSystem::RefClass, _, _) => "fields",
+                (ClassSystem::S4, _, _) => "slots",
+                (ClassSystem::S7, _, _) => "properties",
+            };
+            return file.facts.oop.member_groups.iter().any(|group| {
+                &group.class == key
+                    && group.name == group_name
+                    && group.factory.as_ref().is_none_or(|factory| {
+                        self.callee_identity(path, factory)
+                            .is_some_and(|origin| origin.package == "base")
+                    })
+            });
+        }
+
+        let Some((event, mutation)) =
+            file.facts
+                .oop
+                .events
+                .iter()
+                .enumerate()
+                .find_map(|(event, value)| {
+                    let OopEvent::Mutation(index) = value else {
+                        return None;
+                    };
+                    let mutation = &file.facts.oop.mutations[*index];
+                    mutation
+                        .members
+                        .contains(&member.key)
+                        .then_some((event, mutation))
+                })
+        else {
+            return false;
+        };
+        let point = OopPoint {
+            path: path.into(),
+            event: event + 1,
+        };
+        let installed_on = |id: &ClassId| {
+            OopSystem::from(id.key.system) == member.key.system
+                && self
+                    .own_members(id, Some(&point))
+                    .entries
+                    .iter()
+                    .any(|installed| installed.id.path == path && installed.id.key == member.key)
+        };
+        let resolved =
+            self.resolve_reference(path, &mutation.owner, &mutation.target, mutation.deferred);
+        if resolved.iter().any(installed_on) {
+            return true;
+        }
+        // A free generator name may have referred to a different class at
+        // the registration point. Let the execution replay confirm its owner.
+        matches!(mutation.target, ParentRef::Generator(GeneratorRef::Free(_)))
+            && self
+                .execution(path)
+                .events
+                .into_iter()
+                .any(|(path, event)| {
+                    let Some(file) = self.file(&path) else {
+                        return false;
+                    };
+                    let OopEvent::Class(key) = &file.facts.oop.events[event] else {
+                        return false;
+                    };
+                    let id = ClassId {
+                        path,
+                        key: key.clone(),
+                    };
+                    !resolved.contains(&id) && installed_on(&id)
+                })
+    }
+
     pub(super) fn reference_locked_fields(
         &self,
         id: &ClassId,

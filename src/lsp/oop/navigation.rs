@@ -271,7 +271,7 @@ pub(in crate::lsp) fn class_candidate(
     (!registrations.is_empty()).then_some(ClassCandidate::Registration(registrations))
 }
 
-fn resolve_class_occurrence(
+pub(super) fn resolve_class_occurrence(
     index: &ClassIndex,
     path: &Path,
     occurrence: &ClassOccurrence,
@@ -301,7 +301,11 @@ fn resolve_class_occurrence(
     }
 }
 
-fn resolve_generic_site(index: &ClassIndex, path: &Path, site: &OopSourceSite) -> Vec<OopId> {
+pub(super) fn resolve_generic_site(
+    index: &ClassIndex,
+    path: &Path,
+    site: &OopSourceSite,
+) -> Vec<OopId> {
     match &site.site.target {
         OopTarget::Declaration(key) if key.kind == OopKind::Generic => {
             let id = OopId {
@@ -330,7 +334,11 @@ fn resolve_generic_site(index: &ClassIndex, path: &Path, site: &OopSourceSite) -
     }
 }
 
-fn resolve_method_site(index: &ClassIndex, path: &Path, site: &OopSourceSite) -> Option<OopId> {
+pub(super) fn resolve_method_site(
+    index: &ClassIndex,
+    path: &Path,
+    site: &OopSourceSite,
+) -> Option<OopId> {
     let OopTarget::Declaration(key) = &site.site.target else {
         return None;
     };
@@ -358,7 +366,7 @@ fn resolve_method_site(index: &ClassIndex, path: &Path, site: &OopSourceSite) ->
     confirmed.then_some(id)
 }
 
-fn resolve_registration_class(
+pub(super) fn resolve_registration_class(
     index: &ClassIndex,
     path: &Path,
     site: &OopSourceSite,

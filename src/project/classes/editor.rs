@@ -152,6 +152,88 @@ impl<'a> EditorRead<'a> {
         )
     }
 
+    pub(crate) fn class_hover(
+        &self,
+        value: &SyntaxElement,
+    ) -> Option<(String, Option<CallableSignature>, Option<ObjectHelp>)> {
+        let receiver = match self.receivers(value).unique()? {
+            EditorReceiver::Installed(receiver) => receiver,
+            EditorReceiver::Source(receiver) => {
+                let class = &self.index.declarations.get(&receiver.class)?.declaration;
+                return Some((
+                    format!("{} `{}`", class.system().label(), class.display_name()),
+                    None,
+                    None,
+                ));
+            }
+        };
+        let role = match receiver.class.system {
+            crate::rindex::schema::ObjectSystem::S3 => "S3 class",
+            crate::rindex::schema::ObjectSystem::S4 => "S4 class",
+            crate::rindex::schema::ObjectSystem::Reference => "reference class",
+            crate::rindex::schema::ObjectSystem::R6 => "R6 class",
+            crate::rindex::schema::ObjectSystem::S7 => "S7 class",
+        };
+        Some((
+            format!("{role} {}", receiver.class.identity.name),
+            self.installed.constructor(receiver),
+            receiver
+                .class
+                .help
+                .as_ref()
+                .map(|help| ObjectHelp::new(receiver.package, help)),
+        ))
+    }
+
+    pub(crate) fn generic_hover(
+        &self,
+        value: &SyntaxElement,
+    ) -> Option<(String, Option<CallableSignature>, Option<ObjectHelp>)> {
+        let (package, generic) = self
+            .installed
+            .generic(self.index, self.path, self.root, self.model, value)?;
+        Some((
+            format!("{:?} generic {}", generic.system, generic.identity.name),
+            generic.formals.as_deref().map(from_formals),
+            generic
+                .help
+                .as_ref()
+                .map(|help| ObjectHelp::new(package, help)),
+        ))
+    }
+
+    pub(crate) fn method_hover(
+        &self,
+        value: &SyntaxElement,
+    ) -> Option<(String, Option<CallableSignature>, Option<ObjectHelp>)> {
+        let (package, method) = self
+            .installed
+            .method(self.index, self.path, self.root, self.model, value)?;
+        let mut label = format!("{:?} method for `{}`", method.system, method.generic.name);
+        if let Some(dispatch) = &method.dispatch {
+            let classes = dispatch
+                .iter()
+                .map(|parameter| {
+                    parameter
+                        .class
+                        .as_ref()
+                        .map(installed::object_type_label)
+                        .unwrap_or_else(|| "?".into())
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            label.push_str(&format!(" ({classes})"));
+        }
+        Some((
+            label,
+            method.formals.as_deref().map(from_formals),
+            method
+                .help
+                .as_ref()
+                .map(|help| ObjectHelp::new(package, help)),
+        ))
+    }
+
     pub(crate) fn members(&self, value: &SyntaxElement, at: bool) -> Option<MemberSurface> {
         let evidence = self.receivers(value);
         if evidence.candidates.is_empty() {
@@ -315,12 +397,16 @@ impl<'a> EditorRead<'a> {
         self.generic(call, &base)
     }
 
-    fn constructor(&self, call: &CallExpr, base: &SyntaxElement) -> Option<EditorCallable> {
-        if call_function_ref(self.model, self.root, call).is_some_and(|reference| {
+    pub(crate) fn is_formal_constructor(&self, call: &CallExpr) -> bool {
+        call_function_ref(self.model, self.root, call).is_some_and(|reference| {
             matches!(&reference, FunctionRef::Qualified { package, name } if package == "methods" && name == "new")
                 || self.index.callee_identity(self.path, &reference)
                     .is_some_and(|origin| origin.package == "methods" && origin.name == "new")
-        }) {
+        })
+    }
+
+    fn constructor(&self, call: &CallExpr, base: &SyntaxElement) -> Option<EditorCallable> {
+        if self.is_formal_constructor(call) {
             let mut result = EditorCallable {
                 name: base.to_string(),
                 signature: simple_signature(&["Class", "..."]),
@@ -330,13 +416,22 @@ impl<'a> EditorRead<'a> {
             // The literal Class argument is usable while the closing paren is
             // still being typed, provided it matches unambiguously.
             if let Some(value) = incomplete_constructor_class(call) {
-                if let Some(id) = self.index.s4_named_class(self.path, self.root, self.model, &value) {
+                if let Some(id) = self
+                    .index
+                    .s4_named_class(self.path, self.root, self.model, &value)
+                {
                     result.notes = s4_slot_note(self.index, &id);
-                } else if let Some(receiver) = self.installed.formal_class(
-                    self.index, self.path, self.root, self.model, &value, None,
-                ) {
-                    result.notes = slot_note(self.installed.members(receiver, true).members.into_keys());
-                    result.help = receiver.class.help.as_ref().map(|help| ObjectHelp::new(receiver.package, help));
+                } else if let Some(receiver) = self
+                    .installed
+                    .formal_class(self.index, self.path, self.root, self.model, &value, None)
+                {
+                    result.notes =
+                        slot_note(self.installed.members(receiver, true).members.into_keys());
+                    result.help = receiver
+                        .class
+                        .help
+                        .as_ref()
+                        .map(|help| ObjectHelp::new(receiver.package, help));
                 }
             }
             return Some(result);
@@ -566,24 +661,37 @@ impl EditorRead<'_> {
 }
 
 pub(super) fn method_note(name: &str, arguments: &[DispatchArgument]) -> String {
-    let classes: Vec<_> = arguments
+    format!(
+        "Selected method: `{}({})`",
+        name,
+        dispatch_labels(arguments, |_| None).join(", ")
+    )
+}
+
+pub(crate) fn dispatch_labels(
+    arguments: &[DispatchArgument],
+    local_name: impl Fn(&ClassKey) -> Option<String>,
+) -> Vec<String> {
+    arguments
         .iter()
         .map(|argument| match &argument.class {
             DispatchClass::Missing => "missing".to_string(),
-            DispatchClass::S7(spec) => s7_dispatch_label(spec),
-            DispatchClass::Generator(reference) => generator_label(reference),
+            DispatchClass::S7(spec) => s7_dispatch_label(spec, &local_name),
+            DispatchClass::Generator(reference) => generator_label(reference, &local_name),
             class => declared_type(class).unwrap_or_else(|| "?".into()),
         })
-        .collect();
-    format!("Selected method: `{}({})`", name, classes.join(", "))
+        .collect()
 }
 
-fn s7_dispatch_label(spec: &S7ClassSpec) -> String {
+fn s7_dispatch_label(
+    spec: &S7ClassSpec,
+    local_name: &impl Fn(&ClassKey) -> Option<String>,
+) -> String {
     match spec {
         S7ClassSpec::Builtin(
             FunctionRef::Bare { name, .. } | FunctionRef::Qualified { name, .. },
         ) => name.clone(),
-        S7ClassSpec::Generator(reference) => generator_label(reference),
+        S7ClassSpec::Generator(reference) => generator_label(reference, &local_name),
         S7ClassSpec::S3 { classes, .. } => classes.join(" / "),
         S7ClassSpec::S4 {
             package: Some(package),
@@ -594,7 +702,7 @@ fn s7_dispatch_label(spec: &S7ClassSpec) -> String {
         S7ClassSpec::S4 { name, .. } => name.clone(),
         S7ClassSpec::Union { classes, .. } => classes
             .iter()
-            .map(s7_dispatch_label)
+            .map(|class| s7_dispatch_label(class, local_name))
             .collect::<Vec<_>>()
             .join(" | "),
         S7ClassSpec::Null => "NULL".into(),
@@ -602,10 +710,14 @@ fn s7_dispatch_label(spec: &S7ClassSpec) -> String {
     }
 }
 
-fn generator_label(reference: &GeneratorRef) -> String {
+fn generator_label(
+    reference: &GeneratorRef,
+    local_name: &impl Fn(&ClassKey) -> Option<String>,
+) -> String {
     match reference {
         GeneratorRef::Qualified { package, name } => format!("{package}::{name}"),
         GeneratorRef::Free(name) => name.clone(),
-        GeneratorRef::Local(_) | GeneratorRef::Unknown => "?".into(),
+        GeneratorRef::Local(key) => local_name(key).unwrap_or_else(|| "?".into()),
+        GeneratorRef::Unknown => "?".into(),
     }
 }

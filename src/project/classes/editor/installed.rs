@@ -3,7 +3,8 @@
 use super::*;
 use crate::rindex::provider::{package_exports_name, package_indexed, resolve_origin};
 use crate::rindex::schema::{
-    InstalledClass, InstalledGeneric, InstalledMemberKind, ObjectName, ObjectSystem, ObjectType,
+    InstalledClass, InstalledGeneric, InstalledMemberKind, InstalledMethod, ObjectName,
+    ObjectSystem, ObjectType,
 };
 use crate::semantic::{LoadedPackage, PackageOrigin};
 
@@ -304,14 +305,7 @@ impl<'a> InstalledObjects<'a> {
         model: &SemanticModel,
         value: &SyntaxElement,
     ) -> Option<(&'a PackageIndex, &'a InstalledGeneric)> {
-        let internal = value
-            .as_node()
-            .cloned()
-            .and_then(BinaryExpr::cast)
-            .and_then(|binary| binary.namespace_access())
-            .is_some_and(|namespace| namespace.internal);
-        let reference = function_ref(model, root, value, &mut BTreeSet::new())?;
-        let (package, name) = self.package_binding(index, path, &reference, internal, value)?;
+        let (package, name) = self.object_binding(index, path, root, model, value)?;
         let generic = unique(
             package
                 .objects
@@ -320,6 +314,43 @@ impl<'a> InstalledObjects<'a> {
                 .filter(|generic| generic.origin.binding == name),
         )?;
         Some((package, generic))
+    }
+
+    pub(super) fn method(
+        &self,
+        index: &ClassIndex,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        value: &SyntaxElement,
+    ) -> Option<(&'a PackageIndex, &'a InstalledMethod)> {
+        let (package, name) = self.object_binding(index, path, root, model, value)?;
+        let method = unique(
+            package
+                .objects
+                .methods
+                .iter()
+                .filter(|method| method.origin.binding == name),
+        )?;
+        Some((package, method))
+    }
+
+    fn object_binding(
+        &self,
+        index: &ClassIndex,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+        value: &SyntaxElement,
+    ) -> Option<(&'a PackageIndex, String)> {
+        let internal = value
+            .as_node()
+            .cloned()
+            .and_then(BinaryExpr::cast)
+            .and_then(|binary| binary.namespace_access())
+            .is_some_and(|namespace| namespace.internal);
+        let reference = function_ref(model, root, value, &mut BTreeSet::new())?;
+        self.package_binding(index, path, &reference, internal, value)
     }
 
     pub(super) fn members(&self, receiver: InstalledReceiver<'a>, at: bool) -> MemberSurface {
@@ -615,7 +646,7 @@ fn exported(package: &PackageIndex, name: &str) -> bool {
         .any(|entry| entry.exported && entry.name == name)
 }
 
-fn object_type_label(class: &ObjectType) -> String {
+pub(super) fn object_type_label(class: &ObjectType) -> String {
     match class {
         ObjectType::Named(name) => name.name.to_string(),
         ObjectType::S3Chain(names) => names.join(", "),

@@ -600,12 +600,20 @@ impl GlobalState {
         };
         let path =
             uri::to_path(&uri).unwrap_or_else(|| PathBuf::from(kind.placeholder_file_name()));
+        let s7_floor = if kind == DocumentKind::R {
+            self.resolve_settings(&uri)
+                .ok()
+                .and_then(|settings| settings.lint.compat.s7_version())
+        } else {
+            None
+        };
         self.register_read(id.clone(), Some((uri, version)));
         self.dispatch_read(ReadJob::Hover {
             id,
             path,
             buffer,
             position,
+            s7_floor,
             out: self.out_tx.clone(),
         });
     }
@@ -993,10 +1001,8 @@ impl GlobalState {
         });
     }
 
-    /// `textDocument/semanticTokens/full`: scope-aware highlighting for the whole
-    /// document. A pure single-file CST walk (no workspace lookup), so like
-    /// document symbol and folding range it runs straight on the read pool rather
-    /// than through the lint thread. See [`compute_semantic_tokens`].
+    /// `textDocument/semanticTokens/full` highlights names using the live
+    /// document and project semantics.
     fn on_semantic_tokens(&mut self, req: Request) {
         let id = req.id.clone();
         let Ok((_, params)) =
@@ -1010,13 +1016,19 @@ impl GlobalState {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
+        let path = uri::to_path(&uri)
+            .unwrap_or_else(|| PathBuf::from(DocumentKind::R.placeholder_file_name()));
+        let s7_floor = self
+            .resolve_settings(&uri)
+            .ok()
+            .and_then(|settings| settings.lint.compat.s7_version());
         self.register_read(id.clone(), Some((uri, version)));
-        let out = self.out_tx.clone();
-        let encoding = self.position_encoding;
-        self.read_spawner.spawn(move || {
-            let tokens = compute_semantic_tokens_in(&buffer, encoding);
-            let result = SemanticTokensResult::Tokens(tokens);
-            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
+        self.dispatch_read(ReadJob::SemanticTokens {
+            id,
+            path,
+            buffer,
+            s7_floor,
+            out: self.out_tx.clone(),
         });
     }
 
@@ -1333,7 +1345,9 @@ impl GlobalState {
             let (id, out) = match job {
                 ReadJob::Format { id, out, .. } => (id, out),
                 ReadJob::FormatRange { id, out, .. } => (id, out),
-                ReadJob::Hover { id, out, .. } => (id, out),
+                ReadJob::Hover { id, out, .. } | ReadJob::SemanticTokens { id, out, .. } => {
+                    (id, out)
+                }
                 ReadJob::InlayHints { id, out, .. } => (id, out),
                 ReadJob::Completion { id, out, .. } => (id, out),
                 ReadJob::SignatureHelp { id, out, .. } => (id, out),

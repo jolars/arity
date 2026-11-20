@@ -91,9 +91,6 @@
     ]
   },
   "s4/definitions": {
-    "known_gaps": [
-      "Registered method definitions and class members are absent from the outline."
-    ],
     "probes": [
       {
         "method": "type-hierarchy",
@@ -502,9 +499,6 @@
     ]
   },
   "s7/definitions": {
-    "known_gaps": [
-      "Registered S7 methods are absent from the outline."
-    ],
     "probes": [
       {
         "method": "type-hierarchy",

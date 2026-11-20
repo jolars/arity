@@ -861,7 +861,7 @@ coverage need not block useful workspace support.
   registered method bodies, method registrations with traceable bodies, and
   classes with confirmed direct subclasses. Resolve supported class names in
   registration arguments when preparing type hierarchy.
-- [ ] Add class, generic, method, and member document and workspace symbols,
+- [x] Add class, generic, method, and member document and workspace symbols,
   semantic token roles, and hover. Use installed metadata for hover when
   available.
 - [ ] Extend definition and references to class and generic identifier uses,

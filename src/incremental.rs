@@ -3,6 +3,7 @@
 //! Queries cache `rowan::GreenNode`s because red `SyntaxNode`s are neither
 //! thread-safe nor valid salsa values. Consumers create their own red cursors.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,6 +16,7 @@ use crate::parser::{
     Edit, ParseDiagnostic, ParseOptions, diff_edit, edits_produce, map_range_through_edit,
     map_range_through_edits, parse_with_options, reparse_edits_with_options, reparse_with_options,
 };
+use crate::project::graph::BodyClassLookups;
 use crate::project::{
     ClassId, ClassIndex, DefKind, DescriptionFacts, FileClassFacts, FilePromiseSeeds, PackageInfo,
     PackageReferences, ReadBinding, ReadSite, SourceEdgeKey, TopLevelEvent,
@@ -743,7 +745,7 @@ pub fn method_environments(
             root: &root,
             model: semantic_model(db, file),
         }),
-        false,
+        BodyClassLookups::None,
     )
     .method_environments(path)
 }
@@ -799,7 +801,7 @@ pub fn dispatch_contexts(
             root: &root,
             model: semantic_model(db, file),
         }),
-        false,
+        BodyClassLookups::None,
     )
     .dispatch_contexts(path)
 }
@@ -962,6 +964,13 @@ pub(crate) fn file_body_class_lookups(
         &parsed_tree_root(db, file),
         true,
     )
+}
+
+// Body callee confirmation is specific to a read file. Bound the number of
+// retained graph overlays and keep body edits off the shared class query.
+#[salsa::tracked(returns(ref), lru = 4)]
+fn class_index_with_file_body(db: &dyn IncrementalDb, file: SourceFile) -> ClassIndex {
+    crate::project::graph::build_class_index(db, None, BodyClassLookups::File(file))
 }
 
 /// The file's roxygen blocks grouped by the Rd topic they merge into
@@ -2042,6 +2051,40 @@ impl Analysis {
         project_classes(&self.0).clone()
     }
 
+    /// Borrow the tracked graph when its file projection describes this read.
+    /// A stale buffer or a different compatibility context needs a live overlay.
+    pub(crate) fn class_index_for_presentation(
+        &self,
+        path: &Path,
+        facts: &FileClassFacts,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+    ) -> Cow<'_, ClassIndex> {
+        if let Some(file) = self.lookup_file(path)
+            && {
+                let tracked = &*parsed_document(&self.0, file).green;
+                std::ptr::eq(root.green(), tracked) || root.green() == tracked
+            }
+            && model.s7_version == semantic_model(&self.0, file).s7_version
+            && file_class_defs(&self.0, file) == facts
+        {
+            let index = project_classes(&self.0);
+            if index.file(path).is_some() {
+                let body = crate::project::classes::class_lookups(model, root, true);
+                if body
+                    .iter()
+                    .all(|reference| facts.oop.class_lookups.contains(reference))
+                {
+                    return Cow::Borrowed(index);
+                }
+                if &body == file_body_class_lookups(&self.0, file) {
+                    return Cow::Borrowed(class_index_with_file_body(&self.0, file));
+                }
+            }
+        }
+        Cow::Owned(self.class_index_in(path, facts, root, model))
+    }
+
     /// Resolve a live buffer through the same project class model as tracked reads.
     pub fn class_index_in(
         &self,
@@ -2069,7 +2112,11 @@ impl Analysis {
                 root,
                 model,
             }),
-            confirm_workspace_bodies,
+            if confirm_workspace_bodies {
+                BodyClassLookups::Workspace
+            } else {
+                BodyClassLookups::None
+            },
         )
     }
 
@@ -2680,6 +2727,42 @@ impl IncrementalDb for IncrementalDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn presentation_borrows_tracked_class_graphs_for_current_buffers() {
+        let mut db = IncrementalDatabase::default();
+        let path = normalize_path(Path::new("classes.R"));
+        let file = db.upsert_file(&path, "ordinary <- function(x) x$column\n");
+        db.set_workspace_members(vec![file], vec![path.parent().unwrap().into()]);
+        for source in [
+            "ordinary <- function(x) x$column\n",
+            "construct <- function() methods::new('environment')\n",
+        ] {
+            db.set_file_text(file, source);
+            let snapshot = db.snapshot();
+            let root = snapshot.parsed_tree(file);
+            let model = snapshot.semantic_model(file);
+            let facts = crate::project::file_class_defs(model, &root);
+            let index = snapshot.class_index_for_presentation(&path, &facts, &root, model);
+            let Cow::Borrowed(index) = index else {
+                panic!("expected the tracked graph");
+            };
+            if let Some(reference) =
+                crate::project::classes::class_lookups(model, &root, true).first()
+            {
+                assert_eq!(index.callee_identity(&path, reference).unwrap().name, "new");
+            } else {
+                assert!(std::ptr::eq(index, project_classes(&snapshot.0)));
+            }
+
+            let edited = crate::parser::parse("C <- R6::R6Class('C')").cst;
+            let model = SemanticModel::build(&edited);
+            let facts = crate::project::file_class_defs(&model, &edited);
+            let live = snapshot.class_index_for_presentation(&path, &facts, &edited, &model);
+            assert!(matches!(live, Cow::Owned(_)));
+            assert_eq!(live.declarations.len(), 1);
+        }
+    }
 
     #[test]
     fn db_recovers_from_a_poisoned_mutex() {

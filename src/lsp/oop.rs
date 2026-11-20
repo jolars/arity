@@ -5,6 +5,7 @@ use crate::config::CompatVersion;
 use crate::project::classes::{ClassIndex, file_class_defs};
 
 mod navigation;
+pub(super) mod presentation;
 pub(super) use navigation::{
     NameNavigation, class_candidate, implementation_locations, name_locations,
 };

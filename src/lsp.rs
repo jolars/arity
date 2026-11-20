@@ -40,10 +40,11 @@
 //! finish-during-cancel race).
 //!
 //! Read-only requests reuse the lint thread's cached work rather than re-parsing:
-//! - **Document symbols** retain their completed outline with the open buffer.
+//! - **Document symbols** retain their completed outline with the open buffer
+//!   when it depends only on the text.
 //!   Repeated requests serialize it on the read pool without a db snapshot. Every
 //!   text edit replaces the cache cell so an old in-flight read cannot populate it.
-//! - **Formatting, hover, navigation, and document symbols** are sent to the lint
+//! - **Formatting, hover, navigation, document symbols, and semantic tokens** go to the lint
 //!   thread as [`ReadJob`]s (symbols only on a cache miss); it mints a short-lived
 //!   db clone and runs the job on the read pool ([`run_read`]), reusing the cached
 //!   parse tree and, for navigation and document symbols, the

@@ -3,9 +3,8 @@ source: tests/lsp_protocol/oop.rs
 expression: report
 ---
 === s4/definitions ===
-known gap: Registered method definitions and class members are absent from the outline.
 diagnostic: unused-binding severity=2 66..78 "ColoredPoint"
-symbols: [["Point",13,null],["ColoredPoint",13,null],["obj",13,null]]
+symbols: [["Point",5,"S4 class"],["Point::value",7,"S4 slot"],["ColoredPoint",5,"S4 class"],["ColoredPoint::color",7,"S4 slot"],["describe",12,"S4 generic (x)"],["describe",6,"S4 method for Point (x)"],["obj",13,null]]
 TypeHierarchy "\"ColoredPoint\"": [{"children":[],"detail":"S4 class","name":"ColoredPoint","parents":["Point"],"selection":[103,117]}]
 Definition "describe(obj)": null
 References "Point(value = 1)": [{"range":[313,318],"text":"Point"},{"range":[0,5],"text":"Point"}]
@@ -13,7 +12,7 @@ TypeHierarchy "setClass(\"Point\"": [{"children":["ColoredPoint"],"detail":"S4 c
 
 === s4/declaration_identity ===
 diagnostics: []
-symbols: [["make",13,null],["First",13,null],["Second",13,null]]
+symbols: [["make",13,null],["Base",5,"S4 class"],["Base",5,"S4 class"],["Child",5,"S4 class"]]
 TypeHierarchy "First <-": [{"children":[],"detail":"S4 class via First","name":"Base","parents":[],"selection":[48,54]}]
 TypeHierarchy "Second <-": [{"children":[],"detail":"S4 class via Second","name":"Base","parents":[],"selection":[92,98]}]
 TypeHierarchy "Class = \"Child\"": [{"children":[],"detail":"S4 class","name":"Child","parents":[],"selection":[126,133]}]
@@ -21,7 +20,7 @@ TypeHierarchy "contains = \"Base\"": [{"children":[],"detail":"S4 class via Firs
 
 === s4/use_sites ===
 diagnostics: []
-symbols: []
+symbols: [["audit_speak",12,"S4 generic (x)"],["audit_speak",6,"S4 method for numeric (x)"]]
 Definition "audit_speak(1)": null
 SignatureHelp "audit_speak(1)": {"active_parameter":0,"signatures":["audit_speak(x)"]}
 Definition ".defined,": null
@@ -30,7 +29,7 @@ PrepareRename ".defined,": null
 
 === s4/incomplete ===
 diagnostic: syntax-error severity=1 109..110 "@"
-symbols: [["Point",13,null],["obj",13,null]]
+symbols: [["Point",5,"S4 class"],["Point::value",7,"S4 slot"],["obj",13,null]]
 TypeHierarchy "setClass(\"Point\"": [{"children":[],"detail":"S4 class","name":"Point","parents":[],"selection":[27,34]}]
 Completion "obj@": [["value",5]]
 
@@ -42,20 +41,20 @@ TypeHierarchy "\"Pretend\"": null
 
 === s4/dynamic ===
 diagnostic: unused-binding severity=2 37..42 "Point"
-symbols: [["class_name",13,null],["Point",13,null],["generic_name",13,null],["obj",13,null]]
+symbols: [["class_name",13,null],["Point",5,"S4 class"],["Point::value",7,"S4 slot"],["generic_name",13,null],["obj",13,null]]
 Definition "Point <-": [{"range":[37,42],"text":"Point"}]
 TypeHierarchy "class_name, slots": null
 Completion "obj@value": []
 
 === s4/named_arguments ===
 diagnostic: unused-binding severity=2 0..5 "Point"
-symbols: [["Point",13,null],["obj",13,null]]
+symbols: [["Point",5,"S4 class"],["Point::value",7,"S4 slot"],["obj",13,null]]
 TypeHierarchy "Class = \"Point\"": [{"children":[],"detail":"S4 class","name":"Point","parents":[],"selection":[35,42]}]
 Completion "obj@value": [["value",5]]
 
 === s4/method_environments ===
 diagnostic: undefined-symbol severity=2 224..232 ".defined"
-symbols: [["nested",12,"()"]]
+symbols: [["g",12,"S4 generic (x)"],["g",6,"S4 method for ANY (x)"],["g::nested",12,"()"],["length",6,"S4 method for ANY (x)"]]
 Definition ".defined\n  nested <-": null
 References ".defined\n  nested <-": [{"range":[106,114],"text":".defined"},{"range":[138,146],"text":".defined"}]
 PrepareRename ".defined\n  nested <-": null

@@ -86,11 +86,19 @@ pub(crate) enum ReadJob {
         style: FormatStyle,
         out: Sender<Outbound>,
     },
+    SemanticTokens {
+        id: RequestId,
+        path: PathBuf,
+        buffer: Arc<TextBuffer>,
+        s7_floor: Option<crate::config::CompatVersion>,
+        out: Sender<Outbound>,
+    },
     Hover {
         id: RequestId,
         path: PathBuf,
         buffer: Arc<TextBuffer>,
         position: Position,
+        s7_floor: Option<crate::config::CompatVersion>,
         out: Sender<Outbound>,
     },
     InlayHints {
@@ -264,14 +272,34 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
                 format_range_edits_via_db(&snapshot, &path, &buffer, range, style, encoding);
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
+        ReadJob::SemanticTokens {
+            id,
+            path,
+            buffer,
+            s7_floor,
+            out,
+        } => {
+            let tokens =
+                semantic_tokens_via_db(&snapshot, &path, &buffer, encoding, s7_floor.as_ref());
+            let result = SemanticTokensResult::Tokens(tokens);
+            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
+        }
         ReadJob::Hover {
             id,
             path,
             buffer,
             position,
+            s7_floor,
             out,
         } => {
-            let result = hover_via_db(&snapshot, &path, &buffer, position, encoding);
+            let result = hover_via_db(
+                &snapshot,
+                &path,
+                &buffer,
+                position,
+                encoding,
+                s7_floor.as_ref(),
+            );
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
         ReadJob::InlayHints {

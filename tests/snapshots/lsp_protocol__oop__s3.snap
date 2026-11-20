@@ -4,13 +4,13 @@ expression: report
 ---
 === s3/definitions ===
 diagnostics: []
-symbols: [["speak",12,"(x, ...)"],["speak.point",12,"(x, ...)"],["speak.default",12,"(x, ...)"],["point",13,null]]
+symbols: [["speak",12,"S3 generic (x, ...)"],["speak.point",6,"S3 method for point (x, ...)"],["speak.default",6,"S3 method for default (x, ...)"],["point",13,null]]
 Definition "speak(point)": [{"range":[0,5],"text":"speak"}]
 TypeHierarchy "\"point\"": null
 
 === s3/use_sites ===
 diagnostics: []
-symbols: [["describe",12,"(x)"],["describe.point",12,"(x)"],["obj",13,null]]
+symbols: [["describe",12,"S3 generic (x)"],["describe.point",6,"S3 method for point (x)"],["obj",13,null]]
 Definition "describe(obj)": [{"range":[0,8],"text":"describe"}]
 Completion "obj$value": []
 References "describe(obj)": [{"range":[208,216],"text":"describe"},{"range":[0,8],"text":"describe"}]
@@ -38,7 +38,7 @@ TypeHierarchy "class_name)": null
 
 === s3/method_environments ===
 diagnostic: undefined-symbol severity=2 197..205 ".Generic"
-symbols: [["g",12,"(x)"],["g.C",12,"(x)"],["g.C::nested",12,"()"],["g.D",12,"(x)"],["g.E",12,"(x, .Generic)"],["outside",12,"()"]]
+symbols: [["g",12,"S3 generic (x)"],["g.C",6,"S3 method for C (x)"],["g.C::nested",12,"()"],["g.D",6,"S3 method for D (x)"],["g.E",6,"S3 method for E (x, .Generic)"],["outside",12,"()"]]
 Definition ".Generic\n  nested <-": null
 References ".Generic\n  nested <-": [{"range":[55,63],"text":".Generic"},{"range":[87,95],"text":".Generic"}]
 PrepareRename ".Generic\n  nested <-": null

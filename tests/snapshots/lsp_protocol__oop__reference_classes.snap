@@ -4,7 +4,7 @@ expression: report
 ---
 === reference_classes/method_environments ===
 diagnostic: unused-binding severity=2 13..17 "Base"
-symbols: [["value",13,null],["Base",13,null],["Child",13,null]]
+symbols: [["value",13,null],["Base",5,"reference class"],["Base::value",8,"RefClass field"],["Child",5,"reference class"],["Child::read",6,"RefClass method ()"],["Child::initialize",6,"RefClass method (...)"],["Child::external",6,"RefClass method (.self)"]]
 Definition "value <<-": null
 References "value <<-": [{"range":[185,190],"text":"value"},{"range":[195,200],"text":"value"},{"range":[211,216],"text":"value"}]
 Highlights "value <<-": [{"kind":3,"range":[185,190]},{"kind":2,"range":[195,200]},{"kind":2,"range":[211,216]}]
@@ -14,7 +14,7 @@ References "value <- 100": [{"range":[339,344],"text":"value"},{"range":[0,5],"t
 
 === reference_classes/member_apis ===
 diagnostic: unused-binding severity=2 281..286 "Child"
-symbols: [["Base",13,null],["Alias",13,null],["Child",13,null],["obj",13,null],["direct",13,null]]
+symbols: [["Display",5,"reference class"],["Display::value",8,"RefClass field"],["Display::doubled",7,"RefClass active binding (value)"],["Display::read",6,"RefClass method (scale = 2)"],["Display::initialize",6,"RefClass method (value = 3, ...)"],["Alias",13,null],["Child",5,"reference class"],["Child::label",8,"RefClass field"],["Child::read",6,"RefClass method (scale = 4)"],["Child::external",6,"RefClass method (.self, increment = 1)"],["obj",13,null],["direct",13,null]]
 Completion "getRefClass(\"Child\")$new": [[".objectPackage",5],[".objectParent",5],[".refClassDef",5],[".self",5],["accessors",2],["callSuper",2],["className",5],["copy",2],["def",5],["export",2],["field",2],["fields",2],["getClass",2],["getRefClass",2],["help",2],["import",2],["initFields",2],["lock",2],["methods",2],["new",2],["show",2],["trace",2],["untrace",2],["usingMethods",2]]
 SignatureHelp "getRefClass(\"Child\")$new(value = 5)": {"active_parameter":0,"signatures":["new(value = 3, ...)"]}
 SignatureHelp "Alias(value = 6)": {"active_parameter":0,"signatures":["Alias(value = 3, ...)"]}
@@ -27,7 +27,7 @@ Completion ".self$value + increment": [[".objectPackage",5],[".objectParent",5],
 
 === reference_classes/definitions ===
 diagnostic: unused-binding severity=2 0..4 "Base"
-symbols: [["Base",13,null],["Child",13,null],["obj",13,null]]
+symbols: [["Base",5,"reference class"],["Base::value",8,"RefClass field"],["Child",5,"reference class"],["Child::read",6,"RefClass method ()"],["obj",13,null]]
 TypeHierarchy "\"Child\"": [{"children":[],"detail":"reference class","name":"Child","parents":["Base"],"selection":[104,111]}]
 Definition "Child$new": [{"range":[71,76],"text":"Child"}]
 Definition "obj$read()": null
@@ -35,7 +35,7 @@ TypeHierarchy "setRefClass(\"Base\"": [{"children":["Child"],"detail":"reference
 
 === reference_classes/declaration_identity ===
 diagnostics: []
-symbols: [["Formal",13,null],["make",13,null],["Reference",13,null]]
+symbols: [["Formal",5,"S4 class"],["make",13,null],["Reference",5,"reference class"],["Child",5,"S4 class"]]
 TypeHierarchy "Reference <-": [{"children":["Child"],"detail":"reference class","name":"Reference","parents":["Formal"],"selection":[101,112]}]
 TypeHierarchy "Class = \"Child\"": [{"children":[],"detail":"S4 class","name":"Child","parents":["Reference"],"selection":[161,168]}]
 TypeHierarchy "contains = \"Formal\"": [{"children":["Reference"],"detail":"S4 class","name":"Formal","parents":[],"selection":[36,44]}]
@@ -43,7 +43,7 @@ TypeHierarchy "contains = \"Formal\"": [{"children":["Reference"],"detail":"S4 c
 === reference_classes/use_sites ===
 known gap: Reference methods have no member definition navigation.
 diagnostics: []
-symbols: [["Counter",13,null],["obj",13,null]]
+symbols: [["AuditCounter",5,"reference class"],["AuditCounter::value",8,"RefClass field"],["AuditCounter::read",6,"RefClass method ()"],["AuditCounter::get",6,"RefClass method ()"],["obj",13,null]]
 Definition "obj$read()": null
 SignatureHelp "obj$get()": {"active_parameter":null,"signatures":["get()"]}
 Completion ".self$read()": [[".objectPackage",5],[".objectParent",5],[".refClassDef",5],[".self",5],["callSuper",2],["copy",2],["export",2],["field",2],["get",2],["getClass",2],["getRefClass",2],["import",2],["initFields",2],["read",2],["show",2],["trace",2],["untrace",2],["usingMethods",2],["value",5]]
@@ -51,7 +51,7 @@ References "Counter$new": [{"range":[167,174],"text":"Counter"},{"range":[0,7],"
 
 === reference_classes/incomplete ===
 diagnostic: syntax-error severity=1 114..115 "$"
-symbols: [["Counter",13,null],["obj",13,null]]
+symbols: [["Counter",5,"reference class"],["Counter::value",8,"RefClass field"],["obj",13,null]]
 TypeHierarchy "\"Counter\"": [{"children":[],"detail":"reference class","name":"Counter","parents":[],"selection":[35,44]}]
 Completion "obj$": [[".objectPackage",5],[".objectParent",5],[".refClassDef",5],[".self",5],["callSuper",2],["copy",2],["export",2],["field",2],["getClass",2],["getRefClass",2],["import",2],["initFields",2],["show",2],["trace",2],["untrace",2],["usingMethods",2],["value",5]]
 
@@ -63,6 +63,6 @@ TypeHierarchy "\"Pretend\"": null
 
 === reference_classes/dynamic ===
 diagnostics: []
-symbols: [["class_name",13,null],["field_name",13,null],["Counter",13,null],["obj",13,null]]
+symbols: [["class_name",13,null],["field_name",13,null],["Counter",5,"reference class"],["read",6,"RefClass method ()"],["obj",13,null]]
 TypeHierarchy "class_name, fields": null
 Definition "obj$read()": null

@@ -578,6 +578,14 @@ fn s4_local_call_target(
             alias.name == name
                 && alias.target.system == OopSystem::S4
                 && owner.0.starts_with(&alias.owner.0)
+                // Registration accepts a name string, but only a callable
+                // alias can serve as the target of an ordinary call.
+                && extracted.oop_sites.iter().any(|source| {
+                    let site = &source.site;
+                    site.range == binding.def_range
+                        && site.role == OopSiteRole::Alias
+                        && matches!(&site.target, OopTarget::Declaration(key) if key == &alias.target)
+                })
                 && extracted
                     .facts
                     .oop

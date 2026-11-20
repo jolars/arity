@@ -1239,16 +1239,23 @@ impl Projection<'_> {
         })
     }
 
-    fn generic_value(&self, value: &SyntaxElement, visiting: &mut BTreeSet<u32>) -> Option<OopKey> {
+    fn generic_value(
+        &self,
+        value: &SyntaxElement,
+        visiting: &mut BTreeSet<u32>,
+        registration_names: bool,
+    ) -> Option<OopKey> {
         if let Some(key) = self.generic_values.get(&value.text_range()) {
-            return Some(key.clone());
+            // setGeneric() returns a name. Registrars accept that string as a
+            // reference, but ordinary reads of the value are not callable.
+            return (registration_names || key.system != OopSystem::S4).then(|| key.clone());
         }
         if let Some(paren) = value
             .as_node()
             .cloned()
             .and_then(crate::ast::ParenExpr::cast)
         {
-            return self.generic_value(&paren.inner()?, visiting);
+            return self.generic_value(&paren.inner()?, visiting, registration_names);
         }
         let token = value.as_token()?;
         if token.kind() != SyntaxKind::IDENT {
@@ -1290,7 +1297,11 @@ impl Projection<'_> {
         {
             return None;
         }
-        self.generic_value(&stable_value(self.model, self.root, binding)?, visiting)
+        self.generic_value(
+            &stable_value(self.model, self.root, binding)?,
+            visiting,
+            registration_names,
+        )
     }
 
     fn generic_bindings(&mut self) {
@@ -1313,7 +1324,7 @@ impl Projection<'_> {
             else {
                 continue;
             };
-            let Some(target) = self.generic_value(&value, &mut BTreeSet::new()) else {
+            let Some(target) = self.generic_value(&value, &mut BTreeSet::new(), true) else {
                 continue;
             };
             let owner = owner_at(
@@ -1332,11 +1343,17 @@ impl Projection<'_> {
             if !self.facts.generic_bindings.contains(&fact) {
                 self.facts.generic_bindings.push(fact);
             }
-            self.site(
-                binding.def_range,
-                OopSiteRole::Alias,
-                OopTarget::Declaration(target),
-            );
+            if target.system != OopSystem::S4
+                || self
+                    .generic_value(&value, &mut BTreeSet::new(), false)
+                    .is_some()
+            {
+                self.site(
+                    binding.def_range,
+                    OopSiteRole::Alias,
+                    OopTarget::Declaration(target),
+                );
+            }
         }
     }
 
@@ -1366,7 +1383,7 @@ impl Projection<'_> {
             );
         }
         let local = self
-            .generic_value(&value, &mut BTreeSet::new())
+            .generic_value(&value, &mut BTreeSet::new(), true)
             .or_else(|| {
                 if system != OopSystem::S3 {
                     return None;
@@ -1375,6 +1392,7 @@ impl Projection<'_> {
                 self.generic_value(
                     &stable_value(self.model, self.root, binding)?,
                     &mut BTreeSet::new(),
+                    true,
                 )
             });
         if let Some(key) = local
@@ -1929,10 +1947,13 @@ impl Projection<'_> {
                     DispatchClass::Generator(generator) => ParentRef::Generator(generator),
                     class
                     @ (DispatchClass::S3(_) | DispatchClass::Any | DispatchClass::Missing) => {
-                        self.site(
+                        self.site_with_callee(
                             range,
                             OopSiteRole::Use,
                             OopTarget::DispatchClass { system, class },
+                            Some((reference.clone(), package)),
+                            dispatch.factory.clone(),
+                            None,
                         );
                         continue;
                     }
@@ -2133,7 +2154,7 @@ impl Projection<'_> {
                     OopSiteRole::Use,
                     OopTarget::ClassReference(ParentRef::Generator(GeneratorRef::Local(key))),
                 );
-            } else if let Some(key) = self.generic_value(&value, &mut BTreeSet::new()) {
+            } else if let Some(key) = self.generic_value(&value, &mut BTreeSet::new(), false) {
                 self.site(ident.range, OopSiteRole::Use, OopTarget::Declaration(key));
             }
         }
@@ -2224,13 +2245,16 @@ impl Projection<'_> {
                         if let ClassName::Known(name) = class {
                             // S3 tags are uses of a dispatch name, not declarations
                             // of a unique class object or a constructor binding.
-                            self.site(
+                            self.site_with_callee(
                                 range,
                                 OopSiteRole::Use,
                                 OopTarget::DispatchClass {
                                     system: OopSystem::S3,
                                     class: DispatchClass::S3(name),
                                 },
+                                Some((reference.clone(), "base")),
+                                classes.factory.clone(),
+                                None,
                             );
                         }
                     }
