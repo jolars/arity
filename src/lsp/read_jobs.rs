@@ -165,6 +165,15 @@ pub(crate) enum ReadJob {
         open_namespaces: Vec<(PathBuf, Arc<TextBuffer>)>,
         out: Sender<Outbound>,
     },
+    PrepareRename {
+        id: RequestId,
+        path: PathBuf,
+        uri: Uri,
+        buffer: Arc<TextBuffer>,
+        offset: usize,
+        peers: Vec<(PathBuf, Arc<TextBuffer>)>,
+        out: Sender<Outbound>,
+    },
     Rename {
         id: RequestId,
         path: PathBuf,
@@ -172,10 +181,11 @@ pub(crate) enum ReadJob {
         uri: Uri,
         buffer: Arc<TextBuffer>,
         /// The cursor's byte offset, already resolved on the main thread (via the
-        /// `prepareRename` anchor when present, else the request position) so the
-        /// anchor state never crosses the thread boundary.
+        /// `prepareRename` anchor when present, else the request position).
         offset: usize,
         new_name: String,
+        target: Option<ObjectRenameAnchor>,
+        peers: Vec<(PathBuf, Arc<TextBuffer>)>,
         out: Sender<Outbound>,
     },
     WillRenameFiles {
@@ -415,6 +425,25 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             );
             let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
         }
+        ReadJob::PrepareRename {
+            id,
+            path,
+            uri,
+            buffer,
+            offset,
+            peers,
+            out,
+        } => {
+            let prepared = prepare_rename_via_db(&snapshot, &path, &uri, &buffer, offset, encoding)
+                .filter(|prepared| {
+                    prepared.anchor.local || rename_peers_current(&snapshot, &peers)
+                });
+            let _ = out.send(Outbound::PreparedRename {
+                id,
+                uri,
+                prepared: prepared.map(Box::new),
+            });
+        }
         ReadJob::Rename {
             id,
             path,
@@ -422,11 +451,42 @@ pub(crate) fn run_read(snapshot: Analysis, encoding: PositionEncoding, job: Read
             buffer,
             offset,
             new_name,
+            target,
+            peers,
             out,
         } => {
-            let result =
-                rename_via_db(&snapshot, &path, &uri, &buffer, offset, &new_name, encoding);
-            let _ = out.send(Outbound::ReadReply(Response::new_ok(id, result)));
+            let result = if let Some(target) = target {
+                if is_syntactic_r_name(&new_name) && rename_peers_current(&snapshot, &peers) {
+                    oop::object_rename(
+                        &snapshot,
+                        &path,
+                        &uri,
+                        &buffer,
+                        TextSize::new(offset as u32),
+                        Some(&new_name),
+                        encoding,
+                    )
+                    .flatten()
+                    .filter(|result| {
+                        result.identity == target.identity
+                            && result.spelling == target.spelling
+                            && result.declaration == target.declaration
+                            && (target.declaration_is_local
+                                || result.declaration_text == target.declaration_text)
+                    })
+                    .map(|result| (result.edit, true))
+                } else {
+                    None
+                }
+            } else {
+                rename_with_scope(&snapshot, &path, &uri, &buffer, offset, &new_name, encoding)
+                    .filter(|(_, workspace)| !workspace || rename_peers_current(&snapshot, &peers))
+            };
+            let workspace = result.as_ref().is_none_or(|(_, workspace)| *workspace);
+            let _ = out.send(Outbound::RenameReply {
+                response: Response::new_ok(id, result.map(|(edit, _)| edit)),
+                workspace,
+            });
         }
         ReadJob::WillRenameFiles { id, renames, out } => {
             let result = will_rename_via_db(&snapshot, &renames, encoding);
@@ -587,9 +647,53 @@ pub(crate) fn finalize_rename(mut changes: HashMap<Uri, Vec<TextEdit>>) -> Optio
     })
 }
 
+fn rename_peers_current(snapshot: &Analysis, peers: &[(PathBuf, Arc<TextBuffer>)]) -> bool {
+    salsa::Cancelled::catch(AssertUnwindSafe(|| {
+        peers.iter().all(|(path, buffer)| {
+            if path.file_name().is_some_and(|name| name == "NAMESPACE") {
+                return match snapshot
+                    .namespace_sources()
+                    .iter()
+                    .find(|(root, _)| Some(root.as_path()) == path.parent())
+                {
+                    Some((_, text)) => text == buffer.text(),
+                    None => !snapshot.class_index_ref().oop_files().any(|file| {
+                        file.package_root
+                            .as_deref()
+                            .is_some_and(|root| Some(root) == path.parent())
+                    }),
+                };
+            }
+            match snapshot.lookup_file(path) {
+                Some(file) => snapshot.file_text_is(file, &buffer.text_arc()),
+                None => !snapshot.class_index_ref().oop_files().any(|file| {
+                    file.package_root
+                        .as_ref()
+                        .is_some_and(|root| path.starts_with(root.join("R")))
+                }),
+            }
+        })
+    }))
+    .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod document_semantics_tests {
     use super::*;
+
+    #[test]
+    fn rename_checks_peer_buffer_against_the_snapshot() {
+        let path = test_path().to_path_buf();
+        let mut db = IncrementalDatabase::default();
+        db.upsert_file(&path, "A$new()$value");
+        let snapshot = db.snapshot();
+        let peer = |text| [(path.clone(), Arc::new(TextBuffer::from(text)))];
+        assert!(rename_peers_current(&snapshot, &peer("A$new()$value")));
+        assert!(!rename_peers_current(
+            &snapshot,
+            &peer("# shifted\nA$new()$value")
+        ));
+    }
 
     #[test]
     fn r6_cold_warm_and_live_overlays_share_project_environment_resolution() {

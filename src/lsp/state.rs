@@ -169,6 +169,15 @@ pub(crate) enum Outbound {
     /// or replace it with `ContentModified` (superseded). See
     /// [`GlobalState::on_read_reply`].
     ReadReply(Response),
+    RenameReply {
+        response: Response,
+        workspace: bool,
+    },
+    PreparedRename {
+        id: RequestId,
+        uri: Uri,
+        prepared: Option<Box<PreparedRename>>,
+    },
 }
 
 /// A read dispatched to the pool and not yet answered. Tracked in
@@ -180,6 +189,7 @@ struct InflightRead {
     /// symbol, completion resolve, and the hierarchy calls re-derived from a
     /// round-tripped item) — those are cancelable but never `ContentModified`.
     doc: Option<(Uri, i32)>,
+    peers: Vec<(Uri, i32)>,
 }
 
 /// `RequestCancelled`: the client asked to cancel this request. Mirrors
@@ -283,6 +293,7 @@ pub(crate) struct GlobalState {
     /// so the follow-up `rename` re-locates the cursor even if the buffer changed
     /// since prepare (the "anchor that survives typing"). Cleared on rename/close.
     rename_anchors: HashMap<Uri, RenameAnchor>,
+    pending_rename_prepares: HashMap<Uri, RequestId>,
     client_capabilities: ClientCapabilities,
     /// The position encoding negotiated at `initialize` (see
     /// [`negotiate_position_encoding`](super::server::negotiate_position_encoding)).
@@ -350,6 +361,7 @@ impl GlobalState {
             documents: HashMap::new(),
             findings: HashMap::new(),
             rename_anchors: HashMap::new(),
+            pending_rename_prepares: HashMap::new(),
             client_capabilities,
             position_encoding,
             pending_pull: HashMap::new(),
@@ -371,7 +383,13 @@ impl GlobalState {
     /// `(uri, version)` the read reads for stale-read gating, or `None` for a
     /// read not tied to one document version (cancelable but never stale).
     fn register_read(&mut self, id: RequestId, doc: Option<(Uri, i32)>) {
-        self.live_reads.insert(id, InflightRead { doc });
+        self.live_reads.insert(
+            id,
+            InflightRead {
+                doc,
+                peers: Vec::new(),
+            },
+        );
     }
 
     pub(crate) fn on_request(&mut self, req: Request) {
@@ -1083,11 +1101,30 @@ impl GlobalState {
         });
     }
 
-    /// `textDocument/prepareRename`: confirm the cursor sits on a renameable
-    /// local identifier and return its range + placeholder. Computed
-    /// synchronously (a single cheap parse) because the result anchors per-URI
-    /// state on the main thread — these requests are deliberate and infrequent,
-    /// unlike hover/format which offload to the read pool.
+    fn rename_peers(&mut self, id: &RequestId, origin: &Uri) -> Vec<(PathBuf, Arc<TextBuffer>)> {
+        let mut versions = Vec::new();
+        let peers = self
+            .documents
+            .iter()
+            .filter_map(|(uri, document)| {
+                if uri == origin || document.kind != DocumentKind::R {
+                    return None;
+                }
+                let path = uri::to_path(uri)?;
+                versions.push((uri.clone(), document.version));
+                Some((
+                    crate::incremental::normalize_path(&path),
+                    Arc::clone(&document.buffer),
+                ))
+            })
+            .collect();
+        self.live_reads
+            .get_mut(id)
+            .expect("registered rename request")
+            .peers = versions;
+        peers
+    }
+
     fn on_prepare_rename(&mut self, req: Request) {
         let id = req.id.clone();
         let Ok((_, params)) =
@@ -1097,38 +1134,37 @@ impl GlobalState {
             return;
         };
         let uri = params.text_document.uri;
-        let Some(buffer) = self.r_doc_snapshot(&uri).map(|(buffer, _)| buffer) else {
+        let Some((buffer, version)) = self.r_doc_snapshot(&uri) else {
             self.respond_ok(id, serde_json::Value::Null);
             return;
         };
-        let encoding = self.position_encoding;
-        let line_index = buffer.line_index();
-        let offset = line_index
-            .position_to_byte(params.position, encoding)
+        self.rename_anchors.remove(&uri);
+        self.pending_rename_prepares.insert(uri.clone(), id.clone());
+        let offset = buffer
+            .line_index()
+            .position_to_byte(params.position, self.position_encoding)
             .min(buffer.len());
-        match compute_prepare_rename_in(&buffer, offset, encoding) {
-            Some(prepared) => {
-                self.rename_anchors.insert(uri, prepared.anchor);
-                let response = PrepareRenameResponse::RangeWithPlaceholder {
-                    range: prepared.range,
-                    placeholder: prepared.placeholder,
-                };
-                self.respond_ok(id, serde_json::to_value(response).unwrap_or_default());
-            }
-            None => {
-                self.rename_anchors.remove(&uri);
-                self.respond_ok(id, serde_json::Value::Null);
-            }
-        }
+        let path = uri::to_path(&uri)
+            .unwrap_or_else(|| PathBuf::from(DocumentKind::R.placeholder_file_name()));
+        self.register_read(id.clone(), Some((uri.clone(), version)));
+        let peers = self.rename_peers(&id, &uri);
+        self.dispatch_read(ReadJob::PrepareRename {
+            id,
+            path,
+            uri,
+            buffer,
+            offset,
+            peers,
+            out: self.out_tx.clone(),
+        });
     }
 
     /// `textDocument/rename`: build a [`WorkspaceEdit`] renaming the binding under
     /// the cursor and every dependent read of it across the workspace. The cursor
-    /// offset is resolved here on the main thread — preferring the stored
-    /// `prepareRename` anchor (so the rename targets the same binding even if the
-    /// buffer was edited since prepare), falling back to the request's position —
-    /// so only a plain offset crosses to the read pool, where [`rename_via_db`]
-    /// gathers the cross-file edits off a db snapshot.
+    /// offset comes from the stored `prepareRename` anchor when it can be mapped
+    /// through intervening edits. Otherwise the server uses the request position
+    /// when no object rename was prepared. The read pool gathers edits and revalidates
+    /// the prepared object declaration against its snapshot.
     fn on_rename(&mut self, req: Request) {
         let id = req.id.clone();
         let Ok((_, params)) = req.extract::<RenameParams>(Rename::METHOD) else {
@@ -1144,21 +1180,31 @@ impl GlobalState {
         };
 
         let encoding = self.position_encoding;
-        let offset = self
-            .rename_anchors
-            .get(&uri)
-            .and_then(|anchor| rename_cursor_offset(buffer.text(), anchor))
-            .unwrap_or_else(|| {
-                let line_index = buffer.line_index();
-                line_index
-                    .position_to_byte(position, encoding)
-                    .min(buffer.len())
-            });
-        // A rename consumes its anchor; a fresh prepare precedes any next rename.
-        self.rename_anchors.remove(&uri);
+        self.pending_rename_prepares.remove(&uri);
+        let anchor = self.rename_anchors.remove(&uri);
+        let mapped = anchor
+            .as_ref()
+            .and_then(|anchor| rename_cursor_offset(buffer.text(), anchor));
+        let target = anchor
+            .as_ref()
+            .and_then(|anchor| anchor.object_target(buffer.text()));
+        if anchor.as_ref().is_some_and(RenameAnchor::has_object_target)
+            && (target.is_none() || mapped.is_none())
+        {
+            self.respond_ok(id, serde_json::Value::Null);
+            return;
+        }
+        let offset = mapped.unwrap_or_else(|| {
+            buffer
+                .line_index()
+                .position_to_byte(position, encoding)
+                .min(buffer.len())
+        });
 
-        let path = uri::to_path(&uri).unwrap_or_else(|| PathBuf::from("untitled.R"));
+        let path = uri::to_path(&uri)
+            .unwrap_or_else(|| PathBuf::from(DocumentKind::R.placeholder_file_name()));
         self.register_read(id.clone(), Some((uri.clone(), version)));
+        let peers = self.rename_peers(&id, &uri);
         self.dispatch_read(ReadJob::Rename {
             id,
             path,
@@ -1166,6 +1212,8 @@ impl GlobalState {
             buffer,
             offset,
             new_name,
+            target,
+            peers,
             out: self.out_tx.clone(),
         });
     }
@@ -1373,7 +1421,9 @@ impl GlobalState {
                     (id, out)
                 }
                 ReadJob::References { id, out, .. } => (id, out),
-                ReadJob::Rename { id, out, .. } => (id, out),
+                ReadJob::Rename { id, out, .. } | ReadJob::PrepareRename { id, out, .. } => {
+                    (id, out)
+                }
                 ReadJob::WillRenameFiles { id, out, .. } => (id, out),
                 ReadJob::DocumentSymbol { id, out, .. } => (id, out),
                 ReadJob::WorkspaceSymbol { id, out, .. } => (id, out),
@@ -1501,6 +1551,7 @@ impl GlobalState {
                     self.findings.remove(&uri);
                     self.report_ids.remove(&uri);
                     self.rename_anchors.remove(&uri);
+                    self.pending_rename_prepares.remove(&uri);
                     // A closed `DESCRIPTION` buffer stops being authoritative:
                     // put the on-disk facts back, or an unsaved dependency list
                     // outlives the editor session and keeps gating every R
@@ -1626,6 +1677,43 @@ impl GlobalState {
                 if !self.client_capabilities.pull_mode {
                     self.publish(uri, diags, Some(version));
                 }
+            }
+            Outbound::PreparedRename { id, uri, prepared } => {
+                let latest = self.pending_rename_prepares.get(&uri) == Some(&id);
+                if latest {
+                    self.pending_rename_prepares.remove(&uri);
+                }
+                if prepared
+                    .as_ref()
+                    .is_some_and(|prepared| prepared.anchor.local)
+                    && let Some(read) = self.live_reads.get_mut(&id)
+                {
+                    read.peers.clear();
+                }
+                if !self.accept_read_reply(&id) {
+                    return;
+                }
+                if !latest {
+                    self.respond_content_modified(id);
+                    return;
+                }
+                let response = prepared.map(|prepared| {
+                    self.rename_anchors.insert(uri, prepared.anchor);
+                    PrepareRenameResponse::RangeWithPlaceholder {
+                        range: prepared.range,
+                        placeholder: prepared.placeholder,
+                    }
+                });
+                self.respond_ok(id, serde_json::to_value(response).unwrap_or_default());
+            }
+            Outbound::RenameReply {
+                response,
+                workspace,
+            } => {
+                if !workspace && let Some(read) = self.live_reads.get_mut(&response.id) {
+                    read.peers.clear();
+                }
+                self.on_read_reply(response);
             }
             Outbound::ReadReply(response) => self.on_read_reply(response),
             Outbound::RelintAll => self.request_relint_all(),
@@ -1937,17 +2025,22 @@ impl GlobalState {
     /// dropped. A reply whose document advanced past the version it read is stale,
     /// so we answer `ContentModified` instead and let the client re-request.
     fn on_read_reply(&mut self, response: Response) {
-        let Some(inflight) = self.live_reads.remove(&response.id) else {
-            // Already answered — canceled, or a duplicate; drop it silently.
-            return;
-        };
-        if let Some((uri, version)) = inflight.doc
-            && !matches!(self.documents.get(&uri), Some(d) if d.version == version)
-        {
-            self.respond_content_modified(response.id);
-            return;
+        if self.accept_read_reply(&response.id) {
+            let _ = self.sender.send(Message::Response(response));
         }
-        let _ = self.sender.send(Message::Response(response));
+    }
+
+    fn accept_read_reply(&mut self, id: &RequestId) -> bool {
+        let Some(inflight) = self.live_reads.remove(id) else {
+            return false;
+        };
+        if inflight.doc.into_iter().chain(inflight.peers).any(|(uri, version)| {
+            !matches!(self.documents.get(&uri), Some(doc) if doc.version == version)
+        }) {
+            self.respond_content_modified(id.clone());
+            return false;
+        }
+        true
     }
 
     fn respond_ok(&self, id: RequestId, value: serde_json::Value) {
@@ -2450,6 +2543,44 @@ mod cancellation_gate {
             CONTENT_MODIFIED
         );
         assert!(!state.live_reads.contains_key(&id));
+    }
+
+    #[test]
+    fn only_the_latest_prepare_reply_sets_the_rename_anchor() {
+        let (mut state, rig) = test_state();
+        let uri = doc_uri();
+        let text = "f <- function(x, y) x + y\n";
+        state
+            .documents
+            .insert(uri.clone(), Document::new(text.into(), 1, DocumentKind::R));
+        let older = RequestId::from(1);
+        let newer = RequestId::from(2);
+        for id in [&older, &newer] {
+            state.register_read(id.clone(), Some((uri.clone(), 1)));
+        }
+        state
+            .pending_rename_prepares
+            .insert(uri.clone(), newer.clone());
+        for (id, name, accepted) in [(newer, 'y', true), (older, 'x', false)] {
+            let prepared =
+                compute_prepare_rename(text, text.find(name).unwrap(), PositionEncoding::Utf16)
+                    .map(Box::new);
+            state.on_outbound(Outbound::PreparedRename {
+                id,
+                uri: uri.clone(),
+                prepared,
+            });
+            let response = rig.try_response().unwrap().response_result;
+            if accepted {
+                assert!(response.is_ok());
+            } else {
+                assert_eq!(response.unwrap_err().code, CONTENT_MODIFIED);
+            }
+        }
+        assert_eq!(
+            rename_cursor_offset(text, &state.rename_anchors[&uri]),
+            text.find('y')
+        );
     }
 
     #[test]

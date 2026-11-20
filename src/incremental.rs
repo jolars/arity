@@ -1915,6 +1915,10 @@ impl Analysis {
         self.0.file_text(file)
     }
 
+    pub(crate) fn file_text_arc(&self, file: SourceFile) -> Arc<str> {
+        Arc::clone(file.text(&self.0))
+    }
+
     /// Whether `file`'s tracked text is exactly `text` — the staleness gate the
     /// read path opens with, deciding whether the cached parse still describes
     /// the buffer under the cursor.

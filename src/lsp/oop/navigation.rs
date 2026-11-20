@@ -11,8 +11,10 @@ use crate::project::classes::{
 mod implementation;
 mod member;
 mod namespace;
+mod rename;
 pub(in crate::lsp) use implementation::implementation_locations;
 pub(in crate::lsp) use namespace::callable_references as namespace_callable_references;
+pub(in crate::lsp) use rename::{ObjectRename, object_rename};
 
 #[derive(Clone, Copy)]
 pub(in crate::lsp) enum NameNavigation<'a> {
@@ -23,8 +25,8 @@ pub(in crate::lsp) enum NameNavigation<'a> {
     },
 }
 
-#[derive(PartialEq, Eq)]
-enum Identity {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Identity {
     Class(ClassId),
     Generic(OopId),
     Method(OopId),
@@ -38,7 +40,7 @@ enum Identity {
 }
 
 impl Identity {
-    fn path(&self) -> &Path {
+    pub(in crate::lsp) fn path(&self) -> &Path {
         match self {
             Self::Class(id) => &id.path,
             Self::Callable { path, .. } => path,
@@ -696,4 +698,334 @@ fn callee_from_package(
     index
         .callee_identity(path, callee)
         .is_some_and(|identity| identity.package == package)
+}
+
+#[cfg(test)]
+mod rename_tests {
+    use super::*;
+
+    #[test]
+    fn rename_member_keeps_unrelated_receiver() {
+        let source = "A <- R6::R6Class('A', public = list(value = 1))\nB <- R6::R6Class('B', public = list(value = 2))\nA$new()$value\nB$new()$value\n";
+        let path = ws_path("a.R");
+        let uri = uri::from_path(&path).unwrap();
+        let snapshot = rename_workspace(source, "");
+        let result = rename_via_db(
+            &snapshot,
+            &path,
+            &uri,
+            &TextBuffer::from(source),
+            source.find("value").unwrap() + 1,
+            "item",
+            PositionEncoding::Utf16,
+        )
+        .expect("source member rename");
+        let edits = &result.changes.unwrap()[&uri];
+        assert_eq!(
+            edits
+                .iter()
+                .map(|edit| edit.range.start.line)
+                .collect::<Vec<_>>(),
+            [0, 2]
+        );
+    }
+
+    fn object_edit(
+        snapshot_text: &str,
+        live: &str,
+        cursor: &str,
+        name: &str,
+    ) -> Option<Vec<TextEdit>> {
+        let path = ws_path("a.R");
+        let uri = uri::from_path(&path).unwrap();
+        let snapshot = rename_workspace(snapshot_text, "");
+        rename_via_db(
+            &snapshot,
+            &path,
+            &uri,
+            &TextBuffer::from(live),
+            live.find(cursor)? + 1,
+            name,
+            PositionEncoding::Utf16,
+        )?
+        .changes?
+        .remove(&uri)
+    }
+
+    #[test]
+    fn split_class_name_and_binding_rename_independently_in_the_live_overlay() {
+        let tracked =
+            "Builder <- R6::R6Class('Example')\nAlias <- Builder\nAlias$new()\nBuilder$new()\n";
+        let live = format!("# shift all ranges\n{tracked}");
+        let binding = object_edit(tracked, &live, "Builder <-", "Maker").unwrap();
+        assert_eq!(
+            binding
+                .iter()
+                .map(|edit| edit.range.start.line)
+                .collect::<Vec<_>>(),
+            [1, 2, 4]
+        );
+        let name = object_edit(tracked, &live, "'Example'", "Widget").unwrap();
+        assert_eq!(name.len(), 1);
+        assert_eq!(name[0].new_text, "'Widget'");
+    }
+
+    #[test]
+    fn rename_declines_member_overrides_and_dynamic_indices() {
+        let source = "A <- R6::R6Class('A', public = list(value = 1))\nB <- R6::R6Class('B', inherit = A, public = list(value = 2))\n";
+        assert!(object_edit(source, source, "value = 1", "item").is_none());
+        assert!(object_edit(source, source, "value = 2", "item").is_none());
+        let source = "A <- R6::R6Class('A', public = list(value = 1))\nA$new()[[key]]\n";
+        assert!(object_edit(source, source, "value = 1", "item").is_none());
+    }
+
+    #[test]
+    fn rename_s3_generic_keeps_dispatch_and_conventional_method_binding_linked() {
+        let source = "fmt <- function(x) UseMethod('fmt')\nfmt.foo <- function(x) NextMethod(\"fmt\")\nfmt.foo(1)\nfmt(1)\n";
+        let edits = object_edit(source, source, "fmt <-", "render").unwrap();
+        assert_eq!(
+            edits
+                .iter()
+                .map(|edit| edit.new_text.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "render",
+                "'render'",
+                "render.foo",
+                "\"render\"",
+                "render.foo",
+                "render"
+            ]
+        );
+    }
+
+    #[test]
+    fn rename_s4_class_updates_literal_method_signatures() {
+        let source = "methods::setClass('Example')\nmethods::setMethod('show', \"Example\", function(object) object)\nmethods::new('Example')\n";
+        let edits = object_edit(source, source, "'Example'", "Widget").unwrap();
+        assert_eq!(
+            edits
+                .iter()
+                .map(|edit| edit.new_text.as_str())
+                .collect::<Vec<_>>(),
+            ["'Widget'", "\"Widget\"", "'Widget'"]
+        );
+    }
+
+    #[test]
+    fn rename_s3_generic_updates_implicit_and_explicit_namespace_registrations() {
+        use std::collections::BTreeSet;
+        let package = ws_path("pkg");
+        let path = package.join("R/source.R");
+        let namespace = package.join("NAMESPACE");
+        let ns = "export(fmt)\nS3method('fmt', foo)\nS3method(fmt, bar, render_bar)\n";
+        let source = "fmt <- function(x) UseMethod('fmt')\nfmt.foo <- function(x) x\nrender_bar <- function(x) x\n";
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(&path, source);
+        db.set_workspace_members(vec![file], vec![ws_root()]);
+        db.upsert_description(&package, "Package: pkg\n");
+        db.set_package_metadata(vec![crate::project::PackageInfo {
+            root: package,
+            namespace: Some(ns.into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]);
+        let uri = uri::from_path(&path).unwrap();
+        let edit = rename_via_db(
+            &db.snapshot(),
+            &path,
+            &uri,
+            &TextBuffer::from(source),
+            1,
+            "render",
+            PositionEncoding::Utf16,
+        )
+        .unwrap();
+        let namespace_uri = uri::from_path(&namespace).unwrap();
+        let from_namespace = rename_via_db(
+            &db.snapshot(),
+            &namespace,
+            &namespace_uri,
+            &TextBuffer::from(ns),
+            ns.find("fmt").unwrap() + 1,
+            "render",
+            PositionEncoding::Utf16,
+        )
+        .unwrap();
+        assert_eq!(from_namespace, edit);
+        let changes = edit.changes.unwrap();
+        assert_eq!(
+            changes[&uri]
+                .iter()
+                .map(|edit| edit.new_text.as_str())
+                .collect::<Vec<_>>(),
+            ["render", "'render'", "render.foo"]
+        );
+        assert_eq!(
+            changes[&uri::from_path(&namespace).unwrap()]
+                .iter()
+                .map(|edit| edit.new_text.as_str())
+                .collect::<Vec<_>>(),
+            ["render", "'render'", "render"]
+        );
+    }
+
+    #[test]
+    fn rename_s7_class_updates_method_signature_through_binding_identity() {
+        let source = "K <- S7::new_class('K')\nf <- S7::new_generic('f', 'x')\nS7::method(f, K) <- function(x) x\n";
+        let edits = object_edit(source, source, "'K'", "Widget").unwrap();
+        assert_eq!(
+            edits
+                .iter()
+                .map(|edit| edit.new_text.as_str())
+                .collect::<Vec<_>>(),
+            ["Widget", "'Widget'", "Widget"]
+        );
+    }
+
+    #[test]
+    fn object_rename_refuses_an_incomplete_package() {
+        let source = "A <- R6::R6Class('A', public = list(value = 1))\n";
+        let (_dir, snapshot, path) = package_workspace(
+            "Package: testpkg\n",
+            &[("a.R", source, true), ("b.R", "A$new()$value\n", false)],
+        );
+        let uri = uri::from_path(&path).unwrap();
+        assert!(
+            rename_via_db(
+                &snapshot,
+                &path,
+                &uri,
+                &TextBuffer::from(source),
+                source.find("value").unwrap() + 1,
+                "item",
+                PositionEncoding::Utf16
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn member_rename_is_scoped_to_one_workspace_package() {
+        let source = "A <- R6::R6Class('A', public = list(value = 1))\nA$new()$value\n";
+        let packages = [ws_path("first"), ws_path("second")];
+        let paths = packages.each_ref().map(|root| root.join("R/class.R"));
+        let mut db = IncrementalDatabase::default();
+        let files = paths.each_ref().map(|path| db.upsert_file(path, source));
+        db.set_workspace_members(files.to_vec(), vec![ws_root()]);
+        db.upsert_description(&packages[0], "Package: first\n");
+        db.upsert_description(&packages[1], "Package: second\n");
+        db.set_package_metadata(
+            packages
+                .into_iter()
+                .map(|root| crate::project::PackageInfo {
+                    root,
+                    namespace: None,
+                    dir_sources: Default::default(),
+                    native_routines: Default::default(),
+                })
+                .collect(),
+        );
+        let path = &paths[0];
+        let uri = uri::from_path(path).unwrap();
+        let changes = rename_via_db(
+            &db.snapshot(),
+            path,
+            &uri,
+            &TextBuffer::from(source),
+            source.find("value").unwrap() + 1,
+            "item",
+            PositionEncoding::Utf16,
+        )
+        .unwrap()
+        .changes
+        .unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[&uri].len(), 2);
+    }
+
+    #[test]
+    fn object_rename_accounts_for_namespace_directives_and_sibling_methods() {
+        let package = ws_path("pkg");
+        let path = package.join("R/generic.R");
+        let sibling = package.join("R/sibling.R");
+        let source = "fmt <- function(x) UseMethod('fmt')\nfmt.default <- function(x) 1\n";
+        for (namespace, other, accepted) in [
+            ("export(fmt)\nexport(fmt.default)\n", "", true),
+            ("if (getRversion() >= '3.6.0') { export(fmt) }\n", "", false),
+            ("export(fmt)\n", "render.default <- function(x) 2\n", false),
+            ("export(fmt)\n", "render.special <- function(x) 2\n", false),
+        ] {
+            let mut db = IncrementalDatabase::default();
+            let files = vec![
+                db.upsert_file(&path, source),
+                db.upsert_file(&sibling, other),
+            ];
+            db.set_workspace_members(files, vec![ws_root()]);
+            db.upsert_description(&package, "Package: pkg\n");
+            db.set_package_metadata(vec![crate::project::PackageInfo {
+                root: package.clone(),
+                namespace: Some(namespace.into()),
+                dir_sources: Default::default(),
+                native_routines: Default::default(),
+            }]);
+            let edit = rename_via_db(
+                &db.snapshot(),
+                &path,
+                &uri::from_path(&path).unwrap(),
+                &TextBuffer::from(source),
+                1,
+                "render",
+                PositionEncoding::Utf16,
+            );
+            if accepted {
+                let changes = edit.unwrap().changes.unwrap();
+                let namespace_uri = uri::from_path(&package.join("NAMESPACE")).unwrap();
+                assert_eq!(
+                    changes[&namespace_uri]
+                        .iter()
+                        .map(|edit| edit.new_text.as_str())
+                        .collect::<Vec<_>>(),
+                    ["render", "render.default"]
+                );
+            } else {
+                assert!(edit.is_none(), "{namespace} {other}");
+            }
+        }
+    }
+
+    #[test]
+    fn class_rename_declines_r6_dispatch_and_dynamic_inheritance() {
+        for source in [
+            "A <- R6::R6Class('A')\nprint.A <- function(x, ...) 1\nprint(A$new())\n",
+            "A <- R6::R6Class('A')\nB <- R6::R6Class('B', inherit = get('A'))\nB$new()\n",
+        ] {
+            assert!(
+                object_edit(source, source, "'A'", "Widget").is_none(),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn member_rename_declines_prototypes_and_named_reference_initializers() {
+        for source in [
+            "methods::setClass('A', slots = c(value = 'numeric'), prototype = list(value = 1))\n",
+            "A <- methods::setRefClass('A', fields = c(value = 'numeric'))\nA$new(value = 1)\n",
+            "A <- S7::new_class('A', properties = list(value = S7::class_numeric))\nA(value = 1)\n",
+        ] {
+            assert!(
+                object_edit(source, source, "value =", "item").is_none(),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn generic_rename_declines_capture_and_dynamic_registration() {
+        let source = "fmt <- function(x) UseMethod('fmt')\nf <- function(render) fmt(1)\n";
+        assert!(object_edit(source, source, "fmt <-", "render").is_none());
+        let source = "fmt <- function(x) UseMethod('fmt')\nbase::registerS3method(dynamic_name, 'foo', function(x) x)\n";
+        assert!(object_edit(source, source, "fmt <-", "render").is_none());
+    }
 }

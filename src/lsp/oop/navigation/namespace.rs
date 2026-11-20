@@ -6,7 +6,7 @@ use crate::namespace::DirectiveKind;
 use crate::project::classes::{ClassName, ClassSystem, S3GenericId, S3MethodSource};
 use crate::syntax::SyntaxElement;
 
-fn sites(index: &ClassIndex, root: &Path, text: &str) -> Vec<(TextRange, Identity)> {
+pub(super) fn sites(index: &ClassIndex, root: &Path, text: &str) -> Vec<(TextRange, Identity)> {
     let parsed = crate::namespace::parse(text);
     let mut sites = Vec::new();
     let mut registration = 0;
@@ -50,26 +50,8 @@ fn sites(index: &ClassIndex, root: &Path, text: &str) -> Vec<(TextRange, Identit
                     && let Some((path, origin)) =
                         index.namespace_callable_origin(root, &spec.method)
                 {
-                    let mut declarations = index
-                        .s3
-                        .methods
-                        .iter()
-                        .filter_map(|candidate| {
-                            let S3MethodSource::Declaration(id) = &candidate.source else {
-                                return None;
-                            };
-                            (!candidate.registered
-                                && !candidate.generics.is_empty()
-                                && id.path == path
-                                && index.method(id).is_some_and(|method| {
-                                    method.name == ClassName::Known(spec.method.clone())
-                                }))
-                            .then_some(id)
-                        })
-                        .collect::<std::collections::BTreeSet<_>>()
-                        .into_iter();
-                    let identity = match (declarations.next(), declarations.next()) {
-                        (Some(id), None) => Identity::Method(id.clone()),
+                    let identity = match conventional_method(index, &path, &spec.method) {
+                        Some(id) => Identity::Method(id),
                         _ => Identity::Callable {
                             path,
                             origin,
@@ -144,6 +126,16 @@ fn sites(index: &ClassIndex, root: &Path, text: &str) -> Vec<(TextRange, Identit
                         .map(|(id, _)| (range, Identity::Class(id.clone()))),
                 );
                 continue;
+            }
+            if matches!(kind, DirectiveKind::Export | DirectiveKind::ImportFrom)
+                && let Some((path, _)) = index.namespace_callable_origin(target, &name)
+                && (target == root
+                    || index
+                        .file(&path)
+                        .is_some_and(|file| file.exports.contains(&name)))
+                && let Some(id) = conventional_method(index, &path, &name)
+            {
+                sites.push((range, Identity::Method(id)));
             }
             for file in index
                 .oop_files()
@@ -225,7 +217,30 @@ fn sites(index: &ClassIndex, root: &Path, text: &str) -> Vec<(TextRange, Identit
     sites
 }
 
-fn atom(value: SyntaxElement) -> Option<String> {
+fn conventional_method(index: &ClassIndex, path: &Path, name: &str) -> Option<OopId> {
+    let declarations: std::collections::BTreeSet<_> = index
+        .s3
+        .methods
+        .iter()
+        .filter_map(|candidate| {
+            let S3MethodSource::Declaration(id) = &candidate.source else {
+                return None;
+            };
+            (!candidate.registered
+                && !candidate.generics.is_empty()
+                && id.path == path
+                && index
+                    .method(id)
+                    .is_some_and(|method| method.name == ClassName::Known(name.into())))
+            .then_some(id)
+        })
+        .collect();
+    (declarations.len() == 1)
+        .then(|| declarations.into_iter().next().cloned())
+        .flatten()
+}
+
+pub(super) fn atom(value: SyntaxElement) -> Option<String> {
     let token = value.into_token()?;
     match token.kind() {
         SyntaxKind::IDENT => Some(crate::semantic::symbols::unbacktick(token.text()).into()),

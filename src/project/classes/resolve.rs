@@ -176,7 +176,33 @@ impl ClassIndex {
     pub(super) fn source_graph(&self) -> &crate::project::source_context::SourceGraph {
         self.scope.source_graph()
     }
-    pub(super) fn class_file_complete(&self, path: &Path) -> bool {
+    pub(crate) fn rename_visibility(&self, owner: &Path, reader: &Path) -> bool {
+        owner == reader
+            || self.scope.seen_by(owner).contains(reader)
+            || self
+                .file(owner)
+                .and_then(|file| file.package_root.as_ref())
+                .is_some_and(|root| {
+                    self.file(reader)
+                        .and_then(|file| file.package_root.as_ref())
+                        .is_some_and(|other| {
+                            root == other
+                                || self.s3_origins.package_names.get(root).is_some_and(|name| {
+                                    self.s3_origins
+                                        .attached
+                                        .get(reader)
+                                        .is_some_and(|packages| packages.contains(name))
+                                        || self
+                                            .s3_origins
+                                            .namespaces
+                                            .get(other)
+                                            .is_some_and(|imports| imports.loaded.contains(name))
+                                })
+                        })
+                })
+    }
+
+    pub(crate) fn class_file_complete(&self, path: &Path) -> bool {
         !self.incomplete.contains(path)
     }
 

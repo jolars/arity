@@ -50,11 +50,11 @@ mod s3_dispatch;
 pub use s3_dispatch::*;
 mod s4;
 mod s4_dispatch;
-pub(crate) use s4::slot_call;
 pub use s4::{
     S4Class, S4Coercion, S4Default, S4Definition, S4Facts, S4OldClass, S4Prototype, S4Relation,
     S4RelationKind, S4Slot, S4Slots,
 };
+pub(crate) use s4::{slot_call, slot_operands};
 pub use s4_dispatch::*;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};

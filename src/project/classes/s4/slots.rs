@@ -730,6 +730,21 @@ pub(crate) fn slot_call(
     model: &SemanticModel,
     call: &CallExpr,
 ) -> Option<(SyntaxElement, String, bool)> {
+    let (object, name, replacement) = slot_operands(index, path, root, model, call)?;
+    let name = name
+        .into_token()
+        .filter(|token| token.kind() == SyntaxKind::STRING)
+        .and_then(|token| crate::semantic::decode_string_literal(token.text()))?;
+    Some((object, name, replacement))
+}
+
+pub(crate) fn slot_operands(
+    index: &ClassIndex,
+    path: &std::path::Path,
+    root: &SyntaxNode,
+    model: &SemanticModel,
+    call: &CallExpr,
+) -> Option<(SyntaxElement, SyntaxElement, bool)> {
     let reference = call_function_ref(model, root, call)?;
     let identity = index.callee_identity(path, &reference)?;
     let replacement = matches!(identity.name.as_str(), "slot<-" | "@<-");
@@ -749,9 +764,9 @@ pub(crate) fn slot_call(
             &["object", "name"]
         },
     )?;
-    let name = argument(&args, "name")?
-        .into_token()
-        .filter(|token| token.kind() == SyntaxKind::STRING)
-        .and_then(|token| crate::semantic::decode_string_literal(token.text()))?;
-    Some((argument(&args, "object")?, name, replacement))
+    Some((
+        argument(&args, "object")?,
+        argument(&args, "name")?,
+        replacement,
+    ))
 }

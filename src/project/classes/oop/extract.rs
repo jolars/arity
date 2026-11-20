@@ -2389,6 +2389,30 @@ impl Projection<'_> {
             let Some((reference, name)) = factory(self.model, self.root, &call) else {
                 continue;
             };
+            if name == "NextMethod"
+                && accepts(&reference, "base")
+                && let Some(args) = matched_args(&call, &["generic", "object", "..."])
+                && let Some(value) = argument(&args, "generic")
+                && !constant_atom(&value, "NULL")
+            {
+                let generic = GenericRef {
+                    system: OopSystem::S3,
+                    owner: owner_at(call.syntax(), self.owners),
+                    name: string_name(Some(value.clone())),
+                    package: None,
+                    by_binding: false,
+                    local: None,
+                    lookup: None,
+                };
+                self.site_with_callee(
+                    value.text_range(),
+                    OopSiteRole::Use,
+                    OopTarget::Generic(generic),
+                    Some((reference.clone(), "base")),
+                    None,
+                    None,
+                );
+            }
             let member_package =
                 if matches!(name.as_str(), "slot" | "slot<-") && accepts(&reference, "methods") {
                     Some("methods")

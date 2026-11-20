@@ -7,8 +7,9 @@ use crate::project::classes::{ClassIndex, file_class_defs};
 mod navigation;
 pub(super) mod presentation;
 pub(super) use navigation::{
-    NameNavigation, class_candidate, implementation_locations, name_locations,
-    namespace_callable_references, resolve_member_site, resolve_method_site,
+    Identity as RenameIdentity, NameNavigation, ObjectRename, class_candidate,
+    implementation_locations, name_locations, namespace_callable_references, object_rename,
+    resolve_member_site, resolve_method_site,
 };
 
 #[derive(Clone, Copy)]

@@ -2362,3 +2362,158 @@ fn random_seed_initialization_updates_with_editor_statement_order() {
     );
     h.shutdown();
 }
+
+#[test]
+fn object_rename_reanchors_after_declaration_spans_shift() {
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    let source = "A <- R6::R6Class('A', public = list(value = 1))\nA$new()$value\n";
+    h.did_open(uri, source, 1);
+    let _ = h.recv_publish_for(uri, 1);
+    let position = json!({ "line": 1, "character": 10 });
+    let prep = h.request(
+        "textDocument/prepareRename",
+        json!({
+            "textDocument": { "uri": uri }, "position": position
+        }),
+    );
+    let response = h.recv_response(&prep).response_result.unwrap();
+    assert_eq!(response["placeholder"], "value");
+    h.did_change_raw(
+        uri,
+        2,
+        json!([{
+            "range": { "start": { "line": 0, "character": 0 },
+                       "end": { "line": 0, "character": 0 } },
+            "text": "# shift all declaration spans\n"
+        }]),
+    );
+    let rename = h.request(
+        "textDocument/rename",
+        json!({
+            "textDocument": { "uri": uri }, "position": position, "newName": "item"
+        }),
+    );
+    let response = h.recv_response(&rename).response_result.unwrap();
+    let edits = response["changes"][uri].as_array().unwrap();
+    assert_eq!(edits.len(), 2);
+    assert_eq!(edits[0]["range"]["start"]["line"], 1);
+    assert_eq!(edits[1]["range"]["start"]["line"], 2);
+    assert!(edits.iter().all(|edit| edit["newText"] == "item"));
+    h.shutdown();
+}
+
+#[test]
+fn object_rename_refuses_to_retarget_an_invalidated_anchor() {
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    h.did_open(
+        uri,
+        "A <- R6::R6Class('A', public = list(value = 1))\nA$new()$value\n",
+        1,
+    );
+    let _ = h.recv_publish_for(uri, 1);
+    let prep = h.request(
+        "textDocument/prepareRename",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 1, "character": 10 } }),
+    );
+    assert_eq!(
+        h.recv_response(&prep).response_result.unwrap()["placeholder"],
+        "value"
+    );
+    h.did_change_raw(
+        uri,
+        2,
+        json!([{
+            "range": { "start": { "line": 1, "character": 8 },
+                       "end": { "line": 1, "character": 13 } },
+            "text": "other"
+        }]),
+    );
+    let rename = h.request("textDocument/rename", json!({
+        "textDocument": { "uri": uri }, "position": { "line": 0, "character": 36 }, "newName": "item"
+    }));
+    assert!(h.recv_response(&rename).response_result.unwrap().is_null());
+    h.shutdown();
+}
+
+#[test]
+fn object_rename_refuses_to_leave_named_initializers_behind() {
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    let source = "methods::setClass('A', slots = c(value = 'numeric'))\na <- methods::new('A', value = 1)\na@value\n";
+    h.did_open(uri, source, 1);
+    let _ = h.recv_publish_for(uri, 1);
+    let rename = h.request("textDocument/rename", json!({
+        "textDocument": { "uri": uri }, "position": { "line": 2, "character": 3 }, "newName": "item"
+    }));
+    assert!(h.recv_response(&rename).response_result.unwrap().is_null());
+    h.shutdown();
+}
+
+#[test]
+fn object_rename_refuses_when_another_declaration_inherits_the_ordinal() {
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    h.did_open(uri, "A <- R6::R6Class('A', public = list(value = 1))\nB <- R6::R6Class('B', public = list(value = 2))\nA$new()$value\n", 1);
+    let _ = h.recv_publish_for(uri, 1);
+    let position = json!({ "line": 2, "character": 10 });
+    let prep = h.request(
+        "textDocument/prepareRename",
+        json!({
+            "textDocument": { "uri": uri }, "position": position
+        }),
+    );
+    assert_eq!(
+        h.recv_response(&prep).response_result.unwrap()["placeholder"],
+        "value"
+    );
+    h.did_change_raw(uri, 2, json!([
+        { "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 1, "character": 0 } }, "text": "" },
+        { "range": { "start": { "line": 1, "character": 0 }, "end": { "line": 1, "character": 1 } }, "text": "B" }
+    ]));
+    let rename = h.request(
+        "textDocument/rename",
+        json!({
+            "textDocument": { "uri": uri }, "position": position, "newName": "item"
+        }),
+    );
+    assert!(h.recv_response(&rename).response_result.unwrap().is_null());
+    h.shutdown();
+}
+
+#[test]
+fn local_rename_ignores_an_unsaved_namespace_peer() {
+    let (dir, _, _) = package_fixture("Package: example\n", "helper <- function() 1\n");
+    let namespace = path_uri(&dir.path().join("NAMESPACE"));
+    let path = dir.path().join("script.R");
+    let source = "f <- function(x) x + 1\n";
+    std::fs::write(&path, source).unwrap();
+    let uri = path_uri(&path);
+    let root = path_uri(dir.path());
+    let mut h = Harness::start_in_workspace(json!({}), Some(&root));
+    h.did_open(&namespace, "", 1);
+    h.did_open(&uri, source, 1);
+    let _ = h.recv_publish_for(&uri, 1);
+    h.did_change(&namespace, "# unsaved\n", 2);
+    let position = json!({ "line": 0, "character": 14 });
+    let prepare = h.request(
+        "textDocument/prepareRename",
+        json!({
+            "textDocument": { "uri": uri }, "position": position
+        }),
+    );
+    assert_eq!(
+        h.recv_response(&prepare).response_result.unwrap()["placeholder"],
+        "x"
+    );
+    let rename = h.request(
+        "textDocument/rename",
+        json!({
+            "textDocument": { "uri": uri }, "position": position, "newName": "y"
+        }),
+    );
+    let response = h.recv_response(&rename).response_result.unwrap();
+    assert_eq!(response["changes"][&uri].as_array().unwrap().len(), 2);
+    h.shutdown();
+}

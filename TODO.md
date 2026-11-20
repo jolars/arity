@@ -876,7 +876,7 @@ coverage need not block useful workspace support.
   Distinguish ordinary generic calls, possible dispatch targets, and superclass
   calls. Keep incoming and outgoing edges consistent and require real source
   spans.
-- [ ] Add conservative class, member, and generic rename only after definitions
+- [x] Add conservative class, member, and generic rename only after definitions
   and references are reliable. Update linked declarations, proven string
   registrations, member accesses, and method signatures within the known
   ownership and visibility boundary. Refuse ambiguous or dynamically

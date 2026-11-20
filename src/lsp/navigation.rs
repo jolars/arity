@@ -326,6 +326,7 @@ fn lexical_reference_locations(
 /// (one flat namespace). Namespaced (`pkg::name`) names and non-syntactic
 /// `new_name`s are declined. Snapshot reads are wrapped in
 /// [`salsa::Cancelled::catch`].
+#[cfg(test)]
 pub(crate) fn rename_via_db(
     snapshot: &Analysis,
     path: &Path,
@@ -335,12 +336,30 @@ pub(crate) fn rename_via_db(
     new_name: &str,
     encoding: PositionEncoding,
 ) -> Option<WorkspaceEdit> {
+    rename_with_scope(snapshot, path, uri, buffer, offset, new_name, encoding).map(|(edit, _)| edit)
+}
+
+/// The boolean indicates whether the rename depends on other documents.
+pub(crate) fn rename_with_scope(
+    snapshot: &Analysis,
+    path: &Path,
+    uri: &Uri,
+    buffer: &TextBuffer,
+    offset: usize,
+    new_name: &str,
+    encoding: PositionEncoding,
+) -> Option<(WorkspaceEdit, bool)> {
     let text = buffer.text();
     if !is_syntactic_r_name(new_name) {
         return None;
     }
     let line_index = buffer.line_index();
     let off = TextSize::new(offset.min(text.len()) as u32);
+    if let Some(result) =
+        oop::object_rename(snapshot, path, uri, buffer, off, Some(new_name), encoding)
+    {
+        return result.map(|result| (result.edit, true));
+    }
     with_document_semantics(snapshot, path, buffer, None, |root, model| {
         let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
 
@@ -353,7 +372,8 @@ pub(crate) fn rename_via_db(
             // Cross-file: a top-level binding can be free-read from files that can
             // see this one. Scope to that component; refuse if it isn't safe. Nested
             // locals are file-private, so they stay intra-file.
-            if model.binding_is_file_scope(target.binding) {
+            let workspace = model.binding_is_file_scope(target.binding);
+            if workspace {
                 // This file's own occurrences are `intra`; skip it cross-file.
                 let cross = cross_file_rename_edits(
                     snapshot,
@@ -370,7 +390,7 @@ pub(crate) fn rename_via_db(
             } else {
                 changes.insert(uri.clone(), intra);
             }
-            return finalize_rename(changes);
+            return finalize_rename(changes).map(|edit| (edit, workspace));
         }
 
         // The cursor sits on a bare free read of a workspace name (no local binding).
@@ -401,7 +421,7 @@ pub(crate) fn rename_via_db(
         for (edit_uri, edit) in cross {
             changes.entry(edit_uri).or_default().push(edit);
         }
-        finalize_rename(changes)
+        finalize_rename(changes).map(|edit| (edit, true))
     })
 }
 
@@ -583,6 +603,18 @@ pub struct RenameAnchor {
     /// a change before the buffer existed) and re-anchoring must fall back to the
     /// whole-text [`diff_edit`]. Fed by [`RenameAnchor::record_edits`].
     edits: Option<Vec<Edit>>,
+    object: Option<ObjectRenameAnchor>,
+    pub(crate) local: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ObjectRenameAnchor {
+    pub identity: oop::RenameIdentity,
+    pub spelling: String,
+    range: TextRange,
+    pub declaration: TextRange,
+    pub declaration_text: Arc<str>,
+    pub declaration_is_local: bool,
 }
 
 impl RenameAnchor {
@@ -704,8 +736,89 @@ pub(crate) fn compute_prepare_rename_in(
             offset_in_node,
             text: text.to_string(),
             edits: Some(Vec::new()),
+            object: None,
+            local: !model.binding_is_file_scope(target.binding),
         },
     })
+}
+
+pub(crate) fn prepare_rename_via_db(
+    snapshot: &Analysis,
+    path: &Path,
+    uri: &Uri,
+    buffer: &TextBuffer,
+    offset: usize,
+    encoding: PositionEncoding,
+) -> Option<PreparedRename> {
+    match oop::object_rename(
+        snapshot,
+        path,
+        uri,
+        buffer,
+        TextSize::new(offset as u32),
+        None,
+        encoding,
+    ) {
+        None => compute_prepare_rename_in(buffer, offset, encoding),
+        Some(result) => {
+            let oop::ObjectRename {
+                identity,
+                spelling,
+                range,
+                declaration,
+                declaration_text,
+                ..
+            } = result?;
+            let root = parse(buffer.text()).cst;
+            let node = root.covering_element(range).parent()?;
+            Some(PreparedRename {
+                range: text_range_to_lsp_range(buffer.line_index(), range, encoding),
+                placeholder: spelling.clone(),
+                anchor: RenameAnchor {
+                    node_ptr: NodePtr::from_node(&node),
+                    offset_in_node: u32::from(range.start() - node.text_range().start()),
+                    local: false,
+                    object: Some(ObjectRenameAnchor {
+                        declaration_is_local: identity.path()
+                            == crate::incremental::normalize_path(path),
+                        identity,
+                        spelling,
+                        range,
+                        declaration,
+                        declaration_text,
+                    }),
+                    text: buffer.text().to_owned(),
+                    edits: Some(Vec::new()),
+                },
+            })
+        }
+    }
+}
+
+impl RenameAnchor {
+    pub(crate) fn has_object_target(&self) -> bool {
+        self.object.is_some()
+    }
+
+    pub(crate) fn object_target(&self, current_text: &str) -> Option<ObjectRenameAnchor> {
+        let mut target = self.object.clone()?;
+        if target.declaration_is_local {
+            target.declaration = self.map_object_range(current_text, target.declaration)?;
+        }
+        Some(target)
+    }
+
+    fn map_object_range(&self, current_text: &str, range: TextRange) -> Option<TextRange> {
+        if current_text == self.text {
+            Some(range)
+        } else if let Some(edits) = &self.edits
+            && edits_produce(&self.text, edits, current_text)
+        {
+            map_range_through_edits(range, edits)
+        } else {
+            map_range_through_edit(range, &diff_edit(&self.text, current_text))
+        }
+    }
 }
 
 /// `textDocument/rename` from a cursor offset: the text edits that rename the
@@ -851,8 +964,8 @@ pub(crate) fn definition_local_range(
 /// together (the read-gathering half of [`rename_edits`]). `None` when the cursor
 /// names no local binding.
 pub(crate) struct LocalOccurrences {
-    defs: Vec<TextRange>,
-    reads: Vec<TextRange>,
+    pub(crate) defs: Vec<TextRange>,
+    pub(crate) reads: Vec<TextRange>,
 }
 
 fn generated_occurrences(
@@ -933,6 +1046,10 @@ pub fn compute_rename_with_anchor(
 /// [`diff_edit`] would straddle it. A missing, empty, or misaligned sequence
 /// falls back to that whole-text `diff_edit`.
 pub(crate) fn rename_cursor_offset(current_text: &str, anchor: &RenameAnchor) -> Option<usize> {
+    if let Some(object) = &anchor.object {
+        let mapped = anchor.map_object_range(current_text, object.range)?;
+        return Some(usize::from(mapped.start()));
+    }
     let root = parse(current_text).cst;
     let node = if current_text == anchor.text {
         anchor.node_ptr.try_to_node(&root)?

@@ -158,6 +158,7 @@ pub(crate) fn class_lookups(
                     | "as<-"
                     | "@"
                     | "@<-"
+                    | "NextMethod"
                     | "standardGeneric"
                     | "callNextMethod"
                     | "selectMethod"
