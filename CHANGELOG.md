@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.32.0](https://github.com/jolars/arity/compare/v0.31.0...v0.32.0) (2026-11-20)
+
+### Features
+
+- **lsp:** add conservative object rename ([`20ed0ea`](https://github.com/jolars/arity/commit/20ed0ea413ec1e2a66961ea87a4152e726a4114d))
+- **lsp:** add method items to call hierarchy ([`4e30985`](https://github.com/jolars/arity/commit/4e30985aab37bd3249ec918acb95dcb4bbc01372))
+- **lsp:** show observed S3 dispatch order in type hierarchy ([`67fc4bd`](https://github.com/jolars/arity/commit/67fc4bd62d0e9d34bf6c5eb32fadb79148ca9809))
+- **lsp:** extend source-backed OOP navigation ([`066f167`](https://github.com/jolars/arity/commit/066f16780f0e3187c0b96064edcd1706809452b2))
+- **lsp:** add OOP symbols, highlighting, and hover ([`10fe04e`](https://github.com/jolars/arity/commit/10fe04e774d6b3ff78392b145fc8056bcf77cf52))
+- **lsp:** add OOP go-to-implementation ([`e4b1d01`](https://github.com/jolars/arity/commit/e4b1d014d8dec8e34a67a11c8ec14353eb9d96aa))
+- **lsp:** navigate quoted OOP names ([`bd59601`](https://github.com/jolars/arity/commit/bd596014384e43761247e49f33aa07d4899f3493))
+- **lsp:** resolve class members and signatures ([`962a966`](https://github.com/jolars/arity/commit/962a96698f6e4bbcbfba63910c1efd4503cc6b95))
+- **rindex:** harvest installed object metadata ([`11ad12f`](https://github.com/jolars/arity/commit/11ad12f2654c9586383c8ed8d116d824894db325))
+- **oop:** track bounded receiver class evidence ([`44c14ad`](https://github.com/jolars/arity/commit/44c14ad5837aa4b8fcf4dcec4ce8c1abde090d10))
+- **oop:** add version-aware S7 support ([`541108d`](https://github.com/jolars/arity/commit/541108d3b00c693764d9b896cd633d37dcbba5f9))
+- **oop:** add support for S4 ([`4c4fa51`](https://github.com/jolars/arity/commit/4c4fa511a1dc8b365ff4ed4266d13e0dfbd3561e))
+- **oop:** add support for S3 ([`4907217`](https://github.com/jolars/arity/commit/4907217e33ec9c67a83b62a94a43d84d2c4af36b))
+- **oop:** track generator mutations and accessor effects ([`8e615d0`](https://github.com/jolars/arity/commit/8e615d0bcb0d5ce7ca9f179ef676ab14524f7d95))
+- **oop:** resolve Reference Class member APIs and signatures ([`51defc1`](https://github.com/jolars/arity/commit/51defc1d414a834ef19965630f90cb463f47980a))
+- **oop:** resolve R6 member APIs and signatures ([`9318096`](https://github.com/jolars/arity/commit/93180964fc53b54e87037172bc1a53128dd7397e))
+- **oop:** model S3 and S4 dispatch environments ([`73b2880`](https://github.com/jolars/arity/commit/73b2880492eb96fbd930cc5b9ae040aac262140e))
+- **oop:** model Reference Class method environments ([`d518f16`](https://github.com/jolars/arity/commit/d518f1610c847a18dc3721a0230fd59d7e892b09))
+- **oop:** model R6 method environments ([`05fb954`](https://github.com/jolars/arity/commit/05fb954cc7af6ff52cc83a69e148458a4c23fb2d)), fixes [#183](https://github.com/jolars/arity/issues/183)
+- **oop:** resolve shared project declarations ([`b1836db`](https://github.com/jolars/arity/commit/b1836dbd63a8efe13d69096bd64df6ddc6711a28))
+- **oop:** resolve declaration and registration callees ([`d8a1faf`](https://github.com/jolars/arity/commit/d8a1fafff279061016424a5ac539a4ad25753596))
+- **oop:** share declarations, members, and signatures ([`3f3167a`](https://github.com/jolars/arity/commit/3f3167a010237104cc3ab8a69b689b9f7600a6d1))
+- **oop:** model class declarations and identity ([`af32448`](https://github.com/jolars/arity/commit/af32448cfa576d2f1ff89a6dee60ad12b09ec288)), ref [#183](https://github.com/jolars/arity/issues/183)
+
+### Bug Fixes
+
+- **lint:** recognize intentional omissions in `missing-argument` ([`0cd1718`](https://github.com/jolars/arity/commit/0cd17189ccc03f6eb844a5fdabd05bde06dbe7a1))
+- **lint:** count package binding reads in roxygen `@eval` ([`b9daa6a`](https://github.com/jolars/arity/commit/b9daa6a4edfd9ebf1b5ee20c8db56a003d3df264))
+- **lint:** recognize package-registered roxygen tags ([`5b3a755`](https://github.com/jolars/arity/commit/5b3a755d0c00e2a97660253b3306ec0c46b2d736))
+- **lint:** correct findings from the ggplot2 audit ([`85a8817`](https://github.com/jolars/arity/commit/85a8817f98fbc53a19037b233b3e784bd5cb8980))
+- restore workspace CI ([`8f65af6`](https://github.com/jolars/arity/commit/8f65af65a888d0b9d426e090eb9d6742a557a73b))
+- **oop:** tighten declaration and hierarchy proofs ([`680a881`](https://github.com/jolars/arity/commit/680a8819cc1e53bdf0979efee6d1ac3976c20aef))
+- **oop:** correct hierarchy and dispatch resolution ([`b829532`](https://github.com/jolars/arity/commit/b8295324f8f27fb16799e887e3c7f41462cdd399))
+- **oop:** preserve hierarchy and binding identities ([`29c726a`](https://github.com/jolars/arity/commit/29c726ad83b1c447b138d03e71769809e713e580))
+
+### Performance Improvements
+
+- **lsp:** skip unrelated S3 bindings in generic references ([`16f7c89`](https://github.com/jolars/arity/commit/16f7c893e5eecf6d95d99f405152094daa64f343))
+- **lsp:** skip unrelated object systems in generic references ([`88aaf4b`](https://github.com/jolars/arity/commit/88aaf4be08dc8737719815186b04658af6c4d620))
+- **lsp:** skip unrelated NAMESPACE sites for references ([`3836d23`](https://github.com/jolars/arity/commit/3836d239ddda0819331e72555349fccbf53203f5))
+- **lsp:** reuse tracked class graphs for document symbols ([`6869c17`](https://github.com/jolars/arity/commit/6869c172a9bb9511a75e1e3c925c2c4397c47ce8))
+- **lsp:** sort only matching OOP generic candidates ([`9e7bda6`](https://github.com/jolars/arity/commit/9e7bda68dbe5c9328fd2feeeb529719db2f980fd))
+
 ## [0.31.0](https://github.com/jolars/arity/compare/v0.30.0...v0.31.0) (2026-11-16)
 
 ### Features
