@@ -626,6 +626,50 @@ other(1)
 }
 
 #[test]
+fn generic_references_follow_workspace_aliases_in_live_buffers() {
+    let dir = tempfile::tempdir().unwrap();
+    let r_dir = dir.path().join("R");
+    fs::create_dir(&r_dir).unwrap();
+    fs::write(dir.path().join("DESCRIPTION"), super::COMPLETE_DESCRIPTION).unwrap();
+    let generic = r_dir.join("generic.R");
+    let caller = r_dir.join("caller.R");
+    let source = "probe <- function(x) UseMethod('probe')\nalias <- probe\n";
+    let calls = "run <- function() {\n  alias(1)\n  alias(2)\n  alternate(3)\n}\n";
+    fs::write(&generic, source).unwrap();
+    fs::write(&caller, calls).unwrap();
+    let generic_uri = path_uri(&generic);
+    let caller_uri = path_uri(&caller);
+    let mut harness = Harness::start_push();
+    harness.did_open(&generic_uri, source, 1);
+    harness.recv_publish_for(&generic_uri, 1);
+
+    let caller_lines = |harness: &mut Harness| {
+        request(
+            harness,
+            "textDocument/references",
+            json!({
+                "textDocument": { "uri": generic_uri },
+                "position": position(source, 1),
+                "context": { "includeDeclaration": false }
+            }),
+        )
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|location| location["uri"] == caller_uri)
+        .map(|location| location["range"]["start"]["line"].as_u64().unwrap())
+        .collect::<BTreeSet<_>>()
+    };
+    assert_eq!(caller_lines(&mut harness), BTreeSet::from([1, 2]));
+
+    let edited = source.replace("alias", "alternate");
+    harness.did_change(&generic_uri, &edited, 2);
+    harness.recv_publish_for(&generic_uri, 2);
+    assert_eq!(caller_lines(&mut harness), BTreeSet::from([3]));
+    harness.shutdown();
+}
+
+#[test]
 fn oop_presentation_uses_live_document_roles_and_spans() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("presentation.R");

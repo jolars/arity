@@ -3,9 +3,9 @@
 use super::*;
 use crate::incremental::normalize_path;
 use crate::project::classes::{
-    ClassId, ClassOccurrence, ClassSourceSites, FunctionRef, GeneratorRef, OopId, OopKey, OopKind,
-    OopSiteRole, OopSourceSite, OopSystem, OopTarget, ParentRef, class_source_sites,
-    locate_class_def_in, oop_sites,
+    ClassId, ClassName, ClassOccurrence, ClassSourceSites, FunctionRef, GeneratorRef, OopId,
+    OopKey, OopKind, OopSiteRole, OopSourceSite, OopSystem, OopTarget, ParentRef,
+    class_source_sites, locate_class_def_in, oop_sites,
 };
 
 mod implementation;
@@ -219,6 +219,23 @@ pub(in crate::lsp) fn name_locations(
                             _ => None,
                         })
                         .collect();
+                    let s3_bindings: HashSet<_> = ids
+                        .iter()
+                        .filter_map(|id| match id {
+                            Identity::Generic(id) if id.key.system == OopSystem::S3 => {
+                                Some((id, index.file(&id.path)?))
+                            }
+                            _ => None,
+                        })
+                        .flat_map(|(id, file)| {
+                            file.facts
+                                .oop
+                                .generic_bindings
+                                .iter()
+                                .filter(move |binding| binding.target == id.key)
+                                .map(|binding| binding.name.as_str())
+                        })
+                        .collect();
                     let has_methods = ids.iter().any(|id| matches!(id, Identity::Method(_)));
                     let may_match_generic = |source: &OopSourceSite| {
                         if generic_systems.is_empty() {
@@ -234,6 +251,14 @@ pub(in crate::lsp) fn name_locations(
                             | OopTarget::InternalGeneric(reference)
                                 if source.registration.is_none() && reference.local.is_none() =>
                             {
+                                // The resolver requires an exact binding name, which
+                                // can be an alias of the selected S3 generic.
+                                if reference.system == OopSystem::S3
+                                    && reference.by_binding
+                                    && !matches!(&reference.name, ClassName::Known(name) if s3_bindings.contains(name.as_str()))
+                                {
+                                    return false;
+                                }
                                 reference.system
                             }
                             // Registrations can bridge object systems and a
