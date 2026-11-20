@@ -64,7 +64,18 @@ pub(crate) fn document_symbols_via_db(
     with_document_semantics(snapshot, path, buffer, s7_floor, |root, model| {
         // A binding candidate can appear or disappear after a config,
         // DESCRIPTION, or project scope change with the same buffer text.
-        let (facts, sites) = crate::project::classes::class_source_sites(model, root);
+        let tracked = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+            snapshot.tracked_outline_source(path, root, model)
+        }))
+        .ok()
+        .flatten();
+        let local;
+        let (facts, sites) = if let Some((_, source)) = tracked {
+            source
+        } else {
+            local = crate::project::classes::class_source_sites(model, root);
+            &local
+        };
         let has_objects = sites.has_declarations();
         let cache_by_text = !has_objects
             && !root
@@ -73,14 +84,20 @@ pub(crate) fn document_symbols_via_db(
         let symbols = document_symbols_from_model(root, model, buffer.line_index(), encoding);
         let declarations = if has_objects {
             let index = salsa::Cancelled::catch(AssertUnwindSafe(|| {
-                snapshot.class_index_in(path, &facts, root, model)
+                if let Some((file, _)) = tracked {
+                    std::borrow::Cow::Borrowed(snapshot.outline_class_index(file))
+                } else {
+                    std::borrow::Cow::Owned(snapshot.class_index_in(path, facts, root, model))
+                }
             }))
             .unwrap_or_else(|_| {
-                IncrementalDatabase::default()
-                    .snapshot()
-                    .class_index_in(path, &facts, root, model)
+                std::borrow::Cow::Owned(
+                    IncrementalDatabase::default()
+                        .snapshot()
+                        .class_index_in(path, facts, root, model),
+                )
             });
-            oop::presentation::declarations(root, model, &facts, &sites, &index, path)
+            oop::presentation::declarations(root, model, facts, sites, &index, path)
         } else {
             Vec::new()
         };
@@ -479,6 +496,27 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn cancelled_outline_uses_live_buffer() {
+        let path = test_path();
+        let text = "C <- R6::R6Class('C')\n";
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(path, text);
+        let snapshot = db.snapshot();
+        let writer = std::thread::spawn(move || db.set_file_text(file, "x <- 1\n"));
+        while salsa::Cancelled::catch(AssertUnwindSafe(|| snapshot.parsed_tree(file))).is_ok() {
+            std::thread::yield_now();
+        }
+        let (symbols, _) =
+            document_symbols_via_db(&snapshot, path, &buf(text), PositionEncoding::Utf16, None);
+        drop(snapshot);
+        writer.join().unwrap();
+        assert_eq!(
+            symbols,
+            compute_document_symbols(text, PositionEncoding::Utf16)
+        );
     }
 
     #[test]

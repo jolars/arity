@@ -973,6 +973,48 @@ fn class_index_with_file_body(db: &dyn IncrementalDb, file: SourceFile) -> Class
     crate::project::graph::build_class_index(db, None, BodyClassLookups::File(file))
 }
 
+#[salsa::tracked(returns(ref), lru = 4)]
+fn outline_class_source(
+    db: &dyn IncrementalDb,
+    file: SourceFile,
+) -> (FileClassFacts, crate::project::classes::ClassSourceSites) {
+    crate::project::classes::class_source_sites(
+        runtime_semantic_model(db, file),
+        &parsed_tree_root(db, file),
+    )
+}
+
+// Most outlines can borrow the workspace graph. Keep the uncommon live
+// projection bounded, since each overlay owns a complete class graph.
+#[salsa::tracked(returns(ref), lru = 4)]
+fn outline_class_overlay(db: &dyn IncrementalDb, file: SourceFile) -> Option<ClassIndex> {
+    let path = file.path(db).as_deref()?;
+    let model = runtime_semantic_model(db, file);
+    let root = parsed_tree_root(db, file);
+    let (facts, _) = outline_class_source(db, file);
+    let directory = file.execution_directory(db);
+    if path.file_name().and_then(std::ffi::OsStr::to_str).is_some()
+        && project_classes(db).file(path).is_some()
+        && facts == file_class_defs(db, file)
+        && crate::project::file_exports(model) == **lexical_file_exports(db, file)
+        && crate::project::collect_source_edge_keys(&root, directory) == **source_edges(db, file)
+        && crate::project::collect_top_level_events(&root, directory, model)
+            == **top_level_events(db, file)
+    {
+        return None;
+    }
+    Some(crate::project::graph::build_class_index(
+        db,
+        Some(crate::project::graph::LiveClassFile {
+            path,
+            facts,
+            root: &root,
+            model,
+        }),
+        BodyClassLookups::None,
+    ))
+}
+
 /// The range-free package binding reads in a file's `@eval` tags.
 #[salsa::tracked(returns(ref))]
 pub(crate) fn file_roxygen_eval_reads(
@@ -2113,6 +2155,32 @@ impl Analysis {
         }
     }
 
+    pub(crate) fn tracked_outline_source(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+    ) -> Option<(
+        SourceFile,
+        &(FileClassFacts, crate::project::classes::ClassSourceSites),
+    )> {
+        let file = self.lookup_file(path)?;
+        let tracked = &*parsed_document(&self.0, file).green;
+        if (std::ptr::eq(root.green(), tracked) || root.green() == tracked)
+            && std::ptr::eq(model, runtime_semantic_model(&self.0, file))
+        {
+            Some((file, outline_class_source(&self.0, file)))
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn outline_class_index(&self, file: SourceFile) -> &ClassIndex {
+        outline_class_overlay(&self.0, file)
+            .as_ref()
+            .unwrap_or_else(|| self.class_index_ref())
+    }
+
     /// Borrow the tracked graph when its file projection describes this read.
     /// A stale buffer or a different compatibility context needs a live overlay.
     pub(crate) fn class_index_for_presentation(
@@ -2789,6 +2857,33 @@ impl IncrementalDb for IncrementalDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outline_class_graph_matches_live_overlay_after_edits() {
+        let mut db = IncrementalDatabase::default();
+        let path = normalize_path(Path::new("classes.R"));
+        let file = db.upsert_file(&path, "");
+        db.set_workspace_members(vec![file], vec![path.parent().unwrap().into()]);
+        for text in [
+            "C <- R6::R6Class('C', public = list(f = function() 1))\n",
+            "# Move the outline\nC <- R6::R6Class('C', public = list(f = function() 2))\n",
+            "C <- R6::R6Class('C')\nincomplete(",
+        ] {
+            db.set_file_text(file, text);
+            let snapshot = db.snapshot();
+            let root = snapshot.parsed_tree(file);
+            let model = snapshot.runtime_semantic_model(file);
+            let (_, (facts, _)) = snapshot
+                .tracked_outline_source(&path, &root, model)
+                .unwrap();
+            let index = snapshot.outline_class_index(file);
+            assert_eq!(index, &snapshot.class_index_in(&path, facts, &root, model));
+            assert_eq!(
+                std::ptr::eq(index, snapshot.class_index_ref()),
+                snapshot.class_index_ref().file(&path).is_some()
+            );
+        }
+    }
 
     #[test]
     fn presentation_borrows_tracked_class_graphs_for_current_buffers() {
