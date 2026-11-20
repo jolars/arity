@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
-"""Measure latency, runtime, and resident memory in an R LSP session.
+r"""Measure latency, runtime, and resident memory in an R LSP session.
 
 The harness samples each server's complete process tree from ``/proc`` and
 records four milestones: initialized baseline, files-opened settled state,
 post-edit settled state, and the sampled peak. Arity and languageserver use
 stdio and Python's standard library. Ark uses TCP and requires jupyter_client.
 Adapted from Panache's ``benches/lsp_memory.py``.
+
+The A/B mode compares two release builds on one pinned tidyr file and prints
+the results to stdout.
+
+    python3 benches/lsp.py --arity target/baseline --candidate target/candidate \
+        --request document_symbol --file R/pivot-wide.R --cpu 2
 """
 
 import argparse
+import hashlib
 import itertools
 import json
 import math
@@ -421,13 +428,17 @@ def pull_diagnostics(client, uris, timeout):
         )
 
 
-def await_documents(client, key, pull, versions, timeout, after=0):
+def await_diagnostics(client, key, pull, versions, timeout, after=0):
     if pull:
         pull_diagnostics(client, versions, timeout)
     elif key != "ark":
         # Ark suppresses unchanged sets, including initially empty diagnostics.
         # Its readiness uses successful requests and CPU settling instead.
         client.wait_diagnostics(versions, timeout, after=after)
+
+
+def await_documents(client, key, pull, versions, timeout, after=0):
+    await_diagnostics(client, key, pull, versions, timeout, after)
     for uri in versions:
         require_response(
             client.request(
@@ -509,27 +520,35 @@ def finalize_request_record(record):
     return record
 
 
-def benchmark_requests(client, key, label, method, params, runs, warmups, timeout):
+def benchmark_requests(
+    client, key, label, method, params, runs, warmups, timeout, verify=None
+):
     """Measure serial stdio round trips, excluding warmups and result summaries."""
     for _ in range(warmups):
         for target in params:
-            require_response(client.request(method, target, timeout=timeout), method)
+            response = require_response(
+                client.request(method, target, timeout=timeout), method
+            )
+            if verify is not None:
+                verify(response)
     record = request_record(key, label, method, len(params))
     for _ in range(runs):
         for target in params:
             started = time.perf_counter_ns()
             response = client.request(method, target, timeout=timeout)
             elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000
+            if verify is not None:
+                verify(require_response(response, method))
             record_response(record, response, elapsed_ms)
     return finalize_request_record(record)
 
 
-def benchmark_shared_requests(client, uris, target, runs, warmups, timeout):
+def shared_requests(uris, target):
     navigation = {
         "textDocument": {"uri": target["uri"]},
         "position": {**target["use"], "character": target["use"]["character"] + 1},
     }
-    requests = [
+    return [
         (
             "document_symbol",
             "Document symbols",
@@ -556,9 +575,12 @@ def benchmark_shared_requests(client, uris, target, runs, warmups, timeout):
             [{**navigation, "newName": "arity_lsp_renamed"}],
         ),
     ]
+
+
+def benchmark_shared_requests(client, uris, target, runs, warmups, timeout):
     return [
         benchmark_requests(client, key, label, method, params, runs, warmups, timeout)
-        for key, label, method, params in requests
+        for key, label, method, params in shared_requests(uris, target)
     ]
 
 
@@ -644,6 +666,42 @@ def isolated_environment(directory):
     return env
 
 
+def initialize(client, project, timeout):
+    return require_response(
+        client.request(
+            "initialize",
+            {
+                "processId": os.getpid(),
+                "clientInfo": {"name": "arity-lsp-bench", "version": "1"},
+                "rootUri": project.as_uri(),
+                "rootPath": str(project),
+                "capabilities": CAPABILITIES,
+                "workspaceFolders": [{"uri": project.as_uri(), "name": project.name}],
+                "initializationOptions": {},
+                "trace": "off",
+            },
+            timeout=timeout,
+        ),
+        "initialize",
+        require_result=True,
+    )
+
+
+def open_documents(client, documents):
+    for document in documents:
+        client.notify(
+            "textDocument/didOpen",
+            {
+                "textDocument": {
+                    "uri": document["uri"],
+                    "languageId": "r",
+                    "version": 1,
+                    "text": document["text"],
+                }
+            },
+        )
+
+
 def run_session(
     spec,
     run_number,
@@ -680,26 +738,7 @@ def run_session(
             sampler.start()
             client = Client(server, timeout=settle_timeout)
 
-            initialized = require_response(
-                client.request(
-                    "initialize",
-                    {
-                        "processId": os.getpid(),
-                        "clientInfo": {"name": "arity-lsp-bench", "version": "1"},
-                        "rootUri": project.as_uri(),
-                        "rootPath": str(project),
-                        "capabilities": CAPABILITIES,
-                        "workspaceFolders": [
-                            {"uri": project.as_uri(), "name": project.name}
-                        ],
-                        "initializationOptions": {},
-                        "trace": "off",
-                    },
-                    timeout=settle_timeout,
-                ),
-                "initialize",
-                require_result=True,
-            )
+            initialized = initialize(client, project, settle_timeout)
             init_seconds = round(time.monotonic() - started_at, 6)
             capabilities = (initialized.get("result") or {}).get("capabilities", {})
             pull = bool(capabilities.get("diagnosticProvider"))
@@ -727,18 +766,7 @@ def run_session(
             documents, edit_target = prepare_documents(files)
             uris = [document["uri"] for document in documents]
             documents_started_at = time.monotonic()
-            for document in documents:
-                client.notify(
-                    "textDocument/didOpen",
-                    {
-                        "textDocument": {
-                            "uri": document["uri"],
-                            "languageId": "r",
-                            "version": 1,
-                            "text": document["text"],
-                        }
-                    },
-                )
+            open_documents(client, documents)
 
             await_documents(client, key, pull, dict.fromkeys(uris, 1), settle_timeout)
             documents_ready = wait_until_quiet(
@@ -1008,13 +1036,148 @@ def write_artifact(output, payload):
     Path(tmp.name).replace(output)
 
 
+def compare_arities(args):
+    project = corpus_checkout(args.cache.resolve())
+    file = Path(args.file)
+    if (
+        file.is_absolute()
+        or file.suffix.lower() != ".r"
+        or ".." in file.parts
+        or not (project / file).is_file()
+    ):
+        raise ValueError("--file must be an R file relative to the corpus checkout")
+    documents, target = prepare_documents([project / file])
+    uri = target["uri"]
+    key, label, method, params = next(
+        request
+        for request in shared_requests([uri], target)
+        if request[0] == args.request
+    )
+    stderr_dir = args.stderr_dir.resolve() / "ab"
+    stderr_dir.mkdir(parents=True, exist_ok=True)
+    binaries = {"baseline": args.arity.resolve(), "candidate": args.candidate.resolve()}
+    for binary in binaries.values():
+        if not binary.is_file() or not os.access(binary, os.X_OK):
+            raise ValueError(f"expected an executable Arity binary: {binary}")
+
+    os.sched_setaffinity(0, {args.cpu})
+    print(f"==> {label} on {file} at {CORPUS_REVISION} (CPU {args.cpu})", flush=True)
+    for name, binary in binaries.items():
+        print(f"    {name}: {binary}", flush=True)
+    print(
+        f"    {args.runs} session pairs, {args.latency_warmups} warmups and "
+        f"{args.latency_runs} timed requests per session",
+        flush=True,
+    )
+    results = {name: [] for name in binaries}
+    expected = None
+    timeout = args.settle_timeout
+    for run in range(1, args.runs + 1):
+        for name, binary in binaries.items():
+            stderr_path = stderr_dir / f"{name}-{run}.stderr.log"
+            sample = 0
+
+            def verify(response, name=name, run=run):
+                nonlocal expected, sample
+                sample += 1
+                # Compare the complete result, ignoring JSON-RPC IDs and object key order.
+                payload = json.dumps(response["result"], sort_keys=True).encode()
+                if expected is None:
+                    expected = payload
+                if payload != expected:
+                    raise RuntimeError(
+                        f"{method} response mismatch in {name} session {run}, "
+                        f"request {sample}: expected SHA-256 "
+                        f"{hashlib.sha256(expected).hexdigest()}, got "
+                        f"{hashlib.sha256(payload).hexdigest()}"
+                    )
+
+            with tempfile.TemporaryDirectory(prefix=f"arity-lsp-{name}-") as state_dir:
+                server = StdioServer(
+                    [str(binary), "--no-config", "lsp"],
+                    str(project),
+                    isolated_environment(state_dir),
+                    str(stderr_path),
+                )
+                client = None
+                sampler = Sampler(server.proc.pid)
+                sampler.start()
+                try:
+                    client = Client(server, timeout)
+                    initialized = initialize(client, project, timeout)
+                    pull = bool(
+                        initialized["result"]["capabilities"].get("diagnosticProvider")
+                    )
+                    client.notify("initialized", {})
+                    open_documents(client, documents)
+                    await_diagnostics(client, "arity", pull, {uri: 1}, timeout)
+                    wait_until_quiet(
+                        client,
+                        sampler,
+                        args.quiet_seconds,
+                        timeout,
+                        "files-opened settle",
+                        time.monotonic() - sampler.started_at,
+                    )
+                    sampler.stop_flag.set()
+                    sampler.join()
+                    record = benchmark_requests(
+                        client,
+                        key,
+                        label,
+                        method,
+                        params,
+                        args.latency_runs,
+                        args.latency_warmups,
+                        timeout,
+                        verify=verify,
+                    )
+                finally:
+                    sampler.stop_flag.set()
+                    sampler.join()
+                    if client is None:
+                        server.kill()
+                    else:
+                        client.shutdown()
+            latencies = record["_latencies_ms"]
+            results[name].extend(latencies)
+            print(
+                f"    {name} {run}: {statistics.median(latencies):.3f} ms median, "
+                f"{min(latencies):.3f} ms min ({record['empty_results']} empty)",
+                flush=True,
+            )
+
+    print(f"    All responses matched (SHA-256 {hashlib.sha256(expected).hexdigest()})")
+    print(f"    {len(results['baseline'])} timed requests per binary")
+    for label, stat in (("median", statistics.median), ("min", min)):
+        baseline = stat(results["baseline"])
+        candidate = stat(results["candidate"])
+        print(
+            f"    {label}: {baseline:.3f} ms → {candidate:.3f} ms "
+            f"({(candidate / baseline - 1):+.1%})"
+        )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--out", type=Path, default=ROOT / "benches/benchmark_results.json"
     )
     parser.add_argument(
-        "--arity", type=Path, help="use an existing release binary instead of building"
+        "--arity", type=Path, help="use an existing release binary (the A/B baseline)"
+    )
+    ab = parser.add_argument_group("Arity A/B comparison")
+    ab.add_argument(
+        "--candidate", type=Path, help="compare against the binary in --arity"
+    )
+    ab.add_argument(
+        "--request",
+        choices=("document_symbol", "hover", "definition", "references", "rename"),
+        help="time only this request (navigation uses the benchmark binding)",
+    )
+    ab.add_argument("--file", help="open only this corpus-relative R file")
+    ab.add_argument(
+        "--cpu", type=int, help="pin the client and both servers to this Linux CPU"
     )
     parser.add_argument("--rscript", default="Rscript")
     ark_group = parser.add_mutually_exclusive_group()
@@ -1026,7 +1189,9 @@ def main():
     )
     parser.add_argument("--cache", type=Path, default=ROOT / "target/bench-lsp/corpus")
     parser.add_argument("--open-files", type=int, default=5)
-    parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument(
+        "--runs", type=int, default=3, help="sessions per server or A/B session pairs"
+    )
     parser.add_argument("--edits", type=int, default=1000)
     parser.add_argument("--latency-runs", type=int, default=20)
     parser.add_argument("--latency-warmups", type=int, default=2)
@@ -1039,8 +1204,8 @@ def main():
 
     if platform.system() != "Linux" or not Path("/proc/self/smaps_rollup").is_file():
         parser.error("the memory benchmark requires Linux with /proc/smaps_rollup")
-    if args.runs < 1 or args.edits < 1 or args.open_files < 1:
-        parser.error("--runs, --edits, and --open-files must be positive")
+    if args.runs < 1:
+        parser.error("--runs must be positive")
     if args.latency_runs < 1 or args.latency_warmups < 0:
         parser.error(
             "--latency-runs must be positive and --latency-warmups nonnegative"
@@ -1053,6 +1218,27 @@ def main():
             "--quiet-seconds must exceed two sample intervals and be below --settle-timeout"
         )
 
+    if any(
+        value is not None
+        for value in (args.candidate, args.request, args.file, args.cpu)
+    ):
+        if any(
+            value is None
+            for value in (args.arity, args.candidate, args.request, args.file, args.cpu)
+        ):
+            parser.error(
+                "A/B comparison requires --arity, --candidate, --request, --file, and --cpu"
+            )
+        if args.cpu not in os.sched_getaffinity(0):
+            parser.error(f"CPU {args.cpu} is outside the current affinity mask")
+        try:
+            compare_arities(args)
+        except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
+            parser.exit(1, f"A/B comparison failed: {error}\n")
+        return
+
+    if args.edits < 1 or args.open_files < 1:
+        parser.error("--edits and --open-files must be positive")
     rscript = shutil.which(args.rscript)
     if rscript is None:
         parser.error(f"Rscript executable not found: {args.rscript}")
