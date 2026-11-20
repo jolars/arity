@@ -22,16 +22,6 @@ output and semantic noise. Rule coverage and style options follow those fixes.
   Generated local reads such as the two `eval(parse(...))` test cases remain
   separate; statement-level suppressions are a narrow existing workaround.
 
-- [ ] Pin the evidence for feedback 5 before changing conditional layout. The
-  claimed whitespace dependence did not reproduce: both
-  `x <- if (a) b else c` and `x <- if (a)\n  b else\n  c` format
-  identically, and R confirms their parsed expressions match. The braced
-  form `x <- if (a) { b } else { c }` stays expanded, but has different
-  syntax. Add paired fixtures for the equivalent unbraced layouts and
-  document the intentional brace distinction. If a different case still
-  varies solely with whitespace, reduce that case before recording it as a
-  formatter defect.
-
 ## Parser
 
 ## Formatter
