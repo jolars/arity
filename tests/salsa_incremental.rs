@@ -2755,6 +2755,38 @@ fn shared_oop_resolution_joins_visible_generics_methods_and_members() {
 }
 
 #[test]
+fn shared_oop_resolution_lists_local_generics_before_sorted_source_candidates() {
+    let mut db = IncrementalDatabase::default();
+    let generic = "methods::setGeneric('g', function(x) standardGeneric('g'))\n";
+    let local = db.upsert_file(
+        Path::new("/s/z.R"),
+        format!(
+            "source('b.R')\nsource('a.R')\n{generic}methods::setMethod('g', 'C', function(x) x)\n"
+        ),
+    );
+    let a = db.upsert_file(Path::new("/s/a.R"), generic);
+    let b = db.upsert_file(Path::new("/s/b.R"), generic);
+    db.set_workspace_members(vec![local, b, a], vec!["/s".into()]);
+    let index = project_classes(&db);
+    let path = Path::new("/s/z.R");
+    let method = &index.file(path).unwrap().facts.oop.methods[0];
+    let mut reference = method.generic.clone().unwrap();
+    reference.local = None;
+    let candidates = index.generic_candidates(path, &reference, false);
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|id| id.path.as_path())
+            .collect::<Vec<_>>(),
+        [
+            Path::new("/s/z.R"),
+            Path::new("/s/a.R"),
+            Path::new("/s/b.R")
+        ]
+    );
+}
+
+#[test]
 fn shared_oop_resolution_keeps_source_closures_directional() {
     for (source, expected) in [("source('b.R')\n", 1), ("", 0)] {
         let (db, _, _) = scripts_ab(

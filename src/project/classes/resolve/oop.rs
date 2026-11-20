@@ -190,39 +190,42 @@ impl ClassIndex {
                 return local;
             }
         }
+        let top_level_matches = |file: &ClassFile| {
+            file.facts
+                .oop
+                .generics
+                .iter()
+                .filter(|def| matches(file, def, &[]))
+                .map(|def| OopId {
+                    path: file.path.clone(),
+                    key: def.key.clone(),
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut candidates = top_level_matches(file);
+        if self.incomplete.contains(path) {
+            return candidates;
+        }
         let sources = reference
             .by_binding
             .then(|| self.definition_files(path, name, in_function));
-        let mut candidates: Vec<_> = std::iter::once(file)
-            .chain(
-                self.scope
-                    .sees(path)
-                    .iter()
-                    .collect::<BTreeSet<_>>()
-                    .into_iter()
-                    .filter(|candidate| {
-                        !self.incomplete.contains(path)
-                            && (!reference.by_binding
-                                || sources
-                                    .as_ref()
-                                    .is_some_and(|sources| sources.contains(*candidate)))
-                    })
-                    .filter_map(|path| self.files.get(path)),
-            )
-            .flat_map(|file| {
-                file.facts
-                    .oop
-                    .generics
-                    .iter()
-                    .filter(|def| matches(file, def, &[]))
-                    .map(|def| OopId {
-                        path: file.path.clone(),
-                        key: def.key.clone(),
-                    })
-            })
-            .collect();
+        let local_count = candidates.len();
+        candidates.extend(
+            self.scope
+                .sees(path)
+                .iter()
+                .filter(|candidate| {
+                    sources
+                        .as_ref()
+                        .is_none_or(|sources| sources.contains(*candidate))
+                })
+                .filter_map(|path| self.files.get(path))
+                .flat_map(top_level_matches),
+        );
+        // Preserve local-first, source-path order without sorting every visible
+        // file for candidates that usually occur in only a handful of them.
+        candidates[local_count..].sort_by(|left, right| left.path.cmp(&right.path));
         if candidates.is_empty()
-            && !self.incomplete.contains(path)
             && !std::iter::once(file)
                 .chain(
                     self.scope
