@@ -554,6 +554,18 @@ Generator <- R6::R6Class("Example")
             }),
         )
     };
+    let generic = references(&mut harness, &uri, source, "public");
+    let namespace_spans: Vec<_> = generic
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|location| location["uri"] == namespace_uri)
+        .map(|location| {
+            let [start, end] = byte_range(&live, &location["range"]);
+            &live[start..end]
+        })
+        .collect();
+    assert_eq!(namespace_spans, ["public", "public"]);
     let result = references(&mut harness, &namespace_uri, &live, "impl");
     let locations = result.as_array().unwrap();
     assert_eq!(locations.len(), 2, "{result}");

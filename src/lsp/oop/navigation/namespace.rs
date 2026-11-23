@@ -17,6 +17,7 @@ pub(super) fn sites(index: &ClassIndex, root: &Path, text: &str) -> Vec<(TextRan
 enum SiteFilter<'a> {
     All,
     Callable(Option<&'a str>),
+    References { include_methods: bool },
 }
 
 fn collect_sites(
@@ -26,6 +27,14 @@ fn collect_sites(
     filter: SiteFilter<'_>,
 ) -> Vec<(TextRange, Identity)> {
     let parsed = crate::namespace::parse(text);
+    // A generic or class reference cannot match an implementation operand.
+    // Avoid resolving its callable origin or scanning conventional methods.
+    let include_methods = !matches!(
+        filter,
+        SiteFilter::References {
+            include_methods: false
+        }
+    );
     let mut sites = Vec::new();
     let mut registration = 0;
     for directive in parsed.document().directives() {
@@ -63,7 +72,7 @@ fn collect_sites(
                     && method.class == ClassName::Known(spec.class.clone())
             });
             if let Some(method) = methods.into_iter().next() {
-                if matches!(filter, SiteFilter::All) {
+                if !matches!(filter, SiteFilter::Callable(_)) {
                     sites.extend(method.generics.iter().filter_map(|id| match id {
                         S3GenericId::Declaration(id) => {
                             Some((range, Identity::Generic(id.clone())))
@@ -71,7 +80,8 @@ fn collect_sites(
                         S3GenericId::Known { .. } => None,
                     }));
                 }
-                if let Some(span) = arguments.nth(1).and_then(|argument| argument.value_range())
+                if include_methods
+                    && let Some(span) = arguments.nth(1).and_then(|argument| argument.value_range())
                     && matches!(&method.implementation, Some(MethodImplementationSource::Binding { name, .. }) if *name == spec.method)
                     && let Some((path, origin)) =
                         index.namespace_callable_origin(root, &spec.method)
@@ -157,7 +167,8 @@ fn collect_sites(
                 );
                 continue;
             }
-            if matches!(kind, DirectiveKind::Export | DirectiveKind::ImportFrom) {
+            if include_methods && matches!(kind, DirectiveKind::Export | DirectiveKind::ImportFrom)
+            {
                 // Only conventional S3 methods can produce a callable site here.
                 // Replay namespace execution only if a matching declaration exists.
                 let mut declarations = conventional_methods(index, &name).peekable();
@@ -301,7 +312,11 @@ pub(super) fn references(
         index,
         encoding,
         open_namespaces,
-        SiteFilter::All,
+        SiteFilter::References {
+            include_methods: ids
+                .iter()
+                .any(|id| matches!(id, Identity::Method(_) | Identity::Callable { .. })),
+        },
         |id| ids.contains(id),
     )
 }
