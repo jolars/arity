@@ -2215,6 +2215,48 @@ impl Analysis {
         Cow::Owned(self.class_index_in(path, facts, root, model))
     }
 
+    /// Reuse the workspace class graph when the live overlay would contribute
+    /// the same facts, exports, and execution events as the tracked file.
+    pub(crate) fn class_index_for_signature(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+    ) -> Cow<'_, ClassIndex> {
+        if let Some(file) = self.lookup_file(path)
+            && file.path(&self.0).as_deref() == Some(path)
+            && path.file_name().and_then(std::ffi::OsStr::to_str).is_some()
+            && {
+                let tracked = &*parsed_document(&self.0, file).green;
+                std::ptr::eq(root.green(), tracked) || root.green() == tracked
+            }
+            && model == semantic_model(&self.0, file)
+            // Live overlays use the default lexical model for source edges.
+            // The tracked projection can also see S7 compatibility bindings.
+            && crate::project::collect_source_edge_keys(root, file.execution_directory(&self.0))
+                == **source_edges(&self.0, file)
+        {
+            let index = self.class_index_ref();
+            if index.file(path).is_some() {
+                let facts = file_class_defs(&self.0, file);
+                let body = file_body_class_lookups(&self.0, file);
+                return Cow::Borrowed(
+                    if body
+                        .iter()
+                        .all(|reference| facts.oop.class_lookups.contains(reference))
+                    {
+                        index
+                    } else {
+                        class_index_with_file_body(&self.0, file)
+                    },
+                );
+            }
+        }
+
+        let facts = crate::project::file_class_defs(model, root);
+        Cow::Owned(self.class_index_in(path, &facts, root, model))
+    }
+
     /// Resolve a live buffer through the same project class model as tracked reads.
     pub fn class_index_in(
         &self,

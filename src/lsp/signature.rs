@@ -75,8 +75,9 @@ fn signature_help_in(
     let remote = context
         .and_then(|context| context.snapshot.remote_exports())
         .unwrap_or_default();
-    let (help, masked) = oop::with_class_index(root, context, |index, model, path| {
-        let read = EditorRead::new(index, root, model, path, indexed, &remote);
+    let (help, masked) = oop::with_live_model(root, context, |snapshot, model, path| {
+        let index = snapshot.class_index_for_signature(path, root, model);
+        let read = EditorRead::new(&index, root, model, path, indexed, &remote);
         let help = read
             .callable(&call)
             .and_then(|callable| help_for_callable(&call, offset, callable, indexed));
@@ -562,6 +563,44 @@ mod tests {
         assert_eq!(help.active_parameter, Some(3));
         let help = variadic_help_at("dplyr::summarise(.keep = @)\n").expect("signature");
         assert_eq!(help.active_parameter, Some(4));
+    }
+
+    #[test]
+    fn signature_help_uses_tracked_class_graph_for_current_buffer() {
+        let path = crate::incremental::normalize_path(test_path());
+        let src = "Point <- S7::new_class('Point')\nPoint()\n";
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(&path, src);
+        db.set_workspace_members(vec![file], vec![path.parent().unwrap().into()]);
+        db.clear_query_log();
+        let snapshot = db.snapshot();
+        let help = signature_help_via_db(
+            &snapshot,
+            &path,
+            &buf(src),
+            pos(1, 6),
+            PositionEncoding::Utf16,
+            None,
+        )
+        .expect("constructor signature");
+        assert!(help.signatures[0].label.starts_with("Point("));
+        assert!(
+            db.query_log()
+                .iter()
+                .any(|entry| { entry.kind == crate::incremental::QueryKind::ProjectClasses })
+        );
+
+        let stale = "Other <- S7::new_class('Other')\nOther()\n";
+        let help = signature_help_via_db(
+            &snapshot,
+            &path,
+            &buf(stale),
+            pos(1, 6),
+            PositionEncoding::Utf16,
+            None,
+        )
+        .expect("live constructor signature");
+        assert!(help.signatures[0].label.starts_with("Other("));
     }
 
     #[test]
