@@ -2220,6 +2220,41 @@ impl Analysis {
             .unwrap_or_else(|| self.class_index_ref())
     }
 
+    /// Only reuse the projection for the exact tracked model and tree. An editor
+    /// buffer can be ahead of the database or resolve a different S7 floor.
+    fn tracked_class_read_file(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+    ) -> Option<SourceFile> {
+        let file = self.lookup_file(path)?;
+        let tracked = &*parsed_document(&self.0, file).green;
+        (std::ptr::eq(model, semantic_model(&self.0, file))
+            && (std::ptr::eq(root.green(), tracked) || root.green() == tracked))
+            .then_some(file)
+    }
+
+    pub(crate) fn tracked_editor_class_facts(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+    ) -> Option<Arc<crate::project::classes::Extracted>> {
+        let file = self.tracked_class_read_file(path, root, model)?;
+        Some(crate::project::classes::editor_class_facts(&self.0, file).clone())
+    }
+
+    pub(crate) fn tracked_hover_class_source(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+    ) -> Option<&(FileClassFacts, crate::project::classes::ClassSourceSites)> {
+        let file = self.tracked_class_read_file(path, root, model)?;
+        Some(file_class_source(&self.0, file))
+    }
+
     /// Borrow the tracked graph when its file projection describes this read.
     /// A stale buffer or a different compatibility context needs a live overlay.
     pub(crate) fn class_index_for_presentation(
@@ -2239,14 +2274,20 @@ impl Analysis {
         {
             let index = project_classes(&self.0);
             if index.file(path).is_some() {
-                let body = crate::project::classes::class_lookups(model, root, true);
+                let live;
+                let body = if std::ptr::eq(model, semantic_model(&self.0, file)) {
+                    file_body_class_lookups(&self.0, file)
+                } else {
+                    live = crate::project::classes::class_lookups(model, root, true);
+                    &live
+                };
                 if body
                     .iter()
                     .all(|reference| facts.oop.class_lookups.contains(reference))
                 {
                     return Cow::Borrowed(index);
                 }
-                if &body == file_body_class_lookups(&self.0, file) {
+                if body == file_body_class_lookups(&self.0, file) {
                     return Cow::Borrowed(class_index_with_file_body(&self.0, file));
                 }
             }
@@ -3004,6 +3045,48 @@ mod tests {
             assert!(matches!(live, Cow::Owned(_)));
             assert_eq!(live.declarations.len(), 1);
         }
+    }
+
+    #[test]
+    fn editor_class_facts_reuse_only_matching_tracked_inputs() {
+        let mut db = IncrementalDatabase::default();
+        let path = normalize_path(Path::new("classes.R"));
+        let file = db.upsert_file(&path, "C <- R6::R6Class('C')");
+        let previous;
+        {
+            let snapshot = db.snapshot();
+            let root = snapshot.parsed_tree(file);
+            let model = snapshot.semantic_model(file);
+            previous = snapshot
+                .tracked_editor_class_facts(&path, &root, model)
+                .unwrap();
+            let repeat = snapshot
+                .tracked_editor_class_facts(&path, &root, model)
+                .unwrap();
+            assert!(Arc::ptr_eq(&previous, &repeat));
+            let edited = crate::parser::parse("D <- R6::R6Class('D')").cst;
+            assert!(
+                snapshot
+                    .tracked_editor_class_facts(&path, &edited, model)
+                    .is_none()
+            );
+            let live_model = SemanticModel::build(&root);
+            assert!(
+                snapshot
+                    .tracked_editor_class_facts(&path, &root, &live_model)
+                    .is_none()
+            );
+        }
+        db.set_file_text(file, "D <- R6::R6Class('D')");
+        let snapshot = db.snapshot();
+        let current = snapshot
+            .tracked_editor_class_facts(
+                &path,
+                &snapshot.parsed_tree(file),
+                snapshot.semantic_model(file),
+            )
+            .unwrap();
+        assert!(!Arc::ptr_eq(&previous, &current));
     }
 
     #[test]

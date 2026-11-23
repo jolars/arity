@@ -149,18 +149,27 @@ fn oop_hover(
         .and_then(|context| context.snapshot.remote_exports())
         .unwrap_or_default();
     oop::with_live_model(root, context, |snapshot, model, path| {
-        let (facts, sites) = class_source_sites(model, root);
-        let index = snapshot.class_index_for_presentation(path, &facts, root, model);
-        for decl in declarations(root, model, &facts, &sites, &index, path) {
+        let live;
+        let (facts, sites) = match snapshot.tracked_hover_class_source(path, root, model) {
+            Some(tracked) => tracked,
+            None => {
+                live = class_source_sites(model, root);
+                &live
+            }
+        };
+        let index = snapshot.class_index_for_presentation(path, facts, root, model);
+        for decl in declarations(root, model, facts, sites, &index, path) {
             if decl.selection == range || decl.binding == Some(range) {
                 return Some((range, format!("{} · `{}`", decl.detail, decl.name)));
             }
         }
-        if let Some((_, name, detail)) = source_role(&index, path, &sites, range) {
+        if let Some((_, name, detail)) = source_role(&index, path, sites, range) {
             return Some((range, format!("{detail} · `{name}`")));
         }
 
-        let read = EditorRead::new(&index, root, model, path, indexed, &remote);
+        let editor_facts = snapshot.tracked_editor_class_facts(path, root, model);
+        let read =
+            EditorRead::with_facts(&index, root, model, path, indexed, &remote, editor_facts);
         let value = SyntaxElement::Token(token.clone());
         let binary = token.parent().and_then(BinaryExpr::cast);
         let (label, sig, help) = if let Some(binary) = &binary

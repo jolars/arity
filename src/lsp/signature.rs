@@ -77,7 +77,8 @@ fn signature_help_in(
         .unwrap_or_default();
     let (help, masked) = oop::with_live_model(root, context, |snapshot, model, path| {
         let index = snapshot.class_index_for_signature(path, root, model);
-        let read = EditorRead::new(&index, root, model, path, indexed, &remote);
+        let facts = snapshot.tracked_editor_class_facts(path, root, model);
+        let read = EditorRead::with_facts(&index, root, model, path, indexed, &remote, facts);
         let help = read
             .callable(&call)
             .and_then(|callable| help_for_callable(&call, offset, callable, indexed));

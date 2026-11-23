@@ -384,7 +384,7 @@ pub enum ClassOccurrence {
     },
 }
 
-struct Extracted {
+pub(crate) struct Extracted {
     owners: HashMap<TextRange, ClassOwner>,
     facts: FileClassFacts,
     locations: Vec<ClassLocation>,
@@ -409,6 +409,21 @@ impl Extracted {
                 .partition_point(|range| range.end() <= offset),
         }
     }
+}
+
+// The editor projection stores ranges and owned facts, with no salsa IDs or
+// red syntax nodes. Its ranges change with the tree, and no downstream query
+// depends on this memo, so there is no need to compare successive results.
+#[salsa::tracked(returns(ref), no_eq, unsafe(non_salsa_values), lru = 16)]
+pub(crate) fn editor_class_facts(
+    db: &dyn crate::incremental::IncrementalDb,
+    file: crate::incremental::SourceFile,
+) -> std::sync::Arc<Extracted> {
+    std::sync::Arc::new(extract(
+        crate::incremental::semantic_model(db, file),
+        &crate::incremental::parsed_tree_root(db, file),
+        false,
+    ))
 }
 
 pub fn file_class_defs(model: &SemanticModel, root: &SyntaxNode) -> FileClassFacts {
