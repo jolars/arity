@@ -204,7 +204,8 @@ impl Cache {
     }
 }
 
-/// Write atomically: write to a sibling temp file, then rename into place.
+/// Write atomically: stage the file on the same filesystem, then rename it.
+#[cfg(not(windows))]
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let dir = path.parent().ok_or(CacheError::NoCacheDir)?;
     let mut tmp =
@@ -215,6 +216,18 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     tmp.persist(path)
         .map_err(|e| CacheError::Io(e.to_string()))?;
     Ok(())
+}
+
+#[cfg(windows)]
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    let dir = path.parent().ok_or(CacheError::NoCacheDir)?;
+    let io_error = |error: std::io::Error| CacheError::Io(error.to_string());
+    let staging = tempfile::tempdir_in(dir).map_err(io_error)?;
+    let staged = staging.path().join("data");
+    std::fs::write(&staged, bytes).map_err(io_error)?;
+    // Rust's rename can replace a destination held open by a lazy reader.
+    // The temporary directory cleans up the staged file if the rename fails.
+    std::fs::rename(staged, path).map_err(io_error)
 }
 
 #[cfg(test)]
