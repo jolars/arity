@@ -62,6 +62,9 @@ pub struct ClassIndex {
     pub supertypes: BTreeMap<ClassId, BTreeSet<ClassId>>,
     pub subtypes: BTreeMap<ClassId, BTreeSet<ClassId>>,
     files: BTreeMap<PathBuf, ClassFile>,
+    /// Exact lexical names mapped to their defining files. Visibility and
+    /// source order still come from the scope of each lookup.
+    exporters: Arc<BTreeMap<String, Vec<PathBuf>>>,
     /// Keep the shared scope so arbitrary live reads can resolve on demand,
     /// without a file-by-declaration-name Cartesian product of cached results.
     scope: Arc<ProjectScope>,
@@ -338,6 +341,16 @@ impl ClassIndex {
             s3_origins: s3_registry::S3LookupOrigins::build(resolution),
             ..Self::default()
         };
+        let mut exporters = BTreeMap::<_, Vec<_>>::new();
+        for file in index.files.values() {
+            for name in file.exports.iter() {
+                exporters
+                    .entry(name.clone())
+                    .or_default()
+                    .push(file.path.clone());
+            }
+        }
+        index.exporters = Arc::new(exporters);
         index.namespace = namespace::NamespaceVisibility::build(&index.files, resolution);
         for file in index.files.values() {
             if resolution.scope.for_file(&file.path).resolution_incomplete
@@ -810,55 +823,42 @@ impl ClassIndex {
         name: &str,
         in_function: bool,
     ) -> BTreeSet<PathBuf> {
-        self.files.get(path).map_or_else(BTreeSet::new, |file| {
-            definition_files(file, name, in_function, &self.files, &self.scope)
-        })
-    }
-}
-
-fn definition_files(
-    file: &ClassFile,
-    name: &str,
-    in_function: bool,
-    files: &BTreeMap<PathBuf, ClassFile>,
-    scope: &ProjectScope,
-) -> BTreeSet<PathBuf> {
-    let visible: BTreeSet<_> = scope
-        .sees(&file.path)
-        .iter()
-        .filter(|path| {
-            files
-                .get(*path)
-                .is_some_and(|file| file.exports.contains(name))
-        })
-        .map(Path::to_path_buf)
-        .collect();
-    if scope.for_file(&file.path).resolution_incomplete {
-        return BTreeSet::new();
-    }
-    let read = if in_function {
-        match scope.final_scope_binding(&file.path, name) {
-            ReadSite::Bound(path) => ReadBinding::Resolved(path),
-            ReadSite::Unbound => ReadBinding::Unresolved,
-            ReadSite::Unknown => ReadBinding::OrderUnknown,
+        let (Some(file), Some(exporters)) = (self.files.get(path), self.exporters.get(name)) else {
+            return BTreeSet::new();
+        };
+        let path = file.path.as_path();
+        if self.scope.for_file(path).resolution_incomplete {
+            return BTreeSet::new();
         }
-    } else {
-        scope.top_level_read_binding(&file.path, name)
-    };
-    match read {
-        ReadBinding::Resolved(path) => visible
-            .contains(&path)
-            .then_some(path)
-            .into_iter()
-            .collect(),
-        ReadBinding::OrderUnknown => BTreeSet::new(),
-        ReadBinding::Unresolved => visible
-            .into_iter()
-            .filter(|path| {
-                file.package_root.is_some() && files[path].package_root == file.package_root
-            })
-            .collect(),
-        ReadBinding::NoTopLevelRead => visible,
+        let seen = self.scope.sees(path);
+        let mut visible = exporters
+            .iter()
+            .filter(|candidate| seen.contains(candidate));
+        let read = if in_function {
+            match self.scope.final_scope_binding(path, name) {
+                ReadSite::Bound(path) => ReadBinding::Resolved(path),
+                ReadSite::Unbound => ReadBinding::Unresolved,
+                ReadSite::Unknown => ReadBinding::OrderUnknown,
+            }
+        } else {
+            self.scope.top_level_read_binding(path, name)
+        };
+        match read {
+            ReadBinding::Resolved(path) => visible
+                .any(|candidate| *candidate == path)
+                .then_some(path)
+                .into_iter()
+                .collect(),
+            ReadBinding::OrderUnknown => BTreeSet::new(),
+            ReadBinding::Unresolved => visible
+                .filter(|candidate| {
+                    file.package_root.is_some()
+                        && self.files[*candidate].package_root == file.package_root
+                })
+                .cloned()
+                .collect(),
+            ReadBinding::NoTopLevelRead => visible.cloned().collect(),
+        }
     }
 }
 

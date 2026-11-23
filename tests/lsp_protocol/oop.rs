@@ -718,7 +718,8 @@ fn generic_references_follow_workspace_aliases_in_live_buffers() {
     let generic = r_dir.join("generic.R");
     let caller = r_dir.join("caller.R");
     let source = "probe <- function(x) UseMethod('probe')\nalias <- probe\n";
-    let calls = "run <- function() {\n  alias(1)\n  alias(2)\n  alternate(3)\n}\n";
+    let calls = "run <- function() {\n  alias(1)\n  alias(2)\n  alternate(3)\n}\n\
+                 shadow <- function(alias, alternate) {\n  alias(4)\n  alternate(5)\n}\n";
     fs::write(&generic, source).unwrap();
     fs::write(&caller, calls).unwrap();
     let generic_uri = path_uri(&generic);

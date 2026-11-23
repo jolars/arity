@@ -206,34 +206,31 @@ impl ClassIndex {
         if self.incomplete.contains(path) {
             return candidates;
         }
-        let sources = reference
-            .by_binding
-            .then(|| self.definition_files(path, name, in_function));
         let local_count = candidates.len();
-        candidates.extend(
-            self.scope
-                .sees(path)
-                .iter()
-                .filter(|candidate| {
-                    sources
-                        .as_ref()
-                        .is_none_or(|sources| sources.contains(*candidate))
-                })
-                .filter_map(|path| self.files.get(path))
-                .flat_map(top_level_matches),
-        );
-        // Preserve local-first, source-path order without sorting every visible
-        // file for candidates that usually occur in only a handful of them.
-        candidates[local_count..].sort_by(|left, right| left.path.cmp(&right.path));
+        let seen = self.scope.sees(path);
+        if reference.by_binding {
+            let sources = self.definition_files(path, name, in_function);
+            candidates.extend(
+                sources
+                    .iter()
+                    .filter_map(|path| self.files.get(path))
+                    .flat_map(top_level_matches),
+            );
+        } else {
+            candidates.extend(
+                seen.iter()
+                    .filter_map(|path| self.files.get(path))
+                    .flat_map(top_level_matches),
+            );
+            // Preserve local-first, source-path order.
+            candidates[local_count..].sort_by(|left, right| left.path.cmp(&right.path));
+        }
         if candidates.is_empty()
-            && !std::iter::once(file)
-                .chain(
-                    self.scope
-                        .sees(path)
-                        .iter()
-                        .filter_map(|path| self.files.get(path)),
-                )
-                .any(|file| file.exports.contains(name))
+            && !file.exports.contains(name)
+            && !self
+                .exporters
+                .get(name)
+                .is_some_and(|paths| paths.iter().any(|path| seen.contains(path)))
         {
             for target in self
                 .namespace
