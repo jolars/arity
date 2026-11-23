@@ -101,7 +101,9 @@ else
 
     mkdir -p "$OUT_DIR"
     log ">> Recording (perf -F $FREQ, call-graph fp)..."
-    perf record --quiet --call-graph fp -F "$FREQ" -o "$DATA" -- "$BIN" "${TARGET_ARGS[@]}"
+    # At perf_event_paranoid=2 the kernel also requires user-only callchains.
+    perf record --quiet -e cycles:u --user-callchains --call-graph fp \
+        -F "$FREQ" -o "$DATA" -- "$BIN" "${TARGET_ARGS[@]}"
     log ">> Recorded to $DATA"
 fi
 
