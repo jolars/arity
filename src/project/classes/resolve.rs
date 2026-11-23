@@ -741,8 +741,11 @@ impl ClassIndex {
         }
     }
 
-    pub(crate) fn namespace_generator_targets(&self, path: &Path, name: &str) -> Vec<ClassId> {
-        self.generator_targets(path, name, &mut BTreeSet::new())
+    pub(crate) fn namespace_generator_targets(&self, file: &ClassFile, name: &str) -> Vec<ClassId> {
+        if file.facts.generators.is_empty() && file.facts.generator_aliases.is_empty() {
+            return Vec::new();
+        }
+        self.generator_targets(&file.path, name, &mut BTreeSet::new())
     }
 
     fn generator_targets(

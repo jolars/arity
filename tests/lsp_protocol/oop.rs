@@ -515,12 +515,14 @@ impl(1)
 other <- function(x) x
 other(1)
 alone <- function(x) x
+Generator <- R6::R6Class("Example")
 "#;
     let saved = "exportClasses(Existing)\nS3method(public, example, impl)\nS3method(public, single, alone)\n";
-    let live = saved.replace("Existing", "Alternate");
+    let live = saved.replace("Existing", "Alternate") + "export(Exposed)\n";
     fs::create_dir(path.parent().unwrap()).unwrap();
     fs::write(dir.path().join("DESCRIPTION"), super::COMPLETE_DESCRIPTION).unwrap();
     fs::write(&path, source).unwrap();
+    fs::write(path.with_file_name("aliases.R"), "Exposed <- Generator\n").unwrap();
     fs::write(&namespace_path, saved).unwrap();
     let uri = path_uri(&path);
     let namespace_uri = path_uri(&namespace_path);
@@ -529,6 +531,17 @@ alone <- function(x) x
     harness.recv_publish_for(&uri, 1);
     harness.did_open(&namespace_uri, &live, 1);
     harness.recv_publish_for(&namespace_uri, 1);
+
+    let definition = request(
+        &mut harness,
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": namespace_uri },
+            "position": position(&live, live.find("Exposed").unwrap() + 1)
+        }),
+    );
+    assert_eq!(definition["uri"], uri, "{definition}");
+    assert_eq!(definition["range"]["start"]["line"], 8, "{definition}");
 
     let references = |harness: &mut Harness, uri: &str, text: &str, name: &str| {
         request(

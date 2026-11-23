@@ -241,7 +241,7 @@ fn collect_sites(
                 if !methods {
                     sites.extend(
                         index
-                            .namespace_generator_targets(&file.path, &name)
+                            .namespace_generator_targets(file, &name)
                             .into_iter()
                             .map(|id| (range, Identity::Class(id))),
                     );
