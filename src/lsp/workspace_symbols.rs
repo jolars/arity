@@ -1,4 +1,50 @@
 use super::*;
+use crate::incremental::{
+    IncrementalDb, SourceFile, file_class_source, parsed_tree_root, semantic_model,
+};
+use crate::project::project_classes;
+
+#[derive(PartialEq, Eq)]
+pub(crate) struct WorkspaceObjectSymbol {
+    name: String,
+    kind: LspSymbolKind,
+    selection: TextRange,
+    binding: Option<TextRange>,
+    container: Option<String>,
+}
+
+/// Query-independent presentation for a single workspace file. Keep these
+/// ranges downstream of the class graph so moving a declaration refreshes
+/// its location without rebuilding the graph.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn workspace_symbol_declarations(
+    db: &dyn IncrementalDb,
+    source: SourceFile,
+    path: PathBuf,
+) -> Vec<WorkspaceObjectSymbol> {
+    let index = project_classes(db);
+    let Some(file) = index.file(&path) else {
+        return Vec::new();
+    };
+    oop::presentation::declarations(
+        &parsed_tree_root(db, source),
+        semantic_model(db, source),
+        &file.facts,
+        &file_class_source(db, source).1,
+        index,
+        &path,
+    )
+    .into_iter()
+    .filter(|decl| decl.top_level)
+    .map(|decl| WorkspaceObjectSymbol {
+        name: decl.name,
+        kind: decl.kind,
+        selection: decl.selection,
+        binding: decl.binding,
+        container: decl.container,
+    })
+    .collect()
+}
 
 /// Resolve `workspace/symbol`: the workspace's top-level definitions whose name
 /// fuzzily matches `query`, as modern [`WorkspaceSymbol`]s carrying a full
@@ -22,7 +68,7 @@ pub(crate) fn workspace_symbols_via_db(
             .map(|(_, _, path, range)| (path.as_path(), *range))
             .collect();
         let mut replaced_bindings = std::collections::HashSet::new();
-        let index = snapshot.class_index();
+        let index = snapshot.class_index_ref();
         let mut objects = Vec::new();
         for file in index.oop_files().filter(|file| {
             !file.facts.declarations.is_empty()
@@ -35,14 +81,7 @@ pub(crate) fn workspace_symbols_via_db(
             let Some(source) = snapshot.lookup_file(path) else {
                 continue;
             };
-            let root = snapshot.parsed_tree(source);
-            let model = snapshot.semantic_model(source);
-            let sites = snapshot.class_source_sites(source);
-            for decl in
-                oop::presentation::declarations(&root, model, &file.facts, sites, &index, path)
-                    .into_iter()
-                    .filter(|decl| decl.top_level)
-            {
+            for decl in snapshot.workspace_symbol_declarations(source, path) {
                 let binding_matched = decl.binding.is_some_and(|binding| {
                     replaced_bindings.insert((path.clone(), binding));
                     matching_bindings.contains(&(path.as_path(), binding))
@@ -54,10 +93,10 @@ pub(crate) fn workspace_symbols_via_db(
                     && let Some(location) = location_in(snapshot, path, decl.selection, encoding)
                 {
                     objects.push(WorkspaceSymbol {
-                        name: decl.name,
+                        name: decl.name.clone(),
                         kind: decl.kind,
                         tags: None,
-                        container_name: decl.container,
+                        container_name: decl.container.clone(),
                         location: OneOf::Left(location),
                         data: None,
                     });
@@ -169,6 +208,27 @@ mod tests {
             )),
             ["read"]
         );
+    }
+
+    #[test]
+    fn workspace_search_refreshes_oop_locations_after_edit() {
+        let path = ws_path("a.R");
+        let mut db = IncrementalDatabase::default();
+        let source = "G <- R6::R6Class('Display', public = list(value = 1))";
+        let file = db.upsert_file(&path, source);
+        db.set_workspace_members(vec![file], vec![ws_root()]);
+
+        for (line, text) in [source.to_owned(), format!("\n{source}")]
+            .into_iter()
+            .enumerate()
+        {
+            db.upsert_file(&path, text);
+            let snapshot = db.snapshot();
+            let symbols =
+                workspace_symbols_via_db(&snapshot, "Display value", PositionEncoding::Utf16);
+            assert_eq!(names(&symbols), ["value"]);
+            assert_eq!(location_of(&symbols, "value").range.start.line, line as u32);
+        }
     }
 
     #[test]

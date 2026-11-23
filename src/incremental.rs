@@ -942,7 +942,7 @@ pub fn file_class_defs(db: &dyn IncrementalDb, file: SourceFile) -> FileClassFac
 /// Current spans for object system navigation. Keep them separate from the range-free
 /// class facts so moving a site does not invalidate the project class graph.
 #[salsa::tracked(returns(ref))]
-fn file_class_source(
+pub(crate) fn file_class_source(
     db: &dyn IncrementalDb,
     file: SourceFile,
 ) -> (FileClassFacts, crate::project::classes::ClassSourceSites) {
@@ -2166,6 +2166,14 @@ impl Analysis {
 
     pub(crate) fn class_index_ref(&self) -> &ClassIndex {
         project_classes(&self.0)
+    }
+
+    pub(crate) fn workspace_symbol_declarations(
+        &self,
+        file: SourceFile,
+        path: &Path,
+    ) -> &[crate::lsp::WorkspaceObjectSymbol] {
+        crate::lsp::workspace_symbol_declarations(&self.0, file, path.to_path_buf())
     }
 
     pub(crate) fn tracked_class_source(
