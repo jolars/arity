@@ -1,13 +1,8 @@
 //! On-disk cache schema for the R-introspection index.
 //!
-//! One [`PackageIndex`] is serialized to `{package}@{version}.json` under the
-//! cache directory; a single [`IndexMeta`] (`meta.json`) records which version
-//! of each package is currently indexed. Rich entries can include formals,
-//! help, and object metadata from installed packages.
-//!
-//! The thin name-list view used by the [`SymbolProvider`](crate::semantic::symbols::SymbolProvider)
-//! is derived in memory from [`PackageIndex::symbols`] at load time; there is
-//! no separate names file.
+//! Each package file stores independent JSON sections for export membership,
+//! symbol offsets, and the full [`PackageIndex`]. A single [`IndexMeta`]
+//! (`meta.json`) records which version of each package is currently indexed.
 
 use std::collections::BTreeMap;
 
@@ -16,7 +11,7 @@ use smol_str::SmolStr;
 
 /// Bump when the on-disk shape changes incompatibly or cached metadata needs
 /// to be reharvested. Older versions are ignored and rebuilt.
-pub const SCHEMA_VERSION: u32 = 6;
+pub const SCHEMA_VERSION: u32 = 7;
 
 /// Everything harvested for a single installed package at a single version.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,12 +243,8 @@ pub struct Formal {
     pub default: Option<String>,
 }
 
-/// Names-only projection of a [`PackageIndex`], deserialized from the same
-/// `{pkg}@{ver}.json` file. For consumers that need export *membership* but
-/// none of the rich payload (linting: `resolve_origin`/`package_indexed`),
-/// deserializing this instead of [`PackageIndex`] skips formals, help bodies,
-/// and object metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// Names and attachment information stored in the first section of a package file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageExports {
     /// Must equal [`SCHEMA_VERSION`]; a mismatch means "treat as absent".
     pub schema_version: u32,
@@ -266,8 +257,8 @@ pub struct PackageExports {
     pub symbols: Vec<ExportEntry>,
 }
 
-/// The membership fields of a [`SymbolEntry`]; everything else is skipped.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// The membership fields of a [`SymbolEntry`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExportEntry {
     pub name: SmolStr,
     pub exported: bool,

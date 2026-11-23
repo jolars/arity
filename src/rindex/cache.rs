@@ -5,7 +5,7 @@
 //! ```text
 //! {root}/index/v{SCHEMA_VERSION}/
 //!     meta.json              # IndexMeta: package -> indexed version
-//!     {pkg}@{ver}.json        # one PackageIndex each
+//!     {pkg}@{ver}.index       # export, directory, and rich JSON sections
 //! ```
 //!
 //! A schema bump moves everything under a fresh `v{N}/`; stale `v*/` siblings
@@ -18,6 +18,7 @@ use smol_str::SmolStr;
 
 use rayon::prelude::*;
 
+use super::package_file::{self, PackageFile};
 use crate::rindex::schema::{IndexMeta, PackageExports, PackageIndex, SCHEMA_VERSION};
 
 #[derive(Debug)]
@@ -91,8 +92,8 @@ impl Cache {
         self.index_dir().join("meta.json")
     }
 
-    fn package_path(&self, package: &str, version: &str) -> PathBuf {
-        self.index_dir().join(format!("{package}@{version}.json"))
+    pub(super) fn package_path(&self, package: &str, version: &str) -> PathBuf {
+        self.index_dir().join(format!("{package}@{version}.index"))
     }
 
     /// Read the metadata file, returning a fresh empty `IndexMeta` if it is
@@ -122,32 +123,26 @@ impl Cache {
         atomic_write(&self.meta_path(), &json)
     }
 
+    pub(super) fn open_package(&self, package: &str, version: &str) -> Option<PackageFile> {
+        PackageFile::open(std::fs::File::open(self.package_path(package, version)).ok()?)
+    }
+
     /// Read a single package index by name + version, if present and current.
     pub fn read_package(&self, package: &str, version: &str) -> Option<PackageIndex> {
-        let bytes = std::fs::read(self.package_path(package, version)).ok()?;
-        let idx = serde_json::from_slice::<PackageIndex>(&bytes).ok()?;
-        (idx.schema_version == SCHEMA_VERSION).then_some(idx)
+        self.open_package(package, version)?.package()
     }
 
-    /// Read only the export-membership view of a package index (see
-    /// [`PackageExports`]): same file, same staleness rule, but the rich
-    /// payload (formals + help) is skipped during deserialization.
+    /// Read the export section without loading the symbol directory or rich data.
     pub fn read_package_exports(&self, package: &str, version: &str) -> Option<PackageExports> {
-        let bytes = std::fs::read(self.package_path(package, version)).ok()?;
-        let idx = serde_json::from_slice::<PackageExports>(&bytes).ok()?;
-        (idx.schema_version == SCHEMA_VERSION).then_some(idx)
+        self.open_package(package, version)?.exports()
     }
 
-    /// Write a single package index file (`pkg@ver.json`) **without** touching
-    /// `meta.json`. Safe to call concurrently for distinct packages: each writes
-    /// its own path (via a uniquely-named temp file), and the only shared
-    /// mutation — `meta.json` — is deferred to [`record_indexed`]. Compact JSON,
-    /// not pretty: these files are large (they carry help bodies) and only ever
-    /// machine-read, so indentation just bloats them.
+    /// Publish all views of a package in one atomic replacement. Batch writers
+    /// publish `meta.json` separately through [`Self::record_indexed`].
     pub fn write_package_file(&self, idx: &PackageIndex) -> Result<()> {
         std::fs::create_dir_all(self.index_dir()).map_err(|e| CacheError::Io(e.to_string()))?;
-        let json = serde_json::to_vec(idx).map_err(|e| CacheError::Serde(e.to_string()))?;
-        atomic_write(&self.package_path(&idx.package, &idx.version), &json)
+        let data = package_file::encode(idx)?;
+        atomic_write(&self.package_path(&idx.package, &idx.version), &data)
     }
 
     /// Fold newly-indexed `(package, version)` pairs into `meta.json` in one

@@ -15,6 +15,7 @@ use std::sync::{LazyLock, OnceLock};
 use smol_str::SmolStr;
 
 use crate::rindex::cache::Cache;
+use crate::rindex::package_file::PackageFile;
 use crate::rindex::remote::RemoteExports;
 use crate::rindex::schema::{PackageExports, PackageIndex, SymbolEntry};
 use crate::semantic::s7::S7Version;
@@ -271,8 +272,9 @@ struct PackageSlot {
     /// answerable ([`IndexedProvider::version`]) without any file read.
     version: SmolStr,
     membership: OnceLock<Option<Membership>>,
+    file: OnceLock<Option<PackageFile>>,
     /// The full harvested index (formals + help bodies), filled per package on
-    /// the first rich question. Keeping this per-slot is what lets the language
+    /// the first request for the whole package. Keeping this per-slot is what lets the language
     /// server hold the lazy load: resident rich data scales with the packages a
     /// session actually asks about, not with everything ever harvested.
     index: OnceLock<Option<PackageIndex>>,
@@ -289,6 +291,7 @@ impl PackageSlot {
         PackageSlot {
             version,
             membership: membership_cell,
+            file: OnceLock::new(),
             index: index_cell,
         }
     }
@@ -323,11 +326,8 @@ impl IndexedProvider {
 
     /// Note which packages the cache holds, deferring every package file to the
     /// first question asked about that package. Construction reads `meta.json`
-    /// and nothing else; a package's membership fills on the first resolution
-    /// question about it and its rich per-symbol data
-    /// ([`lookup`](Self::lookup)/[`package`](Self::package)) on the first rich
-    /// question, so resident data scales with the packages a session actually
-    /// asks about, not with everything ever harvested (issue #116).
+    /// and nothing else. The export list, individual symbols, and full index
+    /// fill on demand from the same open package file.
     ///
     /// This is how both the lint CLI and the language server load the cache.
     /// It works because every consumer asks per package: resolution
@@ -348,6 +348,7 @@ impl IndexedProvider {
                     PackageSlot {
                         version,
                         membership: OnceLock::new(),
+                        file: OnceLock::new(),
                         index: OnceLock::new(),
                     },
                 )
@@ -368,16 +369,11 @@ impl IndexedProvider {
         let slot = self.packages.get(package)?;
         slot.membership
             .get_or_init(|| {
-                // A rich fill that already read the file answers membership
-                // too; re-reading would double the work and could disagree
-                // with it if the file has since changed on disk.
+                // A resident full index also answers membership.
                 if let Some(index) = slot.index.get() {
                     return index.as_ref().map(Membership::of_index);
                 }
-                let exports = self
-                    .source
-                    .as_ref()?
-                    .read_package_exports(package, &slot.version)?;
+                let exports = self.package_file(package, slot)?.exports()?;
                 Some(Membership::from(exports))
             })
             .as_ref()
@@ -418,14 +414,21 @@ impl IndexedProvider {
         self.packages.get(package)?.index.get()?.as_ref()
     }
 
-    /// The rich entry for `pkg::name`, if indexed. Under the lazy load the
-    /// package file is read on the first rich question about that package.
+    fn package_file<'a>(&self, package: &str, slot: &'a PackageSlot) -> Option<&'a PackageFile> {
+        slot.file
+            .get_or_init(|| self.source.as_ref()?.open_package(package, &slot.version))
+            .as_ref()
+    }
+
+    /// The rich entry for `pkg::name`, if indexed. A lazy lookup decodes only
+    /// that symbol when the full index is not already resident.
     pub fn lookup(&self, package: &str, name: &str) -> Option<&SymbolEntry> {
         let name = unbacktick(name);
-        self.package(package)?
-            .symbols
-            .iter()
-            .find(|s| s.name == name)
+        let slot = self.packages.get(package)?;
+        if let Some(Some(index)) = slot.index.get() {
+            return index.symbols.iter().find(|symbol| symbol.name == name);
+        }
+        self.package_file(package, slot)?.lookup(name)
     }
 
     /// The full harvested index for a package, filling it from the cache on
@@ -437,11 +440,9 @@ impl IndexedProvider {
         let slot = self.packages.get(package)?;
         let index = slot
             .index
-            .get_or_init(|| self.source.as_ref()?.read_package(package, &slot.version))
+            .get_or_init(|| self.package_file(package, slot)?.package())
             .as_ref();
-        // Seed membership off the same read: the common attached-then-hovered
-        // package parses its file once instead of twice, and the two views
-        // cannot disagree about a file that changed between two reads.
+        // Seed membership directly when this read was the first use.
         if let Some(idx) = index {
             let _ = slot.membership.set(Some(Membership::of_index(idx)));
         }
@@ -883,7 +884,7 @@ mod tests {
         // Construction read `meta.json` only. Deleting a package file *after*
         // construction therefore still changes what the provider can answer —
         // which an eager load could not do.
-        std::fs::remove_file(cache.index_dir().join("tibble@1.0.json")).unwrap();
+        std::fs::remove_file(cache.package_path("tibble", "1.0")).unwrap();
         assert!(lazy.exports("dplyr", "across"));
         // A package `meta.json` names but whose file cannot be read is not
         // indexed, exactly as under the eager load: `package_indexed` must not
@@ -903,7 +904,7 @@ mod tests {
         let lazy = IndexedProvider::from_cache_lazy(&cache);
         assert!(lazy.exports("dplyr", "across"));
         // Once filled, the answer is stable: a second query re-reads nothing.
-        std::fs::remove_file(cache.index_dir().join("dplyr@1.0.json")).unwrap();
+        std::fs::remove_file(cache.package_path("dplyr", "1.0")).unwrap();
         assert!(lazy.exports("dplyr", "across"));
         assert!(lazy.has_package("dplyr"));
     }
@@ -996,7 +997,7 @@ mod tests {
         let lazy = IndexedProvider::from_cache_lazy(&cache);
         // Deleting tibble's file after construction proves construction read
         // `meta.json` only; dplyr's rich data is still served on demand.
-        std::fs::remove_file(cache.index_dir().join("tibble@1.0.json")).unwrap();
+        std::fs::remove_file(cache.package_path("tibble", "1.0")).unwrap();
         let entry = lazy.lookup("dplyr", "filter").expect("rich entry");
         assert_eq!(
             entry.help.as_ref().and_then(|h| h.title.as_deref()),
@@ -1012,8 +1013,61 @@ mod tests {
         assert!(lazy.lookup("tibble", "tribble").is_none());
 
         // Once filled, the payload is stable: a second query re-reads nothing.
-        std::fs::remove_file(cache.index_dir().join("dplyr@1.0.json")).unwrap();
+        std::fs::remove_file(cache.package_path("dplyr", "1.0")).unwrap();
         assert!(lazy.lookup("dplyr", "filter").is_some());
+    }
+
+    #[test]
+    fn symbol_lookup_keeps_the_rest_of_the_package_unloaded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().to_path_buf());
+        let index = pkg("dplyr", &["filter", "across"]);
+        cache.write_package(&index).unwrap();
+
+        let lazy = IndexedProvider::from_cache_lazy(&cache);
+        let entry = lazy.lookup("dplyr", "across").unwrap();
+        assert_eq!(entry, &index.symbols[1]);
+        assert!(std::ptr::eq(entry, lazy.lookup("dplyr", "across").unwrap()));
+        assert!(lazy.package_if_resident("dplyr").is_none());
+        assert!(lazy.exports("dplyr", "filter"));
+        assert_eq!(lazy.package("dplyr"), Some(&index));
+    }
+
+    #[test]
+    fn lazy_reads_pin_the_same_package_generation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().to_path_buf());
+        let original = pkg("dplyr", &["old"]);
+        let replacement = pkg("dplyr", &["new"]);
+        cache.write_package(&original).unwrap();
+        let before = IndexedProvider::from_cache_lazy(&cache);
+        assert!(before.exports("dplyr", "old"));
+
+        cache.write_package(&replacement).unwrap();
+        let after = IndexedProvider::from_cache_lazy(&cache);
+        assert_eq!(before.lookup("dplyr", "old"), original.symbols.first());
+        assert_eq!(before.package("dplyr"), Some(&original));
+        assert!(before.lookup("dplyr", "new").is_none());
+        assert_eq!(after.lookup("dplyr", "new"), replacement.symbols.first());
+        assert!(!after.exports("dplyr", "old"));
+    }
+
+    #[test]
+    fn projected_reads_skip_invalid_unrelated_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().to_path_buf());
+        let index = pkg("dplyr", &["escaped\"name", "other"]);
+        cache.write_package(&index).unwrap();
+        let path = cache.package_path("dplyr", "1.0");
+        let mut bytes = std::fs::read(&path).unwrap();
+        *bytes.last_mut().unwrap() = b'!';
+        std::fs::write(path, bytes).unwrap();
+
+        let lazy = IndexedProvider::from_cache_lazy(&cache);
+        assert!(lazy.exports("dplyr", "other"));
+        assert_eq!(lazy.lookup("dplyr", "escaped\"name"), index.symbols.first());
+        assert!(lazy.package("dplyr").is_none());
+        assert_eq!(lazy.lookup("dplyr", "other"), index.symbols.last());
     }
 
     #[test]
@@ -1029,7 +1083,7 @@ mod tests {
         // Deleting the file after the rich fill proves membership is answered
         // from that same read rather than a second one — so the two views also
         // cannot disagree about a file that changed between two reads.
-        std::fs::remove_file(cache.index_dir().join("dplyr@1.0.json")).unwrap();
+        std::fs::remove_file(cache.package_path("dplyr", "1.0")).unwrap();
         assert!(lazy.has_package("dplyr"));
         assert!(lazy.exports("dplyr", "across"));
     }
@@ -1046,7 +1100,7 @@ mod tests {
         // Deleting the file up front proves the peeks fault nothing in:
         // dependency-field completion labels every harvested package at once
         // and must not deserialize the whole cache on the read pool.
-        std::fs::remove_file(cache.index_dir().join("dplyr@1.0.json")).unwrap();
+        std::fs::remove_file(cache.package_path("dplyr", "1.0")).unwrap();
         assert_eq!(lazy.version("dplyr").map(SmolStr::as_str), Some("1.0"));
         assert!(lazy.package_if_resident("dplyr").is_none());
         assert!(lazy.version("absent").is_none());
