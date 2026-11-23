@@ -1238,14 +1238,32 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
 
 #### Package index first-use latency
 
-- [ ] Investigate rkyv for the local package index. Compare a validated rkyv
-  symbol directory and a queryable full archive against the current split JSON
-  index and a flat, sorted directory. Measure first hover and signature help in
-  fresh LSP sessions, alongside lookup time, cache size, and memory use.
-  In a loader-only probe on base, stats, and vctrs, the rkyv directory beat the
-  flat directory by 0.7–5.6 µs with the OS file cache warm. Keeping the help
-  records in JSON captured over 90% of the lookup gain from encoding those
-  records in rkyv too.
+- [x] Compare split JSON, a flat sorted directory, a validated rkyv directory,
+  and a queryable rkyv archive with typed symbol records. Across 24 paired
+  fresh LSP sessions per case with a warm OS file cache, flat and rkyv
+  directories cut first provider lookups from 37–183 µs to 15–24 µs.
+  Neither consistently improved first hover or signature help. Median
+  repeated lookups took 61–91 ns across all layouts.
+
+  The buffered archive cut first-request latency by 1.2–1.3 ms for
+  `base::mean` and 0.6 ms for `stats::lm` against JSON in the same binary.
+  `vctrs::vec_size` was within noise. In tidyr, the archive saved 1.0–1.3 ms
+  after diagnostics, which was within the variation of open-to-reply time.
+  The archive reduced the three package files from 3.40 MB to 3.03 MB and
+  added about 2 MiB of median post-reply RSS for base and vctrs. It kept
+  export membership and non-symbol metadata as JSON and paid the cost of
+  reading and validating all rich bytes on first use.
+
+  On `base::mean`, the baseline spends about 70% of request CPU cycles
+  building S3 lookup origins and 27% reading the whole installed package
+  for class-aware resolution. The archive cuts the whole-package share to
+  14–15%. Keep split JSON for now.
+
+- [ ] Measure a separate installed-class metadata projection. Route class-aware
+  hover and signature help through it so an ordinary function lookup can read
+  its own help without materializing unrelated symbol documentation. Compare
+  first-reply latency and post-reply RSS in fresh sessions, and verify that
+  installed class, generic, and method responses still match.
 
 #### The jarl gap (measured 2026-08-17)
 
