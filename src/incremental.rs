@@ -942,15 +942,14 @@ pub fn file_class_defs(db: &dyn IncrementalDb, file: SourceFile) -> FileClassFac
 /// Current spans for object system navigation. Keep them separate from the range-free
 /// class facts so moving a site does not invalidate the project class graph.
 #[salsa::tracked(returns(ref))]
-pub(crate) fn file_class_source_sites(
+fn file_class_source(
     db: &dyn IncrementalDb,
     file: SourceFile,
-) -> crate::project::classes::ClassSourceSites {
+) -> (FileClassFacts, crate::project::classes::ClassSourceSites) {
     crate::project::classes::class_source_sites(
         semantic_model(db, file),
         &parsed_tree_root(db, file),
     )
-    .1
 }
 
 /// Body-local callee origins, shared by repeated workspace reference requests.
@@ -963,6 +962,23 @@ pub(crate) fn file_body_class_lookups(
         semantic_model(db, file),
         &parsed_tree_root(db, file),
         true,
+    )
+}
+
+// Rename confirms body callees across the workspace. Retain the overlay for
+// repeated reads of a tracked file, with the same inputs as the live path.
+#[salsa::tracked(returns(ref), lru = 4)]
+fn class_index_for_rename(db: &dyn IncrementalDb, file: SourceFile, path: PathBuf) -> ClassIndex {
+    let root = parsed_tree_root(db, file);
+    crate::project::graph::build_class_index(
+        db,
+        Some(crate::project::graph::LiveClassFile {
+            path: &path,
+            facts: &file_class_source(db, file).0,
+            root: &root,
+            model: semantic_model(db, file),
+        }),
+        BodyClassLookups::Workspace,
     )
 }
 
@@ -2148,7 +2164,7 @@ impl Analysis {
         {
             Some((
                 file_class_defs(&self.0, file),
-                file_class_source_sites(&self.0, file),
+                &file_class_source(&self.0, file).1,
             ))
         } else {
             None
@@ -2292,11 +2308,15 @@ impl Analysis {
         )
     }
 
+    pub(crate) fn class_index_for_rename(&self, file: SourceFile, path: &Path) -> &ClassIndex {
+        class_index_for_rename(&self.0, file, path.to_path_buf())
+    }
+
     pub(crate) fn class_source_sites(
         &self,
         file: SourceFile,
     ) -> &crate::project::classes::ClassSourceSites {
-        file_class_source_sites(&self.0, file)
+        &file_class_source(&self.0, file).1
     }
 
     pub fn class_supertypes(&self, id: &ClassId) -> Vec<ClassId> {

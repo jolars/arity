@@ -493,13 +493,30 @@ pub(in crate::lsp) fn object_rename(
         );
     }
     salsa::Cancelled::catch(AssertUnwindSafe(|| {
-        let parsed = parse(buffer.text());
-        let root = parsed.cst;
+        let tracked = snapshot.lookup_file(&path).filter(|&file| {
+            snapshot.file_path(file) == Some(path.as_path())
+                && snapshot.file_text_is(file, &buffer.text_arc())
+        });
+        let (root, has_errors) = if let Some(file) = tracked {
+            (
+                snapshot.parsed_tree(file),
+                !snapshot.parse_diagnostics(file).is_empty(),
+            )
+        } else {
+            let parsed = parse(buffer.text());
+            (parsed.cst, !parsed.diagnostics.is_empty())
+        };
         let (token, value) = crate::project::classes::class_name_at(&root, offset)?;
         let old = spelling(&token)?;
         let new = new.unwrap_or(&old);
-        let model = snapshot.semantic_model_in(&path, &root);
-        let (facts, sites) = class_source_sites(&model, &root);
+        let (live_model, live_source);
+        let (model, sites, source) = if let Some(file) = tracked {
+            (snapshot.semantic_model(file), snapshot.class_source_sites(file), Ok(file))
+        } else {
+            live_model = snapshot.semantic_model_in(&path, &root);
+            live_source = class_source_sites(&live_model, &root);
+            (&live_model, &live_source.1, Err(&live_source.0))
+        };
         let range = value.text_range();
         let token_range = token.text_range();
         if !sites
@@ -513,8 +530,16 @@ pub(in crate::lsp) fn object_rename(
         {
             return None;
         }
-        let index = snapshot.class_index_with_body_lookups(&path, &facts, &root, &model, true);
-        let ids = identities(&index, &path, &root, &model, &sites, range, token_range);
+        let live_index;
+        let index = match source {
+            Ok(file) => snapshot.class_index_for_rename(file, &path),
+            Err(facts) => {
+                live_index =
+                    snapshot.class_index_with_body_lookups(&path, facts, &root, model, true);
+                &live_index
+            }
+        };
+        let ids = identities(index, &path, &root, model, sites, range, token_range);
         if ids.is_empty() {
             // The extractor records generic lookup candidates for ordinary identifiers.
             return sites
@@ -537,10 +562,10 @@ pub(in crate::lsp) fn object_rename(
             let [target] = ids.as_slice() else {
                 return None;
             };
-            if !parsed.diagnostics.is_empty() {
+            if has_errors {
                 return None;
             }
-            eligible(&index, target, &old, new)?;
+            eligible(index, target, &old, new)?;
             let renames_binding = match target {
                 Identity::Class(id) => index.declarations.get(id)?.declaration.binding.as_deref() == Some(&old),
                 Identity::Generic(id) => {
@@ -558,7 +583,7 @@ pub(in crate::lsp) fn object_rename(
                     return None;
                 }
             }
-            let derived = derived_methods(&index, target, &old, new)?;
+            let derived = derived_methods(index, target, &old, new)?;
             let new_method_prefix = match target {
                 Identity::Generic(id)
                     if old != new
@@ -601,8 +626,8 @@ pub(in crate::lsp) fn object_rename(
                             {
                                 reference.name == ClassName::Unknown
                                     || (reference.name == ClassName::Known(old.clone())
-                                        && resolve_generic_site(&index, path, site).is_empty()
-                                        && callee_confirmed(&index, path, site))
+                                        && resolve_generic_site(index, path, site).is_empty()
+                                        && callee_confirmed(index, path, site))
                             }
                             _ => false,
                         })
@@ -610,7 +635,7 @@ pub(in crate::lsp) fn object_rename(
                     return None;
                 }
                 if let Identity::Member(id) = target
-                    && unsupported_member_access(&index, path, root, model, id, &old)
+                    && unsupported_member_access(index, path, root, model, id, &old)
                 {
                     return None;
                 }
@@ -635,7 +660,7 @@ pub(in crate::lsp) fn object_rename(
                         continue;
                     }
                     let ids =
-                        identities(&index, path, root, model, sites, range, token.text_range());
+                        identities(index, path, root, model, sites, range, token.text_range());
                     let mut renamed = derived.iter().filter_map(|(id, before, after)| {
                         (*before == spelling && ids.contains(id)).then_some(after.as_str())
                     });
@@ -706,8 +731,8 @@ pub(in crate::lsp) fn object_rename(
             collect(
                 &path,
                 &root,
-                &model,
-                &sites,
+                model,
+                sites,
                 buffer.line_index(),
                 uri.clone(),
             )?;
@@ -731,7 +756,7 @@ pub(in crate::lsp) fn object_rename(
                 let parsed = crate::namespace::parse(text);
                 let root = parsed.document().syntax().clone();
                 let lines = LineIndex::new(text);
-                let sites = namespace::sites(&index, package, text);
+                let sites = namespace::sites(index, package, text);
                 for directive in parsed.document().directives() {
                     use crate::namespace::DirectiveKind;
                     let owner_package = index
@@ -865,7 +890,7 @@ pub(in crate::lsp) fn object_rename(
                 }
             }
             let (declaration, declaration_text) = if target.path() == path {
-                (target.definition(&model, &root)?, buffer.text_arc())
+                (target.definition(model, &root)?, buffer.text_arc())
             } else {
                 let file = snapshot.lookup_file(target.path())?;
                 (
