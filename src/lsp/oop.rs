@@ -28,6 +28,9 @@ pub(super) fn with_live_model<T>(
     let floor = context.and_then(|context| context.s7_floor);
     if let Some(ReadContext { snapshot, .. }) = context {
         let result = salsa::Cancelled::catch(AssertUnwindSafe(|| {
+            if let Some(model) = snapshot.tracked_semantic_model_for_tree(path, root, floor) {
+                return compute(snapshot, model, path);
+            }
             let model = snapshot.semantic_model_in_with_floor(path, root, floor);
             compute(snapshot, &model, path)
         }));
@@ -1424,6 +1427,45 @@ methods::setMethod("describe", "numeric", impl)
         };
         assert!(markdown.value.contains("size"));
         assert!(markdown.value.contains("label"));
+    }
+
+    #[test]
+    fn live_model_reuses_tracked_semantics_for_matching_tree_and_floor() {
+        let path = ws_path("point.R");
+        let source = "S7::`:=`(Point, S7::new_class())";
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(&path, source);
+        let snapshot = db.snapshot();
+        let root = snapshot.parsed_tree(file);
+        let context = ReadContext {
+            snapshot: &snapshot,
+            path: &path,
+            s7_floor: None,
+        };
+
+        assert!(with_live_model(&root, Some(context), |_, model, _| {
+            std::ptr::eq(model, snapshot.semantic_model(file))
+        }));
+
+        let live = parse("changed <- 1").cst;
+        assert!(with_live_model(&live, Some(context), |_, model, _| {
+            model
+                .bindings()
+                .iter()
+                .any(|binding| binding.name == "changed")
+        }));
+
+        let floor = CompatVersion::parse("0.2.2.9000").unwrap();
+        let context = ReadContext {
+            s7_floor: Some(&floor),
+            ..context
+        };
+        assert!(with_live_model(&root, Some(context), |_, model, _| {
+            model
+                .bindings()
+                .iter()
+                .any(|binding| binding.name == "Point")
+        }));
     }
 
     #[test]

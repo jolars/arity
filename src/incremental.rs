@@ -1993,6 +1993,23 @@ impl Analysis {
     ) -> SemanticModel {
         semantic_model_in(&self.0, self.lookup_file(path), Some(path), root, floor)
     }
+    /// Borrow the cached lexical model when the live inputs match those of
+    /// the tracked query, including the path used to resolve package context.
+    pub(crate) fn tracked_semantic_model_for_tree(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        floor: Option<&crate::config::CompatVersion>,
+    ) -> Option<&SemanticModel> {
+        let file = self.lookup_file(path)?;
+        if self.file_path(file) != Some(path) || file.s7_floor(&self.0).as_ref() != floor {
+            return None;
+        }
+        let tracked = &*parsed_document(&self.0, file).green;
+        let live = root.green();
+        (std::ptr::eq(live, tracked) || live == tracked).then(|| self.semantic_model(file))
+    }
+
     /// The `SourceFile` input currently tracked for `path`, if any.
     pub fn lookup_file(&self, path: &Path) -> Option<SourceFile> {
         self.0.lookup_file(path)
