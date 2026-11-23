@@ -1236,6 +1236,17 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
 
 ### Performance
 
+#### Package index first-use latency
+
+- [ ] Investigate rkyv for the local package index. Compare a validated rkyv
+  symbol directory and a queryable full archive against the current split JSON
+  index and a flat, sorted directory. Measure first hover and signature help in
+  fresh LSP sessions, alongside lookup time, cache size, and memory use.
+  In a loader-only probe on base, stats, and vctrs, the rkyv directory beat the
+  flat directory by 0.7–5.6 µs with the OS file cache warm. Keeping the help
+  records in JSON captured over 90% of the lookup gain from encoding those
+  records in rkyv too.
+
 #### The jarl gap (measured 2026-08-17)
 
 **The gap is now scaling, not work.** On tidyr arity is **1.56x faster than
