@@ -589,6 +589,77 @@ alone <- function(x) x
 }
 
 #[test]
+fn namespace_export_keeps_conventional_method_binding_provenance() {
+    let dir = tempfile::tempdir().unwrap();
+    let r_dir = dir.path().join("R");
+    fs::create_dir(&r_dir).unwrap();
+    fs::write(dir.path().join("DESCRIPTION"), super::COMPLETE_DESCRIPTION).unwrap();
+    let path = r_dir.join("a.R");
+    let later_path = r_dir.join("z.R");
+    let namespace_path = dir.path().join("NAMESPACE");
+    let source = "probe <- function(x) UseMethod('probe')\nprobe.example <- function(x) x\n";
+    let later = "replacement <- function(x) x\n";
+    let namespace = "export(probe)\nexport(probe.example)\n";
+    fs::write(&path, source).unwrap();
+    fs::write(&later_path, later).unwrap();
+    fs::write(&namespace_path, "export(probe)\n").unwrap();
+    let uri = path_uri(&path);
+    let later_uri = path_uri(&later_path);
+    let namespace_uri = path_uri(&namespace_path);
+    let mut harness = Harness::start_push();
+    harness.did_open(&uri, source, 1);
+    harness.recv_publish_for(&uri, 1);
+    harness.did_open(&later_uri, later, 1);
+    harness.recv_publish_for(&later_uri, 1);
+    harness.did_open(&namespace_uri, namespace, 1);
+    harness.recv_publish_for(&namespace_uri, 1);
+
+    let definition = |harness: &mut Harness| {
+        request(
+            harness,
+            "textDocument/definition",
+            json!({
+                "textDocument": { "uri": namespace_uri },
+                "position": position(namespace, namespace.find("probe.example").unwrap() + 1)
+            }),
+        )
+    };
+    let has_namespace_reference = |harness: &mut Harness| {
+        request(
+            harness,
+            "textDocument/references",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": position(source, source.find("probe.example").unwrap() + 1),
+                "context": { "includeDeclaration": false }
+            }),
+        )
+        .as_array()
+        .is_some_and(|locations| {
+            locations
+                .iter()
+                .any(|location| location["uri"] == namespace_uri)
+        })
+    };
+    let result = definition(&mut harness);
+    assert_eq!(result["uri"], uri, "{result}");
+    assert_eq!(result["range"]["start"]["line"], 1, "{result}");
+    assert!(has_namespace_reference(&mut harness));
+
+    harness.did_change(
+        &later_uri,
+        &format!("{later}probe.example <- replacement\n"),
+        2,
+    );
+    harness.recv_publish_for(&later_uri, 2);
+    let result = definition(&mut harness);
+    assert_eq!(result["uri"], later_uri, "{result}");
+    assert_eq!(result["range"]["start"]["line"], 1, "{result}");
+    assert!(!has_namespace_reference(&mut harness));
+    harness.shutdown();
+}
+
+#[test]
 fn generic_references_include_cross_system_registrations() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("generics.R");
