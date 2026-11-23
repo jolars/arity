@@ -2,6 +2,7 @@ use super::*;
 use crate::incremental::{
     IncrementalDb, SourceFile, file_class_source, parsed_tree_root, semantic_model,
 };
+use crate::project::graph::workspace_project;
 use crate::project::project_classes;
 
 #[derive(PartialEq, Eq)]
@@ -17,14 +18,14 @@ pub(crate) struct WorkspaceObjectSymbol {
 /// ranges downstream of the class graph so moving a declaration refreshes
 /// its location without rebuilding the graph.
 #[salsa::tracked(returns(ref))]
-pub(crate) fn workspace_symbol_declarations(
+fn workspace_symbol_declarations(
     db: &dyn IncrementalDb,
     source: SourceFile,
     path: PathBuf,
-) -> Vec<WorkspaceObjectSymbol> {
+) -> Arc<[WorkspaceObjectSymbol]> {
     let index = project_classes(db);
     let Some(file) = index.file(&path) else {
-        return Vec::new();
+        return Arc::default();
     };
     oop::presentation::declarations(
         &parsed_tree_root(db, source),
@@ -44,6 +45,33 @@ pub(crate) fn workspace_symbol_declarations(
         container: decl.container,
     })
     .collect()
+}
+
+/// Reuse the ordered, query-independent class symbols across searches. The
+/// per-file queries own the locations, so edits can refresh them independently.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn workspace_object_symbols(
+    db: &dyn IncrementalDb,
+) -> Vec<(PathBuf, Arc<[WorkspaceObjectSymbol]>)> {
+    let project = workspace_project(db);
+    let index = project_classes(db);
+    project
+        .members
+        .iter()
+        .filter_map(|member| {
+            let facts = &index.file(&member.path)?.facts;
+            if facts.declarations.is_empty()
+                && facts.oop.generics.is_empty()
+                && facts.oop.methods.is_empty()
+                && facts.oop.possible_methods.is_empty()
+                && facts.oop.members.is_empty()
+            {
+                return None;
+            }
+            let declarations = workspace_symbol_declarations(db, member.file, member.path.clone());
+            (!declarations.is_empty()).then(|| (member.path.clone(), Arc::clone(declarations)))
+        })
+        .collect()
 }
 
 /// Resolve `workspace/symbol`: the workspace's top-level definitions whose name
@@ -68,20 +96,9 @@ pub(crate) fn workspace_symbols_via_db(
             .map(|(_, _, path, range)| (path.as_path(), *range))
             .collect();
         let mut replaced_bindings = std::collections::HashSet::new();
-        let index = snapshot.class_index_ref();
         let mut objects = Vec::new();
-        for file in index.oop_files().filter(|file| {
-            !file.facts.declarations.is_empty()
-                || !file.facts.oop.generics.is_empty()
-                || !file.facts.oop.methods.is_empty()
-                || !file.facts.oop.possible_methods.is_empty()
-                || !file.facts.oop.members.is_empty()
-        }) {
-            let path = &file.path;
-            let Some(source) = snapshot.lookup_file(path) else {
-                continue;
-            };
-            for decl in snapshot.workspace_symbol_declarations(source, path) {
+        for (path, declarations) in snapshot.workspace_object_symbols() {
+            for decl in declarations.iter() {
                 let binding_matched = decl.binding.is_some_and(|binding| {
                     replaced_bindings.insert((path.clone(), binding));
                     matching_bindings.contains(&(path.as_path(), binding))
@@ -229,6 +246,12 @@ mod tests {
             assert_eq!(names(&symbols), ["value"]);
             assert_eq!(location_of(&symbols, "value").range.start.line, line as u32);
         }
+
+        db.set_workspace_members(Vec::new(), vec![ws_root()]);
+        assert!(
+            workspace_symbols_via_db(&db.snapshot(), "Display value", PositionEncoding::Utf16)
+                .is_empty()
+        );
     }
 
     #[test]

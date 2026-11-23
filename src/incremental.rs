@@ -2168,12 +2168,10 @@ impl Analysis {
         project_classes(&self.0)
     }
 
-    pub(crate) fn workspace_symbol_declarations(
+    pub(crate) fn workspace_object_symbols(
         &self,
-        file: SourceFile,
-        path: &Path,
-    ) -> &[crate::lsp::WorkspaceObjectSymbol] {
-        crate::lsp::workspace_symbol_declarations(&self.0, file, path.to_path_buf())
+    ) -> &[(PathBuf, Arc<[crate::lsp::WorkspaceObjectSymbol]>)] {
+        crate::lsp::workspace_object_symbols(&self.0)
     }
 
     pub(crate) fn tracked_class_source(
