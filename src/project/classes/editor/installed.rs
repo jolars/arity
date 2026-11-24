@@ -15,7 +15,7 @@ pub(in crate::project::classes) struct InstalledObjects<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::project::classes) struct InstalledReceiver<'a> {
-    pub(super) package: &'a PackageIndex,
+    pub(super) package: ObjectPackage<'a>,
     pub(super) class: &'a InstalledClass,
     pub(super) access: ClassAccess,
     pub(in crate::project::classes) exact: bool,
@@ -44,7 +44,7 @@ impl<'a> InstalledObjects<'a> {
         reference: &FunctionRef,
         internal: bool,
         at: &SyntaxElement,
-    ) -> Option<(&'a PackageIndex, String)> {
+    ) -> Option<(ObjectPackage<'a>, String)> {
         let (package, name) = match reference {
             FunctionRef::Qualified { package, name } => (package.clone(), name),
             FunctionRef::Bare {
@@ -124,8 +124,8 @@ impl<'a> InstalledObjects<'a> {
         if index.s4_workspace_package(&package) {
             return None;
         }
-        let package = self.indexed.package(&package)?;
-        (internal || exported(package, name)).then(|| (package, name.clone()))
+        let package = self.indexed.object_package(&package)?;
+        (internal || package.exports.contains(name.as_str())).then(|| (package, name.clone()))
     }
 
     pub(in crate::project::classes) fn direct_receiver(
@@ -270,7 +270,7 @@ impl<'a> InstalledObjects<'a> {
             if index.s4_workspace_package(&package) {
                 continue;
             }
-            let Some(package) = self.indexed.package(&package) else {
+            let Some(package) = self.indexed.object_package(&package) else {
                 if matches!(package.as_str(), "base" | "methods") {
                     continue;
                 }
@@ -304,7 +304,7 @@ impl<'a> InstalledObjects<'a> {
         root: &SyntaxNode,
         model: &SemanticModel,
         value: &SyntaxElement,
-    ) -> Option<(&'a PackageIndex, &'a InstalledGeneric)> {
+    ) -> Option<(ObjectPackage<'a>, &'a InstalledGeneric)> {
         let (package, name) = self.object_binding(index, path, root, model, value)?;
         let generic = unique(
             package
@@ -323,7 +323,7 @@ impl<'a> InstalledObjects<'a> {
         root: &SyntaxNode,
         model: &SemanticModel,
         value: &SyntaxElement,
-    ) -> Option<(&'a PackageIndex, &'a InstalledMethod)> {
+    ) -> Option<(ObjectPackage<'a>, &'a InstalledMethod)> {
         let (package, name) = self.object_binding(index, path, root, model, value)?;
         let method = unique(
             package
@@ -342,7 +342,7 @@ impl<'a> InstalledObjects<'a> {
         root: &SyntaxNode,
         model: &SemanticModel,
         value: &SyntaxElement,
-    ) -> Option<(&'a PackageIndex, String)> {
+    ) -> Option<(ObjectPackage<'a>, String)> {
         let internal = value
             .as_node()
             .cloned()
@@ -602,7 +602,9 @@ impl<'a> InstalledObjects<'a> {
         binding: bool,
     ) -> Option<InstalledReceiver<'a>> {
         let package = match name.package.as_deref() {
-            Some(package) if package != owner.package.package => self.indexed.package(package)?,
+            Some(package) if package != owner.package.package.as_str() => {
+                self.indexed.object_package(package)?
+            }
             _ => owner.package,
         };
         let class = unique(package.objects.classes.iter().filter(|class| {
@@ -637,13 +639,6 @@ fn append_reference_members(surface: &mut MemberSurface, entries: ReferenceMembe
 fn unique<T>(mut values: impl Iterator<Item = T>) -> Option<T> {
     let first = values.next()?;
     values.next().is_none().then_some(first)
-}
-
-fn exported(package: &PackageIndex, name: &str) -> bool {
-    package
-        .symbols
-        .iter()
-        .any(|entry| entry.exported && entry.name == name)
 }
 
 pub(super) fn object_type_label(class: &ObjectType) -> String {

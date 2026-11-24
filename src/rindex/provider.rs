@@ -17,7 +17,7 @@ use smol_str::SmolStr;
 use crate::rindex::cache::Cache;
 use crate::rindex::package_file::PackageFile;
 use crate::rindex::remote::RemoteExports;
-use crate::rindex::schema::{PackageExports, PackageIndex, SymbolEntry};
+use crate::rindex::schema::{ObjectMetadata, PackageExports, PackageIndex, SymbolEntry};
 use crate::semantic::s7::S7Version;
 use crate::semantic::symbols::{
     BundledPackages, LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider,
@@ -262,6 +262,26 @@ impl Membership {
     }
 }
 
+/// Borrowed package facts for class-aware reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ObjectPackage<'a> {
+    pub package: &'a SmolStr,
+    pub version: &'a SmolStr,
+    pub objects: &'a ObjectMetadata,
+    pub exports: &'a HashSet<SmolStr>,
+}
+
+impl<'a> ObjectPackage<'a> {
+    fn new(index: &'a PackageIndex, membership: &'a Membership) -> Self {
+        Self {
+            package: &index.package,
+            version: &index.version,
+            objects: &index.objects,
+            exports: &membership.exports,
+        }
+    }
+}
+
 /// One package the index knows of, with its membership and rich index either
 /// already resolved (the eager constructors) or filled from disk on first use
 /// (the lazy one). The inner `Option`s distinguish "read and empty" from "file
@@ -273,6 +293,7 @@ struct PackageSlot {
     version: SmolStr,
     membership: OnceLock<Option<Membership>>,
     file: OnceLock<Option<PackageFile>>,
+    metadata: OnceLock<Option<PackageIndex>>,
     /// The full harvested index (formals + help bodies), filled per package on
     /// the first request for the whole package. Keeping this per-slot is what lets the language
     /// server hold the lazy load: resident rich data scales with the packages a
@@ -292,6 +313,7 @@ impl PackageSlot {
             version,
             membership: membership_cell,
             file: OnceLock::new(),
+            metadata: OnceLock::new(),
             index: index_cell,
         }
     }
@@ -349,6 +371,7 @@ impl IndexedProvider {
                         version,
                         membership: OnceLock::new(),
                         file: OnceLock::new(),
+                        metadata: OnceLock::new(),
                         index: OnceLock::new(),
                     },
                 )
@@ -370,8 +393,8 @@ impl IndexedProvider {
         slot.membership
             .get_or_init(|| {
                 // A resident full index also answers membership.
-                if let Some(index) = slot.index.get() {
-                    return index.as_ref().map(Membership::of_index);
+                if let Some(Some(index)) = slot.index.get() {
+                    return Some(Membership::of_index(index));
                 }
                 let exports = self.package_file(package, slot)?.exports()?;
                 Some(Membership::from(exports))
@@ -412,6 +435,37 @@ impl IndexedProvider {
     /// [`package`](Self::package), which fills on demand.
     pub fn package_if_resident(&self, package: &str) -> Option<&PackageIndex> {
         self.packages.get(package)?.index.get()?.as_ref()
+    }
+
+    pub(crate) fn object_package(&self, package: &str) -> Option<ObjectPackage<'_>> {
+        let slot = self.packages.get(package)?;
+        let membership = self.membership(package)?;
+        if let Some(Some(index)) = slot.index.get() {
+            return Some(ObjectPackage::new(index, membership));
+        }
+        let metadata = slot.metadata.get_or_init(|| {
+            let metadata = self.package_file(package, slot)?.metadata()?;
+            (metadata.package == package && metadata.version == slot.version).then_some(metadata)
+        });
+        Some(ObjectPackage::new(metadata.as_ref()?, membership))
+    }
+
+    pub(crate) fn object_package_if_resident(&self, package: &str) -> Option<ObjectPackage<'_>> {
+        let slot = self.packages.get(package)?;
+        let membership = slot.membership.get()?.as_ref()?;
+        Some(ObjectPackage::new(
+            self.resident_metadata(package)?,
+            membership,
+        ))
+    }
+
+    fn resident_metadata(&self, package: &str) -> Option<&PackageIndex> {
+        self.package_if_resident(package)
+            .or_else(|| self.packages.get(package)?.metadata.get()?.as_ref())
+    }
+
+    pub(crate) fn resident_title(&self, package: &str) -> Option<&SmolStr> {
+        self.resident_metadata(package)?.title.as_ref()
     }
 
     fn package_file<'a>(&self, package: &str, slot: &'a PackageSlot) -> Option<&'a PackageFile> {
@@ -1019,6 +1073,24 @@ mod tests {
     }
 
     #[test]
+    fn object_metadata_keeps_symbols_unloaded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().into());
+        let mut index = pkg("dplyr", &["filter", "across"]);
+        index.title = Some("Example package".into());
+        cache.write_package(&index).unwrap();
+        let provider = IndexedProvider::from_cache_lazy(&cache);
+        assert!(provider.object_package_if_resident("dplyr").is_none());
+        let metadata = provider.object_package("dplyr").unwrap();
+        assert_eq!(metadata.objects, &index.objects);
+        assert!(metadata.exports.contains("filter"));
+        assert_eq!(provider.resident_title("dplyr"), index.title.as_ref());
+        assert!(provider.package_if_resident("dplyr").is_none());
+        assert_eq!(provider.lookup("dplyr", "across"), index.symbols.last());
+        assert_eq!(provider.package("dplyr"), Some(&index));
+    }
+
+    #[test]
     fn symbol_lookup_keeps_the_rest_of_the_package_unloaded() {
         let tmp = tempfile::tempdir().unwrap();
         let cache = Cache::new(tmp.path().to_path_buf());
@@ -1038,14 +1110,32 @@ mod tests {
     fn lazy_reads_pin_the_same_package_generation() {
         let tmp = tempfile::tempdir().unwrap();
         let cache = Cache::new(tmp.path().to_path_buf());
-        let original = pkg("dplyr", &["old"]);
-        let replacement = pkg("dplyr", &["new"]);
+        let mut original = pkg("dplyr", &["old"]);
+        original.title = Some("Old title".into());
+        let mut replacement = pkg("dplyr", &["new"]);
+        replacement.title = Some("New title".into());
         cache.write_package(&original).unwrap();
         let before = IndexedProvider::from_cache_lazy(&cache);
         assert!(before.exports("dplyr", "old"));
 
         cache.write_package(&replacement).unwrap();
         let after = IndexedProvider::from_cache_lazy(&cache);
+        assert!(
+            before
+                .object_package("dplyr")
+                .unwrap()
+                .exports
+                .contains("old")
+        );
+        assert_eq!(before.resident_title("dplyr"), original.title.as_ref());
+        assert!(
+            after
+                .object_package("dplyr")
+                .unwrap()
+                .exports
+                .contains("new")
+        );
+        assert_eq!(after.resident_title("dplyr"), replacement.title.as_ref());
         assert_eq!(before.lookup("dplyr", "old"), original.symbols.first());
         assert_eq!(before.package("dplyr"), Some(&original));
         assert!(before.lookup("dplyr", "new").is_none());
@@ -1061,14 +1151,20 @@ mod tests {
         cache.write_package(&index).unwrap();
         let path = cache.package_path("dplyr", "1.0");
         let mut bytes = std::fs::read(&path).unwrap();
-        *bytes.last_mut().unwrap() = b'!';
+        let unrelated_record = b"{\"name\":\"other\"";
+        let offset = bytes
+            .windows(unrelated_record.len())
+            .rposition(|window| window == unrelated_record)
+            .unwrap();
+        bytes[offset] = b'!';
         std::fs::write(path, bytes).unwrap();
 
         let lazy = IndexedProvider::from_cache_lazy(&cache);
         assert!(lazy.exports("dplyr", "other"));
         assert_eq!(lazy.lookup("dplyr", "escaped\"name"), index.symbols.first());
         assert!(lazy.package("dplyr").is_none());
-        assert_eq!(lazy.lookup("dplyr", "other"), index.symbols.last());
+        assert!(lazy.object_package("dplyr").is_some());
+        assert!(lazy.lookup("dplyr", "other").is_none());
     }
 
     #[test]

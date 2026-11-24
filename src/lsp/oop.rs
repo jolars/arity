@@ -1329,6 +1329,22 @@ methods::setMethod("describe", "numeric", impl)
     }
 
     #[test]
+    fn installed_editor_reads_leave_the_full_package_unloaded() {
+        use crate::rindex::harvest::{HarvestOptions, harvest_package};
+
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rindex/oopfixture");
+        let package = harvest_package(&fixture, HarvestOptions::default(), 0).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let indexed = lazy_index(&package, directory.path());
+        let source = "oopfixture::future(1)";
+
+        assert!(hover::compute_hover(source, 13, &indexed, PositionEncoding::Utf16).is_some());
+        assert!(signature::compute_signature_help(source, 19, &indexed).is_some());
+        assert!(indexed.package_if_resident("oopfixture").is_none());
+    }
+
+    #[test]
     fn installed_inherited_members_resolve_the_declaring_help_topic() {
         use crate::rindex::harvest::{HarvestOptions, harvest_package};
         let fixture =

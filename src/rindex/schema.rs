@@ -1,7 +1,7 @@
 //! On-disk cache schema for the R-introspection index.
 //!
 //! Each package file stores independent JSON sections for export membership,
-//! symbol offsets, and the full [`PackageIndex`]. A single [`IndexMeta`]
+//! symbol offsets, package metadata, and symbol records. A single [`IndexMeta`]
 //! (`meta.json`) records which version of each package is currently indexed.
 
 use std::collections::BTreeMap;
@@ -11,7 +11,7 @@ use smol_str::SmolStr;
 
 /// Bump when the on-disk shape changes incompatibly or cached metadata needs
 /// to be reharvested. Older versions are ignored and rebuilt.
-pub const SCHEMA_VERSION: u32 = 7;
+pub const SCHEMA_VERSION: u32 = 8;
 
 /// Everything harvested for a single installed package at a single version.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

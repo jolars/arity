@@ -5,7 +5,7 @@
 //! ```text
 //! {root}/index/v{SCHEMA_VERSION}/
 //!     meta.json              # IndexMeta: package -> indexed version
-//!     {pkg}@{ver}.index       # export, directory, and rich JSON sections
+//!     {pkg}@{ver}.index       # export, directory, metadata, and symbol JSON sections
 //! ```
 //!
 //! A schema bump moves everything under a fresh `v{N}/`; stale `v*/` siblings

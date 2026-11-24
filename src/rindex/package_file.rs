@@ -1,9 +1,8 @@
 //! Seekable local package cache. One atomic file keeps all views in sync.
 //!
-//! The header contains four little-endian u32s: schema version, export
-//! section length, directory length, and rich section length. Three compact
-//! JSON sections follow in that order. Directory ranges point into the rich
-//! section, so the file stores each symbol record only once.
+//! The header stores the schema version and four section lengths as little-endian
+//! u32s. The export list, symbol directory, package metadata, and symbol array
+//! are independent JSON sections. Directory ranges point into the symbol array.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -17,17 +16,11 @@ use smol_str::SmolStr;
 use super::cache::CacheError;
 use super::schema::{ExportEntry, PackageExports, PackageIndex, SCHEMA_VERSION, SymbolEntry};
 
-const HEADER_LEN: u64 = 16;
+const HEADER_LEN: u64 = 20;
 type Directory = BTreeMap<SmolStr, SymbolRecord>;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SymbolRecord(u32, u32, #[serde(skip)] OnceLock<Option<SymbolEntry>>);
-
-#[derive(Deserialize)]
-struct RawSymbols<'a> {
-    #[serde(borrow)]
-    symbols: Vec<&'a RawValue>,
-}
 
 /// An open handle pins a generation across atomic replacements. The lock
 /// protects the shared seek cursor. Decoding takes place outside the lock.
@@ -36,7 +29,8 @@ pub(super) struct PackageFile {
     file: Mutex<File>,
     export_len: u32,
     directory_len: u32,
-    rich_len: u32,
+    metadata_len: u32,
+    symbols_len: u32,
     directory: OnceLock<Option<Directory>>,
 }
 
@@ -44,11 +38,20 @@ impl PackageFile {
     pub(super) fn open(mut file: File) -> Option<Self> {
         let mut header = [0; HEADER_LEN as usize];
         file.read_exact(&mut header).ok()?;
-        let values = [0, 4, 8, 12]
+        let values = [0, 4, 8, 12, 16]
             .map(|start| u32::from_le_bytes(header[start..start + 4].try_into().unwrap()));
-        let [version, export_len, directory_len, rich_len] = values;
-        let expected_len =
-            HEADER_LEN + u64::from(export_len) + u64::from(directory_len) + u64::from(rich_len);
+        let [
+            version,
+            export_len,
+            directory_len,
+            metadata_len,
+            symbols_len,
+        ] = values;
+        let expected_len = HEADER_LEN
+            + u64::from(export_len)
+            + u64::from(directory_len)
+            + u64::from(metadata_len)
+            + u64::from(symbols_len);
         if version != SCHEMA_VERSION || file.metadata().ok()?.len() != expected_len {
             return None;
         }
@@ -56,7 +59,8 @@ impl PackageFile {
             file: Mutex::new(file),
             export_len,
             directory_len,
-            rich_len,
+            metadata_len,
+            symbols_len,
             directory: OnceLock::new(),
         })
     }
@@ -78,8 +82,12 @@ impl PackageFile {
         serde_json::from_slice(&bytes).ok()
     }
 
-    fn rich_start(&self) -> u64 {
+    fn metadata_start(&self) -> u64 {
         HEADER_LEN + u64::from(self.export_len) + u64::from(self.directory_len)
+    }
+
+    fn symbols_start(&self) -> u64 {
+        self.metadata_start() + u64::from(self.metadata_len)
     }
 
     pub(super) fn exports(&self) -> Option<PackageExports> {
@@ -87,9 +95,15 @@ impl PackageFile {
         (exports.schema_version == SCHEMA_VERSION).then_some(exports)
     }
 
+    pub(super) fn metadata(&self) -> Option<PackageIndex> {
+        let index: PackageIndex = self.read_section(self.metadata_start(), self.metadata_len)?;
+        (index.schema_version == SCHEMA_VERSION && index.symbols.is_empty()).then_some(index)
+    }
+
     pub(super) fn package(&self) -> Option<PackageIndex> {
-        let index: PackageIndex = self.read_section(self.rich_start(), self.rich_len)?;
-        (index.schema_version == SCHEMA_VERSION).then_some(index)
+        let mut index = self.metadata()?;
+        index.symbols = self.read_section(self.symbols_start(), self.symbols_len)?;
+        Some(index)
     }
 
     pub(super) fn lookup(&self, name: &str) -> Option<&SymbolEntry> {
@@ -102,11 +116,11 @@ impl PackageFile {
         let SymbolRecord(offset, len, cached) = directory.get(name)?;
         cached
             .get_or_init(|| {
-                if offset.checked_add(*len)? > self.rich_len {
+                if offset.checked_add(*len)? > self.symbols_len {
                     return None;
                 }
                 let entry: SymbolEntry =
-                    self.read_section(self.rich_start() + u64::from(*offset), *len)?;
+                    self.read_section(self.symbols_start() + u64::from(*offset), *len)?;
                 (entry.name == name).then_some(entry)
             })
             .as_ref()
@@ -134,13 +148,26 @@ pub(super) fn encode(index: &PackageIndex) -> Result<Vec<u8>, CacheError> {
             .collect(),
     };
     let exports = serde_json::to_vec(&exports).map_err(serde_error)?;
-    let rich = serde_json::to_vec(index).map_err(serde_error)?;
-    let records: RawSymbols<'_> = serde_json::from_slice(&rich).map_err(serde_error)?;
+    let metadata = PackageIndex {
+        schema_version: index.schema_version,
+        package: index.package.clone(),
+        version: index.version.clone(),
+        lib_path: index.lib_path.clone(),
+        title: index.title.clone(),
+        r_version: index.r_version.clone(),
+        harvested_at: index.harvested_at,
+        attaches: index.attaches.clone(),
+        symbols: Vec::new(),
+        objects: index.objects.clone(),
+    };
+    let metadata = serde_json::to_vec(&metadata).map_err(serde_error)?;
+    let symbols = serde_json::to_vec(&index.symbols).map_err(serde_error)?;
+    let records: Vec<&RawValue> = serde_json::from_slice(&symbols).map_err(serde_error)?;
     let mut directory = BTreeMap::new();
-    for (symbol, raw) in index.symbols.iter().zip(records.symbols) {
-        // Borrowed RawValue points at the exact slice in the compact rich JSON.
+    for (symbol, raw) in index.symbols.iter().zip(records) {
+        // Borrowed RawValue points at the exact slice in the compact symbol array.
         let raw = raw.get();
-        let start = size(raw.as_ptr() as usize - rich.as_ptr() as usize)?;
+        let start = size(raw.as_ptr() as usize - symbols.as_ptr() as usize)?;
         let len = size(raw.len())?;
         directory
             .entry(symbol.name.clone())
@@ -151,15 +178,18 @@ pub(super) fn encode(index: &PackageIndex) -> Result<Vec<u8>, CacheError> {
         index.schema_version,
         size(exports.len())?,
         size(directory.len())?,
-        size(rich.len())?,
+        size(metadata.len())?,
+        size(symbols.len())?,
     ];
-    let mut file =
-        Vec::with_capacity(HEADER_LEN as usize + exports.len() + directory.len() + rich.len());
+    let mut file = Vec::with_capacity(
+        HEADER_LEN as usize + exports.len() + directory.len() + metadata.len() + symbols.len(),
+    );
     for field in header {
         file.extend(field.to_le_bytes());
     }
     file.extend(exports);
     file.extend(directory);
-    file.extend(rich);
+    file.extend(metadata);
+    file.extend(symbols);
     Ok(file)
 }

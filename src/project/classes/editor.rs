@@ -1,9 +1,9 @@
 //! Request-local callable and member surfaces shared by editor reads.
 
 use super::*;
-use crate::rindex::provider::IndexedProvider;
+use crate::rindex::provider::{IndexedProvider, ObjectPackage};
 use crate::rindex::remote::RemoteExports;
-use crate::rindex::schema::{Formal, HelpAssociation, HelpDoc, PackageIndex};
+use crate::rindex::schema::{Formal, HelpAssociation, HelpDoc};
 use smol_str::SmolStr;
 
 mod installed;
@@ -17,7 +17,7 @@ pub(crate) struct ObjectHelp {
 }
 
 impl ObjectHelp {
-    fn new(package: &PackageIndex, association: &HelpAssociation) -> Self {
+    fn new(package: ObjectPackage<'_>, association: &HelpAssociation) -> Self {
         Self {
             package: package.package.clone(),
             version: package.version.clone(),
@@ -26,8 +26,8 @@ impl ObjectHelp {
     }
 
     pub(crate) fn resolve<'a>(&self, indexed: &'a IndexedProvider) -> Option<&'a HelpDoc> {
-        let package = indexed.package(&self.package)?;
-        (package.version == self.version)
+        let package = indexed.object_package(&self.package)?;
+        (package.version == &self.version)
             .then(|| package.objects.render_help(&self.association))
             .flatten()
     }

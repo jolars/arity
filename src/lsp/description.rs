@@ -296,9 +296,7 @@ pub fn compute_description_completions(
             name: name.clone(),
             group: GROUP_INSTALLED,
             version: indexed.version(name).cloned(),
-            title: indexed
-                .package_if_resident(name)
-                .and_then(|i| i.title.clone()),
+            title: indexed.resident_title(name).cloned(),
         });
     }
     // `R` is the language, not a package, and only `Depends` may name it.

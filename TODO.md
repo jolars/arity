@@ -1225,8 +1225,18 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
   for class-aware resolution. The archive cuts the whole-package share to
   14–15%. Keep split JSON for now.
 
-- [ ] Measure a separate installed-class metadata projection. Route class-aware
-  hover and signature help through it so an ordinary function lookup can read
-  its own help without materializing unrelated symbol documentation. Compare
-  first-reply latency and post-reply RSS in fresh sessions, and verify that
-  installed class, generic, and method responses still match.
+- [x] Measure a separate installed-class metadata projection. Splitting
+  package metadata from symbol records let editor requests read the requested
+  symbol without loading the full package. Installed class, generic, and
+  method replies matched in fresh and repeated requests.
+
+  Across 24 paired fresh LSP sessions with a warm OS file cache, the projection
+  cut first-request latency for `base::mean` by 25% and post-reply RSS by 19–24%.
+  It cut first-request latency for `vctrs::vec_size` by 10% for hover and 18%
+  for signature help. In tidyr, the request was 28–32% faster after diagnostics,
+  and open-to-reply time fell by less than 3%.
+
+  Adopt the projection. The paired median post-reply RSS for vctrs signature
+  help rose by 1.014 MiB (95% bootstrap interval 0.973–1.145 MiB). The interval
+  includes the 1 MiB threshold, while first replies were faster for both
+  request types. Raw measurements are under `target/profile/class-projection/`.

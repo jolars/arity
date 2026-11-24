@@ -151,26 +151,23 @@ fn installed_s3_generics(resolution: &ClassResolution<'_>) -> BTreeSet<(String, 
                 .values()
                 .any(|name| name == package.as_str())
         })
-        .filter_map(|name| resolution.indexed.package_if_resident(name))
+        .filter_map(|name| resolution.indexed.object_package_if_resident(name))
         .flat_map(|package| {
             package
                 .objects
                 .generics
                 .iter()
-                .filter(|generic| {
+                .filter(move |generic| {
                     generic.system == ObjectSystem::S3
                         && generic.identity.name == generic.origin.binding
                         && generic
                             .identity
                             .package
                             .as_ref()
-                            .is_none_or(|owner| *owner == package.package)
-                        && package
-                            .symbols
-                            .iter()
-                            .any(|symbol| symbol.exported && symbol.name == generic.origin.binding)
+                            .is_none_or(|owner| owner == package.package)
+                        && package.exports.contains(&generic.origin.binding)
                 })
-                .map(|generic| {
+                .map(move |generic| {
                     (
                         package.package.to_string(),
                         generic.identity.name.to_string(),
@@ -220,14 +217,14 @@ impl S3LookupOrigins {
             // Reading all lazy package files here would put unbounded indexing
             // on the read pool. Unfilled slots remain unknown until indexed.
             exports.remove(package.as_str());
-            if let Some(index) = resolution.indexed.package_if_resident(package) {
+            if let Some(index) = resolution.indexed.object_package_if_resident(package) {
                 exports.insert(
                     package.to_string(),
                     index
-                        .symbols
+                        .exports
                         .iter()
-                        .filter(|entry| entry.exported && relevant(&entry.name))
-                        .map(|entry| entry.name.to_string())
+                        .filter(|name| relevant(name))
+                        .map(ToString::to_string)
                         .collect(),
                 );
             }

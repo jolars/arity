@@ -978,7 +978,7 @@ impl ClassIndex {
             if self.s4_workspace_package(package) {
                 continue;
             }
-            let Some(index) = resolution.indexed.package_if_resident(package) else {
+            let Some(index) = resolution.indexed.object_package_if_resident(package) else {
                 continue;
             };
             for generic in &index.objects.generics {
@@ -989,10 +989,7 @@ impl ClassIndex {
                         .package
                         .as_ref()
                         .is_some_and(|owner| owner != package)
-                    || !index
-                        .symbols
-                        .iter()
-                        .any(|symbol| symbol.exported && symbol.name == generic.origin.binding)
+                    || !index.exports.contains(&generic.origin.binding)
                 {
                     continue;
                 }
