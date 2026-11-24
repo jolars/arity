@@ -1016,34 +1016,6 @@ coverage need not block useful workspace support.
   documents is what goes away. If this lands, the knob it wants is a granularity
   one (off / description-versions / all), not a bare boolean.
 
-### Audit vs Ark (2026-07-30)
-
-Gaps surfaced by auditing Posit's **Ark** (`posit-dev/ark`)—the R kernel that
-also embeds the language server behind Positron—against arity. **Net finding:
-arity is broadly ahead of Ark on standard editor LSP surface.** Ark advertises
-*no* semantic tokens, call hierarchy, type hierarchy, document color, document
-links, document highlight, or even document/range formatting (it delegates
-formatting to `air`). Ark's edge is that it is *kernel-embedded*: its extra
-surface is console-integration custom requests tied to a live R session. So the
-genuine deltas are narrow and **mostly reinforce items already logged above**;
-only the first item below is new actionable content. (Non-gap: Ark advertises
-`implementationProvider` but its handler is a `// TODO` stub returning `Ok(None)`
-in `main_loop.rs`, so go-to-implementation is *not* something Ark actually
-ships—the existing low-priority note under "Navigation" stands, unelevated.)
-
-- [ ] **Positron console-integration custom requests** (new, speculative).
-  Ark serves `positron/textDocument/statementRange` (given a cursor, return the
-  range of the complete top-level statement to send to the REPL;
-  `statement_range.rs`) and `inputBoundaries` (split pasted console input into
-  executable units; `input_boundaries.rs`). Both are **CST-only** computations
-  arity could produce from its existing statement/selection-range machinery
-  (`src/lsp/selection_range.rs` + the CST), and are useful to any editor with a
-  "send code to console/terminal" runner—not just Positron. But they are a
-  Positron-**proprietary** protocol extension and arity isn't console-embedded,
-  so gate on a client that would actually consume them. Ark's sibling custom
-  requests (`helpTopic`, virtual documents) are genuinely out of scope—they
-  need a live R session.
-
 ### Cross-cutting prerequisite
 
 - [x] Downloadable CRAN sidecar—names-only client (escalation of the bundled
