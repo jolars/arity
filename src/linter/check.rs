@@ -17,9 +17,10 @@ use crate::file_discovery::{
 };
 use crate::incremental::{
     Analysis, IncrementalDatabase, IncrementalDb, ParseDiagnosticData, SourceFile, control_flow,
-    file_exports, file_free_reads, file_qualified_reads, file_registered_roxygen_tags,
-    file_roxygen_topics, package_references, parsed_tree_root, runtime_semantic_model,
-    source_edges, top_level_events,
+    file_class_defs, file_exports, file_free_reads, file_qualified_reads,
+    file_registered_roxygen_tags, file_roxygen_topics, lexical_file_exports,
+    needs_runtime_method_model, package_references, parsed_tree_root, runtime_semantic_model,
+    semantic_model, source_edges, top_level_events,
 };
 use crate::project::collate::PackageSourceInventory;
 use crate::project::description::DescriptionFacts;
@@ -331,37 +332,52 @@ fn check_files_in<'a>(
     let shared_manifest = (groups.len() == 1)
         .then(|| db.set_library_index(Arc::clone(groups.values().next().unwrap().0)));
 
+    let clean: Vec<_> = files
+        .par_iter()
+        .map(|path| tracked[path])
+        .chain(scope_only.par_iter().copied())
+        .map_with(db.clone(), |worker, file| {
+            if !worker.parse_diagnostics(file).is_empty() {
+                return None;
+            }
+            source_edges(worker, file);
+            top_level_events(worker, file);
+            Some((
+                file,
+                needs_runtime_method_model(worker, semantic_model(worker, file)),
+            ))
+        })
+        .flatten()
+        .collect();
+
+    // The first runtime model that needs classes builds the shared index on
+    // its worker. Finish the independent lexical queries before any worker can
+    // enter that build, including for files that contribute only to scope.
+    if clean.len() > 1
+        && rayon::current_num_threads() > 1
+        && clean.iter().any(|&(_, needs_classes)| needs_classes)
+    {
+        clean
+            .par_iter()
+            .for_each_with(db.clone(), |worker, &(file, _)| {
+                file_class_defs(worker, file);
+                lexical_file_exports(worker, file);
+            });
+    }
+
     let warm_usage = !description_sources.is_empty();
-    let warm_file = |worker: &IncrementalDatabase, file: SourceFile| -> usize {
-        let count = worker.parse_diagnostics(file).len();
-        if count == 0 {
-            // `project_graph` folds these five.
+    clean
+        .par_iter()
+        .for_each_with(db.clone(), |worker, &(file, _)| {
             file_exports(worker, file);
             file_free_reads(worker, file);
             file_qualified_reads(worker, file);
             crate::incremental::file_use_only_reads(worker, file);
-            source_edges(worker, file);
-            top_level_events(worker, file);
             file_roxygen_topics(worker, file);
             if warm_usage {
                 package_references(worker, file);
             }
-        }
-        count
-    };
-    let parse_errors: HashMap<&PathBuf, usize> = files
-        .par_iter()
-        .map_with(db.clone(), |worker, path| {
-            (path, warm_file(worker, tracked[path]))
-        })
-        .filter(|&(_, count)| count != 0)
-        .collect();
-    scope_only
-        .par_iter()
-        .map_with(db.clone(), |worker, &file| {
-            warm_file(worker, file);
-        })
-        .collect::<Vec<()>>();
+        });
 
     project_graph(db);
     project_roxygen_topics(db);
@@ -384,13 +400,17 @@ fn check_files_in<'a>(
             .map_with(db.clone(), |worker, path| {
                 let worker = &*worker;
                 let file = tracked[path];
-                let (status, diagnostics) = if let Some(&count) = parse_errors.get(path) {
+                let parse_diagnostics = worker.parse_diagnostics(file);
+                let (status, diagnostics) = if !parse_diagnostics.is_empty() {
                     // Parse errors block the rules but are still reported (not
                     // swallowed): surface the parser's side-channel diagnostics as
                     // findings.
-                    let diagnostics =
-                        syntax_error_diagnostics(worker.parse_diagnostics(file), path);
-                    (LintStatus::ParseDiagnostics { count }, diagnostics)
+                    (
+                        LintStatus::ParseDiagnostics {
+                            count: parse_diagnostics.len(),
+                        },
+                        syntax_error_diagnostics(parse_diagnostics, path),
+                    )
                 } else {
                     let visibility = visible_symbols(worker, file);
                     let file_scope = visibility.scope();
@@ -950,7 +970,11 @@ mod tests {
     use crate::incremental::QueryKind;
 
     #[test]
-    fn batch_with_one_library_index_builds_project_classes_once() {
+    fn batch_prepares_lexical_class_facts_before_building_the_shared_index() {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .unwrap();
         let dir = tempfile::tempdir().unwrap();
         let class = dir.path().join("class.R");
         let consumer = dir.path().join("consumer.R");
@@ -969,12 +993,27 @@ mod tests {
         let mut db = IncrementalDatabase::default();
         db.clear_query_log();
 
-        let result =
-            check_files_in(&mut db, discovered, &|_| &config, &|_| &index, |_| Ok(None)).unwrap();
+        let result = pool
+            .install(|| {
+                check_files_in(&mut db, discovered, &|_| &config, &|_| &index, |_| Ok(None))
+            })
+            .unwrap();
 
         assert_eq!(result.checked_files, 2);
+        let events = db.query_log();
+        let first_class_build = events
+            .iter()
+            .position(|event| event.kind == QueryKind::ProjectClasses)
+            .unwrap();
         assert_eq!(
-            db.query_log()
+            events[..first_class_build]
+                .iter()
+                .filter(|event| event.kind == QueryKind::FileClassDefs)
+                .count(),
+            2
+        );
+        assert_eq!(
+            events
                 .iter()
                 .filter(|event| event.kind == QueryKind::ProjectClasses)
                 .count(),

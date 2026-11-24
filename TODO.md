@@ -1249,11 +1249,18 @@ With the same setup on `MASS/R`, Arity went from 668 ms to 220 ms at 24
 threads, and Jarl took 20 ms. The pinned single-thread whole-package medians
 were 2,554 ms, 1,297 ms, and 127 ms respectively, with wider timing spread.
 
-- [ ] Measure a batch phase that warms the lexical class facts in parallel.
-  The first runtime semantic query asks for the shared class index, which
-  computes the outstanding file facts on one worker. A follow-up trace on
-  whole-package MASS put the S3 registry itself at roughly 11 ms after the
-  lookup changes. The class index still took roughly 140–180 ms.
+- [x] Prepare the lexical class facts in parallel before the shared class
+  index builds. The batch first warms lexical source facts, then prepares
+  class facts for all clean workspace members when runtime method analysis
+  needs them. This includes files read only for package scope. Against
+  `bacaf91`, whole-package MASS went from 324 ms to 244 ms at 24 threads
+  (25% less), and `MASS/R` went from 221 ms to 206 ms (7% less). Jarl took
+  26 ms and 20 ms respectively. Same release CLI setup as above, with 12
+  interleaved runs per case. JSON diagnostics matched with both populated
+  and empty indexes. Whole-package MASS was flat on one pinned thread
+  (844 ms vs. 840 ms). In three debugger traces at 24 threads, time inside
+  the shared class-index build fell from a median of 134 ms to 22 ms. With
+  preparation running first, the build began about 34 ms later.
 
 #### The Jarl gap (measured 2026-08-17)
 

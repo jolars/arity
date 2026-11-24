@@ -810,15 +810,19 @@ pub fn dispatch_contexts(
 /// preserve the dependency direction through `file_class_defs` and classes.
 pub fn runtime_semantic_model(db: &dyn IncrementalDb, file: SourceFile) -> &SemanticModel {
     let lexical = semantic_model(db, file);
-    let project_implementation = !Workspace::get(db).members(db).is_empty()
-        && lexical
-            .scopes()
-            .iter()
-            .any(|scope| scope.kind == crate::semantic::ScopeKind::Function);
-    if !crate::project::classes::has_method_candidates(lexical) && !project_implementation {
+    if !needs_runtime_method_model(db, lexical) {
         return lexical;
     }
     method_semantic_model(db, file).as_ref().unwrap_or(lexical)
+}
+
+pub(crate) fn needs_runtime_method_model(db: &dyn IncrementalDb, lexical: &SemanticModel) -> bool {
+    (!Workspace::get(db).members(db).is_empty()
+        && lexical
+            .scopes()
+            .iter()
+            .any(|scope| scope.kind == crate::semantic::ScopeKind::Function))
+        || crate::project::classes::has_method_candidates(lexical)
 }
 
 /// The per-file control-flow graph (one region per function body plus the file
