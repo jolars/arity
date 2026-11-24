@@ -62,7 +62,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use rowan::ast::AstNode as _;
-use rowan::{TextRange, TextSize, TokenAtOffset};
+use rowan::{TextRange, TextSize, TokenAtOffset, WalkEvent};
 use serde::{Deserialize, Serialize};
 
 use crate::ast::{AssignmentExpr, BinaryExpr, CallExpr, FunctionExpr};
@@ -1214,21 +1214,34 @@ fn binding_assignment(root: &SyntaxNode, range: TextRange) -> Option<AssignmentE
 }
 
 fn opaque_binding_frame(root: &SyntaxNode, range: TextRange) -> bool {
-    let frame = |node: SyntaxNode| {
+    let frame = root.covering_element(range).parent().and_then(|node| {
         node.ancestors()
             .find(|node| node.kind() == SyntaxKind::FUNCTION_EXPR)
-            .map(|node| node.text_range())
-    };
-    let binding_frame = root.covering_element(range).parent().and_then(frame);
-    root.descendants().filter_map(CallExpr::cast).any(|call| {
-        call.callee_name().is_some_and(|name| {
+    });
+    let mut nodes = frame.as_ref().unwrap_or(root).preorder();
+    while let Some(event) = nodes.next() {
+        let WalkEvent::Enter(node) = event else {
+            continue;
+        };
+        // Nested functions have their own binding frames.
+        if node.kind() == SyntaxKind::FUNCTION_EXPR && Some(&node) != frame.as_ref() {
+            nodes.skip_subtree();
+            continue;
+        }
+        let Some(call) = CallExpr::cast(node) else {
+            continue;
+        };
+        if call.callee_name().is_some_and(|name| {
             if replacement_assignment(&call).is_some() {
                 crate::semantic::calls::changes_bindings(&format!("{name}<-"))
             } else {
                 crate::semantic::calls::changes_bindings(unbacktick(&name))
             }
-        }) && frame(call.syntax().clone()) == binding_frame
-    })
+        }) {
+            return true;
+        }
+    }
+    false
 }
 
 fn read_binding(model: &SemanticModel, token: &SyntaxToken) -> Option<BindingId> {
@@ -1820,6 +1833,34 @@ mod tests {
         let facts = facts_of("make <- R6::R6Class\nmake <- methods::setClass\nA <- make(\"A\")\n");
         assert_eq!(facts.declarations.len(), 2);
         assert_ne!(facts.declarations[0].key, facts.declarations[1].key);
+    }
+
+    #[test]
+    fn binding_frame_opacity_respects_nested_functions() {
+        let source = r#"
+file_binding <- 1
+outer <- function() {
+  outer_binding <- 2
+  inner <- function(arg = evalq(expr)) {
+    inner_binding <- 3
+  }
+}
+setter <- function() {
+  setter_binding <- 4
+  base::body(target) <- value
+}
+"#;
+        let root = parse(source).cst;
+        for (name, opaque) in [
+            ("file_binding", false),
+            ("outer_binding", false),
+            ("inner_binding", true),
+            ("setter_binding", true),
+        ] {
+            let start = TextSize::try_from(source.find(name).unwrap()).unwrap();
+            let range = TextRange::at(start, TextSize::of(name));
+            assert_eq!(opaque_binding_frame(&root, range), opaque, "{name}");
+        }
     }
 
     #[test]

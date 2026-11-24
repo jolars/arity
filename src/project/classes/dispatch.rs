@@ -338,7 +338,11 @@ pub fn apply_dispatch_contexts(
             .position(|scope| scope.range == range)
             .map(crate::semantic::ScopeId::from_index)
     };
-    let sites = method_implementation_sites(model, root);
+    let sites = if contexts.methods.is_empty() {
+        Vec::new()
+    } else {
+        method_implementation_sites(model, root)
+    };
     let mut environments = Vec::new();
     let mut implementations = Vec::new();
     for method in &contexts.methods {
@@ -432,7 +436,11 @@ pub fn apply_dispatch_contexts(
         });
     }
     let model = model.with_method_enclosures(environments, &implementations);
-    let sites = oop_sites(&model, root);
+    let sites = if contexts.generics.is_empty() {
+        Vec::new()
+    } else {
+        oop_sites(&model, root)
+    };
     let bindings = contexts
         .generics
         .iter()
