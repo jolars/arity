@@ -76,31 +76,81 @@ pub(super) struct NamespaceVisibility {
     methods: BTreeMap<(PathBuf, String), BTreeSet<PathBuf>>,
     qualified_methods: BTreeMap<(String, String), BTreeSet<PathBuf>>,
     reexports: BTreeMap<String, Reexports>,
+    pub(super) callee_imports: BTreeMap<PathBuf, Option<CalleeImports>>,
     pub s4: BTreeMap<PathBuf, S4Namespace>,
+}
+
+/// Imports used to resolve bare class and dispatch helpers. A conditional
+/// named import is uncertain only for the names it can introduce.
+#[derive(Debug, Clone, Default, PartialEq, Eq, salsa::SalsaValue)]
+pub(super) struct CalleeImports {
+    pub named: BTreeMap<String, BTreeSet<String>>,
+    pub conditional: BTreeSet<String>,
+    pub wildcard: Vec<(Vec<String>, BTreeSet<String>)>,
+}
+
+impl CalleeImports {
+    fn from_namespace(parsed: &crate::namespace::ParseOutput) -> Option<Self> {
+        if !parsed.diagnostics.is_empty() {
+            return None;
+        }
+        let mut result = Self::default();
+        for directive in parsed
+            .document()
+            .directives()
+            .filter(|directive| matches!(directive.kind(), Kind::Import | Kind::ImportFrom))
+        {
+            let conditional = directive
+                .syntax()
+                .ancestors()
+                .any(|node| node.kind() == SyntaxKind::IF_EXPR);
+            if directive.kind() == Kind::Import {
+                if conditional {
+                    return None;
+                }
+                result.wildcard.push(wildcard_import(&directive)?);
+                continue;
+            }
+            let mut args = directive.arguments();
+            let Some(source) = args
+                .next()
+                .and_then(|arg| arg.value())
+                .and_then(namespace_name)
+            else {
+                continue;
+            };
+            for name in args.filter_map(|arg| {
+                arg.name()
+                    .map(|name| name.to_string())
+                    .or_else(|| arg.value().and_then(namespace_name))
+            }) {
+                if conditional {
+                    result.conditional.insert(name);
+                } else {
+                    result.named.entry(name).or_default().insert(source.clone());
+                }
+            }
+        }
+        Some(result)
+    }
 }
 
 impl NamespaceVisibility {
     pub fn build(files: &BTreeMap<PathBuf, ClassFile>, resolution: &ClassResolution<'_>) -> Self {
-        let namespaces: BTreeMap<_, _> = resolution
-            .namespaces
-            .iter()
-            .filter_map(|(root, text)| directives(text).map(|directives| (root, directives)))
-            .collect();
-        let mut result = Self {
-            s4: resolution
-                .namespaces
-                .iter()
-                .map(|(root, _)| {
-                    let namespace = namespaces
-                        .get(root)
-                        .map_or_else(S4Namespace::default, |directives| {
-                            S4Namespace::from_directives(directives)
-                        });
-                    (root.clone(), namespace)
-                })
-                .collect(),
-            ..Self::default()
-        };
+        let mut namespaces = BTreeMap::new();
+        let mut result = Self::default();
+        for (root, text) in resolution.namespaces {
+            let parsed = crate::namespace::parse(text);
+            result
+                .callee_imports
+                .entry(root.clone())
+                .or_insert_with(|| CalleeImports::from_namespace(&parsed));
+            let s4 = result.s4.entry(root.clone()).or_default();
+            if let Some(directives) = directives(&parsed) {
+                *s4 = S4Namespace::from_directives(&directives);
+                namespaces.insert(root, directives);
+            }
+        }
         for target in files.values() {
             let Some(root) = &target.package_root else {
                 continue;
@@ -440,8 +490,7 @@ impl NamespaceDirective {
     }
 }
 
-fn directives(text: &str) -> Option<Vec<NamespaceDirective>> {
-    let parsed = crate::namespace::parse(text);
+fn directives(parsed: &crate::namespace::ParseOutput) -> Option<Vec<NamespaceDirective>> {
     if !parsed.diagnostics.is_empty()
         || parsed.document().directives().any(|directive| {
             directive

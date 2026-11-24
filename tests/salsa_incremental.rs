@@ -1560,13 +1560,22 @@ fn class_identity_rejects_wildcard_masks_and_conditional_imports() {
         native_routines: BTreeSet::new(),
     }]);
     assert!(project_classes(&db).declarations.is_empty());
-    let (mut db, _, _) = package_ab("A <- R6Class(\"A\")\n", "");
-    db.set_package_metadata(vec![PackageInfo {
-        root: "/pkg".into(),
-        namespace: Some("if (flag) importFrom(R6, R6Class)\n".into()),
-        dir_sources: BTreeSet::new(),
-        native_routines: BTreeSet::new(),
-    }]);
+    let (mut db, _, b) = package_ab("A <- R6Class(\"A\")\n", "");
+    let metadata = |namespace: &str| {
+        vec![PackageInfo {
+            root: "/pkg".into(),
+            namespace: Some(namespace.into()),
+            dir_sources: BTreeSet::new(),
+            native_routines: BTreeSet::new(),
+        }]
+    };
+    db.set_package_metadata(metadata("if (flag) importFrom(R6, R6Class)\n"));
+    assert!(project_classes(&db).declarations.is_empty());
+    db.set_package_metadata(metadata(
+        "if (flag) importFrom(other, alias = R6Class)\nimportFrom(R6, R6Class)\n",
+    ));
+    assert_eq!(project_classes(&db).declarations.len(), 1);
+    db.set_file_text(b, "`R6Class` <- function(...) NULL\n");
     assert!(project_classes(&db).declarations.is_empty());
 }
 

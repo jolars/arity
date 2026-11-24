@@ -206,7 +206,6 @@ impl ClassIndex {
         if self.incomplete.contains(path) {
             return candidates;
         }
-        let local_count = candidates.len();
         let seen = self.scope.sees(path);
         if reference.by_binding {
             let sources = self.definition_files(path, name, in_function);
@@ -218,12 +217,14 @@ impl ClassIndex {
             );
         } else {
             candidates.extend(
-                seen.iter()
+                self.generic_files_by_name
+                    .get(name)
+                    .into_iter()
+                    .flatten()
+                    .filter(|path| seen.contains(path))
                     .filter_map(|path| self.files.get(path))
                     .flat_map(top_level_matches),
             );
-            // Preserve local-first, source-path order.
-            candidates[local_count..].sort_by(|left, right| left.path.cmp(&right.path));
         }
         if candidates.is_empty()
             && !file.exports.contains(name)

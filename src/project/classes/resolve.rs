@@ -65,6 +65,9 @@ pub struct ClassIndex {
     /// Exact lexical names mapped to their defining files. Visibility and
     /// source order still come from the scope of each lookup.
     exporters: Arc<BTreeMap<String, Vec<PathBuf>>>,
+    quoted_exporters: BTreeMap<String, Vec<PathBuf>>,
+    /// Files declaring a top-level generic with this name, in path order.
+    generic_files_by_name: BTreeMap<String, Vec<PathBuf>>,
     /// Keep the shared scope so arbitrary live reads can resolve on demand,
     /// without a file-by-declaration-name Cartesian product of cached results.
     scope: Arc<ProjectScope>,
@@ -307,12 +310,11 @@ impl ClassIndex {
         };
         for reference in references {
             for identity in possible_functions(reference) {
-                match function_availability(
+                match self.function_availability(
                     file,
                     reference,
                     &identity.package,
                     &identity.name,
-                    &self.files,
                     resolution,
                 ) {
                     Availability::Present => {
@@ -348,6 +350,24 @@ impl ClassIndex {
                     .entry(name.clone())
                     .or_default()
                     .push(file.path.clone());
+                let bare = unbacktick(name);
+                if bare != name {
+                    index
+                        .quoted_exporters
+                        .entry(bare.to_string())
+                        .or_default()
+                        .push(file.path.clone());
+                }
+            }
+            for generic in &file.facts.oop.generics {
+                if generic.key.owner.0.is_empty()
+                    && let ClassName::Known(name) = &generic.name
+                {
+                    let paths = index.generic_files_by_name.entry(name.clone()).or_default();
+                    if paths.last() != Some(&file.path) {
+                        paths.push(file.path.clone());
+                    }
+                }
             }
         }
         index.exporters = Arc::new(exporters);
@@ -459,12 +479,11 @@ impl ClassIndex {
                 );
             for reference in references {
                 for identity in possible_functions(reference) {
-                    match function_availability(
+                    match index.function_availability(
                         file,
                         reference,
                         &identity.package,
                         &identity.name,
-                        &index.files,
                         resolution,
                     ) {
                         Availability::Present => {
@@ -521,14 +540,8 @@ impl ClassIndex {
                 .parent_candidates
                 .insert(id.clone(), candidates.clone());
             let vector_known = def.parent_vector.as_ref().is_none_or(|vector| {
-                function_availability(
-                    &index.files[&id.path],
-                    vector,
-                    "base",
-                    "c",
-                    &index.files,
-                    resolution,
-                ) == Availability::Present
+                index.function_availability(&index.files[&id.path], vector, "base", "c", resolution)
+                    == Availability::Present
             });
             if !def.binding_known()
                 || !vector_known
@@ -860,181 +873,138 @@ impl ClassIndex {
             ReadBinding::NoTopLevelRead => visible.cloned().collect(),
         }
     }
-}
 
-fn function_availability(
-    file: &ClassFile,
-    reference: &FunctionRef,
-    package: &str,
-    name: &str,
-    files: &BTreeMap<PathBuf, ClassFile>,
-    resolution: &ClassResolution<'_>,
-) -> Availability {
-    let version = file.facts.oop.s7.version;
-    let s7_development = package == "S7" && S7Version::development_export(name);
-    if s7_development && version == S7Version::Release {
-        return Availability::Absent;
-    }
-    match reference {
-        FunctionRef::Qualified {
-            package: actual_package,
-            name: actual_name,
-        } => {
-            if actual_package == package && actual_name == name {
-                Availability::Present
-            } else {
-                Availability::Absent
-            }
+    fn function_availability(
+        &self,
+        file: &ClassFile,
+        reference: &FunctionRef,
+        package: &str,
+        name: &str,
+        resolution: &ClassResolution<'_>,
+    ) -> Availability {
+        let version = file.facts.oop.s7.version;
+        let s7_development = package == "S7" && S7Version::development_export(name);
+        if s7_development && version == S7Version::Release {
+            return Availability::Absent;
         }
-        FunctionRef::Unresolved(_) => Availability::Unknown,
-        FunctionRef::Bare {
-            name: actual_name,
-            attached,
-            attachment_uncertain,
-        } => {
-            if *attachment_uncertain
-                || actual_name != name
-                || resolution.scope.for_file(&file.path).resolution_incomplete
-            {
-                return Availability::Unknown;
-            }
-            // A workspace binding wins over imports and the search path, even
-            // when its value is not a class factory we know how to summarize.
-            if resolution.scope.sees(&file.path).iter().any(|path| {
-                files.get(path).is_some_and(|file| {
-                    file.exports.iter().any(|export| unbacktick(export) == name)
-                        || (!attached.is_empty()
-                            && (file.exports.contains("library")
-                                || file.exports.contains("require")))
-                })
-            }) {
-                return Availability::Unknown;
-            }
-            if let Some(root) = &file.package_root
-                && let Some((_, text)) = resolution.namespaces.iter().find(|(path, _)| path == root)
-            {
-                let namespace = crate::namespace::parse(text);
-                if !namespace.diagnostics.is_empty() {
-                    return Availability::Unknown;
+        match reference {
+            FunctionRef::Qualified {
+                package: actual_package,
+                name: actual_name,
+            } => {
+                if actual_package == package && actual_name == name {
+                    Availability::Present
+                } else {
+                    Availability::Absent
                 }
-                let mut imports = BTreeSet::new();
-                let mut wildcard = Vec::new();
-                for directive in namespace.document().directives() {
-                    match directive.kind() {
-                        crate::namespace::DirectiveKind::ImportFrom => {
-                            let mut args = directive.arguments();
-                            let Some(source) = args
-                                .next()
-                                .and_then(|arg| arg.value())
-                                .and_then(namespace_name)
-                            else {
-                                continue;
-                            };
-                            if args.any(|arg| {
-                                arg.name().map_or_else(
-                                    || {
-                                        arg.value()
-                                            .and_then(namespace_name)
-                                            .is_some_and(|imported| imported == name)
-                                    },
-                                    |local| local == name,
-                                )
-                            }) {
-                                if directive
-                                    .syntax()
-                                    .ancestors()
-                                    .any(|node| node.kind() == SyntaxKind::IF_EXPR)
-                                {
-                                    return Availability::Unknown;
-                                }
-                                imports.insert(source);
-                            }
-                        }
-                        crate::namespace::DirectiveKind::Import => {
-                            if directive
-                                .syntax()
-                                .ancestors()
-                                .any(|node| node.kind() == SyntaxKind::IF_EXPR)
-                            {
-                                return Availability::Unknown;
-                            }
-                            let Some((packages, exclusions)) =
-                                namespace::wildcard_import(&directive)
-                            else {
-                                return Availability::Unknown;
-                            };
-                            if !exclusions.contains(name) {
-                                wildcard.extend(packages);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                if wildcard
-                    .iter()
-                    .any(|package| !package_indexed(resolution.indexed, resolution.remote, package))
+            }
+            FunctionRef::Unresolved(_) => Availability::Unknown,
+            FunctionRef::Bare {
+                name: actual_name,
+                attached,
+                attachment_uncertain,
+            } => {
+                if *attachment_uncertain
+                    || actual_name != name
+                    || resolution.scope.for_file(&file.path).resolution_incomplete
                 {
                     return Availability::Unknown;
                 }
-                imports.extend(package_origins(resolution, name, &wildcard));
-                if s7_development && wildcard.iter().any(|package| package == "S7") {
-                    imports.insert("S7".into());
-                }
-                if !imports.is_empty() {
-                    return if imports.len() == 1 && imports.contains(package) {
-                        Availability::Present
-                    } else if !imports.contains(package) {
-                        Availability::Absent
-                    } else {
-                        Availability::Unknown
-                    };
-                }
-            }
-            let mut loaded = Vec::new();
-            if let Some(root) = &file.package_root
-                && let Some(declaration) = resolution
-                    .packages
-                    .iter()
-                    .find(|declaration| &declaration.root == root)
-            {
-                loaded.extend(declaration.attached.iter().cloned());
-                if package_origins(resolution, name, &loaded).len() > 1 {
+                // A workspace binding wins over imports and the search path, even
+                // when its value is not a class factory we know how to summarize.
+                let seen = resolution.scope.sees(&file.path);
+                let any_visible = |paths: Option<&Vec<PathBuf>>| {
+                    paths.into_iter().flatten().any(|path| seen.contains(path))
+                };
+                if (unbacktick(name) == name && any_visible(self.exporters.get(name)))
+                    || any_visible(self.quoted_exporters.get(name))
+                    || (!attached.is_empty()
+                        && (any_visible(self.exporters.get("library"))
+                            || any_visible(self.exporters.get("require"))))
+                {
                     return Availability::Unknown;
                 }
-            }
-            // Depends attaches before this file executes its own library calls.
-            loaded.extend(attached.iter().cloned());
-            if s7_development && loaded.iter().any(|package| package == "S7") {
-                return Availability::Present;
-            }
-            let loaded: Vec<_> = loaded
-                .into_iter()
-                .map(|name| LoadedPackage {
-                    name: SmolStr::new(name),
-                    range: TextRange::default(),
-                })
-                .collect();
-            if loaded.iter().any(|package| {
-                !package_indexed(resolution.indexed, resolution.remote, &package.name)
-            }) {
-                return Availability::Unknown;
-            }
-            match resolve_origin(resolution.indexed, resolution.remote, name, &loaded) {
-                PackageOrigin::Resolved(origin) => {
-                    if origin == package {
-                        Availability::Present
-                    } else {
-                        Availability::Absent
+                if let Some(root) = &file.package_root
+                    && let Some(imports) = self.namespace.callee_imports.get(root)
+                {
+                    let Some(imports) = imports else {
+                        return Availability::Unknown;
+                    };
+                    if imports.conditional.contains(name) {
+                        return Availability::Unknown;
+                    }
+                    let wildcard: Vec<_> = imports
+                        .wildcard
+                        .iter()
+                        .filter(|(_, exclusions)| !exclusions.contains(name))
+                        .flat_map(|(packages, _)| packages.iter().cloned())
+                        .collect();
+                    let mut imports = imports.named.get(name).cloned().unwrap_or_default();
+                    if wildcard.iter().any(|package| {
+                        !package_indexed(resolution.indexed, resolution.remote, package)
+                    }) {
+                        return Availability::Unknown;
+                    }
+                    imports.extend(package_origins(resolution, name, &wildcard));
+                    if s7_development && wildcard.iter().any(|package| package == "S7") {
+                        imports.insert("S7".into());
+                    }
+                    if !imports.is_empty() {
+                        return if imports.len() == 1 && imports.contains(package) {
+                            Availability::Present
+                        } else if !imports.contains(package) {
+                            Availability::Absent
+                        } else {
+                            Availability::Unknown
+                        };
                     }
                 }
-                PackageOrigin::Ambiguous(origins) => {
-                    if origins.last().is_some_and(|origin| origin == package) {
-                        Availability::Present
-                    } else {
-                        Availability::Unknown
+                let mut loaded = Vec::new();
+                if let Some(root) = &file.package_root
+                    && let Some(declaration) = resolution
+                        .packages
+                        .iter()
+                        .find(|declaration| &declaration.root == root)
+                {
+                    loaded.extend(declaration.attached.iter().cloned());
+                    if package_origins(resolution, name, &loaded).len() > 1 {
+                        return Availability::Unknown;
                     }
                 }
-                PackageOrigin::Unknown => Availability::Unknown,
+                // Depends attaches before this file executes its own library calls.
+                loaded.extend(attached.iter().cloned());
+                if s7_development && loaded.iter().any(|package| package == "S7") {
+                    return Availability::Present;
+                }
+                let loaded: Vec<_> = loaded
+                    .into_iter()
+                    .map(|name| LoadedPackage {
+                        name: SmolStr::new(name),
+                        range: TextRange::default(),
+                    })
+                    .collect();
+                if loaded.iter().any(|package| {
+                    !package_indexed(resolution.indexed, resolution.remote, &package.name)
+                }) {
+                    return Availability::Unknown;
+                }
+                match resolve_origin(resolution.indexed, resolution.remote, name, &loaded) {
+                    PackageOrigin::Resolved(origin) => {
+                        if origin == package {
+                            Availability::Present
+                        } else {
+                            Availability::Absent
+                        }
+                    }
+                    PackageOrigin::Ambiguous(origins) => {
+                        if origins.last().is_some_and(|origin| origin == package) {
+                            Availability::Present
+                        } else {
+                            Availability::Unknown
+                        }
+                    }
+                    PackageOrigin::Unknown => Availability::Unknown,
+                }
             }
         }
     }

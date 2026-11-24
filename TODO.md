@@ -1231,9 +1231,33 @@ ships—the existing low-priority note under "Navigation" stands, unelevated.)
   first-reply latency and post-reply RSS in fresh sessions, and verify that
   installed class, generic, and method responses still match.
 
-#### The jarl gap (measured 2026-08-17)
+#### The Jarl gap on MASS (2026-11-24)
 
-**The gap is now scaling, not work.** On tidyr arity is **1.56x faster than
+MASS 7.3-66 has 122 S3 registrations in NAMESPACE, covering 43 generic names.
+Class resolution checked those registrations against every package file. Each
+check could reparse NAMESPACE and scan sibling files for matching declarations
+and lexical masks. Arity now projects the imports once and looks up candidate
+files by name before applying the existing visibility checks.
+
+On whole-package MASS at 24 threads with a populated local package index,
+release CLI time fell from 1,165 ms at `ee4f301` to 320 ms (72% less).
+Jarl 0.7.1 took 24 ms. These are medians of 12 interleaved runs on a Ryzen 9
+7900 with a warm filesystem cache. The commands were `arity lint MASS` and
+`jarl check MASS` with their default rules. Arity's JSON diagnostics matched
+byte for byte before and after the change, including with an empty index.
+With the same setup on `MASS/R`, Arity went from 668 ms to 220 ms at 24
+threads, and Jarl took 20 ms. The pinned single-thread whole-package medians
+were 2,554 ms, 1,297 ms, and 127 ms respectively, with wider timing spread.
+
+- [ ] Measure a batch phase that warms the lexical class facts in parallel.
+  The first runtime semantic query asks for the shared class index, which
+  computes the outstanding file facts on one worker. A follow-up trace on
+  whole-package MASS put the S3 registry itself at roughly 11 ms after the
+  lookup changes. The class index still took roughly 140–180 ms.
+
+#### The Jarl gap (measured 2026-08-17)
+
+Scaling accounted for the gap in this run. On tidyr arity was **1.56x faster than
 jarl single-threaded** (83.8 ms against 130.6) and **1.11x slower on 24
 threads** (28.3 against 25.4); on MASS the 24-thread ratio is 1.01x. arity is
 not doing more work — it converts less of it into wall time, getting 3.0x out

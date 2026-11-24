@@ -605,12 +605,11 @@ impl ClassIndex {
                     attached: Vec::new(),
                     attachment_uncertain: false,
                 };
-                function_availability(
+                self.function_availability(
                     file,
                     reference.lookup.as_ref().unwrap_or(&fallback),
                     package,
                     name,
-                    &self.files,
                     resolution,
                 ) == Availability::Present
             };
