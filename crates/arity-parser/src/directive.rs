@@ -270,6 +270,38 @@ pub fn parse(text: &str) -> Option<Parsed<'_>> {
     None
 }
 
+/// Parse a use declaration in an ordinary R comment.
+pub fn declared_read(text: &str) -> Option<&str> {
+    use crate::parser::lexer::{TokKind, lex_with_md};
+
+    let body = text.strip_prefix('#')?.trim_start();
+    let (name, _) = strip_word(body, 0, "arity-read")?;
+    let name = name.trim();
+    if matches!(name, "..." | "next" | "break")
+        || crate::parser::expr::ident_is_special_constant(name)
+    {
+        return None;
+    }
+    if let Some(quoted) = name.strip_prefix('`') {
+        let inner = quoted.strip_suffix('`')?;
+        if inner.is_empty()
+            || !inner
+                .bytes()
+                .rev()
+                .take_while(|b| *b == b'\\')
+                .count()
+                .is_multiple_of(2)
+        {
+            return None;
+        }
+    }
+    let tokens = lex_with_md(name, false);
+    match tokens.as_slice() {
+        [token] if token.kind == TokKind::Ident => Some(name),
+        _ => None,
+    }
+}
+
 /// The deprecated `# arity-ignore …`, which spells its own verb: it *is*
 /// `arity-lint skip`, so a verb after it is a mix of the two spellings.
 fn arity_ignore(rest: &str, rest_at: usize, prefix: TextRange) -> Parsed<'_> {
