@@ -215,6 +215,19 @@ pub fn check_files_with_scope_configs<'a>(
     discovered: crate::file_discovery::DiscoveredFiles,
     config_for: &(impl Fn(&Path) -> &'a LintConfig + Sync),
     index_for: &(impl Fn(&Path) -> &'a Arc<IndexedProvider> + Sync),
+    scope_floor_for: impl FnMut(&Path) -> Result<Option<crate::config::CompatVersion>, LintError>,
+) -> Result<LintResult, LintError> {
+    let mut db = IncrementalDatabase::default();
+    let result = check_files_in(&mut db, discovered, config_for, index_for, scope_floor_for)?;
+    rayon::spawn(move || drop(db));
+    Ok(result)
+}
+
+fn check_files_in<'a>(
+    db: &mut IncrementalDatabase,
+    discovered: crate::file_discovery::DiscoveredFiles,
+    config_for: &(impl Fn(&Path) -> &'a LintConfig + Sync),
+    index_for: &(impl Fn(&Path) -> &'a Arc<IndexedProvider> + Sync),
     mut scope_floor_for: impl FnMut(&Path) -> Result<Option<crate::config::CompatVersion>, LintError>,
 ) -> Result<LintResult, LintError> {
     let mut rule_cache = HashMap::new();
@@ -237,7 +250,6 @@ pub fn check_files_with_scope_configs<'a>(
     let files = discovered.r;
     let descriptions = discovered.description;
 
-    let mut db = IncrementalDatabase::default();
     let mut tracked: HashMap<PathBuf, SourceFile> = HashMap::new();
 
     let mut skipped: Vec<PathBuf> = Vec::new();
@@ -305,6 +317,20 @@ pub fn check_files_with_scope_configs<'a>(
         .collect();
     db.set_workspace_members(members, files.clone());
 
+    let mut groups: HashMap<usize, (&Arc<IndexedProvider>, Vec<&PathBuf>)> = HashMap::new();
+    for path in &files {
+        let index = index_for(path);
+        groups
+            .entry(std::ptr::from_ref(index) as usize)
+            .or_insert_with(|| (index, Vec::new()))
+            .1
+            .push(path);
+    }
+    // Warming file facts already resolves project classes against the library
+    // index. Install a shared index now so pass 2 can reuse those memos.
+    let shared_manifest = (groups.len() == 1)
+        .then(|| db.set_library_index(Arc::clone(groups.values().next().unwrap().0)));
+
     let warm_usage = !description_sources.is_empty();
     let warm_file = |worker: &IncrementalDatabase, file: SourceFile| -> usize {
         let count = worker.parse_diagnostics(file).len();
@@ -323,10 +349,10 @@ pub fn check_files_with_scope_configs<'a>(
         }
         count
     };
-    let parse_errors: HashMap<PathBuf, usize> = files
+    let parse_errors: HashMap<&PathBuf, usize> = files
         .par_iter()
         .map_with(db.clone(), |worker, path| {
-            (path.clone(), warm_file(worker, tracked[path]))
+            (path, warm_file(worker, tracked[path]))
         })
         .filter(|&(_, count)| count != 0)
         .collect();
@@ -337,10 +363,10 @@ pub fn check_files_with_scope_configs<'a>(
         })
         .collect::<Vec<()>>();
 
-    project_graph(&db);
-    project_roxygen_topics(&db);
+    project_graph(db);
+    project_roxygen_topics(db);
     if !description_sources.is_empty() {
-        package_usage(&db);
+        package_usage(db);
     }
 
     // The cross-file path resolves undefined symbols through `external_resolution`
@@ -348,43 +374,34 @@ pub fn check_files_with_scope_configs<'a>(
     // only the fallback for rules that read static base-R facts (`is_base`).
     let fallback = default_symbol_provider();
 
-    let mut groups: HashMap<usize, (&Arc<IndexedProvider>, Vec<PathBuf>)> = HashMap::new();
-    for path in files {
-        let index = index_for(&path);
-        groups
-            .entry(std::ptr::from_ref(index) as usize)
-            .or_insert_with(|| (index, Vec::new()))
-            .1
-            .push(path);
-    }
     let mut reports = Vec::new();
     // The library index is a salsa singleton. Analyze one index group at a
     // time, retaining the same workspace and graph across groups.
     for (index, files) in groups.into_values() {
-        let manifest = db.set_library_index(index.clone());
+        let manifest = shared_manifest.unwrap_or_else(|| db.set_library_index(Arc::clone(index)));
         let group_reports: Vec<LintFileReport> = files
             .into_par_iter()
             .map_with(db.clone(), |worker, path| {
                 let worker = &*worker;
-                let file = tracked[&path];
-                let (status, diagnostics) = if let Some(&count) = parse_errors.get(&path) {
+                let file = tracked[path];
+                let (status, diagnostics) = if let Some(&count) = parse_errors.get(path) {
                     // Parse errors block the rules but are still reported (not
                     // swallowed): surface the parser's side-channel diagnostics as
                     // findings.
                     let diagnostics =
-                        syntax_error_diagnostics(worker.parse_diagnostics(file), &path);
+                        syntax_error_diagnostics(worker.parse_diagnostics(file), path);
                     (LintStatus::ParseDiagnostics { count }, diagnostics)
                 } else {
                     let visibility = visible_symbols(worker, file);
                     let file_scope = visibility.scope();
                     let resolution = external_resolution(worker, manifest, file);
-                    let package = package_facts_for(worker, &path);
-                    let topics = roxygen_topics_for(worker, &path);
+                    let package = package_facts_for(worker, path);
+                    let topics = roxygen_topics_for(worker, path);
                     let kept = lint_parsed_file(
                         worker,
                         file,
-                        &path,
-                        &rules[&path],
+                        path,
+                        &rules[path],
                         &fallback,
                         &FileContext {
                             project: Some(&file_scope),
@@ -403,7 +420,7 @@ pub fn check_files_with_scope_configs<'a>(
                 };
                 let source = (!diagnostics.is_empty()).then(|| file.text(worker).clone());
                 LintFileReport {
-                    path,
+                    path: path.clone(),
                     status,
                     diagnostics,
                     source,
@@ -444,8 +461,6 @@ pub fn check_files_with_scope_configs<'a>(
         .sum();
 
     let checked_files = tracked.len() + description_count;
-    rayon::spawn(move || drop(db));
-
     Ok(LintResult {
         checked_files,
         total_findings,
@@ -926,4 +941,44 @@ pub fn check_document_with_provider(
         crate::project::description::roxygen_markdown_default_for_file(path),
     );
     check_tracked_file(&db, file, path, config, provider)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::file_discovery::DiscoveredFiles;
+    use crate::incremental::QueryKind;
+
+    #[test]
+    fn batch_with_one_library_index_builds_project_classes_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let class = dir.path().join("class.R");
+        let consumer = dir.path().join("consumer.R");
+        fs::write(
+            &class,
+            "A <- R6::R6Class(public = list(read = function() self))\n",
+        )
+        .unwrap();
+        fs::write(&consumer, "A$new()\n").unwrap();
+        let discovered = DiscoveredFiles {
+            r: vec![class, consumer],
+            description: Vec::new(),
+        };
+        let config = LintConfig::default();
+        let index = Arc::new(IndexedProvider::empty());
+        let mut db = IncrementalDatabase::default();
+        db.clear_query_log();
+
+        let result =
+            check_files_in(&mut db, discovered, &|_| &config, &|_| &index, |_| Ok(None)).unwrap();
+
+        assert_eq!(result.checked_files, 2);
+        assert_eq!(
+            db.query_log()
+                .iter()
+                .filter(|event| event.kind == QueryKind::ProjectClasses)
+                .count(),
+            1
+        );
+    }
 }
