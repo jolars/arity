@@ -82,7 +82,7 @@ Reproduced against ggplot2 `87a95d9` with R 4.6.1.
   with `@eval doc()` triggers `unused-binding` on `doc`. Roxygen2 8.0.0
   emits the parameter documentation. ggplot2's `subtheme_param_doc` has
   this shape. Parse the expression statically.
-- [ ] Support declared dynamic reads for computed names. In
+- [x] Support declared dynamic reads for computed names. In
   `f <- function() { geom_foo <- function() 42; get(paste0("geom_", "foo"))() }`,
   R returns `42` from `f()`, and `unused-binding` flags `geom_foo`.
   ggplot2 tests exercise computed lookups for local geom and scale providers.

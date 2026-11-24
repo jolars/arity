@@ -1412,6 +1412,33 @@ fn lint_per_file_ignores_apply_per_buffer_and_reload_inherited_config() {
 }
 
 #[test]
+fn declared_dynamic_get_updates_editor_diagnostics() {
+    let mut h = Harness::start_push();
+    let uri = doc_uri();
+    let declared = "key <- 'helper'\nhelper <- 1\nget(\n# arity-read helper\nkey\n)\n";
+    let undeclared = declared.replace("# arity-read helper", "");
+    h.did_open(uri, &undeclared, 1);
+    assert!(
+        h.recv_publish_for(uri, 1)
+            .iter()
+            .any(|d| d["code"] == "unused-binding")
+    );
+    h.did_change(uri, declared, 2);
+    assert!(
+        h.recv_publish_for(uri, 2)
+            .iter()
+            .all(|d| d["code"] != "unused-binding")
+    );
+    h.did_change(uri, &undeclared, 3);
+    assert!(
+        h.recv_publish_for(uri, 3)
+            .iter()
+            .any(|d| d["code"] == "unused-binding")
+    );
+    h.shutdown();
+}
+
+#[test]
 fn did_open_buggy_publishes_diagnostics() {
     let mut h = Harness::start_push();
     let uri = doc_uri();

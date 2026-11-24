@@ -124,6 +124,26 @@ To include fixes that may change behavior, explicitly opt in with
 `arity lint --fix --unsafe-fixes .` and review the resulting diff. The rule
 reference describes the available fixes.
 
+## Declare computed lookup names
+
+When `get()` computes a name at runtime, put an `arity-read` comment inside the
+call before its first argument:
+
+```r
+f <- function(kind) {
+  geom_foo <- function() 42
+  get(
+    # arity-read geom_foo
+    paste0("geom_", kind)
+  )()
+}
+
+f("foo")
+```
+
+Use one comment per possible binding name. Arity counts those names as reads for
+`unused-binding` when the call uses the default lookup environment.
+
 ## Suppress a finding
 
 When a rule is inappropriate at one site, put a directive before that statement:

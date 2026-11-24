@@ -671,15 +671,18 @@ fn handle_call(ctx: &mut BuildCtx<'_>, node: &SyntaxNode, scope: ScopeId) {
     }
     if let Some(call) = CallExpr::cast(node.clone()) {
         ctx.model.use_only_reads.extend(
-            crate::semantic::interpolation::use_only_reads(&call)
-                .into_iter()
-                .map(|candidate| UseOnlyRead {
-                    name: candidate.name,
-                    range: candidate.range,
-                    scope,
-                    deferred: ctx.deferred,
-                    gate: candidate.gate,
-                }),
+            crate::semantic::interpolation::use_only_reads(
+                &call,
+                ctx.quote_depth == 0 && ctx.mask_depth == 0,
+            )
+            .into_iter()
+            .map(|candidate| UseOnlyRead {
+                name: candidate.name,
+                range: candidate.range,
+                scope,
+                deferred: ctx.deferred,
+                gate: candidate.gate,
+            }),
         );
     }
 

@@ -612,20 +612,7 @@ fn consume_newline(bytes: &[u8], i: usize) -> usize {
     }
 }
 
-/// Calls in pipe expressions may receive arguments that are absent from their CST.
-pub(crate) fn in_pipe(call: &CallExpr) -> bool {
-    call.syntax()
-        .ancestors()
-        .skip(1)
-        .take_while(|node| node.kind() != SyntaxKind::FUNCTION_EXPR)
-        .any(|node| {
-            binary_parts(&node).is_some_and(|(_, op, _)| {
-                op.kind() == SyntaxKind::PIPE
-                    || (op.kind() == SyntaxKind::USER_OP
-                        && matches!(op.text(), "%>%" | "%T>%" | "%<>%" | "%$%"))
-            })
-        })
-}
+pub(crate) use crate::semantic::calls::in_pipe;
 
 #[cfg(test)]
 mod tests {

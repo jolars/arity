@@ -376,6 +376,103 @@ fn interpolation_and_literal_get_count_as_binding_reads() {
 }
 
 #[test]
+fn declared_dynamic_get_marks_only_the_named_binding_used() {
+    let source = r#"f <- function(kind) {
+  geom_foo <- function() 42
+  unrelated <- 1
+  get(
+    # arity-read geom_foo
+    paste0("geom_", kind)
+  )()
+}
+f("foo")
+"#;
+    let unused = |source| {
+        diagnostics(source)
+            .into_iter()
+            .filter(|finding| finding.rule == "unused-binding")
+            .map(|finding| finding.message.body)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(unused(source).len(), 1);
+    assert!(unused(source)[0].contains("unrelated"));
+    assert_eq!(
+        unused(&source.replace("# arity-read geom_foo", "")).len(),
+        2
+    );
+}
+
+#[test]
+fn declared_dynamic_get_respects_scope_and_call_shape() {
+    let lookup = "get(\n# arity-read helper\nkey\n)";
+    for call in [
+        lookup.replace("key", "key, new.env()"),
+        lookup.replace("key", "en = new.env(), x = key"),
+        lookup.replace("key", "key, inherits = FALSE"),
+        lookup.replace("key", "key, ..."),
+        lookup.replace("key", "key,"),
+        lookup.replace("key", "\"different\""),
+        lookup.replace("helper", "helper extra"),
+        format!("quote({lookup})"),
+        format!("key |> {lookup}"),
+        format!("get <- identity\n{lookup}"),
+    ] {
+        let source = format!("helper <- 1\nkey <- \"helper\"\n{call}\n");
+        assert!(
+            diagnostics(&source)
+                .iter()
+                .any(|d| d.rule == "unused-binding" && d.message.body.contains("helper")),
+            "{source}"
+        );
+    }
+    let before_definition = format!("key <- \"helper\"\n{lookup}\nhelper <- 1\n");
+    assert!(
+        diagnostics(&before_definition)
+            .iter()
+            .any(|d| d.rule == "unused-binding")
+    );
+}
+
+#[test]
+fn declared_dynamic_get_survives_formatting_and_reads_package_siblings() {
+    let source = "key <- 'helper'\nbase::get( # arity-read helper\n# arity-read `other helper`\nmode = 'function', x = key)()\n";
+    let formatted = arity_formatter::formatter::format_node(
+        &arity::parser::parse(source).cst,
+        Default::default(),
+        source,
+    )
+    .unwrap();
+    let result = lint_package_files(
+        "",
+        &[
+            (
+                "a.R",
+                "helper <- function() 1\n`other helper` <- function() 2\n",
+            ),
+            ("b.R", &formatted),
+        ],
+        &LintConfig::default(),
+    );
+    assert!(!rules_for(&result, "a.R").contains(&"unused-binding"));
+    assert!(!rules_for(&result, "b.R").contains(&"undefined-symbol"));
+}
+
+#[test]
+fn declared_dynamic_get_reads_sourced_bindings() {
+    let dir = tempdir().unwrap();
+    let helper = dir.path().join("helper.R");
+    let caller = dir.path().join("caller.R");
+    std::fs::write(&helper, "helper <- function() 1\n").unwrap();
+    std::fs::write(
+        &caller,
+        "source('helper.R')\nkey <- 'helper'\nget(\n# arity-read helper\nkey\n)()\n",
+    )
+    .unwrap();
+    let result = check_paths(&[helper, caller]).unwrap();
+    assert!(!rules_for(&result, "helper.R").contains(&"unused-binding"));
+}
+
+#[test]
 fn interpolation_candidates_never_become_undefined_symbols() {
     let findings = diagnostics("glue::glue(\"Value: {not_in_scope}\")\n");
     assert!(

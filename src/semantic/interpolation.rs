@@ -4,7 +4,7 @@ use rowan::TextRange;
 use rowan::ast::AstNode as _;
 use smol_str::SmolStr;
 
-use crate::ast::{Arg, BinaryExpr, CallExpr, HasArgList as _};
+use crate::ast::{self, Arg, BinaryExpr, CallExpr, HasArgList as _};
 use crate::semantic::SemanticModel;
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxToken};
 
@@ -24,13 +24,16 @@ pub(super) struct Candidate {
 }
 
 /// Return use-only names with the containing literal's range.
-pub(super) fn use_only_reads(call: &CallExpr) -> Vec<Candidate> {
+pub(super) fn use_only_reads(call: &CallExpr, allow_declarations: bool) -> Vec<Candidate> {
     let Some(name) = call.callee_name() else {
         return Vec::new();
     };
     let package = call_package(call);
 
     if is_get(&name, package.as_deref()) {
+        if allow_declarations && let Some(reads) = declared_get(call) {
+            return reads;
+        }
         return literal_get(call)
             .into_iter()
             .map(|(read, range)| candidate(call, read, range))
@@ -113,6 +116,69 @@ fn call_package(call: &CallExpr) -> Option<SmolStr> {
 
 fn is_get(name: &str, package: Option<&str>) -> bool {
     name == "get" && package.is_none_or(|pkg| pkg == "base")
+}
+
+fn declared_get(call: &CallExpr) -> Option<Vec<Candidate>> {
+    let list = call.arg_list()?;
+    let mut reads = Vec::new();
+    for element in list.syntax().children_with_tokens() {
+        if ast::kinds::is_trivia(element.kind()) {
+            continue;
+        }
+        if element.kind() == SyntaxKind::COMMA {
+            break;
+        }
+        let arg = Arg::cast(element.into_node()?)?;
+        if arg.value().is_some() || arg.is_named() {
+            break;
+        }
+        for token in arg
+            .syntax()
+            .children_with_tokens()
+            .filter_map(SyntaxElement::into_token)
+        {
+            if token.kind() == SyntaxKind::COMMENT
+                && let Some(name) = crate::directive::declared_read(token.text())
+            {
+                reads.push(candidate(call, SmolStr::new(name), token.text_range()));
+            }
+        }
+    }
+    if reads.is_empty() || super::calls::in_pipe(call) {
+        return None;
+    }
+
+    let args: Vec<_> = list
+        .args()
+        .filter(|arg| arg.is_named() || arg.value().is_some())
+        .collect();
+    let commas = list
+        .syntax()
+        .children_with_tokens()
+        .filter(|el| el.kind() == SyntaxKind::COMMA)
+        .count();
+    if args.len() != commas + 1
+        || args.iter().any(|arg| {
+            arg.value()
+                .is_none_or(|value| value.as_token().is_some_and(|token| token.text() == "..."))
+        })
+    {
+        return None;
+    }
+    let names: Vec<_> = args.iter().map(Arg::name).collect();
+    let matched = crate::semantic::checked_match_args_to_formals(
+        &names,
+        &["x", "pos", "envir", "mode", "inherits"],
+    )
+    .ok()?;
+    if matched
+        .iter()
+        .any(|formal| !matches!(formal, Some("x" | "mode")))
+    {
+        return None;
+    }
+    let x = matched.iter().position(|formal| *formal == Some("x"))?;
+    (string_token(&args[x]).is_none()).then_some(reads)
 }
 
 fn literal_get(call: &CallExpr) -> Option<(SmolStr, TextRange)> {

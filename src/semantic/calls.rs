@@ -12,6 +12,23 @@ use crate::ast::{
 use crate::semantic::{BindingId, BindingKind, SemanticModel};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 
+/// Calls in pipe expressions may receive arguments that are absent from their CST.
+pub(crate) fn in_pipe(call: &CallExpr) -> bool {
+    call.syntax()
+        .ancestors()
+        .skip(1)
+        .take_while(|node| node.kind() != SyntaxKind::FUNCTION_EXPR)
+        .any(|node| {
+            BinaryExpr::cast(node)
+                .and_then(|binary| binary.op())
+                .is_some_and(|op| {
+                    op.kind() == SyntaxKind::PIPE
+                        || (op.kind() == SyntaxKind::USER_OP
+                            && matches!(op.text(), "%>%" | "%T>%" | "%<>%" | "%$%"))
+                })
+        })
+}
+
 /// Call effects gathered during the semantic walk, including quoted and
 /// qualified callees that do not appear among ordinary identifier reads.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
