@@ -378,6 +378,7 @@ pkgload
 plm
 plotly
 plotrix
+pls
 plumber
 plyr
 png
@@ -531,6 +532,7 @@ tidytree
 tidyverse
 timeDate
 timechange
+tinytable
 tinytest
 tinytex
 torch
@@ -571,6 +573,7 @@ xopen
 xtable
 xts
 yaml
+yardstick
 yulab.utils
 zip
 zoo

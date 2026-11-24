@@ -730,17 +730,18 @@ mod tests {
 
     #[test]
     fn remote_resolves_uninstalled_unbundled_package() {
-        // `tinytable` is neither installed nor in the bundled top-N; the remote
+        // `aritySidecarFixture` is neither installed nor in the bundled top-N; the remote
         // sidecar supplies its names so a real export resolves and `package_indexed`
         // is true (so `undefined-symbol` fires on a genuine non-export).
-        let p = CompositeProvider::base_only().with_remote(remote(&[("tinytable", &["tt"])]));
-        assert!(p.package_indexed("tinytable"));
+        let p =
+            CompositeProvider::base_only().with_remote(remote(&[("aritySidecarFixture", &["tt"])]));
+        assert!(p.package_indexed("aritySidecarFixture"));
         assert_eq!(
-            p.origin("tt", &[loaded("tinytable")]),
-            PackageOrigin::Resolved(SmolStr::new("tinytable"))
+            p.origin("tt", &[loaded("aritySidecarFixture")]),
+            PackageOrigin::Resolved(SmolStr::new("aritySidecarFixture"))
         );
         assert_eq!(
-            p.origin("not_a_real_export", &[loaded("tinytable")]),
+            p.origin("not_a_real_export", &[loaded("aritySidecarFixture")]),
             PackageOrigin::Unknown
         );
     }

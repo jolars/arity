@@ -4000,9 +4000,9 @@ fn remote_sidecar_resolves_uninstalled_package() {
     // sidecar knows is fully resolvable, so a real export resolves while a genuine
     // non-export is reported undefined.
     let (mut db, file) =
-        script_one("library(tinytable)\nfoo <- function() {\n  tt()\n  bogus()\n}\n");
+        script_one("library(aritySidecarFixture)\nfoo <- function() {\n  tt()\n  bogus()\n}\n");
 
-    // Without the sidecar, tinytable is neither indexed nor bundled: suppressed.
+    // Without the sidecar, aritySidecarFixture is neither indexed nor bundled: suppressed.
     let manifest = db.set_library_index(IndexedProvider::empty());
     {
         let res = external_resolution(&db, manifest, file);
@@ -4013,8 +4013,8 @@ fn remote_sidecar_resolves_uninstalled_package() {
         );
     }
 
-    // Install the sidecar: tinytable exports `tt` (but not `bogus`).
-    let manifest = db.set_remote_exports(remote_exports(&[("tinytable", &["tt"])]));
+    // Install the sidecar: aritySidecarFixture exports `tt` (but not `bogus`).
+    let manifest = db.set_remote_exports(remote_exports(&[("aritySidecarFixture", &["tt"])]));
     let res = external_resolution(&db, manifest, file);
     assert!(
         !res.unresolved.contains("tt"),
@@ -4033,9 +4033,10 @@ fn body_edit_does_not_rerun_resolution_with_remote_installed() {
     // The sidecar lives in the `remote` field of the HIGH-durability library
     // index, so — exactly like the harvested `data` field — a keystroke (a LOW
     // body edit) skips the resolution subgraph even when the sidecar is in play.
-    let (mut db, file) = script_one("library(tinytable)\nfoo <- function() {\n  tt(1)\n}\n");
+    let (mut db, file) =
+        script_one("library(aritySidecarFixture)\nfoo <- function() {\n  tt(1)\n}\n");
     db.set_library_index(IndexedProvider::empty());
-    let manifest = db.set_remote_exports(remote_exports(&[("tinytable", &["tt"])]));
+    let manifest = db.set_remote_exports(remote_exports(&[("aritySidecarFixture", &["tt"])]));
     {
         let res = external_resolution(&db, manifest, file);
         assert!(
@@ -4047,10 +4048,10 @@ fn body_edit_does_not_rerun_resolution_with_remote_installed() {
 
     db.clear_query_log();
 
-    // Body-only edit: free reads ({tt}) and loaded packages ({tinytable}) unchanged.
+    // Body-only edit: free reads ({tt}) and loaded packages ({aritySidecarFixture}) unchanged.
     db.set_file_text(
         file,
-        "library(tinytable)\nfoo <- function() {\n  tt(1)\n  2\n}\n",
+        "library(aritySidecarFixture)\nfoo <- function() {\n  tt(1)\n  2\n}\n",
     );
     let _ = external_resolution(&db, manifest, file);
 
