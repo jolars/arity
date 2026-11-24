@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Highlight: OOP support
+
+Arity now has support for object-oriented systems in R, including S3, S4, reference classes, R6, and S7. This is currently mostly a feature for the language server and its symbols, hover info, etc, but will in upcoming releases expand to provide linting support as well, and possibly code actions.
+
 ## [0.31.0](https://github.com/jolars/arity/compare/v0.30.0...v0.31.0) (2026-11-16)
 
 ### Features
