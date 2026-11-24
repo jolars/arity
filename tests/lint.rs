@@ -6259,6 +6259,78 @@ fn fixed_regex_skips_when_mode_flag_present() {
 }
 
 #[test]
+fn fixed_regex_skips_calls_that_cannot_be_rewritten_safely() {
+    for src in [
+        r#"grepl("a", "A", TRUE)"#,
+        r#"grepl("a", "A", ign = TRUE)"#,
+        r#"grepl(pattern = "a.", "ab")"#,
+        r#"sub("abc", "\\1", "abc")"#,
+        r#"gsub(repl = r"(\1)", pattern = "abc", x = x)"#,
+        r#"gsub("abc", replacement, x)"#,
+        r#"grep("abc", x, FALSE, FALSE, TRUE)"#,
+        r#"grepl("abc", x, f = FALSE)"#,
+        r#"grepl("abc", x, pe = FALSE)"#,
+        r#"grepl("abc", x, p = TRUE)"#,
+        r#"grepl("abc", x, x = x, unknown = TRUE)"#,
+        r#"grepl("abc", x, x = x, x = x)"#,
+        r#"grepl("abc")"#,
+        r#"grepl("abc", , x = x)"#,
+        r#"grepl("abc", x, )"#,
+        r#"grepl("abc", x, ...)"#,
+        r#"grepl("abc", x, `...`)"#,
+        r#"x |> grepl("abc", x = _)"#,
+    ] {
+        assert!(
+            diagnostics(src).iter().all(|d| d.rule != "fixed-regex"),
+            "{src}"
+        );
+    }
+}
+
+#[test]
+fn fixed_regex_matches_pattern_and_preserves_trivia() {
+    for (src, expected) in [
+        (
+            "grepl(x = x, pat = \"abc\" # keep\n)\n",
+            "grepl(x = x, pat = \"abc\", fixed = TRUE # keep\n)\n",
+        ),
+        (
+            "grep(x = x, \"abc\", value = TRUE, inv = TRUE)\n",
+            "grep(x = x, \"abc\", value = TRUE, inv = TRUE, fixed = TRUE)\n",
+        ),
+        (
+            "sub(repl = \"a.b\", x = x, pattern = \"abc\")\n",
+            "sub(repl = \"a.b\", x = x, pattern = \"abc\", fixed = TRUE)\n",
+        ),
+        (
+            "gsub(\"abc\", \"\\n\", x)\n",
+            "gsub(\"abc\", \"\\n\", x, fixed = TRUE)\n",
+        ),
+        (
+            "regexpr(text = x, \"abc\")\n",
+            "regexpr(text = x, \"abc\", fixed = TRUE)\n",
+        ),
+        (
+            "gregexpr(\"abc\", x)\n",
+            "gregexpr(\"abc\", x, fixed = TRUE)\n",
+        ),
+        (
+            "regexec(\"abc\", text = x)\n",
+            "regexec(\"abc\", text = x, fixed = TRUE)\n",
+        ),
+    ] {
+        let finding = diagnostics(src)
+            .into_iter()
+            .find(|d| d.rule == "fixed-regex")
+            .unwrap_or_else(|| panic!("expected fixed-regex on {src}"));
+        assert_eq!(&src[finding.range], "\"abc\"");
+        let fixed = fixed_output(src, "fixed-regex");
+        assert_eq!(fixed, expected);
+        assert!(arity::parser::parse(&fixed).diagnostics.is_empty());
+    }
+}
+
+#[test]
 fn fixed_regex_skips_shadowed_callee() {
     let src = "grepl <- function(p, x) TRUE\ngrepl(\"abc\", x)\n";
     let rules: Vec<&str> = diagnostics(src).iter().map(|d| d.rule).collect();

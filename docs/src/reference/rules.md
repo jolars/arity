@@ -1574,9 +1574,9 @@ warning: class-equals
 
 ### `fixed-regex`
 
-Flag a base-R regex call (`grepl`, `grep`, `sub`, `gsub`, `regexpr`, `gregexpr`, `regexec`) whose pattern is a plain string literal with no regex metacharacter, and add `fixed = TRUE`—it skips regex compilation and states that the pattern is a literal.
+Add `fixed = TRUE` to a base R regex call whose pattern is a plain, nonempty string literal. Fixed matching skips regex compilation.
 
-The rule fires only when the callee resolves to base R and no `fixed`/`ignore.case`/`perl` argument is already present. Because a metacharacter-free pattern matches identically either way, the fix (inserting `, fixed = TRUE`) is safe.
+The rule skips calls that already supply `fixed`, `ignore.case`, or `perl`, including by position or partial name. For `sub()` and `gsub()`, the replacement must also be a string literal whose value contains no backslash. The insertion is a safe fix.
 
 This rule is **enabled by default**.
 

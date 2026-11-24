@@ -91,7 +91,7 @@ Reproduced against ggplot2 `87a95d9` with R 4.6.1.
   accepts `f(1, , 3)` and returns `4`. ggplot2 intentionally omits
   `table2` in calls to its table-weaving helpers. Its `aes()` tests also
   use `aes(,, !!!list(y = 1))`, which yields the same mapping as `aes(y = 1)`.
-- [ ] Account for positional and partially matched arguments before adding
+- [x] Account for positional and partially matched arguments before adding
   `fixed = TRUE`. R evaluates `grepl("a", "A", TRUE)` and
   `grepl("a", "A", ign = TRUE)` to `TRUE`. The current rewrite turns
   both into `FALSE` with a warning. For
