@@ -1,4 +1,78 @@
 use super::*;
+use crate::incremental::{
+    IncrementalDb, SourceFile, file_class_source, parsed_tree_root, semantic_model,
+};
+use crate::project::graph::workspace_project;
+use crate::project::project_classes;
+
+#[derive(PartialEq, Eq)]
+pub(crate) struct WorkspaceObjectSymbol {
+    name: String,
+    kind: LspSymbolKind,
+    selection: TextRange,
+    binding: Option<TextRange>,
+    container: Option<String>,
+}
+
+/// Query-independent presentation for a single workspace file. Keep these
+/// ranges downstream of the class graph so moving a declaration refreshes
+/// its location without rebuilding the graph.
+#[salsa::tracked(returns(ref))]
+fn workspace_symbol_declarations(
+    db: &dyn IncrementalDb,
+    source: SourceFile,
+    path: PathBuf,
+) -> Arc<[WorkspaceObjectSymbol]> {
+    let index = project_classes(db);
+    let Some(file) = index.file(&path) else {
+        return Arc::default();
+    };
+    oop::presentation::declarations(
+        &parsed_tree_root(db, source),
+        semantic_model(db, source),
+        &file.facts,
+        &file_class_source(db, source).1,
+        index,
+        &path,
+    )
+    .into_iter()
+    .filter(|decl| decl.top_level)
+    .map(|decl| WorkspaceObjectSymbol {
+        name: decl.name,
+        kind: decl.kind,
+        selection: decl.selection,
+        binding: decl.binding,
+        container: decl.container,
+    })
+    .collect()
+}
+
+/// Reuse the ordered, query-independent class symbols across searches. The
+/// per-file queries own the locations, so edits can refresh them independently.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn workspace_object_symbols(
+    db: &dyn IncrementalDb,
+) -> Vec<(PathBuf, Arc<[WorkspaceObjectSymbol]>)> {
+    let project = workspace_project(db);
+    let index = project_classes(db);
+    project
+        .members
+        .iter()
+        .filter_map(|member| {
+            let facts = &index.file(&member.path)?.facts;
+            if facts.declarations.is_empty()
+                && facts.oop.generics.is_empty()
+                && facts.oop.methods.is_empty()
+                && facts.oop.possible_methods.is_empty()
+                && facts.oop.members.is_empty()
+            {
+                return None;
+            }
+            let declarations = workspace_symbol_declarations(db, member.file, member.path.clone());
+            (!declarations.is_empty()).then(|| (member.path.clone(), Arc::clone(declarations)))
+        })
+        .collect()
+}
 
 /// Resolve `workspace/symbol`: the workspace's top-level definitions whose name
 /// fuzzily matches `query`, as modern [`WorkspaceSymbol`]s carrying a full
@@ -22,27 +96,9 @@ pub(crate) fn workspace_symbols_via_db(
             .map(|(_, _, path, range)| (path.as_path(), *range))
             .collect();
         let mut replaced_bindings = std::collections::HashSet::new();
-        let index = snapshot.class_index();
         let mut objects = Vec::new();
-        for file in index.oop_files().filter(|file| {
-            !file.facts.declarations.is_empty()
-                || !file.facts.oop.generics.is_empty()
-                || !file.facts.oop.methods.is_empty()
-                || !file.facts.oop.possible_methods.is_empty()
-                || !file.facts.oop.members.is_empty()
-        }) {
-            let path = &file.path;
-            let Some(source) = snapshot.lookup_file(path) else {
-                continue;
-            };
-            let root = snapshot.parsed_tree(source);
-            let model = snapshot.semantic_model(source);
-            let sites = snapshot.class_source_sites(source);
-            for decl in
-                oop::presentation::declarations(&root, model, &file.facts, sites, &index, path)
-                    .into_iter()
-                    .filter(|decl| decl.top_level)
-            {
+        for (path, declarations) in snapshot.workspace_object_symbols() {
+            for decl in declarations.iter() {
                 let binding_matched = decl.binding.is_some_and(|binding| {
                     replaced_bindings.insert((path.clone(), binding));
                     matching_bindings.contains(&(path.as_path(), binding))
@@ -54,10 +110,10 @@ pub(crate) fn workspace_symbols_via_db(
                     && let Some(location) = location_in(snapshot, path, decl.selection, encoding)
                 {
                     objects.push(WorkspaceSymbol {
-                        name: decl.name,
+                        name: decl.name.clone(),
                         kind: decl.kind,
                         tags: None,
-                        container_name: decl.container,
+                        container_name: decl.container.clone(),
                         location: OneOf::Left(location),
                         data: None,
                     });
@@ -91,6 +147,22 @@ pub(crate) fn workspace_symbols_via_db(
 /// necessarily contiguously. An empty query matches everything. Dependency-free
 /// and lenient by design — the client does the final ranking.
 fn fuzzy_subsequence(query: &str, name: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    if name.is_ascii() {
+        let mut remaining = query.as_bytes();
+        for byte in name.bytes() {
+            if byte.to_ascii_lowercase() == remaining[0] {
+                remaining = &remaining[1..];
+                if remaining.is_empty() {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     let mut q = query.chars().peekable();
     let mut name_chars = name.chars().flat_map(char::to_lowercase);
     while let Some(&target) = q.peek() {
@@ -172,6 +244,33 @@ mod tests {
     }
 
     #[test]
+    fn workspace_search_refreshes_oop_locations_after_edit() {
+        let path = ws_path("a.R");
+        let mut db = IncrementalDatabase::default();
+        let source = "G <- R6::R6Class('Display', public = list(value = 1))";
+        let file = db.upsert_file(&path, source);
+        db.set_workspace_members(vec![file], vec![ws_root()]);
+
+        for (line, text) in [source.to_owned(), format!("\n{source}")]
+            .into_iter()
+            .enumerate()
+        {
+            db.upsert_file(&path, text);
+            let snapshot = db.snapshot();
+            let symbols =
+                workspace_symbols_via_db(&snapshot, "Display value", PositionEncoding::Utf16);
+            assert_eq!(names(&symbols), ["value"]);
+            assert_eq!(location_of(&symbols, "value").range.start.line, line as u32);
+        }
+
+        db.set_workspace_members(Vec::new(), vec![ws_root()]);
+        assert!(
+            workspace_symbols_via_db(&db.snapshot(), "Display value", PositionEncoding::Utf16)
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn fuzzy_subsequence_matches_in_order() {
         assert!(fuzzy_subsequence("", "anything"));
         assert!(fuzzy_subsequence("foo", "foo"));
@@ -180,6 +279,9 @@ mod tests {
         assert!(!fuzzy_subsequence("bf", "foobar")); // wrong order
         assert!(!fuzzy_subsequence("xyz", "foobar"));
         assert!(!fuzzy_subsequence("fooo", "foo")); // query longer than match run
+        assert!(!fuzzy_subsequence("é", "EXAMPLE"));
+        assert!(fuzzy_subsequence("kb", "KelvinBinding"));
+        assert!(fuzzy_subsequence("i\u{307}x", "İtemX"));
     }
 
     #[test]

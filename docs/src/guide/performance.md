@@ -134,9 +134,12 @@ transport is recorded in the artifact.
 **Request latency** covers document symbols in the three largest open files,
 hover on `mean()`, and definition, references, and rename on a local function
 call appended to the largest buffer. Rename edits are returned but never
-applied. Each target gets two warmups and 20 measured serial round trips per
-process. Median and p95 pool samples across processes; the tables and tooltips
-also report sample counts, empty responses, returned items, and result sizes. An
+applied. The suite also measures completion at the local binding, signature help
+inside `mean()`, workspace symbols matching `pivot_wider`, folding ranges in the
+largest file, and references to the `pivot_wider` S3 generic across the package.
+Each target gets two warmups and 20 measured serial round trips per process.
+Median and p95 pool samples across processes; the tables and tooltips also
+report sample counts, empty responses, returned items, and result sizes. An
 empty response measures response overhead and does not establish equivalent
 feature behavior.
 

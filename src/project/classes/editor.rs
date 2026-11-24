@@ -102,7 +102,7 @@ pub(crate) struct EditorRead<'a> {
     model: &'a SemanticModel,
     path: &'a Path,
     installed: InstalledObjects<'a>,
-    extracted: Extracted,
+    extracted: std::sync::Arc<Extracted>,
 }
 
 impl ClassIndex {
@@ -131,13 +131,26 @@ impl<'a> EditorRead<'a> {
         indexed: &'a IndexedProvider,
         remote: &'a RemoteExports,
     ) -> Self {
+        Self::with_facts(index, root, model, path, indexed, remote, None)
+    }
+
+    pub(crate) fn with_facts(
+        index: &'a ClassIndex,
+        root: &'a SyntaxNode,
+        model: &'a SemanticModel,
+        path: &'a Path,
+        indexed: &'a IndexedProvider,
+        remote: &'a RemoteExports,
+        extracted: Option<std::sync::Arc<Extracted>>,
+    ) -> Self {
         Self {
             index,
             root,
             model,
             path,
             installed: InstalledObjects { indexed, remote },
-            extracted: extract(model, root, false),
+            extracted: extracted
+                .unwrap_or_else(|| std::sync::Arc::new(extract(model, root, false))),
         }
     }
 

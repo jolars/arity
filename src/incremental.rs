@@ -942,15 +942,14 @@ pub fn file_class_defs(db: &dyn IncrementalDb, file: SourceFile) -> FileClassFac
 /// Current spans for object system navigation. Keep them separate from the range-free
 /// class facts so moving a site does not invalidate the project class graph.
 #[salsa::tracked(returns(ref))]
-pub(crate) fn file_class_source_sites(
+pub(crate) fn file_class_source(
     db: &dyn IncrementalDb,
     file: SourceFile,
-) -> crate::project::classes::ClassSourceSites {
+) -> (FileClassFacts, crate::project::classes::ClassSourceSites) {
     crate::project::classes::class_source_sites(
         semantic_model(db, file),
         &parsed_tree_root(db, file),
     )
-    .1
 }
 
 /// Body-local callee origins, shared by repeated workspace reference requests.
@@ -963,6 +962,23 @@ pub(crate) fn file_body_class_lookups(
         semantic_model(db, file),
         &parsed_tree_root(db, file),
         true,
+    )
+}
+
+// Rename confirms body callees across the workspace. Retain the overlay for
+// repeated reads of a tracked file, with the same inputs as the live path.
+#[salsa::tracked(returns(ref), lru = 4)]
+fn class_index_for_rename(db: &dyn IncrementalDb, file: SourceFile, path: PathBuf) -> ClassIndex {
+    let root = parsed_tree_root(db, file);
+    crate::project::graph::build_class_index(
+        db,
+        Some(crate::project::graph::LiveClassFile {
+            path: &path,
+            facts: &file_class_source(db, file).0,
+            root: &root,
+            model: semantic_model(db, file),
+        }),
+        BodyClassLookups::Workspace,
     )
 }
 
@@ -1977,6 +1993,23 @@ impl Analysis {
     ) -> SemanticModel {
         semantic_model_in(&self.0, self.lookup_file(path), Some(path), root, floor)
     }
+    /// Borrow the cached lexical model when the live inputs match those of
+    /// the tracked query, including the path used to resolve package context.
+    pub(crate) fn tracked_semantic_model_for_tree(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        floor: Option<&crate::config::CompatVersion>,
+    ) -> Option<&SemanticModel> {
+        let file = self.lookup_file(path)?;
+        if self.file_path(file) != Some(path) || file.s7_floor(&self.0).as_ref() != floor {
+            return None;
+        }
+        let tracked = &*parsed_document(&self.0, file).green;
+        let live = root.green();
+        (std::ptr::eq(live, tracked) || live == tracked).then(|| self.semantic_model(file))
+    }
+
     /// The `SourceFile` input currently tracked for `path`, if any.
     pub fn lookup_file(&self, path: &Path) -> Option<SourceFile> {
         self.0.lookup_file(path)
@@ -2135,6 +2168,12 @@ impl Analysis {
         project_classes(&self.0)
     }
 
+    pub(crate) fn workspace_object_symbols(
+        &self,
+    ) -> &[(PathBuf, Arc<[crate::lsp::WorkspaceObjectSymbol]>)] {
+        crate::lsp::workspace_object_symbols(&self.0)
+    }
+
     pub(crate) fn tracked_class_source(
         &self,
         path: &Path,
@@ -2148,7 +2187,7 @@ impl Analysis {
         {
             Some((
                 file_class_defs(&self.0, file),
-                file_class_source_sites(&self.0, file),
+                &file_class_source(&self.0, file).1,
             ))
         } else {
             None
@@ -2181,6 +2220,41 @@ impl Analysis {
             .unwrap_or_else(|| self.class_index_ref())
     }
 
+    /// Only reuse the projection for the exact tracked model and tree. An editor
+    /// buffer can be ahead of the database or resolve a different S7 floor.
+    fn tracked_class_read_file(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+    ) -> Option<SourceFile> {
+        let file = self.lookup_file(path)?;
+        let tracked = &*parsed_document(&self.0, file).green;
+        (std::ptr::eq(model, semantic_model(&self.0, file))
+            && (std::ptr::eq(root.green(), tracked) || root.green() == tracked))
+            .then_some(file)
+    }
+
+    pub(crate) fn tracked_editor_class_facts(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+    ) -> Option<Arc<crate::project::classes::Extracted>> {
+        let file = self.tracked_class_read_file(path, root, model)?;
+        Some(crate::project::classes::editor_class_facts(&self.0, file).clone())
+    }
+
+    pub(crate) fn tracked_hover_class_source(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+    ) -> Option<&(FileClassFacts, crate::project::classes::ClassSourceSites)> {
+        let file = self.tracked_class_read_file(path, root, model)?;
+        Some(file_class_source(&self.0, file))
+    }
+
     /// Borrow the tracked graph when its file projection describes this read.
     /// A stale buffer or a different compatibility context needs a live overlay.
     pub(crate) fn class_index_for_presentation(
@@ -2200,19 +2274,67 @@ impl Analysis {
         {
             let index = project_classes(&self.0);
             if index.file(path).is_some() {
-                let body = crate::project::classes::class_lookups(model, root, true);
+                let live;
+                let body = if std::ptr::eq(model, semantic_model(&self.0, file)) {
+                    file_body_class_lookups(&self.0, file)
+                } else {
+                    live = crate::project::classes::class_lookups(model, root, true);
+                    &live
+                };
                 if body
                     .iter()
                     .all(|reference| facts.oop.class_lookups.contains(reference))
                 {
                     return Cow::Borrowed(index);
                 }
-                if &body == file_body_class_lookups(&self.0, file) {
+                if body == file_body_class_lookups(&self.0, file) {
                     return Cow::Borrowed(class_index_with_file_body(&self.0, file));
                 }
             }
         }
         Cow::Owned(self.class_index_in(path, facts, root, model))
+    }
+
+    /// Reuse the workspace class graph when the live overlay would contribute
+    /// the same facts, exports, and execution events as the tracked file.
+    pub(crate) fn class_index_for_signature(
+        &self,
+        path: &Path,
+        root: &SyntaxNode,
+        model: &SemanticModel,
+    ) -> Cow<'_, ClassIndex> {
+        if let Some(file) = self.lookup_file(path)
+            && file.path(&self.0).as_deref() == Some(path)
+            && path.file_name().and_then(std::ffi::OsStr::to_str).is_some()
+            && {
+                let tracked = &*parsed_document(&self.0, file).green;
+                std::ptr::eq(root.green(), tracked) || root.green() == tracked
+            }
+            && model == semantic_model(&self.0, file)
+            // Live overlays use the default lexical model for source edges.
+            // The tracked projection can also see S7 compatibility bindings.
+            && crate::project::collect_source_edge_keys(root, file.execution_directory(&self.0))
+                == **source_edges(&self.0, file)
+        {
+            let index = self.class_index_ref();
+            if index.file(path).is_some() {
+                let facts = file_class_defs(&self.0, file);
+                let body = file_body_class_lookups(&self.0, file);
+                return Cow::Borrowed(
+                    if body
+                        .iter()
+                        .all(|reference| facts.oop.class_lookups.contains(reference))
+                    {
+                        index
+                    } else {
+                        class_index_with_file_body(&self.0, file)
+                    },
+                );
+            }
+        }
+
+        let facts = crate::project::file_class_defs(model, root);
+        Cow::Owned(self.class_index_in(path, &facts, root, model))
     }
 
     /// Resolve a live buffer through the same project class model as tracked reads.
@@ -2250,11 +2372,15 @@ impl Analysis {
         )
     }
 
+    pub(crate) fn class_index_for_rename(&self, file: SourceFile, path: &Path) -> &ClassIndex {
+        class_index_for_rename(&self.0, file, path.to_path_buf())
+    }
+
     pub(crate) fn class_source_sites(
         &self,
         file: SourceFile,
     ) -> &crate::project::classes::ClassSourceSites {
-        file_class_source_sites(&self.0, file)
+        &file_class_source(&self.0, file).1
     }
 
     pub fn class_supertypes(&self, id: &ClassId) -> Vec<ClassId> {
@@ -2919,6 +3045,48 @@ mod tests {
             assert!(matches!(live, Cow::Owned(_)));
             assert_eq!(live.declarations.len(), 1);
         }
+    }
+
+    #[test]
+    fn editor_class_facts_reuse_only_matching_tracked_inputs() {
+        let mut db = IncrementalDatabase::default();
+        let path = normalize_path(Path::new("classes.R"));
+        let file = db.upsert_file(&path, "C <- R6::R6Class('C')");
+        let previous;
+        {
+            let snapshot = db.snapshot();
+            let root = snapshot.parsed_tree(file);
+            let model = snapshot.semantic_model(file);
+            previous = snapshot
+                .tracked_editor_class_facts(&path, &root, model)
+                .unwrap();
+            let repeat = snapshot
+                .tracked_editor_class_facts(&path, &root, model)
+                .unwrap();
+            assert!(Arc::ptr_eq(&previous, &repeat));
+            let edited = crate::parser::parse("D <- R6::R6Class('D')").cst;
+            assert!(
+                snapshot
+                    .tracked_editor_class_facts(&path, &edited, model)
+                    .is_none()
+            );
+            let live_model = SemanticModel::build(&root);
+            assert!(
+                snapshot
+                    .tracked_editor_class_facts(&path, &root, &live_model)
+                    .is_none()
+            );
+        }
+        db.set_file_text(file, "D <- R6::R6Class('D')");
+        let snapshot = db.snapshot();
+        let current = snapshot
+            .tracked_editor_class_facts(
+                &path,
+                &snapshot.parsed_tree(file),
+                snapshot.semantic_model(file),
+            )
+            .unwrap();
+        assert!(!Arc::ptr_eq(&previous, &current));
     }
 
     #[test]

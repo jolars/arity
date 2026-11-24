@@ -76,6 +76,101 @@ class ProcParsingTests(unittest.TestCase):
 
 
 class LatencyTests(unittest.TestCase):
+    def test_request_selection_uses_utf16_positions_and_distinct_reference_cases(self):
+        harness = load_harness()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pivot-wide.R"
+            path.write_text("'😀'; pivot_wider <- function(x) x\n", encoding="utf-8")
+            documents, target = harness.prepare_documents([path])
+            requests = harness.select_requests(
+                [documents[0]["uri"]], target, ["references", "project_references"]
+            )
+            self.assertEqual(
+                [request[0] for request in requests],
+                [
+                    "references",
+                    "project_references",
+                ],
+            )
+            self.assertEqual(requests[1][3][0]["position"], {"line": 0, "character": 7})
+            target["project_reference"] = None
+            with self.assertRaisesRegex(ValueError, "pivot-wide"):
+                harness.select_requests([target["uri"]], target, ["project_references"])
+
+    def test_new_result_counts(self):
+        harness = load_harness()
+        for method, result, expected in [
+            ("textDocument/completion", [{"label": "a"}], 1),
+            ("textDocument/completion", {"items": []}, 0),
+            ("textDocument/signatureHelp", {"signatures": [{}, {}]}, 2),
+            ("workspace/symbol", [{}, {}], 2),
+            ("textDocument/foldingRange", [{}], 1),
+        ]:
+            with self.subTest(method=method, result=result):
+                self.assertEqual(
+                    harness.result_summary(method, result), (expected, None)
+                )
+
+    def test_request_capabilities_and_empty_aggregation(self):
+        harness = load_harness()
+        client = Mock(state=threading.Lock(), notifications=[])
+        request = ("completion", "Completion", "textDocument/completion", [{}])
+        records = harness.benchmark_selected_requests(client, {}, [request], 1, 0, 1)
+        client.request.assert_not_called()
+        self.assertEqual(
+            harness.aggregate_latencies([{"request_latencies": records}]), []
+        )
+        self.assertTrue(
+            harness.request_supported(
+                client, {"completionProvider": {}}, request[0], request[2]
+            )
+        )
+        client.notifications.append(
+            {
+                "method": "client/registerCapability",
+                "params": {"registrations": [{"method": request[2]}]},
+            }
+        )
+        self.assertTrue(harness.request_supported(client, {}, request[0], request[2]))
+
+    def test_quick_comparison_alternates_server_order(self):
+        harness = load_harness()
+        args = Mock(
+            file=None,
+            request=["completion"],
+            cpu=None,
+            runs=2,
+            latency_warmups=0,
+            latency_runs=1,
+            quiet_seconds=1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            project = Path(directory)
+            args.stderr_dir = project
+            (project / "R").mkdir()
+            (project / "R/pivot-wide.R").write_text("pivot_wider <- function(x) x\n")
+            with (
+                patch.object(
+                    harness, "run_session", return_value={"request_latencies": []}
+                ) as run,
+                patch("sys.stdout", new_callable=io.StringIO) as output,
+            ):
+                harness.compare_with_ark(
+                    args,
+                    project,
+                    Path("/arity"),
+                    ("ark", ["ark"]),
+                    {"arity": "Arity test", "ark": "Ark test"},
+                    {"env": {}},
+                )
+        self.assertEqual(
+            [call.args[0][0] for call in run.call_args_list],
+            ["arity", "ark", "ark", "arity"],
+        )
+        self.assertTrue(all(call.kwargs["warm_only"] for call in run.call_args_list))
+        self.assertIn("ark: unsupported", output.getvalue())
+        self.assertNotIn("Ark / Arity median", output.getvalue())
+
     def edit_target(self):
         return {
             "uri": "file:///a.R",

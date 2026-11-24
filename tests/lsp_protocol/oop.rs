@@ -515,12 +515,14 @@ impl(1)
 other <- function(x) x
 other(1)
 alone <- function(x) x
+Generator <- R6::R6Class("Example")
 "#;
     let saved = "exportClasses(Existing)\nS3method(public, example, impl)\nS3method(public, single, alone)\n";
-    let live = saved.replace("Existing", "Alternate");
+    let live = saved.replace("Existing", "Alternate") + "export(Exposed)\n";
     fs::create_dir(path.parent().unwrap()).unwrap();
     fs::write(dir.path().join("DESCRIPTION"), super::COMPLETE_DESCRIPTION).unwrap();
     fs::write(&path, source).unwrap();
+    fs::write(path.with_file_name("aliases.R"), "Exposed <- Generator\n").unwrap();
     fs::write(&namespace_path, saved).unwrap();
     let uri = path_uri(&path);
     let namespace_uri = path_uri(&namespace_path);
@@ -529,6 +531,17 @@ alone <- function(x) x
     harness.recv_publish_for(&uri, 1);
     harness.did_open(&namespace_uri, &live, 1);
     harness.recv_publish_for(&namespace_uri, 1);
+
+    let definition = request(
+        &mut harness,
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": namespace_uri },
+            "position": position(&live, live.find("Exposed").unwrap() + 1)
+        }),
+    );
+    assert_eq!(definition["uri"], uri, "{definition}");
+    assert_eq!(definition["range"]["start"]["line"], 8, "{definition}");
 
     let references = |harness: &mut Harness, uri: &str, text: &str, name: &str| {
         request(
@@ -541,6 +554,18 @@ alone <- function(x) x
             }),
         )
     };
+    let generic = references(&mut harness, &uri, source, "public");
+    let namespace_spans: Vec<_> = generic
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|location| location["uri"] == namespace_uri)
+        .map(|location| {
+            let [start, end] = byte_range(&live, &location["range"]);
+            &live[start..end]
+        })
+        .collect();
+    assert_eq!(namespace_spans, ["public", "public"]);
     let result = references(&mut harness, &namespace_uri, &live, "impl");
     let locations = result.as_array().unwrap();
     assert_eq!(locations.len(), 2, "{result}");
@@ -585,6 +610,77 @@ alone <- function(x) x
     assert_eq!(locations.len(), 1, "{result}");
     assert_eq!(locations[0]["uri"], namespace_uri);
     assert_eq!(locations[0]["range"]["start"]["line"], 2);
+    harness.shutdown();
+}
+
+#[test]
+fn namespace_export_keeps_conventional_method_binding_provenance() {
+    let dir = tempfile::tempdir().unwrap();
+    let r_dir = dir.path().join("R");
+    fs::create_dir(&r_dir).unwrap();
+    fs::write(dir.path().join("DESCRIPTION"), super::COMPLETE_DESCRIPTION).unwrap();
+    let path = r_dir.join("a.R");
+    let later_path = r_dir.join("z.R");
+    let namespace_path = dir.path().join("NAMESPACE");
+    let source = "probe <- function(x) UseMethod('probe')\nprobe.example <- function(x) x\n";
+    let later = "replacement <- function(x) x\n";
+    let namespace = "export(probe)\nexport(probe.example)\n";
+    fs::write(&path, source).unwrap();
+    fs::write(&later_path, later).unwrap();
+    fs::write(&namespace_path, "export(probe)\n").unwrap();
+    let uri = path_uri(&path);
+    let later_uri = path_uri(&later_path);
+    let namespace_uri = path_uri(&namespace_path);
+    let mut harness = Harness::start_push();
+    harness.did_open(&uri, source, 1);
+    harness.recv_publish_for(&uri, 1);
+    harness.did_open(&later_uri, later, 1);
+    harness.recv_publish_for(&later_uri, 1);
+    harness.did_open(&namespace_uri, namespace, 1);
+    harness.recv_publish_for(&namespace_uri, 1);
+
+    let definition = |harness: &mut Harness| {
+        request(
+            harness,
+            "textDocument/definition",
+            json!({
+                "textDocument": { "uri": namespace_uri },
+                "position": position(namespace, namespace.find("probe.example").unwrap() + 1)
+            }),
+        )
+    };
+    let has_namespace_reference = |harness: &mut Harness| {
+        request(
+            harness,
+            "textDocument/references",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": position(source, source.find("probe.example").unwrap() + 1),
+                "context": { "includeDeclaration": false }
+            }),
+        )
+        .as_array()
+        .is_some_and(|locations| {
+            locations
+                .iter()
+                .any(|location| location["uri"] == namespace_uri)
+        })
+    };
+    let result = definition(&mut harness);
+    assert_eq!(result["uri"], uri, "{result}");
+    assert_eq!(result["range"]["start"]["line"], 1, "{result}");
+    assert!(has_namespace_reference(&mut harness));
+
+    harness.did_change(
+        &later_uri,
+        &format!("{later}probe.example <- replacement\n"),
+        2,
+    );
+    harness.recv_publish_for(&later_uri, 2);
+    let result = definition(&mut harness);
+    assert_eq!(result["uri"], later_uri, "{result}");
+    assert_eq!(result["range"]["start"]["line"], 1, "{result}");
+    assert!(!has_namespace_reference(&mut harness));
     harness.shutdown();
 }
 
@@ -634,7 +730,8 @@ fn generic_references_follow_workspace_aliases_in_live_buffers() {
     let generic = r_dir.join("generic.R");
     let caller = r_dir.join("caller.R");
     let source = "probe <- function(x) UseMethod('probe')\nalias <- probe\n";
-    let calls = "run <- function() {\n  alias(1)\n  alias(2)\n  alternate(3)\n}\n";
+    let calls = "run <- function() {\n  alias(1)\n  alias(2)\n  alternate(3)\n}\n\
+                 shadow <- function(alias, alternate) {\n  alias(4)\n  alternate(5)\n}\n";
     fs::write(&generic, source).unwrap();
     fs::write(&caller, calls).unwrap();
     let generic_uri = path_uri(&generic);

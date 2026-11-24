@@ -831,6 +831,15 @@ mod rename_tests {
     }
 
     #[test]
+    fn object_rename_uses_live_declarations_when_tracked_text_differs() {
+        let tracked = "Old <- R6::R6Class('Old', public = list(stale = 1))\n";
+        let live = "New <- R6::R6Class('New', public = list(value = 1))\nNew$new()$value\n";
+        let edits = object_edit(tracked, live, "value = 1", "item").unwrap();
+        assert_eq!(edits, object_edit(live, live, "value = 1", "item").unwrap());
+        assert_eq!(edits.len(), 2);
+    }
+
+    #[test]
     fn rename_declines_member_overrides_and_dynamic_indices() {
         let source = "A <- R6::R6Class('A', public = list(value = 1))\nB <- R6::R6Class('B', inherit = A, public = list(value = 2))\n";
         assert!(object_edit(source, source, "value = 1", "item").is_none());

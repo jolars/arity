@@ -17,6 +17,7 @@ pub(super) fn sites(index: &ClassIndex, root: &Path, text: &str) -> Vec<(TextRan
 enum SiteFilter<'a> {
     All,
     Callable(Option<&'a str>),
+    References { include_methods: bool },
 }
 
 fn collect_sites(
@@ -26,6 +27,14 @@ fn collect_sites(
     filter: SiteFilter<'_>,
 ) -> Vec<(TextRange, Identity)> {
     let parsed = crate::namespace::parse(text);
+    // A generic or class reference cannot match an implementation operand.
+    // Avoid resolving its callable origin or scanning conventional methods.
+    let include_methods = !matches!(
+        filter,
+        SiteFilter::References {
+            include_methods: false
+        }
+    );
     let mut sites = Vec::new();
     let mut registration = 0;
     for directive in parsed.document().directives() {
@@ -63,7 +72,7 @@ fn collect_sites(
                     && method.class == ClassName::Known(spec.class.clone())
             });
             if let Some(method) = methods.into_iter().next() {
-                if matches!(filter, SiteFilter::All) {
+                if !matches!(filter, SiteFilter::Callable(_)) {
                     sites.extend(method.generics.iter().filter_map(|id| match id {
                         S3GenericId::Declaration(id) => {
                             Some((range, Identity::Generic(id.clone())))
@@ -71,12 +80,14 @@ fn collect_sites(
                         S3GenericId::Known { .. } => None,
                     }));
                 }
-                if let Some(span) = arguments.nth(1).and_then(|argument| argument.value_range())
+                if include_methods
+                    && let Some(span) = arguments.nth(1).and_then(|argument| argument.value_range())
                     && matches!(&method.implementation, Some(MethodImplementationSource::Binding { name, .. }) if *name == spec.method)
                     && let Some((path, origin)) =
                         index.namespace_callable_origin(root, &spec.method)
                 {
-                    let identity = match conventional_method(index, &path, &spec.method) {
+                    let declarations = conventional_methods(index, &spec.method);
+                    let identity = match conventional_method(declarations, &path) {
                         Some(id) => Identity::Method(id),
                         _ => Identity::Callable {
                             path,
@@ -156,15 +167,21 @@ fn collect_sites(
                 );
                 continue;
             }
-            if matches!(kind, DirectiveKind::Export | DirectiveKind::ImportFrom)
-                && let Some((path, _)) = index.namespace_callable_origin(target, &name)
-                && (target == root
-                    || index
-                        .file(&path)
-                        .is_some_and(|file| file.exports.contains(&name)))
-                && let Some(id) = conventional_method(index, &path, &name)
+            if include_methods && matches!(kind, DirectiveKind::Export | DirectiveKind::ImportFrom)
             {
-                sites.push((range, Identity::Method(id)));
+                // Only conventional S3 methods can produce a callable site here.
+                // Replay namespace execution only if a matching declaration exists.
+                let mut declarations = conventional_methods(index, &name).peekable();
+                if declarations.peek().is_some()
+                    && let Some((path, _)) = index.namespace_callable_origin(target, &name)
+                    && (target == root
+                        || index
+                            .file(&path)
+                            .is_some_and(|file| file.exports.contains(&name)))
+                    && let Some(id) = conventional_method(declarations, &path)
+                {
+                    sites.push((range, Identity::Method(id)));
+                }
             }
             for file in index
                 .oop_files()
@@ -235,7 +252,7 @@ fn collect_sites(
                 if !methods {
                     sites.extend(
                         index
-                            .namespace_generator_targets(&file.path, &name)
+                            .namespace_generator_targets(file, &name)
                             .into_iter()
                             .map(|id| (range, Identity::Class(id))),
                     );
@@ -246,24 +263,29 @@ fn collect_sites(
     sites
 }
 
-fn conventional_method(index: &ClassIndex, path: &Path, name: &str) -> Option<OopId> {
-    let declarations: std::collections::BTreeSet<_> = index
-        .s3
-        .methods
-        .iter()
-        .filter_map(|candidate| {
-            let S3MethodSource::Declaration(id) = &candidate.source else {
-                return None;
-            };
-            (!candidate.registered
-                && !candidate.generics.is_empty()
-                && id.path == path
-                && index
-                    .method(id)
-                    .is_some_and(|method| method.name == ClassName::Known(name.into())))
-            .then_some(id)
-        })
-        .collect();
+fn conventional_methods<'a>(
+    index: &'a ClassIndex,
+    name: &'a str,
+) -> impl Iterator<Item = &'a OopId> {
+    index.s3.methods.iter().filter_map(move |candidate| {
+        let S3MethodSource::Declaration(id) = &candidate.source else {
+            return None;
+        };
+        (!candidate.registered
+            && !candidate.generics.is_empty()
+            && index.method(id).is_some_and(
+                |method| matches!(&method.name, ClassName::Known(binding) if binding == name),
+            ))
+        .then_some(id)
+    })
+}
+
+fn conventional_method<'a>(
+    declarations: impl Iterator<Item = &'a OopId>,
+    path: &Path,
+) -> Option<OopId> {
+    let declarations: std::collections::BTreeSet<_> =
+        declarations.filter(|id| id.path == path).collect();
     (declarations.len() == 1)
         .then(|| declarations.into_iter().next().cloned())
         .flatten()
@@ -290,7 +312,11 @@ pub(super) fn references(
         index,
         encoding,
         open_namespaces,
-        SiteFilter::All,
+        SiteFilter::References {
+            include_methods: ids
+                .iter()
+                .any(|id| matches!(id, Identity::Method(_) | Identity::Callable { .. })),
+        },
         |id| ids.contains(id),
     )
 }

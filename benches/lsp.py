@@ -7,6 +7,15 @@ post-edit settled state, and the sampled peak. Arity and languageserver use
 stdio and Python's standard library. Ark uses TCP and requires jupyter_client.
 Adapted from Panache's ``benches/lsp_memory.py``.
 
+Compare Arity and Ark on one pinned tidyr file with two fresh session pairs:
+
+    task bench-lsp -- --compare-ark --request completion --request project_references
+
+Omit --request to time all applicable warm requests. Use --file to select a
+corpus-relative R file (default R/pivot-wide.R) and --cpu to pin both servers.
+The comparison prints to stdout. Compare item counts and payload sizes alongside
+latency, especially when the servers return different completion candidate sets.
+
 The A/B mode compares two release builds on one pinned tidyr file and prints
 the results to stdout.
 
@@ -409,6 +418,11 @@ def prepare_documents(files):
                 "definitions": definitions,
                 "use": use,
                 "use_offset": use_offset,
+                "project_reference": (
+                    position_for_offset(text, text.index("pivot_wider <- function") + 1)
+                    if path.name == "pivot-wide.R" and "pivot_wider <- function" in text
+                    else None
+                ),
             }
         documents.append({"path": str(path), "uri": path.as_uri(), "text": text})
     if target is None:
@@ -475,6 +489,12 @@ def result_summary(method, result):
                 count += len(change.get("edits", []))
                 uris.add(document["uri"])
         return count, len(uris)
+    if method == "textDocument/completion":
+        return len(result["items"] if isinstance(result, dict) else result), None
+    if method == "textDocument/signatureHelp":
+        return len(result["signatures"]), None
+    if method in ("workspace/symbol", "textDocument/foldingRange"):
+        return len(result), None
     return 1, None
 
 
@@ -523,7 +543,7 @@ def finalize_request_record(record):
 def benchmark_requests(
     client, key, label, method, params, runs, warmups, timeout, verify=None
 ):
-    """Measure serial stdio round trips, excluding warmups and result summaries."""
+    """Measure serial round trips, excluding warmups and result summaries."""
     for _ in range(warmups):
         for target in params:
             response = require_response(
@@ -543,12 +563,29 @@ def benchmark_requests(
     return finalize_request_record(record)
 
 
+NEW_REQUEST_CAPABILITIES = {
+    "completion": "completionProvider",
+    "signature_help": "signatureHelpProvider",
+    "workspace_symbol": "workspaceSymbolProvider",
+    "folding_range": "foldingRangeProvider",
+    "project_references": "referencesProvider",
+}
+REQUEST_KEYS = (
+    "document_symbol",
+    "hover",
+    "definition",
+    "references",
+    "rename",
+    *NEW_REQUEST_CAPABILITIES,
+)
+
+
 def shared_requests(uris, target):
     navigation = {
         "textDocument": {"uri": target["uri"]},
         "position": {**target["use"], "character": target["use"]["character"] + 1},
     }
-    return [
+    requests = [
         (
             "document_symbol",
             "Document symbols",
@@ -576,12 +613,98 @@ def shared_requests(uris, target):
         ),
     ]
 
+    document = navigation["textDocument"]
+    requests.extend(
+        [
+            (
+                "completion",
+                "Completion",
+                "textDocument/completion",
+                [
+                    {
+                        **navigation,
+                        "position": {
+                            **target["use"],
+                            "character": target["use"]["character"] + len("arity_lsp_"),
+                        },
+                        "context": {"triggerKind": 1},
+                    }
+                ],
+            ),
+            (
+                "signature_help",
+                "Signature help",
+                "textDocument/signatureHelp",
+                [
+                    {
+                        "textDocument": document,
+                        "position": {
+                            **target["hover"],
+                            "character": target["hover"]["character"] + len("mean("),
+                        },
+                    }
+                ],
+            ),
+            (
+                "workspace_symbol",
+                "Workspace symbols",
+                "workspace/symbol",
+                [{"query": "pivot_wider"}],
+            ),
+            (
+                "folding_range",
+                "Folding ranges",
+                "textDocument/foldingRange",
+                [{"textDocument": document}],
+            ),
+        ]
+    )
+    if target.get("project_reference") is not None:
+        requests.append(
+            (
+                "project_references",
+                "Project references",
+                "textDocument/references",
+                [
+                    {
+                        "textDocument": document,
+                        "position": target["project_reference"],
+                        "context": {"includeDeclaration": True},
+                    }
+                ],
+            )
+        )
+    return requests
 
-def benchmark_shared_requests(client, uris, target, runs, warmups, timeout):
-    return [
-        benchmark_requests(client, key, label, method, params, runs, warmups, timeout)
-        for key, label, method, params in shared_requests(uris, target)
-    ]
+
+def request_supported(client, capabilities, key, method):
+    provider = NEW_REQUEST_CAPABILITIES.get(key)
+    if provider is None:
+        return True
+    advertised = capabilities.get(provider)
+    if advertised is True or isinstance(advertised, dict):
+        return True
+    with client.state:
+        return any(
+            registration["method"] == method
+            for message in client.notifications
+            if message.get("method") == "client/registerCapability"
+            for registration in message["params"]["registrations"]
+        )
+
+
+def benchmark_selected_requests(client, capabilities, requests, runs, warmups, timeout):
+    records = []
+    for key, label, method, params in requests:
+        if not request_supported(client, capabilities, key, method):
+            print(f"    {label}: unsupported", flush=True)
+            continue
+        records.append(
+            benchmark_requests(
+                client, key, label, method, params, runs, warmups, timeout
+            )
+        )
+    return records
 
 
 def churn_definitions(client, target, edits, timeout, text="", sync_kind=2):
@@ -714,9 +837,11 @@ def run_session(
     latency_runs,
     latency_warmups,
     ark_env=None,
+    warm_only=False,
+    selected=None,
 ):
     key, command = spec
-    print(f"==> speed and memory: {key} (run {run_number})", flush=True)
+    print(f"==> {key} (run {run_number})", flush=True)
     stderr_path = Path(stderr_dir) / f"{key}-run-{run_number}.stderr.log"
     client = None
     server = None
@@ -756,12 +881,14 @@ def run_session(
                 "initialization",
                 time.monotonic() - sampler.started_at,
             )
-            workspace_ready_seconds = round(baseline_ready - started_at, 6)
-            milestones = {"baseline": sampler.milestone()}
-            baseline_seconds = round(time.monotonic() - started_at, 2)
-            print(
-                f"    baseline {milestones['baseline']['rss_mb']} MiB RSS", flush=True
-            )
+            if not warm_only:
+                workspace_ready_seconds = round(baseline_ready - started_at, 6)
+                milestones = {"baseline": sampler.milestone()}
+                baseline_seconds = round(time.monotonic() - started_at, 2)
+                print(
+                    f"    baseline {milestones['baseline']['rss_mb']} MiB RSS",
+                    flush=True,
+                )
 
             documents, edit_target = prepare_documents(files)
             uris = [document["uri"] for document in documents]
@@ -777,14 +904,35 @@ def run_session(
                 "files-opened settle",
                 time.monotonic() - sampler.started_at,
             )
-            documents_ready_seconds = round(documents_ready - documents_started_at, 6)
-            milestones["settled"] = sampler.milestone()
-            settled_seconds = round(time.monotonic() - started_at, 2)
-            print(f"    settled  {milestones['settled']['rss_mb']} MiB RSS", flush=True)
+            if not warm_only:
+                documents_ready_seconds = round(
+                    documents_ready - documents_started_at, 6
+                )
+                milestones["settled"] = sampler.milestone()
+                settled_seconds = round(time.monotonic() - started_at, 2)
+                print(
+                    f"    settled  {milestones['settled']['rss_mb']} MiB RSS",
+                    flush=True,
+                )
 
-            request_latencies = benchmark_shared_requests(
-                client, uris, edit_target, latency_runs, latency_warmups, settle_timeout
+            requests = select_requests(uris, edit_target, selected)
+            if warm_only:
+                sampler.stop_flag.set()
+                sampler.join()
+            request_latencies = benchmark_selected_requests(
+                client,
+                capabilities,
+                requests,
+                latency_runs,
+                latency_warmups,
+                settle_timeout,
             )
+            if warm_only:
+                client.shutdown()
+                client = None
+                server = None
+                return {"request_latencies": request_latencies}
+
             with client.state:
                 before_edits = len(client.notifications)
             edit_started_at = time.monotonic()
@@ -892,12 +1040,17 @@ def public_record(value):
 
 def aggregate_latencies(runs):
     records = []
-    for index, first in enumerate(runs[0]["request_latencies"]):
+    by_run = [
+        {record["key"]: record for record in run["request_latencies"]} for run in runs
+    ]
+    if any(records.keys() != by_run[0].keys() for records in by_run[1:]):
+        raise RuntimeError("supported benchmark requests changed between sessions")
+    for first in by_run[0].values():
         combined = request_record(
             first["key"], first["label"], first["method"], first["targets"]
         )
-        for run in runs:
-            record = run["request_latencies"][index]
+        for by_key in by_run:
+            record = by_key[first["key"]]
             combined["empty_results"] += record["empty_results"]
             combined["stale_responses"] = combined.get(
                 "stale_responses", 0
@@ -1036,6 +1189,98 @@ def write_artifact(output, payload):
     Path(tmp.name).replace(output)
 
 
+def select_requests(uris, target, selected):
+    requests = shared_requests(uris, target)
+    if selected is None:
+        return requests
+    missing = set(selected) - {request[0] for request in requests}
+    if missing:
+        raise ValueError("project_references requires opening R/pivot-wide.R")
+    return [request for request in requests if request[0] in selected]
+
+
+def compare_with_ark(args, project, arity, ark_spec, versions, runtime):
+    file = Path(args.file or "R/pivot-wide.R")
+    path = project / file
+    if (
+        file.is_absolute()
+        or not path.is_file()
+        or not path.resolve().is_relative_to(project)
+        or path.suffix.lower() != ".r"
+    ):
+        raise ValueError("--file must be an R file relative to the corpus checkout")
+    path = path.resolve()
+    documents, target = prepare_documents([path])
+    requests = select_requests([documents[0]["uri"]], target, args.request)
+    stderr_dir = args.stderr_dir.resolve() / "compare-ark"
+    stderr_dir.mkdir(parents=True, exist_ok=True)
+    specs = [("arity", [str(arity), "--no-config", "lsp"]), ark_spec]
+    if args.cpu is not None:
+        os.sched_setaffinity(0, {args.cpu})
+    print(f"==> {path.relative_to(project)} at {CORPUS_REVISION}", flush=True)
+    for key, _ in specs:
+        print(f"    {key}: {versions[key]}", flush=True)
+    affinity = f"CPU {args.cpu}" if args.cpu is not None else "unpinned"
+    print(
+        f"    {args.runs} session pairs, {args.latency_warmups} warmups, "
+        f"{args.latency_runs} timed rounds, {args.quiet_seconds:g}s quiet window, {affinity}",
+        flush=True,
+    )
+    runs = {key: [] for key, _ in specs}
+    for repetition in range(args.runs):
+        order = specs if repetition % 2 == 0 else reversed(specs)
+        for spec in order:
+            runs[spec[0]].append(
+                run_session(
+                    spec,
+                    repetition + 1,
+                    project,
+                    [path],
+                    0,
+                    args.settle_timeout,
+                    args.quiet_seconds,
+                    stderr_dir,
+                    args.latency_runs,
+                    args.latency_warmups,
+                    ark_env=runtime["env"],
+                    warm_only=True,
+                    selected=args.request,
+                )
+            )
+    summaries = {
+        key: {record["key"]: record for record in aggregate_latencies(sessions)}
+        for key, sessions in runs.items()
+    }
+    for key, label, _, _ in requests:
+        print(f"\n{label}", flush=True)
+        arity_result, ark_result = (summaries[server].get(key) for server, _ in specs)
+        for (server, _), result in zip(specs, (arity_result, ark_result)):
+            if result is None:
+                print(f"    {server}: unsupported")
+                continue
+            files = (
+                f", files {result['result_files_min']}–{result['result_files_max']}"
+                if "result_files_min" in result
+                else ""
+            )
+            print(
+                f"    {server}: {result['median_ms']:.3f} ms median, "
+                f"{result['p95_ms']:.3f} ms p95, "
+                f"{result['samples']} samples ({result['empty_results']} empty), "
+                f"items {result['result_count_min']}–{result['result_count_max']}, "
+                f"bytes {result['payload_bytes_min']}–{result['payload_bytes_max']}{files}"
+            )
+        if (
+            arity_result
+            and ark_result
+            and arity_result["median_ms"]
+            and not (arity_result["empty_results"] or ark_result["empty_results"])
+        ):
+            print(
+                f"    Ark / Arity median: {ark_result['median_ms'] / arity_result['median_ms']:.2f}×"
+            )
+
+
 def compare_arities(args):
     project = corpus_checkout(args.cache.resolve())
     file = Path(args.file)
@@ -1048,11 +1293,7 @@ def compare_arities(args):
         raise ValueError("--file must be an R file relative to the corpus checkout")
     documents, target = prepare_documents([project / file])
     uri = target["uri"]
-    key, label, method, params = next(
-        request
-        for request in shared_requests([uri], target)
-        if request[0] == args.request
-    )
+    [(key, label, method, params)] = select_requests([uri], target, args.request)
     stderr_dir = args.stderr_dir.resolve() / "ab"
     stderr_dir.mkdir(parents=True, exist_ok=True)
     binaries = {"baseline": args.arity.resolve(), "candidate": args.candidate.resolve()}
@@ -1160,20 +1401,24 @@ def compare_arities(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--out", type=Path, default=ROOT / "benches/benchmark_results.json"
-    )
+    parser.add_argument("--out", type=Path, help="output artifact for the full suite")
     parser.add_argument(
         "--arity", type=Path, help="use an existing release binary (the A/B baseline)"
     )
-    ab = parser.add_argument_group("Arity A/B comparison")
+    ab = parser.add_argument_group("Focused comparisons")
+    ab.add_argument(
+        "--compare-ark",
+        action="store_true",
+        help="compare warm requests in Arity and Ark",
+    )
     ab.add_argument(
         "--candidate", type=Path, help="compare against the binary in --arity"
     )
     ab.add_argument(
         "--request",
-        choices=("document_symbol", "hover", "definition", "references", "rename"),
-        help="time only this request (navigation uses the benchmark binding)",
+        choices=REQUEST_KEYS,
+        action="append",
+        help="select warm requests for --compare-ark or one request for --candidate",
     )
     ab.add_argument("--file", help="open only this corpus-relative R file")
     ab.add_argument(
@@ -1190,7 +1435,9 @@ def main():
     parser.add_argument("--cache", type=Path, default=ROOT / "target/bench-lsp/corpus")
     parser.add_argument("--open-files", type=int, default=5)
     parser.add_argument(
-        "--runs", type=int, default=3, help="sessions per server or A/B session pairs"
+        "--runs",
+        type=int,
+        help="sessions per server (3 by default, 2 with --compare-ark)",
     )
     parser.add_argument("--edits", type=int, default=1000)
     parser.add_argument("--latency-runs", type=int, default=20)
@@ -1201,9 +1448,16 @@ def main():
         "--stderr-dir", type=Path, default=ROOT / "target/bench-lsp/logs"
     )
     args = parser.parse_args()
-
+    if args.runs is None:
+        args.runs = 2 if args.compare_ark else 3
+    if args.compare_ark and (args.candidate or args.no_ark or args.out):
+        parser.error(
+            "--compare-ark cannot be combined with --candidate, --no-ark, or --out"
+        )
     if platform.system() != "Linux" or not Path("/proc/self/smaps_rollup").is_file():
         parser.error("the memory benchmark requires Linux with /proc/smaps_rollup")
+    if args.cpu is not None and args.cpu not in os.sched_getaffinity(0):
+        parser.error(f"CPU {args.cpu} is outside the current affinity mask")
     if args.runs < 1:
         parser.error("--runs must be positive")
     if args.latency_runs < 1 or args.latency_warmups < 0:
@@ -1218,7 +1472,7 @@ def main():
             "--quiet-seconds must exceed two sample intervals and be below --settle-timeout"
         )
 
-    if any(
+    if not args.compare_ark and any(
         value is not None
         for value in (args.candidate, args.request, args.file, args.cpu)
     ):
@@ -1229,8 +1483,8 @@ def main():
             parser.error(
                 "A/B comparison requires --arity, --candidate, --request, --file, and --cpu"
             )
-        if args.cpu not in os.sched_getaffinity(0):
-            parser.error(f"CPU {args.cpu} is outside the current affinity mask")
+        if len(args.request) != 1:
+            parser.error("A/B comparison requires exactly one --request")
         try:
             compare_arities(args)
         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
@@ -1243,22 +1497,23 @@ def main():
     if rscript is None:
         parser.error(f"Rscript executable not found: {args.rscript}")
     args.rscript = str(Path(rscript).resolve())
-    r_version = subprocess.check_output(
-        [
-            args.rscript,
-            "--vanilla",
-            "-e",
-            'cat(paste0("languageserver ", packageVersion("languageserver"), "; R ", getRversion(), "; lintr ", packageVersion("lintr")))',
-        ],
-        text=True,
-    ).strip()
+    if not args.compare_ark:
+        r_version = subprocess.check_output(
+            [
+                args.rscript,
+                "--vanilla",
+                "-e",
+                'cat(paste0("languageserver ", packageVersion("languageserver"), "; R ", getRversion(), "; lintr ", packageVersion("lintr")))',
+            ],
+            text=True,
+        ).strip()
     ark = None
     runtime = None
     ark_version = None
     if not args.no_ark:
         ark = shutil.which(args.ark or "ark")
-        if args.ark and ark is None:
-            parser.error(f"Ark executable not found: {args.ark}")
+        if (args.ark or args.compare_ark) and ark is None:
+            parser.error(f"Ark executable not found: {args.ark or 'ark'}")
         if ark is not None:
             ark = str(Path(ark).resolve())
             try:
@@ -1283,9 +1538,30 @@ def main():
     arity = (args.arity or ROOT / "target/release/arity").resolve()
     versions = {
         "arity": subprocess.check_output([str(arity), "--version"], text=True).strip(),
-        "languageserver": r_version,
+        **({} if args.compare_ark else {"languageserver": r_version}),
     }
     project = corpus_checkout(args.cache.resolve())
+    if ark is not None:
+        ark_spec = (
+            "ark",
+            [
+                ark,
+                "--connection_file",
+                "{connection_file}",
+                "--session-mode",
+                "console",
+                "--",
+                "--vanilla",
+                "--quiet",
+            ],
+        )
+        versions["ark"] = f"{ark_version}; {runtime['version']}"
+    if args.compare_ark:
+        try:
+            compare_with_ark(args, project, arity, ark_spec, versions, runtime)
+        except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as error:
+            parser.exit(1, f"Arity–Ark comparison failed: {error}\n")
+        return
     tracked = subprocess.check_output(
         ["git", "-C", str(project), "ls-files", "-z", "R/"], text=True
     ).split("\0")
@@ -1302,22 +1578,7 @@ def main():
         ("languageserver", [args.rscript, "--vanilla", "-e", "languageserver::run()"]),
     ]
     if ark is not None:
-        specs.append(
-            (
-                "ark",
-                [
-                    ark,
-                    "--connection_file",
-                    "{connection_file}",
-                    "--session-mode",
-                    "console",
-                    "--",
-                    "--vanilla",
-                    "--quiet",
-                ],
-            )
-        )
-        versions["ark"] = f"{ark_version}; {runtime['version']}"
+        specs.append(ark_spec)
     keys = [key for key, _ in specs]
 
     runs_by_server = {key: [] for key in keys}
@@ -1408,7 +1669,7 @@ def main():
         },
         "servers": servers,
     }
-    output = Path(args.out)
+    output = args.out or ROOT / "benches/benchmark_results.json"
     write_artifact(output, payload)
     print(f"==> wrote {output}")
 
