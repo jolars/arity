@@ -147,6 +147,22 @@ pub(crate) fn workspace_symbols_via_db(
 /// necessarily contiguously. An empty query matches everything. Dependency-free
 /// and lenient by design — the client does the final ranking.
 fn fuzzy_subsequence(query: &str, name: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    if name.is_ascii() {
+        let mut remaining = query.as_bytes();
+        for byte in name.bytes() {
+            if byte.to_ascii_lowercase() == remaining[0] {
+                remaining = &remaining[1..];
+                if remaining.is_empty() {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     let mut q = query.chars().peekable();
     let mut name_chars = name.chars().flat_map(char::to_lowercase);
     while let Some(&target) = q.peek() {
@@ -263,6 +279,9 @@ mod tests {
         assert!(!fuzzy_subsequence("bf", "foobar")); // wrong order
         assert!(!fuzzy_subsequence("xyz", "foobar"));
         assert!(!fuzzy_subsequence("fooo", "foo")); // query longer than match run
+        assert!(!fuzzy_subsequence("é", "EXAMPLE"));
+        assert!(fuzzy_subsequence("kb", "KelvinBinding"));
+        assert!(fuzzy_subsequence("i\u{307}x", "İtemX"));
     }
 
     #[test]
