@@ -18,16 +18,16 @@ and `src/test/examples/`. Reduced cases were checked with R 4.6.1 on November
 Build the current release binary from the Arity checkout:
 
 ```sh
-compute run -- cargo build --release
+cargo build --release
 ```
 
 Then run these commands from the pinned vscode-R checkout, substituting the
 absolute path to the binary:
 
 ```sh
-compute run -- /path/to/arity/target/release/arity --no-config lint \
+/path/to/arity/target/release/arity --no-config lint \
   --select unused-binding --output json R sess scripts src/test/examples
-compute run -- /path/to/arity/target/release/arity --no-config lint \
+/path/to/arity/target/release/arity --no-config lint \
   --select undefined-symbol --output json R sess scripts src/test/examples
 ```
 

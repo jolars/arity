@@ -12,7 +12,7 @@ calls retain defaults. Partial argument names in registrations are pinned too.
 Run the live oracle with:
 
 ```sh
-compute run -- cargo test --test s4_dispatch live_r_s4_dispatch_observations -- --ignored
+cargo test --test s4_dispatch live_r_s4_dispatch_observations -- --ignored
 ```
 
 To refresh deliberately, run `Rscript --vanilla observe.R .` from this

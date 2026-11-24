@@ -9,7 +9,7 @@ its binding independently of `handler`.
 Verify the observations with:
 
 ```sh
-compute run -- cargo test --test s3_registry live_r_registration_observations -- --ignored
+cargo test --test s3_registry live_r_registration_observations -- --ignored
 ```
 
 To refresh deliberately, run `Rscript --vanilla observe.R .` from this

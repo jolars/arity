@@ -35,8 +35,8 @@ established statically should continue to return unknown results.
 Run the matrix with:
 
 ```sh
-compute run -- cargo test --test lsp_protocol oop::
-compute run -- cargo insta review
+cargo test --test lsp_protocol oop::
+cargo insta review
 ```
 
 The tests do not require R, R6, or S7. During the initial audit, the complete

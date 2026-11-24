@@ -71,7 +71,7 @@ an intentional manifest change, regeneration, and review of every affected pin.
 Ordinary CI needs only Rust:
 
 ```sh
-compute run -- cargo test --test oop_oracle
+cargo test --test oop_oracle
 ```
 
 These tests deserialize the runtime facts, compare the currently supported S4,

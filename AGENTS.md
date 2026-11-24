@@ -45,8 +45,7 @@ Dependency changes must pass `cargo-audit` and `cargo-deny`.
 - Preserve losslessness and idempotence. Benchmarks/profiles are opt-in local
   measurements, not release gates.
 - Recurring workflows use the `add-lint-rule`, `linter-investigation`,
-  `roxygen-parity`, `rd-parity`, `smoke-test-triage`, and `perf-investigation`
-  skills.
+  `roxygen-parity`, `rd-parity`, and `smoke-test-triage` skills.
 - Optional untracked oracle/reference checkouts (`air/`, `style/`,
   `roxygen2-ref/`) may be absent in a fresh clone.
 
@@ -500,8 +499,13 @@ The renderer is tool-generic.
 
 `task profile` samples `benches/profile.rs` and writes only under
 `target/profile/`. Preserve `scripts/profile.sh` as flag/profile authority,
-including frame-pointer call graphs and `[profile.profiling]`. Use the
-`perf-investigation` workflow for measured performance changes.
+including frame-pointer call graphs and `[profile.profiling]`. See
+[performance measurements](benches/PERFORMANCE.md) for harness modes, timing,
+and verification. For end-to-end CLI work, time the release binary with the
+reported configuration. Use `--no-cache` when measuring formatter work in
+`format --check`. For editor latency, reproduce the request in a persistent
+language server. Preserve formatter bytes, CST losslessness, lint findings
+and spans, and incremental invalidation as applicable.
 
 ## Editor and packaging
 

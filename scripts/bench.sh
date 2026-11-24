@@ -191,15 +191,22 @@ run_one() {
         local tmp; tmp=$(mktemp)
         # -i: tools that find issues exit non-zero (linters, format --check);
         # we time the work regardless of the verdict.
-        hyperfine --warmup "$warmup" --min-runs "$HYPERFINE_MIN_RUNS" -i \
+        hyperfine --shell=default --warmup "$warmup" --min-runs "$HYPERFINE_MIN_RUNS" -i \
             --export-json "$tmp" --style=none "$cmd" >/dev/null 2>&1
-        local mean stddev min max runs
-        mean=$(jq -r '.results[0].mean' "$tmp")
-        stddev=$(jq -r '.results[0].stddev' "$tmp")
-        min=$(jq -r '.results[0].min' "$tmp")
-        max=$(jq -r '.results[0].max' "$tmp")
-        runs=$(jq -r '.results[0].times | length' "$tmp")
+        local stats mean stddev min max runs
+        stats=$(jq -er '
+            .results[0]
+            | (.summary.time_wall_clock // .)
+            | [.mean, (.stddev // 0), .min, .max, (.count // (.times | length))]
+            | if all(.[]; type == "number") and .[4] > 0 then @tsv
+              else error("Hyperfine export has no wall-clock measurements")
+              end
+        ' "$tmp") || {
+            rm -f "$tmp"
+            return 1
+        }
         rm -f "$tmp"
+        read -r mean stddev min max runs <<< "$stats"
         awk -v m="$mean" -v s="$stddev" -v lo="$min" -v hi="$max" -v r="$runs" \
             'BEGIN { printf "%.4f %.4f %.4f %.4f %d\n", m*1000, s*1000, lo*1000, hi*1000, r }'
     else

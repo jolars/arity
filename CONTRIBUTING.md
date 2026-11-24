@@ -306,9 +306,9 @@ hand-edit generated pages --- the rendered rule docs are pinned by
 `tests/rule_docs.rs` and the benchmark partials by `tests/benchmarks_docs.rs`,
 so they can't drift from behavior.
 
-Run `compute run -- task docs-check` to check the built site and local Worker.
-Use `task docs-worker` for a Worker preview. See
-[docs/README.md](docs/README.md) for deployment and URL compatibility details.
+Run `task docs-check` to check the built site and local Worker. Use
+`task docs-worker` for a Worker preview. See [docs/README.md](docs/README.md)
+for deployment and URL compatibility details.
 
 ## Performance
 

@@ -16,9 +16,9 @@ Production analysis reads these static tables. Use these commands to refresh and
 verify them.
 
 ```sh
-compute run -- Rscript --vanilla scripts/dump_s4_builtins.R
-compute run -- Rscript --vanilla tests/fixtures/s4_inheritance/observe.R tests/fixtures/s4_inheritance
-compute run -- cargo test --test s4_inheritance -- --ignored
+Rscript --vanilla scripts/dump_s4_builtins.R
+Rscript --vanilla tests/fixtures/s4_inheritance/observe.R tests/fixtures/s4_inheritance
+cargo test --test s4_inheritance -- --ignored
 ```
 
 The namespace oracle installs temporary packages under a temporary library. It

@@ -6,7 +6,7 @@ prototypes, and relationships with these observations. R runs only in the
 ignored developer oracle:
 
 ```sh
-compute run -- cargo test --test s4_classes live_r_s4_observations -- --ignored
+cargo test --test s4_classes live_r_s4_observations -- --ignored
 ```
 
 The fixture covers legacy representations, multiple inheritance, virtual and

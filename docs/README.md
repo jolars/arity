@@ -10,9 +10,9 @@ part of the build or serving path.
 From the repository root, use:
 
 ```sh
-compute run -- task docs-preview
-compute run -- task docs-check
-compute run -- task docs-worker
+task docs-preview
+task docs-check
+task docs-worker
 ```
 
 `docs-preview` runs VitePress with live reload. `docs-check` builds the site,
@@ -25,11 +25,10 @@ by Wrangler's bundled runtime.
 The R playground at `/playground.html` uses the unpublished `arity-wasm` crate.
 The documentation development and production commands build its JavaScript and
 WebAssembly assets automatically with `wasm-pack`, which the development shell
-provides. To rebuild just those assets, run
-`compute run -- task playground-wasm`. Generated bundles under
-`public/playground/pkg/` are ignored. CodeMirror is bundled by Vite and loaded
-only when the playground opens. Shared links contain formatting settings, never
-the input code.
+provides. To rebuild just those assets, run `task playground-wasm`. Generated
+bundles under `public/playground/pkg/` are ignored. CodeMirror is bundled by
+Vite and loaded only when the playground opens. Shared links contain formatting
+settings, never the input code.
 
 Navigation lives in `.vitepress/config.mjs`. Generated references and benchmark
 partials still come from `task docs-gen`. Includes use VitePress's
