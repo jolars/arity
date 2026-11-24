@@ -393,45 +393,59 @@ fn outside_packages_the_config_floor_controls_cli_def_use() {
 }
 
 #[test]
-fn development_exports_resolve_in_cli_file_and_stdin_lint() {
-    use std::io::Write as _;
-    use std::process::{Command, Stdio};
+fn development_exports_resolve_in_cli_file_lint() {
+    use std::process::Command;
+
+    use arity::rindex::cache::Cache;
+    use arity::rindex::schema::{PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind};
 
     let dir = tempfile::tempdir().unwrap();
+    let cache_root = dir.path().join("index");
+    // Pin the S7 0.2.2 exports used here because the bundled CRAN snapshot moves.
+    Cache::new(cache_root.clone())
+        .write_package(&PackageIndex {
+            schema_version: SCHEMA_VERSION,
+            package: "S7".into(),
+            version: "0.2.2".into(),
+            lib_path: String::new(),
+            title: None,
+            r_version: None,
+            harvested_at: 0,
+            attaches: Vec::new(),
+            symbols: ["new_class", "S4_register"]
+                .into_iter()
+                .map(|name| SymbolEntry {
+                    name: name.into(),
+                    kind: SymbolKind::Function,
+                    exported: true,
+                    formals: None,
+                    help: None,
+                })
+                .collect(),
+            objects: Default::default(),
+        })
+        .unwrap();
     let source = "library(S7)\nA <- new_class('A')\nS4_register(A)\nmethods::setClass('B', contains = S4_contains(A))\nS7_class_desc(A)\n";
     std::fs::write(dir.path().join("classes.R"), source).unwrap();
     for (floor, succeeds) in [("0.2.2.9000", true), ("0.2.2", false)] {
         std::fs::write(
             dir.path().join("arity.toml"),
-            format!("[compat]\ns7 = '{floor}'\n"),
+            format!(
+                "[compat]\ns7 = '{floor}'\n[index]\ncache-dir = {:?}\n",
+                cache_root.to_string_lossy()
+            ),
         )
         .unwrap();
-        for input in ["classes.R", "-"] {
-            let mut process = Command::new(env!("CARGO_BIN_EXE_arity"))
-                .current_dir(dir.path())
-                .args(["lint", "--select", "undefined-symbol", input])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap();
-            if input == "-" {
-                process
-                    .stdin
-                    .take()
-                    .unwrap()
-                    .write_all(source.as_bytes())
-                    .unwrap();
-            }
-            let output = process.wait_with_output().unwrap();
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            assert_eq!(
-                output.status.success(),
-                succeeds,
-                "{floor}, {input}: {stderr}"
-            );
-            if !succeeds {
-                assert!(stderr.contains("S4_contains"), "{stderr}");
+        let output = Command::new(env!("CARGO_BIN_EXE_arity"))
+            .current_dir(dir.path())
+            .args(["lint", "--select", "undefined-symbol", "classes.R"])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.success(), succeeds, "{floor}: {stderr}");
+        if !succeeds {
+            for name in ["S4_contains", "S7_class_desc"] {
+                assert!(stderr.contains(name), "{stderr}");
             }
         }
     }

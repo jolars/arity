@@ -961,12 +961,12 @@ mod tests {
 
     #[test]
     fn member_uses_remote_for_uninstalled_unbundled_package() {
-        // `tinytable` is neither harvested nor bundled; the remote sidecar backs
+        // `aritySidecarFixture` is neither harvested nor bundled; the remote sidecar backs
         // `pkg::` member completion.
         let got = labels_with_remote(
-            "tinytable::\n",
+            "aritySidecarFixture::\n",
             "::",
-            &remote("tinytable", &["tt", "theme_tt"]),
+            &remote("aritySidecarFixture", &["tt", "theme_tt"]),
         );
         assert!(got.contains(&"tt".to_string()), "{got:?}");
         assert!(got.contains(&"theme_tt".to_string()), "{got:?}");
@@ -975,9 +975,9 @@ mod tests {
     #[test]
     fn bare_uses_remote_for_attached_uninstalled_package() {
         let got = labels_with_remote(
-            "library(tinytable)\ntt\n",
+            "library(aritySidecarFixture)\ntt\n",
             "\ntt",
-            &remote("tinytable", &["tt"]),
+            &remote("aritySidecarFixture", &["tt"]),
         );
         assert!(got.contains(&"tt".to_string()), "{got:?}");
     }
