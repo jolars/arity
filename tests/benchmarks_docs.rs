@@ -6,8 +6,7 @@ use arity::bench_docs::render_partials;
 
 /// A representative v2 artifact: a formatter section (single-file tiers vs
 /// `air`/`styler`, plus a project) and a linter section (single files vs
-/// `jarl`), with `arity` the baseline throughout, so the renderer's
-/// tool-generic, multi-section, multi-chart path is exercised.
+/// `jarl`), including a project measured by a single tool.
 const SAMPLE: &str = r#"{
   "schema_version": 2,
   "meta": {
@@ -30,7 +29,7 @@ const SAMPLE: &str = r#"{
         {
           "id": "formatter-files",
           "title": "Single files",
-          "caption": "Formatting speed relative to arity on single files.",
+          "caption": "Formatting speed on single files.",
           "documents": [
             {"id": "small", "name": "small", "size_bytes": 1000, "lines": 100},
             {"id": "large", "name": "large", "size_bytes": 12000, "lines": 1200}
@@ -46,12 +45,11 @@ const SAMPLE: &str = r#"{
         {
           "id": "formatter-projects",
           "title": "Projects",
-          "caption": "Formatting speed relative to arity on a real R package.",
+          "caption": "Formatting speed on a real R package.",
           "documents": [
             {"id": "tidyr", "name": "tidyr", "size_bytes": 500000, "lines": 20000}
           ],
           "results": [
-            {"document": "tidyr", "tool": "arity", "mean_ms": 300.0, "stddev_ms": 5.0, "min_ms": 290.0, "max_ms": 310.0, "runs": 10},
             {"document": "tidyr", "tool": "air", "mean_ms": 250.0, "stddev_ms": 5.0, "min_ms": 240.0, "max_ms": 260.0, "runs": 10}
           ]
         }
@@ -64,7 +62,7 @@ const SAMPLE: &str = r#"{
         {
           "id": "linter-files",
           "title": "Single files",
-          "caption": "Linting speed relative to arity on single files.",
+          "caption": "Linting speed on single files.",
           "documents": [
             {"id": "small", "name": "small", "size_bytes": 1000, "lines": 100}
           ],
@@ -79,11 +77,10 @@ const SAMPLE: &str = r#"{
 }"#;
 
 #[test]
-fn meta_lists_every_tool_baseline_first() {
+fn meta_lists_every_tool_with_arity_first() {
     let (meta, _) = render_partials(Some(SAMPLE));
 
-    // arity is the baseline and must come first; the rest fall back to sorted
-    // key order (air, jarl, styler).
+    // arity comes first, followed by the other tools in alphabetical order.
     let arity = meta.find("arity").expect("arity in meta");
     let air = meta.find("air").expect("air in meta");
     assert!(arity < air, "arity must lead the meta list:\n{meta}");
@@ -105,8 +102,7 @@ fn meta_lists_every_tool_baseline_first() {
 fn body_has_a_section_per_operation_and_a_chart_per_scope() {
     let (_, body) = render_partials(Some(SAMPLE));
 
-    // Section headers (### ) and chart headers (#### ) for both operations;
-    // the body nests under the page's `## Results` heading.
+    // Both operations nest their charts under the formatter and linter heading.
     assert!(body.contains("### Formatter"), "formatter section missing");
     assert!(body.contains("### Linter"), "linter section missing");
     assert!(body.contains("#### Single files"), "files chart missing");
@@ -139,12 +135,18 @@ fn charts_carry_data_and_fallback_tables() {
     assert!(body.contains("<details"), "collapsed table missing");
     assert!(body.contains("tidyr"), "project document missing");
 
-    // Ratios: air on `small` is 20/10 = 2x slower, arity is the baseline, and
-    // air beats arity on the `large` tier (80/100).
-    assert!(body.contains("\"ratio\""), "ratio field missing");
-    assert!(body.contains("baseline"), "baseline label missing");
-    assert!(body.contains("slower"), "slower label missing:\n{body}");
-    assert!(body.contains("faster"), "faster label missing:\n{body}");
+    let mut data = body.split("class=\"bench-data\">").skip(1).map(|block| {
+        serde_json::from_str::<serde_json::Value>(block.split("</script>").next().unwrap())
+            .expect("chart JSON")
+    });
+    let files = data.next().unwrap();
+    assert_eq!(files[1]["mean_ms"], 20.0);
+    let projects = data.next().unwrap();
+    assert_eq!(projects[0]["tool"], "air");
+    assert_eq!(projects[0]["mean_ms"], 250.0);
+    assert!(body.contains("<td>250.0000</td>"));
+    assert!(!body.contains("\"ratio\""));
+    assert!(!body.contains("<th>Relative</th>"));
 
     // jarl appears as the linter comparison tool.
     assert!(
@@ -189,8 +191,16 @@ fn lsp_partial_uses_its_own_metadata_and_exposes_work_counts() {
         }]
     });
     let mut slower = aggregate.clone();
+    slower["timings"]["workspace_ready_seconds"] = json!(0.25);
     slower["milestones"]["settled"]["rss_mb"] = json!(40.0);
     slower["request_latencies"][0]["median_ms"] = json!(6.0);
+    let mut definition = slower["request_latencies"][0].clone();
+    definition["key"] = json!("definition");
+    definition["label"] = json!("Definition");
+    slower["request_latencies"]
+        .as_array_mut()
+        .unwrap()
+        .push(definition);
     let artifact = json!({"lsp": {
         "meta": {
             "generated_at": "2026-09-20", "host": {"os": "Linux", "arch": "x86_64", "cpu": "LSP CPU"},
@@ -211,8 +221,11 @@ fn lsp_partial_uses_its_own_metadata_and_exposes_work_counts() {
     assert!(body.contains("p95: 4.000 ms; samples: 60; empty: 3"));
     assert!(body.contains("stale responses: 7"));
     assert!(body.contains("PSS: 15.0 MiB"));
-    assert!(body.contains("2.00× arity"));
-    assert!(body.contains("3.00× arity"));
+    assert!(!body.contains("\"ratio\""));
+    assert!(!body.contains("<th>Relative</th>"));
+    assert!(body.contains("<td>Workspace ready</td><td>another-server</td><td>250.000</td>"));
+    assert!(body.contains("<td>Definition</td><td>another-server</td><td>6.000</td>"));
+    assert!(body.contains("<td>Files open</td><td>another-server</td><td>40.000</td>"));
     assert!(body.contains("Hover &lt;/script&gt;"));
     assert!(!body.contains("Hover </script>"));
     assert_eq!(body.matches("<table>").count(), 3);

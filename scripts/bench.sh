@@ -13,8 +13,7 @@
 # "Single files" mixes two synthetic corpus tiers built from the formatter
 # fixtures with the largest real source file of each benchmarked package;
 # "projects" is the R/ source tree of each package, cloned once into a cache.
-# arity is the baseline in every chart; every other tool's time is reported
-# relative to it.
+# The charts show mean wall-clock times in milliseconds on a log scale.
 #
 # The JSON artifact feeds the docs benchmark page (docs/src/guide/performance.md):
 # `cargo run --example docgen` renders it into the generated partials at doc-gen
@@ -24,8 +23,7 @@
 # This is a *visibility* tool, not a quality gate and not a parity target. It
 # measures wall-clock speed only, never output equivalence (that is what
 # `task air-compat` covers). Tools do different work and pay different startup
-# floors (styler and lintr are R processes), so treat the *ratios*, not
-# the absolute milliseconds, as the takeaway.
+# floors (styler and lintr are R processes).
 #
 # Usage:
 #   ./scripts/bench.sh                     # all charts (formatter + linter)
@@ -76,7 +74,7 @@ BENCH_CACHE="${ARITY_BENCH_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/arity-bench}"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --out) JSON_OUT="$2"; shift 2 ;;
-        -h|--help) sed -n '2,48p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,/^[^#]/{s/^# \{0,1\}//p;}' "$0"; exit 0 ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -135,7 +133,7 @@ HOST_CPU=""
 [ -f /proc/cpuinfo ] && HOST_CPU=$(grep -m1 "model name" /proc/cpuinfo | sed 's/.*: //')
 
 log "Tools:"
-log "  arity: $ARITY_VER (baseline)"
+log "  arity: $ARITY_VER"
 if [ "$HAVE_AIR" = "yes" ]; then log "  air: $AIR_VER (formatter)"; else log "  air: (not on PATH -- skipped)"; fi
 if [ "$HAVE_JARL" = "yes" ]; then log "  jarl: $JARL_VER (linter)"; else log "  jarl: (not on PATH -- skipped)"; fi
 if [ "$HAVE_STYLER" = "yes" ]; then log "  styler: $STYLER_VER (formatter, R)"; else log "  styler: (unavailable -- skipped)"; fi
@@ -147,8 +145,7 @@ log
 # --- Command templates (stdin -> stdout, or a path/dir) ----------------------
 
 # Formatter command for TOOL over PATH in MODE (stdin|path). Path mode uses
-# --check so a directory run never mutates the checkout while still doing the
-# full formatting work.
+# --check to leave the source files intact, with each tool's default cache settings.
 fmt_cmd() {
     case "$1:$2" in
         arity:stdin)  echo "$ARITY format < '$3' > /dev/null 2>&1" ;;
@@ -495,10 +492,10 @@ mkdir -p "$(dirname "$JSON_OUT")"
     # comma between them from what actually ran.
     if chart_has_rows formatter-projects; then f_files_trail=","; else f_files_trail=""; fi
     emit_chart formatter-files "Single files" \
-        "Formatting speed on single files relative to arity, one dot per document: the largest source file of each benchmarked package, then two synthetic corpus tiers. The vertical axis is mean wall-clock time as a ratio to arity on a log scale, so arity lies on the dashed baseline at 1; faster tools fall below it and slower tools rise above. Hover a dot for the exact figures." \
+        "Mean formatting time by file, including process startup." \
         "$f_files_trail"
     emit_chart formatter-projects "Projects" \
-        "Formatting speed on real R packages (the $PROJECT_LIST source trees) relative to arity, on the same log-ratio axis." \
+        "Mean time to check formatting in the R/ source trees of $PROJECT_LIST." \
         ""
     printf '      ]\n    },\n'
 
@@ -506,10 +503,10 @@ mkdir -p "$(dirname "$JSON_OUT")"
     printf '    {\n      "id":"linter",\n      "title":"Linter",\n      "charts":[\n'
     if chart_has_rows linter-projects; then l_files_trail=","; else l_files_trail=""; fi
     emit_chart linter-files "Single files" \
-        "Linting speed on single files relative to arity, one dot per document, on the same log-ratio axis as the formatter charts." \
+        "Mean linting time by file, including process startup." \
         "$l_files_trail"
     emit_chart linter-projects "Projects" \
-        "Linting speed on real R packages (the $PROJECT_LIST source trees) relative to arity, on the same log-ratio axis." \
+        "Mean time to lint the R/ source trees of $PROJECT_LIST." \
         ""
     printf '      ]\n    }\n'
 

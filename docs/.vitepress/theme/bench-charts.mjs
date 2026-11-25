@@ -31,140 +31,39 @@ function orderedUnique(rows, key) {
   return out;
 }
 
-// Whole decades keep the log scale easy to read; a small margin keeps dots
-// at the domain boundaries clear of the plot edges.
-function logDomain(points, field) {
-  var values = points
-    .map(function (p) {
-      return p[field];
-    })
-    .filter(function (value) {
-      return Number.isFinite(value) && value > 0;
-    });
-  var lo = Math.floor(Math.log10(Math.min.apply(null, values.concat([1]))));
-  var hi = Math.ceil(Math.log10(Math.max.apply(null, values.concat([1]))));
-  if (lo === hi) {
-    lo--;
-    hi++;
-  }
-  return [Math.pow(10, lo) / 1.1, Math.pow(10, hi) * 1.1];
-}
-
-// Match ggplot2's log ticks: long at powers of ten, medium at five, and
-// short at the other subdivisions. Only powers of ten receive labels.
-function logAxis(domain, color) {
-  var ticks = [];
-  var major = [];
-  var middle = [];
-  for (
-    var e = Math.floor(Math.log10(domain[0]));
-    e <= Math.ceil(Math.log10(domain[1]));
-    e++
-  ) {
-    for (var m = 1; m < 10; m++) {
-      var value = m * Math.pow(10, e);
-      if (value >= domain[0] && value <= domain[1]) {
-        ticks.push(value);
-        if (m === 1) major.push(value);
-        if (m === 5) middle.push(value);
-      }
+// Label 1, 2, and 5 in each decade, matching Panache's timing charts.
+function timeScale(points, field) {
+  const values = points.map((point) => point[field]);
+  const low = values.length ? Math.floor(Math.log10(Math.min(...values))) : 0;
+  const high = values.length ? Math.ceil(Math.log10(Math.max(...values))) : 1;
+  const ticks = [];
+  for (let exponent = low; exponent < high; exponent++) {
+    for (const multiple of [1, 2, 5]) {
+      ticks.push(multiple * 10 ** exponent);
     }
   }
-  var isMajor = "indexof(" + JSON.stringify(major) + ", datum.value) >= 0";
-  var isMiddle = "indexof(" + JSON.stringify(middle) + ", datum.value) >= 0";
-  return {
-    values: ticks,
-    labelExpr: isMajor + " ? format(datum.value, ',~g') : ''",
-    labelOverlap: false,
-    labelPadding: 4,
-    tickColor: color,
-    tickSize: {
-      condition: [
-        { test: isMajor, value: 9 },
-        { test: isMiddle, value: 6 },
-      ],
-      value: 3,
-    },
-    grid: true,
-    gridOpacity: {
-      condition: { test: isMajor + " && datum.value !== 1", value: 1 },
-      value: 0,
-    },
-  };
+  ticks.push(10 ** high);
+  return { domain: [10 ** low / 1.1, 10 ** high * 1.1], ticks };
 }
 
 function spec(payload) {
-  var lsp = !Array.isArray(payload);
-  var points = lsp ? payload.points : payload;
-  var dark = document.documentElement.classList.contains("dark");
-  var fg = dark ? "#c8c9db" : "#333333";
-  var grid = dark ? "#3b3f5c" : "#dddddd";
-  var tools = orderedUnique(points, "tool");
-  var documents = orderedUnique(points, "document");
-  var domain = logDomain(points, "ratio");
+  const lsp = !Array.isArray(payload);
+  const memory = lsp && payload.kind === "bar";
+  const field = lsp ? "value" : "mean_ms";
+  const rows = lsp ? payload.points : payload;
+  const points = memory ? rows : rows.filter((point) => point[field] > 0);
+  const dark = document.documentElement.classList.contains("dark");
+  const fg = dark ? "#c8c9db" : "#333333";
+  const grid = dark ? "#3b3f5c" : "#dddddd";
+  const tools = orderedUnique(points, "tool");
+  const documents = orderedUnique(points, "document");
+  const valueTitle = lsp ? payload.value_title : "Mean time (ms)";
 
-  var chart = {
+  const chart = {
     $schema: "https://vega.github.io/schema/vega-lite/v5.json",
-    description: lsp
-      ? payload.ratio_title +
-        ". Lower values use less time or memory. See the data table for measurements and sample details."
-      : "Dot plot of speed relative to arity. Each dot is one input " +
-        "processed by one tool; the vertical axis is mean time as a " +
-        "ratio to arity on a log scale, with arity on a dashed baseline " +
-        "at 1, faster tools below and slower tools above. See the data table " +
-        "for the underlying numbers.",
     width: "container",
     height: 340,
     data: { values: points },
-    layer: [
-      // Baseline at 1.0 (arity); everything below is faster, above slower.
-      {
-        mark: { type: "rule", strokeDash: [4, 4], color: grid, aria: false },
-        encoding: { y: { datum: 1, type: "quantitative" } },
-      },
-      {
-        mark: { type: "point", filled: true, size: 130, opacity: 0.9 },
-        encoding: {
-          x: {
-            field: "tool",
-            type: "nominal",
-            title: "Tool",
-            sort: tools,
-            axis: { labelAngle: 0 },
-          },
-          y: {
-            field: "ratio",
-            type: "quantitative",
-            title: lsp ? payload.ratio_title : "Time relative to arity",
-            scale: { type: "log", domain: domain, nice: false },
-            axis: logAxis(domain, fg),
-          },
-          color: {
-            field: "document",
-            type: "nominal",
-            title: lsp ? "Measurement" : "Input",
-            sort: documents,
-          },
-          tooltip: lsp
-            ? [
-                { field: "document", title: "Measurement" },
-                { field: "tool", title: "Server" },
-                { field: "value", title: payload.value_title, format: ".3f" },
-                { field: "ratio_label", title: "Relative" },
-                { field: "detail", title: "Details" },
-              ]
-            : [
-                { field: "document", title: "Input" },
-                { field: "tool", title: "Tool" },
-                { field: "mean_ms", title: "Mean (ms)", format: ".3f" },
-                { field: "ratio_label", title: "Relative" },
-                { field: "min_ms", title: "Min (ms)", format: ".3f" },
-                { field: "max_ms", title: "Max (ms)", format: ".3f" },
-                { field: "stddev_ms", title: "Std dev (ms)", format: ".3f" },
-              ],
-        },
-      },
-    ],
     config: {
       background: null,
       view: { stroke: null },
@@ -178,39 +77,89 @@ function spec(payload) {
       legend: { labelColor: fg, titleColor: fg },
     },
   };
-  if (lsp && payload.kind === "bar") {
-    chart.description =
-      "Grouped bar chart of median resident memory in MiB at each session stage. " +
-      "Each server has its own bar on a linear axis starting at zero. " +
-      "See the data table for PSS, process counts, and relative memory use.";
-    delete chart.layer;
-    chart.mark = { type: "bar" };
-    chart.encoding = {
-      x: {
-        field: "document",
-        type: "nominal",
-        title: "Stage",
-        sort: documents,
-        axis: { labelAngle: 0 },
+  if (memory) {
+    return {
+      ...chart,
+      description:
+        "Grouped bar chart of median resident memory in MiB at each session stage. " +
+        "Each server has its own bar on a linear axis starting at zero. " +
+        "See the data table for PSS and process counts.",
+      mark: { type: "bar" },
+      encoding: {
+        x: {
+          field: "document",
+          type: "nominal",
+          title: "Stage",
+          sort: documents,
+          axis: { labelAngle: 0 },
+        },
+        xOffset: { field: "tool", type: "nominal", sort: tools },
+        y: {
+          field,
+          type: "quantitative",
+          title: valueTitle,
+          scale: { type: "linear", zero: true },
+        },
+        color: { field: "tool", type: "nominal", title: "Server", sort: tools },
+        tooltip: [
+          { field: "document", title: "Stage" },
+          { field: "tool", title: "Server" },
+          { field, title: valueTitle, format: ".1f" },
+          { field: "detail", title: "Details" },
+        ],
       },
-      xOffset: { field: "tool", type: "nominal", sort: tools },
-      y: {
-        field: "value",
-        type: "quantitative",
-        title: payload.value_title,
-        scale: { type: "linear", zero: true },
-      },
-      color: { field: "tool", type: "nominal", title: "Server", sort: tools },
-      tooltip: [
-        { field: "document", title: "Stage" },
-        { field: "tool", title: "Server" },
-        { field: "value", title: payload.value_title, format: ".1f" },
-        { field: "ratio_label", title: "Relative" },
-        { field: "detail", title: "Details" },
-      ],
     };
   }
-  return chart;
+
+  const inputTitle = lsp ? "Measurement" : "Input";
+  const toolTitle = lsp ? "Server" : "Tool";
+  const { domain, ticks } = timeScale(points, field);
+  return {
+    ...chart,
+    description:
+      `${valueTitle} on a logarithmic scale. Lower values mean shorter waits. ` +
+      "See the data table for measurements.",
+    mark: { type: "point", filled: true, size: 130, opacity: 0.9 },
+    encoding: {
+      x: {
+        field: "tool",
+        type: "nominal",
+        title: toolTitle,
+        sort: tools,
+        axis: { labelAngle: 0 },
+      },
+      y: {
+        field,
+        type: "quantitative",
+        title: `${valueTitle}, log scale`,
+        scale: { type: "log", domain, nice: false },
+        axis: {
+          values: ticks,
+          labelExpr: "format(datum.value, ',~g')",
+          labelOverlap: false,
+          grid: true,
+        },
+      },
+      color: {
+        field: "document",
+        type: "nominal",
+        title: inputTitle,
+        sort: documents,
+      },
+      tooltip: [
+        { field: "document", title: inputTitle },
+        { field: "tool", title: toolTitle },
+        { field, title: valueTitle, format: ".3f" },
+        ...(lsp
+          ? [{ field: "detail", title: "Details" }]
+          : [
+              { field: "min_ms", title: "Min (ms)", format: ".3f" },
+              { field: "max_ms", title: "Max (ms)", format: ".3f" },
+              { field: "stddev_ms", title: "Std dev (ms)", format: ".3f" },
+            ]),
+      ],
+    },
+  };
 }
 
 export function mountCharts() {

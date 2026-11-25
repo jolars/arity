@@ -35,7 +35,7 @@
         {
           "id": "formatter-files",
           "title": "Single files",
-          "caption": "Formatting speed on single files relative to arity, one dot per document: the largest source file of each benchmarked package, then two synthetic corpus tiers. The vertical axis is mean wall-clock time as a ratio to arity on a log scale, so arity lies on the dashed baseline at 1; faster tools fall below it and slower tools rise above. Hover a dot for the exact figures.",
+          "caption": "Mean formatting time by file, including process startup.",
           "documents": [
             {
               "id": "MASS-file",
@@ -156,7 +156,7 @@
         {
           "id": "formatter-projects",
           "title": "Projects",
-          "caption": "Formatting speed on real R packages (the tidyr and MASS source trees) relative to arity, on the same log-ratio axis.",
+          "caption": "Mean time to check formatting in the R/ source trees of tidyr and MASS.",
           "documents": [
             {
               "id": "tidyr",
@@ -215,7 +215,7 @@
         {
           "id": "linter-files",
           "title": "Single files",
-          "caption": "Linting speed on single files relative to arity, one dot per document, on the same log-ratio axis as the formatter charts.",
+          "caption": "Mean linting time by file, including process startup.",
           "documents": [
             {
               "id": "MASS-file",
@@ -336,7 +336,7 @@
         {
           "id": "linter-projects",
           "title": "Projects",
-          "caption": "Linting speed on real R packages (the tidyr and MASS source trees) relative to arity, on the same log-ratio axis.",
+          "caption": "Mean time to lint the R/ source trees of tidyr and MASS.",
           "documents": [
             {
               "id": "tidyr",

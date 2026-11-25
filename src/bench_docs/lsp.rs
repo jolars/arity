@@ -1,6 +1,6 @@
 //! Render opt-in LSP measurements from the shared benchmark artifact.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
@@ -84,7 +84,7 @@ struct Latency {
 #[derive(Serialize)]
 #[serde(rename_all = "lowercase")]
 enum ChartKind {
-    Ratio,
+    Timing,
     Bar,
 }
 
@@ -93,8 +93,6 @@ struct Point {
     document: String,
     tool: String,
     value: f64,
-    ratio: f64,
-    ratio_label: String,
     detail: String,
 }
 
@@ -165,10 +163,10 @@ fn render(b: &Measurements) -> String {
     );
     out.push_str(".\n\n");
 
-    let Some(baseline) = b.servers.iter().find(|s| s.key == "arity") else {
-        out.push_str("_Arity baseline unavailable._\n");
+    if b.servers.is_empty() {
+        out.push_str("_No language-server measurements recorded._\n");
         return out;
-    };
+    }
     let mut runtime = Vec::new();
     for (key, label) in [
         ("init_seconds", "Initialize"),
@@ -177,16 +175,12 @@ fn render(b: &Measurements) -> String {
         ("edit_work_seconds", "Edit workload"),
     ] {
         for server in &b.servers {
-            if let (Some(value), Some(base)) = (
-                server.aggregate.timings.get(key),
-                baseline.aggregate.timings.get(key),
-            ) {
+            if let Some(value) = server.aggregate.timings.get(key) {
                 push_point(
                     &mut runtime,
                     server,
                     label,
                     value * 1000.0,
-                    base * 1000.0,
                     "Median across fresh processes".into(),
                 );
             }
@@ -194,20 +188,25 @@ fn render(b: &Measurements) -> String {
     }
     out.push_str(&chart(
         "Startup and workload",
-        "Median (ms)",
-        "Time relative to arity",
-        ChartKind::Ratio,
+        "Median elapsed time (ms)",
+        ChartKind::Timing,
         runtime,
     ));
 
     let mut latency = Vec::new();
-    for base in &baseline.aggregate.request_latencies {
+    let mut seen = HashSet::new();
+    let requests = b
+        .servers
+        .iter()
+        .flat_map(|server| &server.aggregate.request_latencies)
+        .filter(|request| seen.insert(&request.key));
+    for request in requests {
         for server in &b.servers {
             if let Some(value) = server
                 .aggregate
                 .request_latencies
                 .iter()
-                .find(|r| r.key == base.key)
+                .find(|r| r.key == request.key)
             {
                 let detail = format!(
                     "p95: {:.3} ms; samples: {}; empty: {}; returned items: {}–{}; result bytes: {}–{}; stale responses: {}",
@@ -223,9 +222,8 @@ fn render(b: &Measurements) -> String {
                 push_point(
                     &mut latency,
                     server,
-                    &value.label,
+                    &request.label,
                     value.median_ms,
-                    base.median_ms,
                     detail,
                 );
             }
@@ -233,9 +231,8 @@ fn render(b: &Measurements) -> String {
     }
     out.push_str(&chart(
         "Request latency",
-        "Median (ms)",
-        "Latency relative to arity",
-        ChartKind::Ratio,
+        "Median latency (ms)",
+        ChartKind::Timing,
         latency,
     ));
 
@@ -247,16 +244,12 @@ fn render(b: &Measurements) -> String {
         ("peak", "Sampled peak"),
     ] {
         for server in &b.servers {
-            if let (Some(value), Some(base)) = (
-                server.aggregate.milestones.get(key),
-                baseline.aggregate.milestones.get(key),
-            ) {
+            if let Some(value) = server.aggregate.milestones.get(key) {
                 push_point(
                     &mut memory,
                     server,
                     label,
                     value.rss_mb,
-                    base.rss_mb,
                     format!(
                         "PSS: {:.1} MiB; processes: {}",
                         value.pss_mb, value.processes
@@ -268,71 +261,45 @@ fn render(b: &Measurements) -> String {
     out.push_str(&chart(
         "Resident memory",
         "Median RSS (MiB)",
-        "Memory relative to arity",
         ChartKind::Bar,
         memory,
     ));
     format!("{}\n", out.trim_end())
 }
 
-fn push_point(
-    points: &mut Vec<Point>,
-    server: &Server,
-    label: &str,
-    value: f64,
-    base: f64,
-    detail: String,
-) {
-    if base <= 0.0 || value <= 0.0 {
-        return;
-    }
-    let ratio = value / base;
+fn push_point(points: &mut Vec<Point>, server: &Server, label: &str, value: f64, detail: String) {
     points.push(Point {
         document: label.into(),
         tool: server.key.clone(),
         value,
-        ratio,
-        ratio_label: if server.key == "arity" {
-            "baseline".into()
-        } else {
-            format!("{ratio:.2}× arity")
-        },
         detail,
     });
 }
 
-fn chart(
-    title: &str,
-    value_title: &str,
-    ratio_title: &str,
-    kind: ChartKind,
-    points: Vec<Point>,
-) -> String {
+fn chart(title: &str, value_title: &str, kind: ChartKind, points: Vec<Point>) -> String {
     let payload = serde_json::json!({
-        "points": points, "value_title": value_title, "ratio_title": ratio_title,
-        "kind": kind,
+        "points": points, "value_title": value_title, "kind": kind,
     });
     let caption = match kind {
-        ChartKind::Ratio => format!(
-            "{ratio_title}. Hover a point for measurements and sample details. Lower values use less time."
+        ChartKind::Timing => format!(
+            "{value_title} on a logarithmic scale. Hover a point for measurements and sample details."
         ),
-        ChartKind::Bar => format!(
-            "{value_title} at each session stage, with one bar per server on a linear scale starting at zero. Hover a bar for relative memory use, PSS, and process counts."
-        ),
+        ChartKind::Bar => {
+            format!("{value_title} at each session stage. Hover a bar for PSS and process counts.")
+        }
     };
     // Corpus and version strings can contain HTML; JSON lives in a script element.
     let json = payload.to_string().replace('<', "\\u003c");
     let mut out = format!(
-        "### {title}\n\n<div class=\"bench-chart-block\">\n<figure class=\"bench-figure\">\n<div class=\"bench-chart\"></div>\n<script type=\"application/json\" class=\"bench-data\">{json}</script>\n<figcaption>{caption}</figcaption>\n</figure>\n<details class=\"bench-table\"><summary>Data table</summary>\n<table>\n<thead><tr><th>Measurement</th><th>Server</th><th>{value_title}</th><th>Relative</th><th>Details</th></tr></thead>\n<tbody>\n"
+        "### {title}\n\n<div class=\"bench-chart-block\">\n<figure class=\"bench-figure\">\n<div class=\"bench-chart\"></div>\n<script type=\"application/json\" class=\"bench-data\">{json}</script>\n<figcaption>{caption}</figcaption>\n</figure>\n<details class=\"bench-table\"><summary>Data table</summary>\n<table>\n<thead><tr><th>Measurement</th><th>Server</th><th>{value_title}</th><th>Details</th></tr></thead>\n<tbody>\n"
     );
     for point in points {
         let _ = writeln!(
             out,
-            "<tr><td>{}</td><td>{}</td><td>{:.3}</td><td>{}</td><td>{}</td></tr>",
+            "<tr><td>{}</td><td>{}</td><td>{:.3}</td><td>{}</td></tr>",
             esc(&point.document),
             esc(&point.tool),
             point.value,
-            esc(&point.ratio_label),
             esc(&point.detail)
         );
     }

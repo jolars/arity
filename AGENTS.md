@@ -490,12 +490,11 @@ sitemap come from VitePress. Preserve `.html` routes and the legacy anchor
 fixture in `docs/tests/legacy-routes.json`; `task docs-check` validates them
 and exercises the local Worker. Deployment instructions live in `docs/README.md`.
 
-Benchmarks are measured, never asserted. `task bench` compares formatter and
-linter tools at synthetic and real-package scopes and rewrites tracked
-`benches/benchmark_results.json`, the sole published performance source. Report
-ratios, not milliseconds; it measures wall time, not equivalence. Use
-`task air-compat` for output comparison and `task bench-parse` for parser work.
-The renderer is tool-generic.
+Benchmarks are measured, never asserted. `task bench` runs the CLI and language
+server comparisons and rewrites `benches/benchmark_results.json`, the sole
+published performance source. The performance page plots wall-clock times in
+milliseconds on a logarithmic scale. Use `task air-compat` for output comparison
+and `task bench-parse` for parser work. The renderer is tool-generic.
 
 `task profile` samples `benches/profile.rs` and writes only under
 `target/profile/`. Preserve `scripts/profile.sh` as flag/profile authority,

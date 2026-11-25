@@ -1,231 +1,60 @@
 # Performance
 
-Arity is measured against other R tools in two suites: command-line speed,
-measured with [hyperfine], and language-server latency and memory, measured
-through LSP over stdio or TCP. The command-line suite covers two operations:
+These benchmarks compare Arity's formatter, linter, and language server with
+other R tools. The tools differ in formatting style, lint coverage, and editor
+features. The timing charts show milliseconds on a logarithmic scale. Lower
+values mean shorter waits.
 
-- the **formatter**, compared against [`air`](https://github.com/posit-dev/air)
-  and [`styler`](https://styler.r-lib.org/);
-- the **linter**, compared against
-  [`jarl`](https://github.com/etiennebacher/jarl) and
-  [`lintr`](https://lintr.r-lib.org/).
+## Formatter and linter
 
-Each operation is measured at two scopes: single files (the largest source file
-of each benchmarked package, plus two synthetic corpus tiers) and whole projects
-(real R packages). `arity` is the baseline in every chart, and every other
-tool's time is reported relative to it.
+<a id="corpus"></a>
 
-The tools also pay very different startup floors: `styler` and `lintr` run
-inside an R process, so a large part of their time on small inputs is
-interpreter startup rather than real work. Treat the *ratios*, not the absolute
-milliseconds, as the takeaway.
+We compare the formatter with [Air] and [styler] and the linter with [Jarl] and
+[lintr]. The single-file benchmarks use the largest R source file from each of
+[tidyr] and [MASS], plus two synthetic files. The project benchmarks cover each
+package's `R/` directory. Formatters use check mode for projects, and styler
+appears only in the single-file comparison.
 
-The figures below come from the committed machine-readable artifact
-`benches/benchmark_results.json`. Run `task bench` to refresh command-line
-measurements or `task bench-lsp` to refresh language-server measurements, then
-`task docs-gen` to update this page. Each suite preserves the other's results.
-Neither suite runs when the site is built or in CI.
+The charts show mean wall-clock times, including process startup. R startup can
+account for much of the time styler and lintr spend on small files.
 
-[hyperfine]: https://github.com/sharkdp/hyperfine
-
-## How it is measured
-
-For single files, each tool is invoked as a user would pipe (formatters) or
-point it at a file (linters):
-
-  | Tool     | Invocation                                                  |
-  | -------- | ----------------------------------------------------------- |
-  | `arity`  | `arity format` / `arity lint FILE`                          |
-  | `air`    | `air format --stdin-file-path bench.R`                      |
-  | `styler` | `Rscript -e 'styler::style_text(readLines(file("stdin")))'` |
-  | `jarl`   | `jarl check FILE`                                           |
-  | `lintr`  | `Rscript -e 'lintr::lint(FILE)'`                            |
-
-For projects, each tool walks the package's `R/` source tree in one invocation.
-Formatters run in check mode so nothing is mutated, but the full formatting work
-is still done:
-
-  | Tool    | Invocation                                  |
-  | ------- | ------------------------------------------- |
-  | `arity` | `arity format --check R/` / `arity lint R/` |
-  | `air`   | `air format --check R/`                     |
-  | `jarl`  | `jarl check R/`                             |
-  | `lintr` | `Rscript -e 'lintr::lint_dir("R/")'`        |
-
-`arity` is the baseline; every other tool's time is reported relative to it.
-Comparison tools absent from the machine are skipped, so a run without `jarl`
-simply omits it from the linter charts. The timing backend prefers `hyperfine`
-(warmup plus stddev/min/max); without `hyperfine` and `jq` it falls back to a
-mean-only shell loop and the min/max columns become blank.
-
-The R-backed tools need two caveats. `styler` and `lintr` pay an interpreter
-startup floor plus a steep per-line cost, so they are skipped on documents above
-20,000 lines to keep a run tractable; `styler` is additionally absent from the
-project charts, because `style_dir` would rewrite the checkout and it has no
-check-only directory mode. `styler`'s persistent on-disk cache of already-styled
-expressions is deactivated for the measurement, so that every run does the full
-work rather than inheriting whatever an earlier run happened to style. Because
-the tools do such different work, this is a rough scale comparison, not a
-like-for-like one. Set `ARITY_BENCH_NO_R=1` to leave both out of a run.
-
-## Corpus
-
-**Single files** mix real and synthetic input. The real documents are the
-largest source file of each benchmarked package, which is the closest stand-in
-for the per-file work an editor asks of a formatter or linter. The synthetic
-tiers are built by concatenating every formatter fixture's `expected.R`
-(`crates/arity-formatter/tests/fixtures/formatter/*/expected.R`, sorted,
-blank-line separated) into a base block and repeating it to two sizes. That
-content repeats, so it is cache-friendly and not representative of real code; it
-exists to amortize process startup and show rough scaling.
-
-**Projects** use real R packages: the [`tidyr`](https://tidyr.tidyverse.org/)
-and [`MASS`](https://cran.r-project.org/package=MASS) source trees, cloned once
-at pinned tags into a local cache. The two are deliberately unalike---`tidyr` is
-modern tidyverse code, `MASS` is long-lived base-R-style code. Point the
-benchmark at your own checkout with
-`ARITY_BENCH_PROJECT=/path/to/pkg task bench`, which replaces the list entirely;
-only a package's `R/` directory is measured.
-
-## Setup
+<a id="setup"></a>
 
 <!--@include: ./benchmarks_meta.md -->
 
-## Results
-
-Each operation gets its own section below, split into single files and whole
-projects. The `arity` baseline sits on the dashed line at 1 in every chart;
-faster tools fall below it, slower tools rise above.
+<a id="results"></a>
 
 <!--@include: ./benchmarks_results.md -->
 
-## Language-server latency and memory
+## Language server
 
-This Linux-only suite compares Arity with
-[`languageserver`](https://github.com/REditorSupport/languageserver) and, when
-installed, [Ark](https://github.com/posit-dev/ark). It follows Panache's LSP
-benchmark. It starts three fresh processes per server in rotating order, opens
-the five largest tracked R files in `tidyr` v1.3.2 at a pinned commit, and
-performs 1,000 edits in the largest file. The checkout stays unchanged:
-benchmark bindings and edits exist only in the open buffer.
+<a id="language-server-latency-and-memory"></a>
+<a id="what-the-session-measures"></a>
 
-### What the session measures
+We compare Arity with [languageserver] and [Ark] by opening the same five files
+in tidyr. The benchmarks measure startup, readiness after opening files, editor
+request latency, and the time to get a correct definition after an edit. The
+charts show medians, with the 95th percentile (p95) and result counts in the
+request tooltips and tables.
 
-**Startup and workload** covers process launch through the `initialize`
-response, workspace readiness after initialization, readiness after opening the
-files, and the complete edit workload. Arity and `languageserver` must publish
-diagnostics for the opened files before warm requests begin. Ark suppresses
-initially empty and unchanged diagnostic sets, so diagnostic notifications
-cannot establish its readiness. All servers must answer document-symbol requests
-for each opened buffer, followed by a quiet period. Readiness is estimated from
-process-tree CPU use: the start of a five-second window below 5% of one core,
-sampled every 150 ms. The deliberate settling wait is excluded from readiness
-times. These estimates do not prove that all background work has finished or
-that Ark has completed diagnostics for the latest version. The artifact records
-each server's readiness method.
-
-Ark starts as a headless Jupyter R kernel. Its startup measurement includes the
-kernel handshake and opening the embedded language server over loopback TCP.
-Positron is not required. Arity and `languageserver` use stdio. The TCP client
-uses `TCP_NODELAY` and Linux `TCP_QUICKACK` to avoid delayed acknowledgments
-stalling responses whose headers and bodies arrive separately. Each server's
-transport is recorded in the artifact.
-
-**Request latency** covers document symbols in the three largest open files,
-hover on `mean()`, and definition, references, and rename on a local function
-call appended to the largest buffer. Rename edits are returned but never
-applied. The suite also measures completion at the local binding, signature help
-inside `mean()`, workspace symbols matching `pivot_wider`, folding ranges in the
-largest file, and references to the `pivot_wider` S3 generic across the package.
-Each target gets two warmups and 20 measured serial round trips per process.
-Median and p95 pool samples across processes; the tables and tooltips also
-report sample counts, empty responses, returned items, and result sizes. An
-empty response measures response overhead and does not establish equivalent
-feature behavior.
-
-Document-symbol samples query unchanged buffers after readiness checks and
-warmups, so they include any per-document caches. They do not measure the first
-outline after an edit.
-
-The outlines also differ in scope. On this corpus, Arity includes many local
-assignments absent from Ark's results. Larger outlines cost more to serialize
-and transfer, so compare returned-item counts and payload sizes alongside
-latency.
-
-**Edit to definition** times a change notification through the following correct
-definition response. Each edit switches a call between two functions with
-equal-length names and declarations on different lines. The runner checks that
-the response points to the newly selected declaration. It polls every 10 ms
-after stale or empty replies, counting those replies and including the wait in
-the measurement. A server that never returns the correct location fails the run.
-Arity and Ark receive incremental changes; `languageserver` receives full
-documents, as each advertises during initialization. All 1,000 edits are
-measured, without discarded warmups. This measures navigation after an edit; it
-does not measure time to diagnostics for each keystroke. The complete edit
-workload excludes the final readiness checks and settling waits.
-
-**Resident memory** is sampled for the server and its descendants after
-initialization, after opening files, after edits, and at the sampled peak. RSS
-counts shared pages in each process; PSS apportions them and appears in the
-tables and tooltips. The grouped bars show median RSS in MiB across fresh
-processes, with one bar per server at each stage and a linear axis starting at
-zero. Short-lived peaks or child processes between samples can be missed. The
-peak RSS, peak PSS, and peak process count can occur at different times. Ark's
-figures include its embedded R session and descendants. The Python client and
-Jupyter launcher are outside the sampled process tree.
-
-The servers perform different work and use different diagnostics and package
-indexes. These are measurements of the same editor workload, not a claim of
-feature equivalence. The servers retain their default analysis settings. Arity
-runs with `--no-config`; R runs with `--vanilla`; each process gets fresh XDG
-config and cache directories. Arity's remote index URL is unset. Installed R
-packages and their help files remain available, so results depend on that
-library as well as the host. Operating-system file caches are not cleared, and
-servers are not pinned to one CPU core.
-
-Ark uses the R installation and resolved library paths reported by the selected
-`Rscript`. Its version, R home, library paths, and source-fetching environment
-setting are recorded in the artifact. Ark can download package sources on cache
-misses, so startup and settling times can include network work. Each session
-gets a fresh XDG cache, including Ark's source cache. Ark 0.1.252 does not
-support `OAK_SOURCE_FETCHING_ENABLED`; setting it does not prevent that release
-from fetching sources. Newer builds may honor it, so preserve the recorded
-setting when reproducing a run. The harness does not download or modify Ark
-itself.
-
-### Run the comparison
-
-The development shell includes Python, R, `languageserver`, Ark from nixpkgs,
-and `jupyter_client` with its `pyzmq` dependency. Outside that shell, Ark is
-discovered on `PATH`; without it, the runner compares Arity and
-`languageserver`. Only the Ark backend requires `jupyter_client`. The runner
-requires Linux `/proc`, Git, Cargo, and the selected servers. It builds Arity in
-release mode, checks out the pinned corpus under `target/bench-lsp/corpus/`, and
-saves server stderr under `target/bench-lsp/logs/`.
-
-```sh
-task bench-lsp
-task docs-gen
-```
-
-For a short harness check that leaves the published results alone:
-
-```sh
-task bench-lsp -- --runs 1 --edits 10 --latency-runs 2 \
-  --out target/bench-lsp/trial.json
-```
-
-Use `--arity /path/to/arity` to measure an existing release binary,
-`--rscript /path/to/Rscript` to select an R installation, and
-`--ark /path/to/ark` to select an Ark R kernel executable. Use `--no-ark` to
-omit Ark even when it is installed. Run `--help` for workload and timeout
-options. If Ark is available but its Python dependencies are missing, the runner
-reports the missing dependency instead of silently omitting Ark.
-
-A failed request, missing required diagnostics, an incorrect definition that
-remains stale until the timeout, a disconnected server, or a settling timeout
-aborts the run without replacing the artifact. Harness correctness tests run
-with `python3 -m unittest discover -s benches -p 'test_lsp.py'`; they do not run
-the servers or assert performance thresholds.
+The memory chart includes each server and its child processes. **RSS** counts
+shared pages in every process that uses them. **PSS** divides those pages among
+the processes and appears in the tooltips and tables.
 
 <!--@include: ./benchmarks_lsp.md -->
+
+## Reproducibility
+
+<a id="how-it-is-measured"></a> <a id="run-the-comparison"></a>
+
+See the [benchmark README] for prerequisites, commands, and measurement details.
+
+[air]: https://github.com/posit-dev/air
+[ark]: https://github.com/posit-dev/ark
+[benchmark readme]: https://github.com/jolars/arity/blob/main/benches/README.md
+[jarl]: https://github.com/etiennebacher/jarl
+[languageserver]: https://github.com/REditorSupport/languageserver
+[lintr]: https://lintr.r-lib.org/
+[mass]: https://cran.r-project.org/package=MASS
+[styler]: https://styler.r-lib.org/
+[tidyr]: https://tidyr.tidyverse.org/

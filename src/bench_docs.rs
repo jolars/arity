@@ -11,13 +11,9 @@
 //!   linter), each holding one `####` chart per scope (single files, projects).
 //!   Every chart is an interactive Vega-Lite dot plot (driven by
 //!   `docs/.vitepress/theme/bench-charts.mjs`) plus a collapsed HTML fallback table. The
-//!   page includes it under a `## Results` heading, so sections nest as `###`.
+//!   page includes it under the formatter and linter heading.
 //!
-//! The renderer is deliberately **tool-generic**: within each chart it treats
-//! `arity` as the baseline and every other tool as a comparison point, deriving
-//! the tool order from the results themselves. Adding a new comparison tool
-//! (e.g. `styler`, `jarl`) to the benchmark artifact therefore needs no change
-//! here; nor does adding a section or chart.
+//! The renderer derives the tools and their order from the benchmark artifact.
 
 mod lsp;
 
@@ -26,11 +22,6 @@ pub use lsp::render_lsp_partial;
 use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
-
-/// The tool treated as the baseline (ratio `1.0`) within every chart; each
-/// other tool's timing is reported relative to it. The benchmark script always
-/// lists arity first, so this is also the first tool to appear in the results.
-const BASELINE: &str = "arity";
 
 /// The committed benchmark artifact, deserialized straight from
 /// `benches/benchmark_results.json`. See `scripts/bench.sh` for the producer and
@@ -50,7 +41,7 @@ struct Meta {
     backend: String,
     min_runs: u32,
     /// Version per tool, keyed by tool name. Kept as a free-form map so a new
-    /// tool needs no code change; display order hoists the baseline first.
+    /// tool needs no code change.
     tools: std::collections::BTreeMap<String, Tool>,
 }
 
@@ -66,7 +57,7 @@ struct Tool {
     version: String,
 }
 
-/// One `##` section on the page (e.g. the formatter), holding one chart per
+/// One section on the page (e.g. the formatter), holding one chart per
 /// scope.
 #[derive(Deserialize)]
 struct Section {
@@ -74,9 +65,7 @@ struct Section {
     charts: Vec<Chart>,
 }
 
-/// One `###` chart within a section (e.g. single files, or projects). Each chart
-/// is self-contained: its own documents, its own results, and its own arity
-/// baseline, so ratios never cross charts.
+/// One chart within a section (e.g. single files or projects).
 #[derive(Deserialize)]
 struct Chart {
     title: String,
@@ -105,16 +94,14 @@ struct BenchResult {
     max_ms: Option<f64>,
 }
 
-/// One dot in a chart: a (document, tool) timing, its ratio to the arity
-/// baseline, and the numbers the tooltip shows. Serialized inline into the page
+/// One dot in a chart, with the measured timings for a document and tool.
+/// Serialized inline into the page
 /// for `docs/.vitepress/theme/bench-charts.mjs` to plot with Vega-Lite.
 #[derive(Serialize)]
 struct ChartPoint {
     document: String,
     tool: String,
     mean_ms: f64,
-    ratio: f64,
-    ratio_label: String,
     stddev_ms: Option<f64>,
     min_ms: Option<f64>,
     max_ms: Option<f64>,
@@ -142,11 +129,9 @@ pub fn render_partials(json: Option<&str>) -> (String, String) {
 /// A Markdown bullet list of tool versions, timing backend, host, and run date.
 fn render_meta(meta: &Meta) -> String {
     let mut out = String::new();
-    // Order arity-first, then alphabetically. The per-chart appearance order
-    // isn't available from `meta` alone, so hoist the baseline and fall back to
-    // the map's own (sorted) key order for the rest.
+    // Order arity-first, then alphabetically.
     let mut names: Vec<&String> = meta.tools.keys().collect();
-    names.sort_by_key(|n| (*n != BASELINE, (*n).clone()));
+    names.sort_by_key(|n| (*n != "arity", *n));
     for name in names {
         let version = &meta.tools[name].version;
         let _ = writeln!(out, "- **{name}**: `{version}`");
@@ -166,9 +151,7 @@ fn render_meta(meta: &Meta) -> String {
 }
 
 /// The page body: one `###` section per operation, each with one `####` chart
-/// per scope. It is included under the page's `## Results` heading, so sections
-/// nest one level below it. A section or chart carrying no results is skipped so
-/// a partial run (e.g. jarl absent) leaves no empty headers.
+/// per scope. Sections and charts without results are skipped.
 fn render_body(b: &Benchmarks) -> String {
     let mut out = String::new();
     for section in &b.sections {
@@ -198,12 +181,14 @@ fn render_body(b: &Benchmarks) -> String {
 /// collapsed HTML table with the same numbers as a no-JS/print fallback.
 ///
 /// The chart data rides inline in a `<script type="application/json">`; the JS
-/// plots time-relative-to-arity on a log axis, one dot per (document, tool).
+/// plots mean time in milliseconds on a log axis, one dot per document and tool.
 /// Kept as raw HTML (not a Markdown pipe table) so the fallback renders inside
 /// `<details>`.
 fn render_chart(chart: &Chart) -> String {
     let points = chart_points(chart);
-    let data_json = serde_json::to_string(&points).unwrap_or_else(|_| "[]".to_string());
+    let data_json = serde_json::to_string(&points)
+        .unwrap_or_else(|_| "[]".to_string())
+        .replace('<', "\\u003c");
 
     let mut out = String::new();
     out.push_str("<div class=\"bench-chart-block\">\n");
@@ -225,29 +210,15 @@ fn render_chart(chart: &Chart) -> String {
     out
 }
 
-/// One dot per (document, tool): its mean time as a ratio to that document's
-/// arity baseline (arity itself is `1.0`), in document order. Documents whose
-/// baseline is missing or non-positive are skipped (they carry no meaningful
-/// ratio); they still appear in the fallback table.
+/// One dot per measured document and tool, in document order.
 fn chart_points(chart: &Chart) -> Vec<ChartPoint> {
     let mut points = Vec::new();
     for doc in &chart.documents {
-        let base = baseline_mean(chart, &doc.id);
-        let Some(base) = base.filter(|&b| b > 0.0) else {
-            continue;
-        };
         for r in chart.results.iter().filter(|r| r.document == doc.id) {
-            let ratio_label = if r.tool == BASELINE {
-                "baseline".to_string()
-            } else {
-                relative_cell(r.mean_ms, Some(base))
-            };
             points.push(ChartPoint {
                 document: doc.name.clone(),
                 tool: r.tool.clone(),
                 mean_ms: r.mean_ms,
-                ratio: r.mean_ms / base,
-                ratio_label,
                 stddev_ms: r.stddev_ms,
                 min_ms: r.min_ms,
                 max_ms: r.max_ms,
@@ -258,14 +229,11 @@ fn chart_points(chart: &Chart) -> Vec<ChartPoint> {
 }
 
 /// One `<h5>` + HTML `<table>` per document in a chart, in document order; rows
-/// follow the order tools appear in `results`. `arity` is the baseline and every
-/// other tool's `Relative` cell is its mean ratio to it.
+/// follow the order tools appear in `results`.
 fn render_chart_tables_html(chart: &Chart) -> String {
     let order = tool_order(&chart.results);
     let mut out = String::new();
     for doc in &chart.documents {
-        let base = baseline_mean(chart, &doc.id);
-
         let _ = writeln!(
             out,
             "<h5>{} ({} bytes, {} lines)</h5>",
@@ -275,7 +243,7 @@ fn render_chart_tables_html(chart: &Chart) -> String {
         );
         out.push_str(
             "<table>\n<thead><tr><th>Tool</th><th>Mean (ms)</th>\
-             <th>Min (ms)</th><th>Max (ms)</th><th>Relative</th></tr></thead>\n<tbody>\n",
+             <th>Min (ms)</th><th>Max (ms)</th></tr></thead>\n<tbody>\n",
         );
         // Walk tools in artifact order so rows read arity-first, skipping any a
         // tool did not run on this document.
@@ -287,19 +255,13 @@ fn render_chart_tables_html(chart: &Chart) -> String {
             else {
                 continue;
             };
-            let relative = if r.tool == BASELINE {
-                "baseline".to_string()
-            } else {
-                relative_cell(r.mean_ms, base)
-            };
             let _ = writeln!(
                 out,
-                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
                 esc(&r.tool),
                 fmt_ms(Some(r.mean_ms)),
                 fmt_ms(r.min_ms),
                 fmt_ms(r.max_ms),
-                esc(&relative),
             );
         }
         out.push_str("</tbody>\n</table>\n");
@@ -321,16 +283,6 @@ fn tool_order(results: &[BenchResult]) -> Vec<String> {
     order
 }
 
-/// The arity baseline mean for a document within a chart, if arity was measured
-/// on it.
-fn baseline_mean(chart: &Chart, doc_id: &str) -> Option<f64> {
-    chart
-        .results
-        .iter()
-        .find(|r| r.document == doc_id && r.tool == BASELINE)
-        .map(|r| r.mean_ms)
-}
-
 /// Minimal HTML text escaping for the fallback table's cell text.
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -344,20 +296,5 @@ fn fmt_ms(v: Option<f64>) -> String {
     match v {
         Some(x) => format!("{x:.4}"),
         None => "—".to_string(),
-    }
-}
-
-/// Human ratio of a tool's mean to the arity baseline.
-fn relative_cell(tool_mean: f64, base: Option<f64>) -> String {
-    match base {
-        Some(b) if b > 0.0 && tool_mean > 0.0 => {
-            let r = tool_mean / b;
-            if r >= 1.0 {
-                format!("{r:.1}x slower")
-            } else {
-                format!("{:.1}x faster", 1.0 / r)
-            }
-        }
-        _ => "—".to_string(),
     }
 }
