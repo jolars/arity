@@ -1380,9 +1380,11 @@ fn lint_per_file_ignores_apply_per_buffer_and_reload_inherited_config() {
         "workspace/didChangeWatchedFiles",
         json!({"changes": [{"uri": path_uri(&base), "type": 2}]}),
     );
-    let diagnostics = h.recv_publish_for(&uri, 1);
-    assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
-    assert!(diagnostics.iter().any(|d| d["code"] == "undefined-symbol"));
+    h.recv_publish_matching(&uri, "after removing the per-file ignore", |d| {
+        d.len() == 2
+            && d.iter().any(|item| item["code"] == "undefined-symbol")
+            && d.iter().any(|item| item["code"] == "equals-na")
+    });
 
     // Disabling a fixable rule removes its cached quick fix too.
     std::fs::write(&base, "[lint]\nselect = [\"undefined-symbol\", \"equals-na\"]\n[lint.per-file-ignores]\n\"R/**\" = [\"equals-na\"]\n").unwrap();
@@ -1390,9 +1392,9 @@ fn lint_per_file_ignores_apply_per_buffer_and_reload_inherited_config() {
         "workspace/didChangeWatchedFiles",
         json!({"changes": [{"uri": path_uri(&base), "type": 2}]}),
     );
-    let diagnostics = h.recv_publish_for(&uri, 1);
-    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-    assert_eq!(diagnostics[0]["code"], "undefined-symbol");
+    let diagnostics = h.recv_publish_matching(&uri, "after ignoring equals-na", |d| {
+        d.len() == 1 && d[0]["code"] == "undefined-symbol"
+    });
     let id = h.request(
         "textDocument/codeAction",
         json!({
@@ -1709,18 +1711,24 @@ fn incremental_multi_cursor_change_reparses_and_diagnoses() {
     // boundary; the point here is that the end-to-end result is still correct.
     // Both edits stop `a`/`b` from being read, so the reparsed tree must yield
     // two `unused` diagnostics.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("arity.toml"),
+        "[index]\nauto-build = false\ncache-dir = \"index\"\n",
+    )
+    .unwrap();
+    let uri = path_uri(&dir.path().join("multi_cursor.R"));
     let mut h = Harness::start_push();
-    let uri = doc_uri();
     let base = "a <- 1\nb <- 2\nprint(a)\nprint(b)\n";
-    h.did_open(uri, base, 1);
+    h.did_open(&uri, base, 1);
     // v1 is clean (both bindings are read).
-    let clean = h.recv_publish_for(uri, 1);
+    let clean = h.recv_publish_for(&uri, 1);
     assert!(clean.is_empty(), "base buffer is clean, got: {clean:#?}");
 
     // Replace the `a` in `print(a)` (line 2) and the `b` in `print(b)` (line 3),
     // each an equal-length splice so neither shifts the other's line offsets.
     h.did_change_raw(
-        uri,
+        &uri,
         2,
         json!([
             { "range": { "start": { "line": 2, "character": 6 },
@@ -1737,7 +1745,7 @@ fn incremental_multi_cursor_change_reparses_and_diagnoses() {
     // messages, so a formatting round-trip would swallow this notification.)
     // Two findings prove the reparsed tree reads `print(9)` in both statements
     // (not the original `print(a)`/`print(b)`), i.e. both edits landed correctly.
-    let diags = h.recv_publish_for(uri, 2);
+    let diags = h.recv_publish_for(&uri, 2);
     assert!(
         diags.len() >= 2,
         "both unused bindings should be diagnosed after the multi-cursor edit, got: {diags:#?}"
