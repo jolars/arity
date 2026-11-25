@@ -54,7 +54,8 @@ function spec(payload) {
   const points = memory ? rows : rows.filter((point) => point[field] > 0);
   const dark = document.documentElement.classList.contains("dark");
   const fg = dark ? "#c8c9db" : "#333333";
-  const grid = dark ? "#3b3f5c" : "#dddddd";
+  const axisGray = dark ? "#40434d" : "#aaaaaa";
+  const gridGray = dark ? "#535764" : "#eeeeee";
   const tools = orderedUnique(points, "tool");
   const documents = orderedUnique(points, "document");
   const valueTitle = lsp ? payload.value_title : "Mean time (ms)";
@@ -70,9 +71,9 @@ function spec(payload) {
       axis: {
         labelColor: fg,
         titleColor: fg,
-        gridColor: grid,
-        domainColor: grid,
-        tickColor: grid,
+        gridColor: gridGray,
+        domainColor: axisGray,
+        tickColor: axisGray,
       },
       legend: { labelColor: fg, titleColor: fg },
     },
@@ -86,15 +87,14 @@ function spec(payload) {
         "See the data table for PSS and process counts.",
       mark: { type: "bar" },
       encoding: {
-        x: {
+        y: {
           field: "document",
           type: "nominal",
           title: "Stage",
           sort: documents,
-          axis: { labelAngle: 0 },
         },
-        xOffset: { field: "tool", type: "nominal", sort: tools },
-        y: {
+        yOffset: { field: "tool", type: "nominal", sort: tools },
+        x: {
           field,
           type: "quantitative",
           title: valueTitle,
@@ -121,30 +121,31 @@ function spec(payload) {
       "See the data table for measurements.",
     mark: { type: "point", filled: true, size: 130, opacity: 0.9 },
     encoding: {
-      x: {
-        field: "tool",
-        type: "nominal",
-        title: toolTitle,
-        sort: tools,
-        axis: { labelAngle: 0 },
-      },
       y: {
-        field,
-        type: "quantitative",
-        title: `${valueTitle}, log scale`,
-        scale: { type: "log", domain, nice: false },
-        axis: {
-          values: ticks,
-          labelExpr: "format(datum.value, ',~g')",
-          labelOverlap: false,
-          grid: true,
-        },
-      },
-      color: {
         field: "document",
         type: "nominal",
         title: inputTitle,
         sort: documents,
+        axis: { grid: true },
+      },
+      x: {
+        field,
+        type: "quantitative",
+        title: valueTitle,
+        scale: { type: "log", domain, nice: false },
+        axis: {
+          values: ticks,
+          labelExpr: "format(datum.value, ',~g')",
+          labelOverlap: "greedy",
+          grid: false,
+        },
+      },
+      color: {
+        field: "tool",
+        type: "nominal",
+        title: toolTitle,
+        sort: tools,
+        legend: { orient: "top" },
       },
       tooltip: [
         { field: "document", title: inputTitle },

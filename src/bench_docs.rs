@@ -271,7 +271,7 @@ fn render_chart_tables_html(chart: &Chart) -> String {
 
 /// Tools in the order they first appear across a chart's `results` (arity
 /// first). This is the row order for the fallback table, matching the chart's
-/// axis order.
+/// legend order.
 fn tool_order(results: &[BenchResult]) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     let mut order = Vec::new();
