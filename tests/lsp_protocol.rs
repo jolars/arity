@@ -2558,6 +2558,11 @@ fn object_rename_refuses_when_another_declaration_inherits_the_ordinal() {
 #[test]
 fn local_rename_ignores_an_unsaved_namespace_peer() {
     let (dir, _, _) = package_fixture("Package: example\n", "helper <- function() 1\n");
+    std::fs::write(
+        dir.path().join("arity.toml"),
+        "[index]\nauto-build = false\ncache-dir = \"index\"\n",
+    )
+    .unwrap();
     let namespace = path_uri(&dir.path().join("NAMESPACE"));
     let path = dir.path().join("script.R");
     let source = "f <- function(x) x + 1\n";
@@ -2567,7 +2572,6 @@ fn local_rename_ignores_an_unsaved_namespace_peer() {
     let mut h = Harness::start_in_workspace(json!({}), Some(&root));
     h.did_open(&namespace, "", 1);
     h.did_open(&uri, source, 1);
-    let _ = h.recv_publish_for(&uri, 1);
     h.did_change(&namespace, "# unsaved\n", 2);
     let position = json!({ "line": 0, "character": 14 });
     let prepare = h.request(
