@@ -156,10 +156,13 @@ pub fn resolve_completion(mut item: CompletionItem, indexed: &IndexedProvider) -
     };
     let resolved = match &data {
         CompletionData::Member { package, name } => indexed
-            .lookup(package, name)
+            .lookup_with_help(package, name)
             .map(|entry| (package.clone(), entry)),
-        CompletionData::Bare { name } => base_package_of(name)
-            .and_then(|pkg| indexed.lookup(pkg, name).map(|entry| (pkg.clone(), entry))),
+        CompletionData::Bare { name } => base_package_of(name).and_then(|pkg| {
+            indexed
+                .lookup_with_help(pkg, name)
+                .map(|entry| (pkg.clone(), entry))
+        }),
         CompletionData::Package { name } => {
             if let Some(markdown) = render_package_markdown(name, indexed) {
                 item.documentation = Some(Documentation::MarkupContent(MarkupContent {
@@ -171,7 +174,7 @@ pub fn resolve_completion(mut item: CompletionItem, indexed: &IndexedProvider) -
         }
         CompletionData::ClassMember { help, .. } => {
             if let Some(doc) = help.as_ref().and_then(|help| help.resolve(indexed)) {
-                item.documentation = signature::help_documentation(doc, &[]);
+                item.documentation = signature::help_documentation(&doc, &[]);
             }
             return item;
         }
@@ -180,9 +183,9 @@ pub fn resolve_completion(mut item: CompletionItem, indexed: &IndexedProvider) -
     if let Some((package, entry)) = resolved {
         item.documentation = Some(Documentation::MarkupContent(MarkupContent {
             kind: MarkupKind::Markdown,
-            value: render_hover_markdown(&package, entry),
+            value: render_hover_markdown(&package, &entry),
         }));
-        item.detail = signature_of(entry);
+        item.detail = signature_of(&entry);
     }
     item
 }

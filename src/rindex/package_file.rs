@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -14,13 +15,36 @@ use serde_json::value::RawValue;
 use smol_str::SmolStr;
 
 use super::cache::CacheError;
-use super::schema::{ExportEntry, PackageExports, PackageIndex, SCHEMA_VERSION, SymbolEntry};
+use super::harvest::{installed_package_matches, is_valid_package_name};
+use super::help::HelpFiles;
+use super::schema::{
+    ExportEntry, HelpDoc, PackageExports, PackageIndex, SCHEMA_VERSION, SymbolEntry,
+};
 
 const HEADER_LEN: u64 = 20;
 type Directory = BTreeMap<SmolStr, SymbolRecord>;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SymbolRecord(u32, u32, #[serde(skip)] OnceLock<Option<SymbolEntry>>);
+
+#[derive(Serialize)]
+struct Metadata<'a> {
+    #[serde(flatten)]
+    index: &'a PackageIndex,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    deferred_help: bool,
+}
+
+/// The fields needed to open installed help without decoding class metadata.
+#[derive(Deserialize)]
+struct HelpMetadata {
+    schema_version: u32,
+    package: SmolStr,
+    version: SmolStr,
+    lib_path: String,
+    #[serde(default)]
+    deferred_help: bool,
+}
 
 /// An open handle pins a generation across atomic replacements. The lock
 /// protects the shared seek cursor. Decoding takes place outside the lock.
@@ -32,6 +56,7 @@ pub(super) struct PackageFile {
     metadata_len: u32,
     symbols_len: u32,
     directory: OnceLock<Option<Directory>>,
+    help: OnceLock<Option<HelpFiles>>,
 }
 
 impl PackageFile {
@@ -62,6 +87,7 @@ impl PackageFile {
             metadata_len,
             symbols_len,
             directory: OnceLock::new(),
+            help: OnceLock::new(),
         })
     }
 
@@ -100,6 +126,39 @@ impl PackageFile {
         (index.schema_version == SCHEMA_VERSION && index.symbols.is_empty()).then_some(index)
     }
 
+    pub(super) fn has_deferred_help(&self) -> Option<bool> {
+        Some(self.help_metadata()?.deferred_help)
+    }
+
+    fn help_metadata(&self) -> Option<HelpMetadata> {
+        let metadata: HelpMetadata = self.read_section(self.metadata_start(), self.metadata_len)?;
+        (metadata.schema_version == SCHEMA_VERSION).then_some(metadata)
+    }
+
+    pub(super) fn deferred_help(
+        &self,
+        package: &str,
+        version: &str,
+        alias: &str,
+    ) -> Option<HelpDoc> {
+        let help = self.help.get_or_init(|| {
+            let metadata = self.help_metadata()?;
+            if !metadata.deferred_help
+                || metadata.package != package
+                || metadata.version != version
+                || !is_valid_package_name(package)
+            {
+                return None;
+            }
+            let directory = Path::new(&metadata.lib_path).join(package);
+            if !installed_package_matches(&directory, package, version) {
+                return None;
+            }
+            HelpFiles::open(&directory, package)
+        });
+        help.as_ref()?.document(alias)
+    }
+
     pub(super) fn package(&self) -> Option<PackageIndex> {
         let mut index = self.metadata()?;
         index.symbols = self.read_section(self.symbols_start(), self.symbols_len)?;
@@ -127,7 +186,7 @@ impl PackageFile {
     }
 }
 
-pub(super) fn encode(index: &PackageIndex) -> Result<Vec<u8>, CacheError> {
+pub(super) fn encode(index: &PackageIndex, deferred_help: bool) -> Result<Vec<u8>, CacheError> {
     let serde_error = |error: serde_json::Error| CacheError::Serde(error.to_string());
     let size = |len| {
         u32::try_from(len)
@@ -160,7 +219,11 @@ pub(super) fn encode(index: &PackageIndex) -> Result<Vec<u8>, CacheError> {
         symbols: Vec::new(),
         objects: index.objects.clone(),
     };
-    let metadata = serde_json::to_vec(&metadata).map_err(serde_error)?;
+    let metadata = serde_json::to_vec(&Metadata {
+        index: &metadata,
+        deferred_help,
+    })
+    .map_err(serde_error)?;
     let symbols = serde_json::to_vec(&index.symbols).map_err(serde_error)?;
     let records: Vec<&RawValue> = serde_json::from_slice(&symbols).map_err(serde_error)?;
     let mut directory = BTreeMap::new();

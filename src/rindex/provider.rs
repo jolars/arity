@@ -9,6 +9,7 @@
 //!   default packages attach first, then `library()`-loaded packages in source
 //!   order, and the last attacher masks.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, OnceLock};
 
@@ -17,7 +18,7 @@ use smol_str::SmolStr;
 use crate::rindex::cache::Cache;
 use crate::rindex::package_file::PackageFile;
 use crate::rindex::remote::RemoteExports;
-use crate::rindex::schema::{ObjectMetadata, PackageExports, PackageIndex, SymbolEntry};
+use crate::rindex::schema::{HelpDoc, ObjectMetadata, PackageExports, PackageIndex, SymbolEntry};
 use crate::semantic::s7::S7Version;
 use crate::semantic::symbols::{
     BundledPackages, LoadedPackage, PackageOrigin, StaticBaseR, SymbolProvider,
@@ -483,6 +484,30 @@ impl IndexedProvider {
             return index.symbols.iter().find(|symbol| symbol.name == name);
         }
         self.package_file(package, slot)?.lookup(name)
+    }
+
+    /// Resolve documentation for the requested symbol on a cold LSP index.
+    /// Candidate lists can use `lookup` for kinds and formals alone.
+    pub(crate) fn lookup_with_help(
+        &self,
+        package: &str,
+        name: &str,
+    ) -> Option<Cow<'_, SymbolEntry>> {
+        let entry = self.lookup(package, name)?;
+        if entry.help.is_none()
+            && let Some(help) = self.deferred_help(package, &entry.name)
+        {
+            let mut entry = entry.clone();
+            entry.help = Some(help);
+            return Some(Cow::Owned(entry));
+        }
+        Some(Cow::Borrowed(entry))
+    }
+
+    pub(crate) fn deferred_help(&self, package: &str, alias: &str) -> Option<HelpDoc> {
+        let slot = self.packages.get(package)?;
+        self.package_file(package, slot)?
+            .deferred_help(package, &slot.version, alias)
     }
 
     /// The full harvested index for a package, filling it from the cache on

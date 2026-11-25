@@ -1,5 +1,7 @@
 //! Request-local callable and member surfaces shared by editor reads.
 
+use std::borrow::Cow;
+
 use super::*;
 use crate::rindex::provider::{IndexedProvider, ObjectPackage};
 use crate::rindex::remote::RemoteExports;
@@ -25,11 +27,20 @@ impl ObjectHelp {
         }
     }
 
-    pub(crate) fn resolve<'a>(&self, indexed: &'a IndexedProvider) -> Option<&'a HelpDoc> {
+    pub(crate) fn resolve<'a>(&self, indexed: &'a IndexedProvider) -> Option<Cow<'a, HelpDoc>> {
         let package = indexed.object_package(&self.package)?;
-        (package.version == &self.version)
-            .then(|| package.objects.render_help(&self.association))
-            .flatten()
+        if package.version != &self.version {
+            return None;
+        }
+        package
+            .objects
+            .render_help(&self.association)
+            .map(Cow::Borrowed)
+            .or_else(|| {
+                indexed
+                    .deferred_help(&self.package, &self.association.alias)
+                    .map(Cow::Owned)
+            })
     }
 }
 

@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::*;
 use crate::syntax::SyntaxElement;
 
@@ -117,7 +119,7 @@ fn hover_from_node(
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
-            value: render_hover_markdown(&package, entry),
+            value: render_hover_markdown(&package, &entry),
         }),
         range: Some(lsp_range),
     })
@@ -231,12 +233,12 @@ fn oop_hover(
                     }
                     let callable = read.callable(&call)?;
                     if callable.help.is_none()
-                        && let Some(entry) = indexed.lookup("methods", "new")
-                        && entry.help.is_some()
                         && read.is_formal_constructor(&call)
+                        && let Some(entry) = indexed.lookup_with_help("methods", "new")
+                        && entry.help.is_some()
                     {
-                        let mut markdown = render_hover_markdown("methods", entry);
-                        if signature_of(entry).is_none() {
+                        let mut markdown = render_hover_markdown("methods", &entry);
+                        if signature_of(&entry).is_none() {
                             markdown.insert_str(
                                 0,
                                 &format!("`{}`\n\n", signature(&callable.signature)),
@@ -252,7 +254,8 @@ fn oop_hover(
             markdown.push_str(&format!("\n\n`{}`", signature(&sig)));
         }
         if let Some(doc) = help.as_ref().and_then(|help| help.resolve(indexed))
-            && let Some(Documentation::MarkupContent(doc)) = signature::help_documentation(doc, &[])
+            && let Some(Documentation::MarkupContent(doc)) =
+                signature::help_documentation(&doc, &[])
         {
             markdown.push_str("\n\n");
             markdown.push_str(&doc.value);
@@ -309,14 +312,14 @@ pub(crate) fn resolve_query<'p>(
     query: SymbolQuery,
     root: &SyntaxNode,
     indexed: &'p IndexedProvider,
-) -> Option<(SmolStr, &'p SymbolEntry, TextRange)> {
+) -> Option<(SmolStr, Cow<'p, SymbolEntry>, TextRange)> {
     match query {
         SymbolQuery::Namespaced {
             package,
             name,
             range,
         } => {
-            let entry = indexed.lookup(&package, &name)?;
+            let entry = indexed.lookup_with_help(&package, &name)?;
             Some((package, entry, range))
         }
         SymbolQuery::Bare { name, range } => {
@@ -328,7 +331,7 @@ pub(crate) fn resolve_query<'p>(
                 PackageOrigin::Ambiguous(mut v) => v.pop()?,
                 PackageOrigin::Unknown => return None,
             };
-            let entry = indexed.lookup(&package, &name)?;
+            let entry = indexed.lookup_with_help(&package, &name)?;
             Some((package, entry, range))
         }
     }

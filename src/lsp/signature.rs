@@ -93,7 +93,7 @@ fn signature_help_in(
     let query = symbol_query_at(root, callee.text_range().start())?;
     let (_package, entry, _range) = resolve_query(query, root, indexed)?;
 
-    help_for_entry(&call, offset, entry)
+    help_for_entry(&call, offset, &entry)
 }
 
 fn help_for_callable(
@@ -110,7 +110,7 @@ fn help_for_callable(
             .help
             .as_ref()
             .and_then(|help| help.resolve(indexed))
-            .cloned(),
+            .map(std::borrow::Cow::into_owned),
         formals: Some(
             callable
                 .signature

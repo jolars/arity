@@ -140,8 +140,16 @@ impl Cache {
     /// Publish all views of a package in one atomic replacement. Batch writers
     /// publish `meta.json` separately through [`Self::record_indexed`].
     pub fn write_package_file(&self, idx: &PackageIndex) -> Result<()> {
+        self.write_package_file_with_help(idx, false)
+    }
+
+    pub(super) fn write_package_file_with_help(
+        &self,
+        idx: &PackageIndex,
+        deferred_help: bool,
+    ) -> Result<()> {
         std::fs::create_dir_all(self.index_dir()).map_err(|e| CacheError::Io(e.to_string()))?;
-        let data = package_file::encode(idx)?;
+        let data = package_file::encode(idx, deferred_help)?;
         atomic_write(&self.package_path(&idx.package, &idx.version), &data)
     }
 

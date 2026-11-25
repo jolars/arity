@@ -148,7 +148,7 @@ use crate::parser::{
     parse, parse_with_options,
 };
 use crate::project::DefKind;
-use crate::rindex::build::{BuildOptions, build_index};
+use crate::rindex::build::{BuildOptions, build_index_for_lsp};
 use crate::rindex::cache::{Cache, resolve_cache_root};
 use crate::rindex::discover::{referenced_in_source, with_default_packages};
 use crate::rindex::libpaths::LibrarySearch;

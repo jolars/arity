@@ -7,7 +7,7 @@ use smol_str::SmolStr;
 
 use crate::rindex::attach_probe;
 use crate::rindex::cache::Cache;
-use crate::rindex::harvest::{HarvestOptions, harvest_package_in};
+use crate::rindex::harvest::{HelpMode, harvest_with_help_mode};
 use crate::rindex::lazyload;
 use crate::rindex::libpaths::LibrarySearch;
 
@@ -65,27 +65,77 @@ pub fn build_index(
     opts: BuildOptions,
     now: u64,
 ) -> BuildReport {
+    build(
+        packages,
+        cache,
+        search,
+        opts,
+        HelpMode::from_enabled(opts.help),
+        now,
+    )
+}
+
+/// The language server needs package exports and signatures at open. Its
+/// installed help pages are decoded by the provider in editor requests.
+pub(crate) fn build_index_for_lsp(
+    packages: &[SmolStr],
+    cache: &Cache,
+    search: &LibrarySearch,
+    opts: BuildOptions,
+    now: u64,
+) -> BuildReport {
+    let help = if opts.help {
+        HelpMode::OnDemand
+    } else {
+        HelpMode::Disabled
+    };
+    build(packages, cache, search, opts, help, now)
+}
+
+fn build(
+    packages: &[SmolStr],
+    cache: &Cache,
+    search: &LibrarySearch,
+    opts: BuildOptions,
+    help: HelpMode,
+    now: u64,
+) -> BuildReport {
     // Package files are independent; defer the shared metadata update until
     // after the parallel work to avoid lost read-modify-write updates.
     let report: Vec<(SmolStr, PackageOutcome)> = packages
         .par_iter()
         .map(|pkg| {
-            let harvest_opts = HarvestOptions { help: opts.help };
-            let outcome = match search.find_package(pkg) {
+            let directory = search.find_package(pkg).map(|directory| {
+                if help == HelpMode::OnDemand && directory.is_relative() {
+                    // A later server can open the same cache from another cwd.
+                    std::path::absolute(&directory).unwrap_or(directory)
+                } else {
+                    directory
+                }
+            });
+            let outcome = match directory {
                 None => PackageOutcome::NotInstalled,
-                Some(pkg_dir) => match harvest_package_in(&pkg_dir, harvest_opts, now, search) {
+                Some(pkg_dir) => match harvest_with_help_mode(&pkg_dir, help, now, search) {
                     Err(e) => PackageOutcome::Failed {
                         reason: e.to_string(),
                     },
                     Ok(index) => {
-                        let already =
-                            cache.indexed_version(pkg).as_deref() == Some(index.version.as_str());
+                        let already = cache.indexed_version(pkg).as_deref()
+                            == Some(index.version.as_str())
+                            && cache
+                                .open_package(pkg, &index.version)
+                                .is_some_and(|cached| {
+                                    help != HelpMode::Eager
+                                        || cached.has_deferred_help() == Some(false)
+                                });
                         if already && !opts.force {
                             PackageOutcome::UpToDate {
                                 version: index.version.clone(),
                             }
                         } else {
-                            match cache.write_package_file(&index) {
+                            match cache
+                                .write_package_file_with_help(&index, help == HelpMode::OnDemand)
+                            {
                                 Ok(()) => PackageOutcome::Indexed {
                                     version: index.version.clone(),
                                     symbols: index.symbols.len(),
@@ -111,9 +161,13 @@ pub fn build_index(
                 }
                 _ => continue,
             };
-            let Some(mut index) = cache.read_package(pkg, version) else {
+            let Some(file) = cache.open_package(pkg, version) else {
                 continue;
             };
+            let Some(mut index) = file.package() else {
+                continue;
+            };
+            let deferred_help = file.has_deferred_help().unwrap_or_default();
             if !index.attaches.is_empty() {
                 continue;
             }
@@ -133,7 +187,7 @@ pub fn build_index(
                 continue;
             };
             index.attaches = members;
-            let _ = cache.write_package_file(&index);
+            let _ = cache.write_package_file_with_help(&index, deferred_help);
         }
     }
 
@@ -177,7 +231,120 @@ mod tests {
         // Point a LibrarySearch at the checked-in fixtures, whose layout is
         // `tests/fixtures/rindex/<pkg>/...`.
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rindex");
-        LibrarySearch::discover(None, &[dir])
+        LibrarySearch::from_dirs(vec![dir])
+    }
+
+    #[test]
+    fn lsp_build_defers_help_until_an_editor_request() {
+        use crate::lsp::{
+            compute_completions, compute_hover, compute_signature_help, resolve_completion,
+        };
+        use crate::rindex::provider::IndexedProvider;
+        use crate::text::PositionEncoding;
+        use lsp_types::CompletionResponse;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().to_path_buf());
+        let search = fixture_lib();
+        let packages = ["magrittr".into(), "oopfixture".into()];
+        let opts = BuildOptions::default();
+        build_index_for_lsp(&packages, &cache, &search, opts, 0);
+
+        let package = cache.read_package("magrittr", "2.0.4").unwrap();
+        assert!(package.symbols.iter().all(|symbol| symbol.help.is_none()));
+        let deferred = IndexedProvider::from_cache_lazy(&cache);
+        let object_version = cache.indexed_version("oopfixture").unwrap();
+        let objects = cache
+            .read_package("oopfixture", &object_version)
+            .unwrap()
+            .objects;
+        assert!(objects.help.is_empty());
+        let association = objects
+            .classes
+            .iter()
+            .find_map(|class| class.help.as_ref())
+            .unwrap();
+
+        let source = "magrittr::`%>%`";
+        let hover = |indexed| {
+            compute_hover(source, source.len() - 2, indexed, PositionEncoding::Utf8).unwrap()
+        };
+        let call = "magrittr::`%>%`(x, )";
+        let signature = |indexed| compute_signature_help(call, call.len() - 1, indexed).unwrap();
+        let resolve = |indexed| {
+            let source = "magrittr::fre";
+            let Some(CompletionResponse::List(list)) =
+                compute_completions(source, source.len(), indexed)
+            else {
+                panic!("expected namespace completions");
+            };
+            let item = list
+                .items
+                .into_iter()
+                .find(|item| item.label == "freduce")
+                .unwrap();
+            resolve_completion(item, indexed)
+        };
+        let deferred_hover = hover(&deferred);
+        let deferred_signature = signature(&deferred);
+        let deferred_completion = resolve(&deferred);
+        let deferred_object = deferred.deferred_help("oopfixture", &association.alias);
+
+        let report = build_index(&packages, &cache, &search, opts, 0);
+        assert_eq!(report.newly_indexed().count(), 2);
+        let eager = IndexedProvider::from_cache_lazy(&cache);
+        let eager_hover = hover(&eager);
+        assert!(format!("{eager_hover:?}").contains("Pipe an object"));
+        assert_eq!(deferred_hover, eager_hover);
+        assert_eq!(deferred_signature, signature(&eager));
+        assert!(deferred_completion.documentation.is_some());
+        let eager_completion = resolve(&eager);
+        assert_eq!(
+            deferred_completion.documentation,
+            eager_completion.documentation
+        );
+        assert_eq!(deferred_completion.detail, eager_completion.detail);
+        let object_package = eager.object_package("oopfixture").unwrap();
+        assert!(deferred_object.is_some());
+        assert_eq!(
+            deferred_object.as_ref(),
+            object_package.objects.render_help(association)
+        );
+    }
+
+    #[test]
+    fn cached_help_requires_an_enabled_matching_installation() {
+        use crate::rindex::provider::IndexedProvider;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().to_path_buf());
+        let search = fixture_lib();
+        let packages = ["magrittr".into()];
+        let opts = BuildOptions {
+            help: false,
+            ..BuildOptions::default()
+        };
+        build_index_for_lsp(&packages, &cache, &search, opts, 0);
+        let disabled = IndexedProvider::from_cache_lazy(&cache);
+        assert!(
+            disabled
+                .lookup_with_help("magrittr", "%>%")
+                .unwrap()
+                .help
+                .is_none()
+        );
+
+        // The file can still supply exports and formals if the installed
+        // version has moved on. Rd from the newer installation must not mix
+        // with the old symbol record.
+        let mut old = cache.read_package("magrittr", "2.0.4").unwrap();
+        old.version = "2.0.3".into();
+        cache.write_package_file_with_help(&old, true).unwrap();
+        cache.record_indexed(&[(old.package, old.version)]).unwrap();
+        let stale = IndexedProvider::from_cache_lazy(&cache);
+        let entry = stale.lookup_with_help("magrittr", "%>%").unwrap();
+        assert!(entry.help.is_none());
+        assert!(entry.formals.is_some());
     }
 
     #[test]

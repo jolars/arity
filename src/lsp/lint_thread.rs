@@ -922,7 +922,7 @@ impl LintWorker {
             let cache = Cache::new(cache_root);
             let search = LibrarySearch::discover(Some(&anchor), &cfg.library_paths);
             let harvest = || {
-                build_index(
+                build_index_for_lsp(
                     &to_build,
                     &cache,
                     &search,

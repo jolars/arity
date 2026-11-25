@@ -14,24 +14,21 @@
 //! - `help/{pkg}.rdb` → full Rd bodies (description/usage/arguments), rendered
 //!   to markdown via [`rd`](crate::rindex::rd).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use rd_helpdb::{HelpTopicIndex, HelpTopicText, PackageHelpDb};
 use smol_str::SmolStr;
 
 use crate::namespace::{
     Argument as NamespaceArgument, Directive as NamespaceDirective, DirectiveKind,
 };
 use crate::rindex::deparse;
+use crate::rindex::help::HelpFiles;
 use crate::rindex::lazyload::{self, LazyLoadDb};
 use crate::rindex::libpaths::LibrarySearch;
 use crate::rindex::objects::ObjectHarvester;
-use crate::rindex::rd;
 use crate::rindex::rds::{Rkind, Robj};
-use crate::rindex::schema::{
-    Formal, HelpDoc, PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind,
-};
+use crate::rindex::schema::{Formal, PackageIndex, SCHEMA_VERSION, SymbolEntry, SymbolKind};
 
 #[derive(Debug)]
 pub enum HarvestError {
@@ -98,6 +95,33 @@ pub fn harvest_package_in(
     harvested_at: u64,
     search: &LibrarySearch,
 ) -> Result<PackageIndex> {
+    harvest_with_help_mode(
+        pkg_dir,
+        HelpMode::from_enabled(opts.help),
+        harvested_at,
+        search,
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum HelpMode {
+    Disabled,
+    Eager,
+    OnDemand,
+}
+
+impl HelpMode {
+    pub(super) fn from_enabled(enabled: bool) -> Self {
+        if enabled { Self::Eager } else { Self::Disabled }
+    }
+}
+
+pub(super) fn harvest_with_help_mode(
+    pkg_dir: &Path,
+    help_mode: HelpMode,
+    harvested_at: u64,
+    search: &LibrarySearch,
+) -> Result<PackageIndex> {
     let desc_path = pkg_dir.join("DESCRIPTION");
     if !desc_path.is_file() {
         return Err(HarvestError::NotAPackage(pkg_dir.to_path_buf()));
@@ -122,8 +146,10 @@ pub fn harvest_package_in(
     let exports = namespace.exports;
     let lazydata = read_lazydata_names(pkg_dir);
 
-    let help = HelpFiles::when_enabled(opts.help, || HelpFiles::open(pkg_dir, &package));
-    let mut help_topics = HashMap::new();
+    let help = (help_mode != HelpMode::Disabled)
+        .then(|| HelpFiles::open(pkg_dir, &package))
+        .flatten();
+    let eager_help = help.as_ref().filter(|_| help_mode == HelpMode::Eager);
 
     // Missing code records leave explicit exports and metadata usable.
     let db = LazyLoadDb::open(&pkg_dir.join("R").join(format!("{package}.rdx")))
@@ -132,13 +158,7 @@ pub fn harvest_package_in(
         })
         .ok();
 
-    let help_for_object = |alias: &str| {
-        let topic = help.index.as_ref()?.find_alias(alias)?;
-        Some(crate::rindex::schema::HelpAssociation {
-            alias: alias.into(),
-            topic: topic.topic_key().map(Into::into),
-        })
-    };
+    let help_for_object = |alias: &str| help.as_ref()?.association(alias);
     let mut objects = ObjectHarvester::new(
         db.as_ref(),
         &package,
@@ -149,7 +169,7 @@ pub fn harvest_package_in(
     let mut symbols: Vec<SymbolEntry> = exports
         .iter()
         .map(|name| {
-            let help = build_help(&help, &mut help_topics, name);
+            let help = eager_help.and_then(|help| help.document(name));
             let value = db.as_ref().and_then(|db| {
                 db.fetch(name)
                     .inspect_err(|error| {
@@ -180,7 +200,7 @@ pub fn harvest_package_in(
         if exports.contains(name.as_str()) {
             continue;
         }
-        let help = build_help(&help, &mut help_topics, name);
+        let help = eager_help.and_then(|help| help.document(name));
         symbols.push(SymbolEntry {
             name: SmolStr::new(name),
             kind: SymbolKind::Data,
@@ -197,41 +217,43 @@ pub fn harvest_package_in(
             .exported_classes
             .contains(class.identity.name.as_str());
     }
-    let mut rendered = std::collections::BTreeMap::new();
-    for association in objects
-        .classes
-        .iter()
-        .flat_map(|class| {
-            class
-                .help
-                .iter()
-                .chain(class.members.iter().filter_map(|m| m.help.as_ref()))
-        })
-        .chain(
-            objects
-                .generics
-                .iter()
-                .filter_map(|generic| generic.help.as_ref()),
-        )
-        .chain(
-            objects
-                .methods
-                .iter()
-                .filter_map(|method| method.help.as_ref()),
-        )
-    {
-        rendered.entry(association.cache_key()).or_insert_with(|| {
-            symbols
-                .iter()
-                .find(|entry| entry.name == association.alias)
-                .and_then(|entry| entry.help.clone())
-                .or_else(|| build_help(&help, &mut help_topics, &association.alias))
-        });
+    if let Some(help) = eager_help {
+        let mut rendered = std::collections::BTreeMap::new();
+        for association in objects
+            .classes
+            .iter()
+            .flat_map(|class| {
+                class
+                    .help
+                    .iter()
+                    .chain(class.members.iter().filter_map(|m| m.help.as_ref()))
+            })
+            .chain(
+                objects
+                    .generics
+                    .iter()
+                    .filter_map(|generic| generic.help.as_ref()),
+            )
+            .chain(
+                objects
+                    .methods
+                    .iter()
+                    .filter_map(|method| method.help.as_ref()),
+            )
+        {
+            rendered.entry(association.cache_key()).or_insert_with(|| {
+                symbols
+                    .iter()
+                    .find(|entry| entry.name == association.alias)
+                    .and_then(|entry| entry.help.clone())
+                    .or_else(|| help.document(&association.alias))
+            });
+        }
+        objects.help = rendered
+            .into_iter()
+            .filter_map(|(key, doc)| Some((key, doc?)))
+            .collect();
     }
-    objects.help = rendered
-        .into_iter()
-        .filter_map(|(key, doc)| Some((key, doc?)))
-        .collect();
 
     Ok(PackageIndex {
         objects,
@@ -444,6 +466,14 @@ fn read_dcf(path: &Path) -> Result<Dcf> {
     // rather than fail the harvest.
     Ok(Dcf {
         document: crate::dcf::parse(&text).document(),
+    })
+}
+
+/// A cached symbol record must resolve help from the same installed version.
+pub(super) fn installed_package_matches(pkg_dir: &Path, package: &str, version: &str) -> bool {
+    read_dcf(&pkg_dir.join("DESCRIPTION")).is_ok_and(|description| {
+        description.field("Package").as_deref() == Some(package)
+            && description.field("Version").as_deref() == Some(version)
     })
 }
 
@@ -827,168 +857,9 @@ fn unquote(value: &str) -> Option<String> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Help index (Meta/Rd.rds) — alias → (title, help-page key)
-// ---------------------------------------------------------------------------
-
-fn read_help_index(pkg_dir: &Path) -> Option<HelpTopicIndex> {
-    match HelpTopicIndex::read_installed(pkg_dir) {
-        Ok(index) => {
-            if let Some(index) = &index {
-                for (row, entry) in index.entries().enumerate() {
-                    for (field, value) in [("title", &entry.title), ("file", &entry.file)] {
-                        if let HelpTopicText::Invalid(reason) = value {
-                            log::debug!(
-                                "{}: help metadata row {row} {field}: {reason}",
-                                pkg_dir.display()
-                            );
-                        }
-                    }
-                }
-            }
-            index
-        }
-        Err(error) => {
-            log::debug!("{}: help metadata unavailable: {error}", pkg_dir.display());
-            None
-        }
-    }
-}
-
-/// Assemble a symbol's [`HelpDoc`]: the title from `Meta/Rd.rds`, the body
-/// (description/usage/arguments) from the help lazy-load DB page, if any. A page
-/// that fails to decode degrades to title-only. Aliases share the rendered
-/// sections of a page and each uses the title from its own metadata row.
-fn build_help<'a>(
-    help: &'a HelpFiles,
-    topics: &mut HashMap<&'a str, rd::RdSections>,
-    name: &str,
-) -> Option<HelpDoc> {
-    let entry = help.index.as_ref()?.find_alias(name)?;
-    let sections = entry
-        .topic_key()
-        .zip(help.database.as_ref())
-        .map(|(key, database)| {
-            topics
-                .entry(key)
-                .or_insert_with(|| match database.document(key) {
-                    Ok(document) => {
-                        let rendered = rd::render_document(&document);
-                        for issue in rendered.issues {
-                            log::debug!(
-                                "{}: topic {key:?}, omitted {} at {:?}",
-                                help.package_dir.display(),
-                                issue.field,
-                                issue.path
-                            );
-                        }
-                        rendered.sections
-                    }
-                    Err(error) => {
-                        log::debug!(
-                            "{}: topic {key:?} unavailable: {error}",
-                            help.package_dir.display()
-                        );
-                        rd::RdSections::default()
-                    }
-                })
-                .clone()
-        })
-        .unwrap_or_default();
-    let doc = rd::into_help_doc(entry.title.as_str().map(str::to_owned), sections);
-    (doc != HelpDoc::default()).then_some(doc)
-}
-
-#[derive(Default)]
-struct HelpFiles {
-    index: Option<HelpTopicIndex>,
-    database: Option<HelpDatabase>,
-    package_dir: PathBuf,
-}
-
-impl HelpFiles {
-    fn when_enabled(enabled: bool, load: impl FnOnce() -> Self) -> Self {
-        if enabled { load() } else { Self::default() }
-    }
-
-    fn open(package_dir: &Path, package: &str) -> Self {
-        let index = read_help_index(package_dir);
-        let database = HelpDatabase::open(package_dir, package)
-            .map_err(|error| {
-                log::debug!(
-                    "{}: compiled help unavailable: {error}",
-                    package_dir.display()
-                );
-            })
-            .ok();
-        Self {
-            index,
-            database,
-            package_dir: package_dir.to_owned(),
-        }
-    }
-}
-
-enum HelpDatabase {
-    Package(PackageHelpDb),
-    // The public harvester also accepts renamed directories. The package view
-    // assumes basename == Package, so those paths need explicit shared access.
-    Explicit(rd_rds::lazyload::LazyLoadDb),
-}
-
-impl HelpDatabase {
-    fn open(package_dir: &Path, package: &str) -> std::result::Result<Self, String> {
-        if package_dir.file_name().and_then(|s| s.to_str()) == Some(package) {
-            PackageHelpDb::open(package_dir)
-                .map(Self::Package)
-                .map_err(|e| e.to_string())
-        } else {
-            let help = package_dir.join("help");
-            rd_rds::lazyload::LazyLoadDb::open(
-                help.join(format!("{package}.rdx")),
-                help.join(format!("{package}.rdb")),
-            )
-            .map(Self::Explicit)
-            .map_err(|e| e.to_string())
-        }
-    }
-
-    fn document(&self, key: &str) -> std::result::Result<rd_ast::RdDocument, String> {
-        let object = match self {
-            Self::Package(db) => db.raw_topic(key).map_err(|e| e.to_string())?,
-            Self::Explicit(db) => {
-                let record = db.read(key).map_err(|e| e.to_string())?;
-                rd_rds::parse(record.decompressed_bytes()).map_err(|e| e.to_string())?
-            }
-        };
-        rd_ast::lower_r_object(&object).map_err(|e| e.to_string())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn disabled_help_does_not_open_metadata_or_records() {
-        let help = HelpFiles::when_enabled(false, || panic!("help files must not be read"));
-        assert!(help.index.is_none());
-        assert!(help.database.is_none());
-    }
-
-    #[test]
-    fn help_aliases_reuse_rendered_topic() {
-        let directory =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rindex/oopfixture");
-        let help = HelpFiles::open(&directory, "oopfixture");
-        let mut topics = HashMap::new();
-        let class = build_help(&help, &mut topics, "Shape-class").unwrap();
-        let method = build_help(&help, &mut topics, "area,Shape-method").unwrap();
-
-        assert!(!class.arguments.is_empty());
-        assert_eq!(method, class);
-        assert_eq!(topics.len(), 1);
-    }
 
     fn str_vec(names: &[Option<&str>]) -> rd_rds::RObject {
         let values = names

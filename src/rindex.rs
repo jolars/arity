@@ -24,6 +24,7 @@ pub mod cache;
 pub mod deparse;
 pub mod discover;
 pub mod harvest;
+mod help;
 pub mod lazyload;
 pub mod libpaths;
 mod objects;
