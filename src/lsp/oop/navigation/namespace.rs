@@ -225,8 +225,8 @@ fn collect_sites(
                     );
                 }
                 for generic in &file.facts.oop.generics {
+                    // Check whether this operand can name the generic before resolving its factory.
                     if generic.key.owner.0.is_empty()
-                        && index.generic_confirmed(&file.path, generic)
                         && (methods
                             && generic.key.system == OopSystem::S4
                             && generic.name == ClassName::Known(name.clone())
@@ -239,6 +239,7 @@ fn collect_sites(
                                     })
                                     || generic.key.system == OopSystem::S4
                                         && generic.name == ClassName::Known(name.clone())))
+                        && index.generic_confirmed(&file.path, generic)
                     {
                         sites.push((
                             range,

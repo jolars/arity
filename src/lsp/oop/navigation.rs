@@ -1,5 +1,7 @@
 //! Resolve source-backed class and generic names from their semantic sites.
 
+use std::collections::BTreeSet;
+
 use super::*;
 use crate::incremental::normalize_path;
 use crate::project::classes::{
@@ -212,14 +214,14 @@ pub(in crate::lsp) fn name_locations(
                             Some(name.as_str())
                         })
                         .collect();
-                    let generic_systems: HashSet<_> = ids
+                    let generic_systems: BTreeSet<_> = ids
                         .iter()
                         .filter_map(|id| match id {
                             Identity::Generic(id) => Some(id.key.system),
                             _ => None,
                         })
                         .collect();
-                    let s3_bindings: HashSet<_> = ids
+                    let s3_bindings: BTreeSet<_> = ids
                         .iter()
                         .filter_map(|id| match id {
                             Identity::Generic(id) if id.key.system == OopSystem::S3 => {
