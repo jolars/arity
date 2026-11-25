@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.0](https://github.com/jolars/arity/compare/arity-parser-v0.8.0...arity-parser-v0.9.0) (2026-11-25)
+
+### Features
+
+- **parser:** parse `arity-read` declarations ([`e4b1d86`](https://github.com/jolars/arity/commit/e4b1d86c897bd123e054f0934d93abdd395e20f8))
+
+### Performance Improvements
+
+- **parser:** reduce event allocation and roxygen mode scans ([`e5857d6`](https://github.com/jolars/arity/commit/e5857d62c967ca0fff140a0e990f278593077895))
+
 ## [0.8.0](https://github.com/jolars/arity/compare/arity-parser-v0.7.0...arity-parser-v0.8.0) (2026-11-10)
 
 ### Features

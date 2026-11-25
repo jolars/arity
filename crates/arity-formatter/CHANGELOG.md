@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.1](https://github.com/jolars/arity/compare/arity-formatter-v0.9.0...arity-formatter-v0.9.1) (2026-11-25)
+
+### Bug Fixes
+
+- **formatter:** support inline comment matching on Rust 1.89 ([`b3aa456`](https://github.com/jolars/arity/commit/b3aa456f97980a969a6477c6662f7a6495f3e57c))
+
+### Performance Improvements
+
+- **formatter:** avoid redundant syntax walks and allocations ([`98166e8`](https://github.com/jolars/arity/commit/98166e806a494e9bbc2cea380eb9fba693d038ce))
+
+### Dependencies
+
+- updated crates/arity-parser to v0.9.0
+
 ## [0.9.0](https://github.com/jolars/arity/compare/arity-formatter-v0.8.4...arity-formatter-v0.9.0) (2026-11-16)
 
 ### Features
