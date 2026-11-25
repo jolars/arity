@@ -613,34 +613,33 @@ pub(super) fn ir_line(
 ) -> Result<Ir, FormatError> {
     let mut significant = line.iter().filter(|el| !is_trivia_kind(el.kind()));
     match (significant.next(), significant.next(), significant.next()) {
-        (None, _, _) => Ok(Ir::nil()),
+        (None, _, _) => return Ok(Ir::nil()),
         (Some(NodeOrToken::Token(token)), None, _) if token.kind() == SyntaxKind::COMMENT => {
-            Ok(Ir::text(token.text()))
+            return Ok(Ir::text(token.text()));
         }
         (Some(NodeOrToken::Node(node)), None, _) if node.kind() == SyntaxKind::ROXYGEN_BLOCK => {
-            Ok(super::roxygen::ir_roxygen_block(node, indent, ctx))
+            return Ok(super::roxygen::ir_roxygen_block(node, indent, ctx));
         }
-        (Some(expr), None, _) => ir_expr_element(expr, indent, ctx),
-        (Some(expr), Some(trailing), None)
-            if let Some(comment) = super::trivia::inline_trailing_comment_text(trailing) =>
-        {
-            Ok(Ir::concat([
-                ir_expr_element(expr, indent, ctx)?,
-                super::trivia::ir_inline_trailing_comment(&comment),
-            ]))
+        (Some(expr), None, _) => return ir_expr_element(expr, indent, ctx),
+        (Some(expr), Some(trailing), None) => {
+            if let Some(comment) = super::trivia::inline_trailing_comment_text(trailing) {
+                return Ok(Ir::concat([
+                    ir_expr_element(expr, indent, ctx)?,
+                    super::trivia::ir_inline_trailing_comment(&comment),
+                ]));
+            }
         }
-        _ => {
-            let significant: Vec<_> = line
-                .iter()
-                .filter(|el| !is_trivia_kind(el.kind()))
-                .cloned()
-                .collect();
-            Err(FormatError::AmbiguousConstruct {
-                context: "line expression",
-                snippet: snippet_from_elements(&significant),
-            })
-        }
+        _ => {}
     }
+    let significant: Vec<_> = line
+        .iter()
+        .filter(|el| !is_trivia_kind(el.kind()))
+        .cloned()
+        .collect();
+    Err(FormatError::AmbiguousConstruct {
+        context: "line expression",
+        snippet: snippet_from_elements(&significant),
+    })
 }
 
 pub(super) fn format_expr_element(
