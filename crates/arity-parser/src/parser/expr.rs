@@ -645,7 +645,9 @@ fn build_binary_like_expr(
     op_idx: usize,
     rhs: ExprParse,
 ) -> ExprParse {
-    let mut events = Vec::new();
+    // Two wrapper events and one token per position between the operands.
+    let capacity = lhs.events.len() + rhs.events.len() + (rhs.start - lhs.end) + 2;
+    let mut events = Vec::with_capacity(capacity);
     events.push(Event::Start(kind));
     events.extend(lhs.events);
     for idx in lhs.end..op_idx {

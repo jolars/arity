@@ -51,9 +51,10 @@ pub(crate) fn emit_roxygen_block(
     // mode is threaded in for the HTML resolution, whose `<`-in-prose candidate
     // has no mode-carrying leaf (the same re-derivation the indented-code
     // recognition uses).
+    let md = block_md(tokens, start, md_default);
     let mut block = Vec::new();
-    let end = emit_roxygen_block_events(tokens, start, &mut block, md_default);
-    super::inline::resolve_emphasis(tokens, &mut block, block_md(tokens, start, md_default));
+    let end = emit_roxygen_block_events(tokens, start, &mut block, md);
+    super::inline::resolve_emphasis(tokens, &mut block, md);
     events.append(&mut block);
     end
 }
@@ -72,15 +73,21 @@ fn block_md(tokens: &[Token], start: usize, md_default: bool) -> bool {
     let mut md = md_default;
     let mut i = start;
     loop {
-        // Reconstruct the line text (marker + body tokens) and check for a directive.
-        let mut line = String::from(tokens[i].text);
-        let mut j = i + 1;
+        let content = line_content_start(tokens, i);
+        let mut j = content;
         while tokens.get(j).is_some_and(|t| is_line_body_kind(&t.kind)) {
-            line.push_str(tokens[j].text);
             j += 1;
         }
-        if let Some(on) = super::lex::roxygen_md_directive(&line) {
-            md = on;
+        // Only these tag names can be directives. Use the source matcher on
+        // candidates so trailing text and whitespace follow the lexer rules.
+        if let [at, name, ..] = &tokens[content..j]
+            && at.kind == TokKind::RoxygenAt
+            && matches!(name.text, "md" | "noMd")
+        {
+            let line: String = tokens[i..j].iter().map(|token| token.text).collect();
+            if let Some(on) = super::lex::roxygen_md_directive(&line) {
+                md = on;
+            }
         }
         // Ordinary comments between roxygen lines are part of the same block but
         // carry no documentation content, matching roxygen2's tokenizer.
@@ -97,9 +104,8 @@ fn emit_roxygen_block_events(
     tokens: &[Token],
     start: usize,
     events: &mut Vec<Event>,
-    md_default: bool,
+    md: bool,
 ) -> usize {
-    let md = block_md(tokens, start, md_default);
     debug_assert_eq!(tokens[start].kind, TokKind::RoxygenMarker);
     events.push(Event::Start(SyntaxKind::ROXYGEN_BLOCK));
 
