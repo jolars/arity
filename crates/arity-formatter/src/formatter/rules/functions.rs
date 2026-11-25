@@ -92,20 +92,11 @@ pub(crate) fn ir_call_expr(
 /// value is a `function` definition always expands one argument per line, even
 /// when it would otherwise fit (`list(a = function() {}, b = function() {})`).
 fn should_force_multiline_named_functions(arg_list: &SyntaxNode) -> bool {
-    let args: Vec<_> = arg_list
+    arg_list
         .children()
-        .filter(|n| n.kind() == SyntaxKind::ARG)
-        .collect();
-    let non_empty = args.iter().filter(|arg| arg_has_significant(arg)).count();
-    if non_empty <= 1 {
-        return false;
-    }
-    args.iter().filter(|arg| arg_is_named_function(arg)).count() >= 2
-}
-
-fn arg_has_significant(arg: &SyntaxNode) -> bool {
-    arg.children_with_tokens()
-        .any(|el| !super::super::core::is_trivia(el.kind()))
+        .filter(|arg| arg.kind() == SyntaxKind::ARG && arg_is_named_function(arg))
+        .nth(1)
+        .is_some()
 }
 
 /// A named argument whose value is (or contains) a `function` definition,
@@ -136,40 +127,37 @@ fn arg_list_needs_comment_layout(arg_list: &SyntaxNode) -> bool {
         .children()
         .filter(|n| n.kind() == SyntaxKind::ARG)
         .any(|arg| {
-            arg.children_with_tokens()
-                .any(|el| el.kind() == SyntaxKind::COMMENT)
-                || arg
-                    .children()
-                    .any(|n| n.kind() == SyntaxKind::ROXYGEN_BLOCK)
-                || arg_value_is_commented_curly_curly(&arg)
-        })
-}
+            let mut value = None;
+            let mut significant_count = 0;
+            let mut named = false;
+            for element in arg.children_with_tokens() {
+                match element.kind() {
+                    SyntaxKind::COMMENT | SyntaxKind::ROXYGEN_BLOCK => return true,
+                    SyntaxKind::ASSIGN_EQ if !named && element.as_token().is_some() => {
+                        named = true;
+                        value = None;
+                        significant_count = 0;
+                    }
+                    kind if super::super::core::is_trivia(kind) => {}
+                    _ => {
+                        significant_count += 1;
+                        if significant_count == 1 {
+                            value = element.into_node();
+                        }
+                    }
+                }
+            }
 
-/// Whether an argument's value is a curly-curly `{{ … }}` carrying a comment
-/// somewhere inside (so its comments must be lifted out — see
-/// [`ir_curly_curly_with_comments`]). Handles both bare (`{{ x }}`) and named
-/// (`name = {{ x }}`) arguments.
-fn arg_value_is_commented_curly_curly(arg: &SyntaxNode) -> bool {
-    let elements: Vec<_> = arg.children_with_tokens().collect();
-    let value_elements = match elements
-        .iter()
-        .position(|el| matches!(el, NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::ASSIGN_EQ))
-    {
-        Some(eq_idx) => &elements[eq_idx + 1..],
-        None => &elements[..],
-    };
-    let value_significant: Vec<_> = value_elements
-        .iter()
-        .filter(|el| !super::super::core::is_trivia(el.kind()))
-        .cloned()
-        .collect();
-    let [NodeOrToken::Node(outer)] = value_significant.as_slice() else {
-        return false;
-    };
-    is_curly_curly_symbol_block(outer)
-        && outer
-            .descendants_with_tokens()
-            .any(|el| el.kind() == SyntaxKind::COMMENT)
+            // A curly-curly argument with comments lifts them to the call's
+            // argument list, whether the value is bare or follows `name =`.
+            significant_count == 1
+                && value.is_some_and(|block| {
+                    is_curly_curly_symbol_block(&block)
+                        && block
+                            .descendants_with_tokens()
+                            .any(|el| el.kind() == SyntaxKind::COMMENT)
+                })
+        })
 }
 
 /// Whether a `BLOCK_EXPR` is a curly-curly `{{ symbol }}` wrapper that
@@ -421,16 +409,9 @@ fn collect_call_ir_slots(
     for element in arg_list.children_with_tokens() {
         match element {
             NodeOrToken::Node(arg) if arg.kind() == SyntaxKind::ARG => {
-                let arg_elements: Vec<_> = arg.children_with_tokens().collect();
-                let significant: Vec<_> = arg_elements
-                    .iter()
-                    .filter(|el| !super::super::core::is_trivia(el.kind()))
-                    .cloned()
-                    .collect();
-                if significant.is_empty() {
-                    continue;
+                if let Some(slot) = ir_call_argument(&arg, indent, ctx)? {
+                    current = Some(slot);
                 }
-                current = Some(ir_call_argument(&arg_elements, &significant, indent, ctx)?);
             }
             NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::COMMA => {
                 slots.push(current.take().unwrap_or(ArgSlot::Empty));
@@ -444,63 +425,71 @@ fn collect_call_ir_slots(
 }
 
 fn ir_call_argument(
-    elements: &[SyntaxElement<RLanguage>],
-    significant: &[SyntaxElement<RLanguage>],
+    arg: &SyntaxNode,
     indent: usize,
     ctx: FormatContext,
-) -> Result<ArgSlot, FormatError> {
-    // Named argument `name = value`: in calls these are raw tokens (not an
-    // `ASSIGNMENT_EXPR` node as in subsets), so split on `=`. `expr_node` points
-    // at the value so a `name = { ... }` arg is still seen as a trailing block.
-    if let Some(eq_idx) = elements
-        .iter()
-        .position(|el| matches!(el, NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::ASSIGN_EQ))
+) -> Result<Option<ArgSlot>, FormatError> {
+    let mut significant = arg
+        .children_with_tokens()
+        .filter(|el| !super::super::core::is_trivia(el.kind()));
+    let Some(first) = significant.next() else {
+        return Ok(None);
+    };
+
+    // Positional arguments normally have one expression. Keep that element
+    // directly instead of collecting the argument's trivia and cloning it.
+    if !matches!(&first, NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::ASSIGN_EQ)
+        && significant.next().is_none()
     {
-        let (name_ir, name_empty) =
-            ir_arg_side(&elements[..eq_idx], "named arg name", indent, ctx)?;
-        let value_elements = &elements[eq_idx + 1..];
-        let value_significant: Vec<_> = value_elements
-            .iter()
-            .filter(|el| !super::super::core::is_trivia(el.kind()))
-            .cloned()
-            .collect();
-        let value_node = single_node(&value_significant);
-        let value_ir = if value_significant.is_empty() {
-            None
-        } else if let Some(curly) = ir_curly_curly(&value_significant, indent, ctx)? {
-            Some(curly)
-        } else {
-            Some(ir_expr_segment(
-                value_elements,
-                "named arg value",
-                indent,
-                ctx,
-            )?)
+        let ir = match ir_curly_curly(std::slice::from_ref(&first), indent, ctx)? {
+            Some(curly) => curly,
+            None => ir_expr_element(&first, indent, ctx)?,
         };
-        let ends_with_eq = value_significant.is_empty();
-        let ir = build_named_arg_ir(name_ir, name_empty, value_ir);
-        return Ok(ArgSlot::Expr {
+        return Ok(Some(ArgSlot::Expr {
             ir,
-            expr_node: value_node,
-            ends_with_eq,
-        });
+            expr_node: first.into_node(),
+            ends_with_eq: false,
+        }));
     }
 
-    let expr_node = single_node(significant);
-    // Curly-curly `{{ x }}` renders natively as its own group.
-    if let Some(curly) = ir_curly_curly(significant, indent, ctx)? {
-        return Ok(ArgSlot::Expr {
-            ir: curly,
-            expr_node,
-            ends_with_eq: false,
+    let elements: Vec<_> = arg.children_with_tokens().collect();
+    // Named arguments use a direct `=` token. Keep the value node for the
+    // trailing-block layout, including in a named argument.
+    let Some(eq_idx) = elements.iter().position(
+        |el| matches!(el, NodeOrToken::Token(tok) if tok.kind() == SyntaxKind::ASSIGN_EQ),
+    ) else {
+        return Err(FormatError::AmbiguousConstruct {
+            context: "call argument",
+            snippet: snippet_from_elements(&elements),
         });
-    }
-    let ir = ir_expr_segment(elements, "call argument", indent, ctx)?;
-    Ok(ArgSlot::Expr {
-        ir,
+    };
+    let (name_ir, name_empty) = ir_arg_side(&elements[..eq_idx], "named arg name", indent, ctx)?;
+    let value_elements = &elements[eq_idx + 1..];
+    let mut value = value_elements
+        .iter()
+        .filter(|el| !super::super::core::is_trivia(el.kind()));
+    let (value_ir, expr_node) = match (value.next(), value.next()) {
+        (None, _) => (None, None),
+        (Some(expr), None) => {
+            let ir = match ir_curly_curly(std::slice::from_ref(expr), indent, ctx)? {
+                Some(curly) => curly,
+                None => ir_expr_element(expr, indent, ctx)?,
+            };
+            (Some(ir), expr.as_node().cloned())
+        }
+        _ => {
+            return Err(FormatError::AmbiguousConstruct {
+                context: "named arg value",
+                snippet: snippet_from_elements(value_elements),
+            });
+        }
+    };
+
+    Ok(Some(ArgSlot::Expr {
+        ends_with_eq: value_ir.is_none(),
+        ir: build_named_arg_ir(name_ir, name_empty, value_ir),
         expr_node,
-        ends_with_eq: false,
-    })
+    }))
 }
 
 pub(crate) fn single_node(significant: &[SyntaxElement<RLanguage>]) -> Option<SyntaxNode> {

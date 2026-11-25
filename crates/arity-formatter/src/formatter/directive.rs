@@ -148,15 +148,13 @@ pub(super) fn plan(
             Some(Verb::SkipFile) | None => {}
         }
 
-        if region_start.is_some() || is_blank(line) || is_comment_only(line) {
+        if !pending_skip || region_start.is_some() || has_only_comments_or_trivia(line) {
             // Blank and comment lines never consume a pending skip: the target
             // is the next line that carries code, as in the linter.
             continue;
         }
-        if pending_skip {
-            pending_skip = false;
-            push_run(&mut plan, lines, idx, idx);
-        }
+        pending_skip = false;
+        push_run(&mut plan, lines, idx, idx);
     }
 
     // An `off` that is never closed runs to the end of its own list.
@@ -195,8 +193,8 @@ fn line_directive(
     line: &[SyntaxElement<RLanguage>],
     ignored_directive: Option<TextRange>,
 ) -> Option<Verb> {
-    let elements = significant(line);
-    let [NodeOrToken::Token(token)] = elements.as_slice() else {
+    let mut elements = significant(line);
+    let (Some(NodeOrToken::Token(token)), None) = (elements.next(), elements.next()) else {
         return None;
     };
     if token.kind() != SyntaxKind::COMMENT {
@@ -214,7 +212,7 @@ fn line_directive(
 /// Where the first line of a skipped run begins: at its indentation, not at its
 /// first token, so the author's own column is part of what gets spliced.
 fn line_start(line: &[SyntaxElement<RLanguage>]) -> Option<TextSize> {
-    let first = significant(line).into_iter().next()?;
+    let first = significant(line).next()?;
     let start = match first.prev_sibling_or_token() {
         Some(NodeOrToken::Token(ws)) if ws.kind() == SyntaxKind::WHITESPACE => {
             ws.text_range().start()
@@ -225,29 +223,26 @@ fn line_start(line: &[SyntaxElement<RLanguage>]) -> Option<TextSize> {
 }
 
 fn line_end(line: &[SyntaxElement<RLanguage>]) -> Option<TextSize> {
-    significant(line).last().map(|el| el.text_range().end())
+    significant(line)
+        .next_back()
+        .map(|el| el.text_range().end())
 }
 
-fn significant(line: &[SyntaxElement<RLanguage>]) -> Vec<SyntaxElement<RLanguage>> {
-    line.iter()
-        .filter(|el| !is_trivia(el.kind()))
-        .cloned()
-        .collect()
+fn significant(
+    line: &[SyntaxElement<RLanguage>],
+) -> impl DoubleEndedIterator<Item = &SyntaxElement<RLanguage>> {
+    line.iter().filter(|el| !is_trivia(el.kind()))
 }
 
 fn is_blank(line: &[SyntaxElement<RLanguage>]) -> bool {
-    significant(line).is_empty()
+    significant(line).next().is_none()
 }
 
-/// A line carrying nothing but `#` comments. A `#'` block is a node, not a
+/// A blank line or one carrying nothing but `#` comments. A `#'` block is a node, not a
 /// comment token, so it counts as code — which matches the linter, where a
 /// directive attaches to a roxygen block rather than reaching past it.
-fn is_comment_only(line: &[SyntaxElement<RLanguage>]) -> bool {
-    let significant = significant(line);
-    !significant.is_empty()
-        && significant
-            .iter()
-            .all(|el| el.kind() == SyntaxKind::COMMENT)
+fn has_only_comments_or_trivia(line: &[SyntaxElement<RLanguage>]) -> bool {
+    significant(line).all(|el| el.kind() == SyntaxKind::COMMENT)
 }
 
 /// The IR for a skipped run starting at `idx`, and the last line it covers.
@@ -259,8 +254,8 @@ pub(super) fn skipped_at(
     idx: usize,
 ) -> Option<(Ir, usize)> {
     let (last, range) = plan.run_at(idx)?;
-    let anchor = significant(lines.get(idx)?).into_iter().next()?;
-    Some((Ir::skipped(source_text(&anchor, range)), last))
+    let anchor = significant(lines.get(idx)?).next()?;
+    Some((Ir::skipped(source_text(anchor, range)), last))
 }
 
 /// The text of `range`, read back out of the tree it was parsed from.

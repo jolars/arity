@@ -51,7 +51,7 @@ use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 /// marker, its tag (if a tag line), and the content elements after the marker
 /// (inline Rd-macro nodes and the tag node kept atomic). Inter-line indentation
 /// before a marker is dropped — the formatter computes its own indent.
-#[derive(Clone, Default)]
+#[derive(Default)]
 struct PhysicalLine {
     marker: Option<SyntaxToken>,
     /// An ordinary comment that roxygen2 skips inside the surrounding block.
@@ -780,7 +780,7 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
         // and belongs to the body (blank/fenced/structured lines included); a tag
         // line ends the body and falls through to the tag branch, which flushes.
         if in_examples && line.tag().is_none() {
-            example.push_line(&line);
+            example.push_line(line);
             continue;
         }
 
@@ -818,10 +818,10 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
                 // Open unconditionally (even with no inline prose): the unit pulls
                 // up the following prose under the inline `@tag name` header.
                 TagClass::NameBearingProse => {
-                    tag_unit = Some(TagUnit::new(&line, &tag, indent_cols));
+                    tag_unit = Some(TagUnit::new(line, &tag, indent_cols));
                 }
                 TagClass::SectioningProse => {
-                    section = Some(SectionUnit::new(&line, &tag, indent_cols));
+                    section = Some(SectionUnit::new(line, &tag, indent_cols));
                 }
             }
             continue;
@@ -836,7 +836,7 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
 
         if line.is_blank() {
             if let Some(s) = section.as_mut() {
-                s.pending_blanks.push(line.clone());
+                s.pending_blanks.push(line);
                 continue;
             }
             flush_pending!();
@@ -865,7 +865,7 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
         // section body into ordinary flush prose.
         if let Some(s) = section.as_mut() {
             if s.marker == marker && s.pending_blanks.is_empty() {
-                s.push_prose(&line);
+                s.push_prose(line);
                 continue;
             }
             if s.marker == marker {
@@ -887,7 +887,7 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
         // Continuation of an open tag unit (same marker): absorb and hang-indent.
         if let Some(unit) = tag_unit.as_mut() {
             if unit.marker == marker {
-                unit.push_continuation(&line);
+                unit.push_continuation(line);
                 continue;
             }
             flush_tag_unit(&mut tag_unit, &mut items, lw, md);
@@ -900,7 +900,7 @@ pub(super) fn ir_roxygen_block(node: &SyntaxNode, indent: usize, ctx: FormatCont
         if para.marker.is_none() {
             para.marker = Some(marker);
         }
-        para.push_line(&line);
+        para.push_line(line);
     }
     flush_pending!();
 
@@ -933,9 +933,9 @@ struct Paragraph {
 }
 
 impl Paragraph {
-    fn push_line(&mut self, line: &PhysicalLine) {
-        line_chunks(line, &mut self.chunks);
-        self.lines.push(line.clone());
+    fn push_line(&mut self, line: PhysicalLine) {
+        line_chunks(&line, &mut self.chunks);
+        self.lines.push(line);
     }
 
     fn clear(&mut self) {
@@ -996,23 +996,23 @@ struct TagUnit {
 }
 
 impl TagUnit {
-    fn new(line: &PhysicalLine, tag: &RoxygenTag, indent_cols: usize) -> Self {
+    fn new(line: PhysicalLine, tag: &RoxygenTag, indent_cols: usize) -> Self {
         let mut chunks = Vec::new();
         tag_prose_chunks(tag, &mut chunks);
         TagUnit {
-            marker: marker_text(line),
+            marker: marker_text(&line),
             indent_cols,
             header: tag_header(tag).unwrap_or_else(|| "@".to_string()),
             chunks,
-            lines: vec![line.clone()],
+            lines: vec![line],
             first_is_linkref_def: text_opens_linkref_def(&tag_first_line_value(tag)),
         }
     }
 
     /// Absorb a following plain-prose line as continuation text.
-    fn push_continuation(&mut self, line: &PhysicalLine) {
-        line_chunks(line, &mut self.chunks);
-        self.lines.push(line.clone());
+    fn push_continuation(&mut self, line: PhysicalLine) {
+        line_chunks(&line, &mut self.chunks);
+        self.lines.push(line);
     }
 
     /// Emit the reflowed tag unit into `items`.
@@ -1136,17 +1136,17 @@ struct SectionUnit {
 }
 
 impl SectionUnit {
-    fn new(line: &PhysicalLine, tag: &RoxygenTag, indent_cols: usize) -> Self {
+    fn new(line: PhysicalLine, tag: &RoxygenTag, indent_cols: usize) -> Self {
         let mut chunks = Vec::new();
         tag_prose_chunks(tag, &mut chunks);
         // Form-1: the tag carries the body's first prose inline; record its value.
         let first_text = (!chunks.is_empty()).then(|| tag_first_line_value(tag));
         SectionUnit {
-            marker: marker_text(line),
+            marker: marker_text(&line),
             indent_cols,
             header: tag_header(tag).unwrap_or_else(|| "@".to_string()),
             chunks,
-            lines: vec![line.clone()],
+            lines: vec![line],
             first_text,
             pending_blanks: Vec::new(),
             force_form2: false,
@@ -1154,13 +1154,13 @@ impl SectionUnit {
     }
 
     /// Absorb a following plain-prose line into the body's first paragraph.
-    fn push_prose(&mut self, line: &PhysicalLine) {
+    fn push_prose(&mut self, line: PhysicalLine) {
         // Form-2: the first following prose line supplies the paragraph's first text.
         if self.first_text.is_none() {
-            self.first_text = Some(content_text(line));
+            self.first_text = Some(content_text(&line));
         }
-        line_chunks(line, &mut self.chunks);
-        self.lines.push(line.clone());
+        line_chunks(&line, &mut self.chunks);
+        self.lines.push(line);
     }
 
     /// Emit the section (header + first paragraph) into `items`, then the buffered
@@ -1288,11 +1288,11 @@ struct ExampleBody {
 }
 
 impl ExampleBody {
-    fn push_line(&mut self, line: &PhysicalLine) {
+    fn push_line(&mut self, line: PhysicalLine) {
         if self.marker.is_none() {
-            self.marker = Some(marker_text(line));
+            self.marker = Some(marker_text(&line));
         }
-        self.lines.push(line.clone());
+        self.lines.push(line);
     }
 
     /// Format the collected body as embedded R and emit it re-prefixed, clearing

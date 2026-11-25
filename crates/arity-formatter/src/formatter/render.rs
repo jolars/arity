@@ -41,7 +41,10 @@ pub(super) fn block_statement_elements(
         });
     }
 
-    Ok(elements[open_idx + 1..close_idx].to_vec())
+    let mut elements = elements;
+    elements.truncate(close_idx);
+    elements.drain(..=open_idx);
+    Ok(elements)
 }
 
 /// Build a block expression as IR, optionally relocating comments from before
@@ -124,11 +127,7 @@ pub(super) fn ir_block_expr_with_prefixed_comments(
         None => Ir::text("{"),
     };
 
-    let body = Ir::concat(
-        items
-            .into_iter()
-            .map(|it| Ir::concat([Ir::hard_line(), it])),
-    );
+    let body = Ir::concat(items.into_iter().flat_map(|it| [Ir::hard_line(), it]));
     Ok(Ir::concat([
         open,
         Ir::indent(Ir::break_body(body)),

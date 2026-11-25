@@ -611,41 +611,36 @@ pub(super) fn ir_line(
     indent: usize,
     ctx: FormatContext,
 ) -> Result<Ir, FormatError> {
-    let significant: Vec<_> = line
-        .iter()
-        .filter(|el| !is_trivia_kind(el.kind()))
-        .cloned()
-        .collect();
-    if significant.is_empty() {
-        return Ok(Ir::nil());
+    let mut significant = line.iter().filter(|el| !is_trivia_kind(el.kind()));
+    match (significant.next(), significant.next(), significant.next()) {
+        (None, _, _) => Ok(Ir::nil()),
+        (Some(NodeOrToken::Token(token)), None, _) if token.kind() == SyntaxKind::COMMENT => {
+            Ok(Ir::text(token.text()))
+        }
+        (Some(NodeOrToken::Node(node)), None, _) if node.kind() == SyntaxKind::ROXYGEN_BLOCK => {
+            Ok(super::roxygen::ir_roxygen_block(node, indent, ctx))
+        }
+        (Some(expr), None, _) => ir_expr_element(expr, indent, ctx),
+        (Some(expr), Some(trailing), None)
+            if let Some(comment) = super::trivia::inline_trailing_comment_text(trailing) =>
+        {
+            Ok(Ir::concat([
+                ir_expr_element(expr, indent, ctx)?,
+                super::trivia::ir_inline_trailing_comment(&comment),
+            ]))
+        }
+        _ => {
+            let significant: Vec<_> = line
+                .iter()
+                .filter(|el| !is_trivia_kind(el.kind()))
+                .cloned()
+                .collect();
+            Err(FormatError::AmbiguousConstruct {
+                context: "line expression",
+                snippet: snippet_from_elements(&significant),
+            })
+        }
     }
-
-    if let [NodeOrToken::Token(token)] = significant.as_slice()
-        && token.kind() == SyntaxKind::COMMENT
-    {
-        return Ok(Ir::text(token.text().to_string()));
-    }
-
-    if let [NodeOrToken::Node(node)] = significant.as_slice()
-        && node.kind() == SyntaxKind::ROXYGEN_BLOCK
-    {
-        return Ok(super::roxygen::ir_roxygen_block(node, indent, ctx));
-    }
-
-    if significant.len() == 2
-        && let Some(comment) = super::trivia::inline_trailing_comment_text(&significant[1])
-    {
-        let expr = ir_expr_element(&significant[0], indent, ctx)?;
-        // The trailing comment is a zero-width line suffix so it never forces the
-        // expression's own groups to break (matching air); the statement
-        // separator supplies the newline that ends its line.
-        return Ok(Ir::concat([
-            expr,
-            super::trivia::ir_inline_trailing_comment(&comment),
-        ]));
-    }
-
-    ir_expr_segment(&significant, "line expression", indent, ctx)
 }
 
 pub(super) fn format_expr_element(
@@ -741,18 +736,14 @@ pub(super) fn ir_expr_segment(
     indent: usize,
     ctx: FormatContext,
 ) -> Result<Ir, FormatError> {
-    let significant: Vec<_> = elements
-        .iter()
-        .filter(|el| !is_trivia_kind(el.kind()))
-        .cloned()
-        .collect();
-    if significant.len() != 1 {
-        return Err(FormatError::AmbiguousConstruct {
+    let mut significant = elements.iter().filter(|el| !is_trivia_kind(el.kind()));
+    match (significant.next(), significant.next()) {
+        (Some(expr), None) => ir_expr_element(expr, indent, ctx),
+        _ => Err(FormatError::AmbiguousConstruct {
             context,
             snippet: snippet_from_elements(elements),
-        });
+        }),
     }
-    ir_expr_element(&significant[0], indent, ctx)
 }
 
 /// A single expression optionally followed by a trailing comment on the same
