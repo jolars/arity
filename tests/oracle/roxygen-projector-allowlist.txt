@@ -812,6 +812,7 @@ md_macro_arg_emphasis
 md_macro_arg_escapes
 md_macro_arg_span
 md_macro_arg_structural
+md_multibyte_rd_macro
 md_multiline_macro_arg
 md_nested_link
 md_nested_link_chain

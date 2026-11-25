@@ -1,0 +1,3 @@
+(\description (TEXT "UTF-8 in an Rd macro"))
+(\details (TEXT "Before") (\code (RCODE "café")) (TEXT "and") (\emph (TEXT "after")) (TEXT "with") (\emph (TEXT "日本語")) (TEXT "and") (\strong (TEXT "bold")) (TEXT "."))
+(\title (TEXT "UTF-8 in an Rd macro"))

@@ -91,6 +91,8 @@ pub struct DescriptionFacts {
     pub compat: DescriptionCompat,
     /// The `Roxygen` field's value, as R source.
     pub roxygen: Option<String>,
+    /// A logical value from `Config/roxygen2/markdown`.
+    pub roxygen_config_markdown: Option<bool>,
     /// Every `Collate*` field's entries.
     pub collate: BTreeSet<String>,
     /// Each platform's execution order, separate from the completeness union.
@@ -183,6 +185,13 @@ impl DescriptionFacts {
                     .and_then(|v| CompatVersion::parse(v.trim())),
             },
             roxygen: get("Roxygen"),
+            roxygen_config_markdown: get("Config/roxygen2/markdown").and_then(|value| match value
+                .trim()
+            {
+                "TRUE" | "T" | "\"TRUE\"" | "\"T\"" | "'TRUE'" | "'T'" => Some(true),
+                "FALSE" | "F" | "\"FALSE\"" | "\"F\"" | "'FALSE'" | "'F'" => Some(false),
+                _ => None,
+            }),
             collate,
             collate_order,
         }
@@ -215,17 +224,17 @@ impl DescriptionFacts {
 
 /// The package-wide roxygen markdown default for the package at `root`
 /// (a directory holding `DESCRIPTION`): `man/roxygen/meta.R` when statically
-/// resolvable, else the `Roxygen` field of `DESCRIPTION`, else `false`
+/// resolvable, then `Config/roxygen2/markdown`, then the legacy `Roxygen`
+/// field of `DESCRIPTION`, and finally `false`
 /// (roxygen2's default). Touches disk.
 pub fn roxygen_markdown_default(root: &Path) -> bool {
-    let desc = facts_at(root)
-        .roxygen
-        .as_deref()
-        .and_then(markdown_from_r_text);
+    let facts = facts_at(root);
     let meta = std::fs::read_to_string(root.join("man/roxygen/meta.R"))
         .ok()
         .and_then(|text| markdown_from_r_text(&text));
-    meta.or(desc).unwrap_or(false)
+    meta.or(facts.roxygen_config_markdown)
+        .or_else(|| facts.roxygen.as_deref().and_then(markdown_from_r_text))
+        .unwrap_or(false)
 }
 
 /// [`roxygen_markdown_default`] resolved for a single file: walk up to the
@@ -630,6 +639,26 @@ mod tests {
     fn markdown_true_from_roxygen_field() {
         let dir = package("Package: p\nRoxygen: list(markdown = TRUE)\n");
         assert!(roxygen_markdown_default(dir.path()));
+    }
+
+    #[test]
+    fn config_markdown_overrides_legacy_field() {
+        let dir = package(
+            "Package: p\nRoxygen: list(markdown = FALSE)\nConfig/roxygen2/markdown: TRUE\n",
+        );
+        assert!(roxygen_markdown_default(dir.path()));
+
+        let dir = package(
+            "Package: p\nRoxygen: list(markdown = TRUE)\nConfig/roxygen2/markdown: FALSE\n",
+        );
+        assert!(!roxygen_markdown_default(dir.path()));
+    }
+
+    #[test]
+    fn meta_overrides_config_markdown() {
+        let dir = package("Package: p\nConfig/roxygen2/markdown: TRUE\n");
+        write_meta(&dir, "list(markdown = FALSE)\n");
+        assert!(!roxygen_markdown_default(dir.path()));
     }
 
     #[test]

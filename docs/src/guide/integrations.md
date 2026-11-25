@@ -158,8 +158,9 @@ selection; Arity's TOML exclusions do not apply. dprint also respects
 
 The Arity CLI discovers whether roxygen comments use Markdown by reading the
 package's `DESCRIPTION` and `man/roxygen/meta.R`. The plugin cannot read those
-files. So a package whose `DESCRIPTION` sets `Roxygen: list(markdown = TRUE)`
-needs `roxygenMarkdown` set explicitly:
+files. If your package enables Markdown with `Config/roxygen2/markdown: TRUE` or
+the legacy `Roxygen: list(markdown = TRUE)`, set `roxygenMarkdown` explicitly in
+the plugin.
 
 ```json
 {

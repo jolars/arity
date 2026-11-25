@@ -14,13 +14,15 @@ reads this first.
 
 ## Status
 
-**Oracle = roxygen2 8.0.0** (pin bumped 2026-08-07; `tests/oracle/.roxygen2-source`,
-`roxygen2-ref` checkout at `v8.0.0`). **Backlog closed at the new oracle.**
-Projector gate **1032 matching (all allowlisted), 0 divergent, 12 blocked**.
-The **whole CommonMark spec (655/655)** matches; the harvested corpus is fully
-closed. The latest curated fixed-point run is **237/238** preserving; the sole
-red case is the pre-existing `verbatim_block_macro` divergence, while the new
-package-markdown-default case preserves.
+**Oracle = roxygen2 8.1.1** (`tests/oracle/.roxygen2-source`).
+Projector gate **1033 matching (all allowlisted), 0 divergent, 12 blocked**.
+All existing curated, harvested, and CommonMark section pins match 8.1.1.
+The harvested inputs still come from the 8.0.0 source corpus.
+The new `md_multibyte_rd_macro` case covers Markdown following Rd macros
+with multibyte arguments. The curated fixed-point oracle preserves 238/239;
+`verbatim_block_macro` remains the sole divergence. The lint oracle matches
+239/239 for the warning classes it compares.
+
 The measured backlog is **exhausted** — no divergence currently drives parser
 growth.
 
@@ -323,7 +325,15 @@ WHOLE CommonMark spec is adopted as a measured backlog (panache's conformance mo
 design: `~/.claude/plans/i-want-to-start-snoopy-haven.md`; roadmap: `TODO.md`. Phase 0 done;
 Phase 1 (projector + pinned gate) is the driver.
 
-## Latest session (2026-08-21) — package markdown default in the Rd projector
+## Latest session (2026-11-25) — roxygen2 8.1.1
+
+Verified the existing section pins against 8.1.1 and added the multibyte
+regression fixture. Arity needed no roxygen grammar changes for this corpus.
+Package Markdown resolution now reads `Config/roxygen2/markdown`, which
+roxygen2 introduced in 8.0. A statically resolvable `man/roxygen/meta.R`
+setting wins, followed by the config field and the legacy `Roxygen` field.
+
+## 2026-08-21 — package markdown default in the Rd projector
 
 Closed the remaining issue-#94 follow-up. The projector now exposes
 `project_to_rd_with_options(text, &ParseOptions)` while the existing

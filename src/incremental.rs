@@ -1390,7 +1390,7 @@ impl IncrementalDatabase {
     /// from disk (dropping the per-directory memo first) and update the
     /// changed inputs. Called on `DESCRIPTION`/`man/roxygen/meta.R` watcher
     /// events; an unchanged resolution writes nothing, so the common case (a
-    /// `DESCRIPTION` edit that didn't touch `Roxygen`) invalidates no parse.
+    /// `DESCRIPTION` edit that leaves the Markdown default unchanged) invalidates no parse.
     /// Returns whether any file's flag changed.
     pub fn refresh_roxygen_markdown(&mut self) -> bool {
         *self

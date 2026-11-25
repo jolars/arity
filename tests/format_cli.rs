@@ -294,7 +294,7 @@ fn cli_format_without_markdown_default_reflows() {
 #[test]
 fn cli_format_check_honors_package_markdown_default() {
     let dir = tempdir().expect("failed to create temp dir");
-    write_package(dir.path(), "Roxygen: list(markdown = TRUE)\n");
+    write_package(dir.path(), "Config/roxygen2/markdown: TRUE\n");
 
     let output = run_cli_no_stdin([
         "format",

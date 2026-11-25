@@ -4840,7 +4840,7 @@ fn upsert_file_resolves_markdown_from_package() {
     std::fs::create_dir(dir.path().join("R")).expect("R/");
     std::fs::write(
         dir.path().join("DESCRIPTION"),
-        "Package: p\nRoxygen: list(markdown = TRUE)\n",
+        "Package: p\nConfig/roxygen2/markdown: TRUE\n",
     )
     .expect("DESCRIPTION");
     let path = dir.path().join("R/doc.R");
