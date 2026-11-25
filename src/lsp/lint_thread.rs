@@ -921,18 +921,24 @@ impl LintWorker {
             let now = now_unix_secs();
             let cache = Cache::new(cache_root);
             let search = LibrarySearch::discover(Some(&anchor), &cfg.library_paths);
-            let report = build_index(
-                &to_build,
-                &cache,
-                &search,
-                BuildOptions {
-                    help: cfg.help,
-                    force: false,
-                    // Background builds honor only the per-user env consent.
-                    attach_probe: crate::rindex::attach_probe::enabled_by_env(),
-                },
-                now,
-            );
+            let harvest = || {
+                build_index(
+                    &to_build,
+                    &cache,
+                    &search,
+                    BuildOptions {
+                        help: cfg.help,
+                        force: false,
+                        // Background builds honor only the per-user env consent.
+                        attach_probe: crate::rindex::attach_probe::enabled_by_env(),
+                    },
+                    now,
+                )
+            };
+            // Release the workers' allocator caches when this batch finishes.
+            let report = rayon::ThreadPoolBuilder::new()
+                .build_scoped(|thread| thread.run(), |pool| pool.install(harvest))
+                .unwrap_or_else(|_| harvest());
             let newly = report.newly_indexed().count();
             if newly > 0 {
                 // Lazy, like `ensure_index`: the install swaps in a provider
