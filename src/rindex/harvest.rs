@@ -14,7 +14,7 @@
 //! - `help/{pkg}.rdb` → full Rd bodies (description/usage/arguments), rendered
 //!   to markdown via [`rd`](crate::rindex::rd).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use rd_helpdb::{HelpTopicIndex, HelpTopicText, PackageHelpDb};
@@ -123,6 +123,7 @@ pub fn harvest_package_in(
     let lazydata = read_lazydata_names(pkg_dir);
 
     let help = HelpFiles::when_enabled(opts.help, || HelpFiles::open(pkg_dir, &package));
+    let mut help_topics = HashMap::new();
 
     // Missing code records leave explicit exports and metadata usable.
     let db = LazyLoadDb::open(&pkg_dir.join("R").join(format!("{package}.rdx")))
@@ -148,7 +149,7 @@ pub fn harvest_package_in(
     let mut symbols: Vec<SymbolEntry> = exports
         .iter()
         .map(|name| {
-            let help = build_help(&help, name);
+            let help = build_help(&help, &mut help_topics, name);
             let value = db.as_ref().and_then(|db| {
                 db.fetch(name)
                     .inspect_err(|error| {
@@ -179,7 +180,7 @@ pub fn harvest_package_in(
         if exports.contains(name.as_str()) {
             continue;
         }
-        let help = build_help(&help, name);
+        let help = build_help(&help, &mut help_topics, name);
         symbols.push(SymbolEntry {
             name: SmolStr::new(name),
             kind: SymbolKind::Data,
@@ -224,7 +225,7 @@ pub fn harvest_package_in(
                 .iter()
                 .find(|entry| entry.name == association.alias)
                 .and_then(|entry| entry.help.clone())
-                .or_else(|| build_help(&help, &association.alias))
+                .or_else(|| build_help(&help, &mut help_topics, &association.alias))
         });
     }
     objects.help = rendered
@@ -856,33 +857,42 @@ fn read_help_index(pkg_dir: &Path) -> Option<HelpTopicIndex> {
 
 /// Assemble a symbol's [`HelpDoc`]: the title from `Meta/Rd.rds`, the body
 /// (description/usage/arguments) from the help lazy-load DB page, if any. A page
-/// that fails to decode degrades to title-only; a symbol no Rd documents yields
-/// `None`.
-fn build_help(help: &HelpFiles, name: &str) -> Option<HelpDoc> {
+/// that fails to decode degrades to title-only. Aliases share the rendered
+/// sections of a page and each uses the title from its own metadata row.
+fn build_help<'a>(
+    help: &'a HelpFiles,
+    topics: &mut HashMap<&'a str, rd::RdSections>,
+    name: &str,
+) -> Option<HelpDoc> {
     let entry = help.index.as_ref()?.find_alias(name)?;
     let sections = entry
         .topic_key()
         .zip(help.database.as_ref())
-        .and_then(|(key, database)| match database.document(key) {
-            Ok(document) => {
-                let rendered = rd::render_document(&document);
-                for issue in rendered.issues {
-                    log::debug!(
-                        "{}: topic {key:?}, omitted {} at {:?}",
-                        help.package_dir.display(),
-                        issue.field,
-                        issue.path
-                    );
-                }
-                Some(rendered.sections)
-            }
-            Err(error) => {
-                log::debug!(
-                    "{}: topic {key:?} unavailable: {error}",
-                    help.package_dir.display()
-                );
-                None
-            }
+        .map(|(key, database)| {
+            topics
+                .entry(key)
+                .or_insert_with(|| match database.document(key) {
+                    Ok(document) => {
+                        let rendered = rd::render_document(&document);
+                        for issue in rendered.issues {
+                            log::debug!(
+                                "{}: topic {key:?}, omitted {} at {:?}",
+                                help.package_dir.display(),
+                                issue.field,
+                                issue.path
+                            );
+                        }
+                        rendered.sections
+                    }
+                    Err(error) => {
+                        log::debug!(
+                            "{}: topic {key:?} unavailable: {error}",
+                            help.package_dir.display()
+                        );
+                        rd::RdSections::default()
+                    }
+                })
+                .clone()
         })
         .unwrap_or_default();
     let doc = rd::into_help_doc(entry.title.as_str().map(str::to_owned), sections);
@@ -964,6 +974,20 @@ mod tests {
         let help = HelpFiles::when_enabled(false, || panic!("help files must not be read"));
         assert!(help.index.is_none());
         assert!(help.database.is_none());
+    }
+
+    #[test]
+    fn help_aliases_reuse_rendered_topic() {
+        let directory =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rindex/oopfixture");
+        let help = HelpFiles::open(&directory, "oopfixture");
+        let mut topics = HashMap::new();
+        let class = build_help(&help, &mut topics, "Shape-class").unwrap();
+        let method = build_help(&help, &mut topics, "area,Shape-method").unwrap();
+
+        assert!(!class.arguments.is_empty());
+        assert_eq!(method, class);
+        assert_eq!(topics.len(), 1);
     }
 
     fn str_vec(names: &[Option<&str>]) -> rd_rds::RObject {
