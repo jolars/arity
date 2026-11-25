@@ -2096,18 +2096,26 @@ fn document_symbols_follow_live_edits_and_support_untitled_buffers() {
 
 #[test]
 fn flat_document_symbols_report_enclosing_bindings_and_follow_live_edits() {
+    // Keep file-backed cases independent of the host's temp tree and R index.
+    let dir = tempfile::tempdir().unwrap();
+    let config = toml::to_string(&json!({
+        "index": {"auto-build": false, "cache-dir": dir.path().join("index")},
+    }))
+    .unwrap();
+    std::fs::write(dir.path().join("arity.toml"), config).unwrap();
+    let file_uri = path_uri(&dir.path().join("outline.R"));
     for support in [None, Some(false)] {
         for encoding in ["utf-8", "utf-16"] {
-            for uri in [doc_uri(), "untitled:flat-document-symbols"] {
-                let mut capabilities = json!({
-                    "general": {"positionEncodings": [encoding]},
+            let mut capabilities = json!({
+                "general": {"positionEncodings": [encoding]},
+            });
+            if let Some(support) = support {
+                capabilities["textDocument"] = json!({
+                    "documentSymbol": {"hierarchicalDocumentSymbolSupport": support}
                 });
-                if let Some(support) = support {
-                    capabilities["textDocument"] = json!({
-                        "documentSymbol": {"hierarchicalDocumentSymbolSupport": support}
-                    });
-                }
-                let mut h = Harness::start_with_capabilities(capabilities);
+            }
+            let mut h = Harness::start_with_capabilities(capabilities);
+            for uri in ["untitled:flat-document-symbols", file_uri.as_str()] {
                 for (version, parent) in [(1, "outer"), (2, "other"), (3, "again")] {
                     let text = format!(
                         "{parent} <- function(x = 1) {{\n  if (x) {{\n    inner <- function() {{\n      1 -> `café`\n    }}\n  }}\n  {{ leaf <- 2 }} -> right\n}}\nif (TRUE) top <- 3\n"
@@ -2173,8 +2181,12 @@ fn flat_document_symbols_report_enclosing_bindings_and_follow_live_edits() {
                         );
                     }
                 }
-                h.shutdown();
+                h.notify(
+                    "textDocument/didClose",
+                    json!({"textDocument": {"uri": uri}}),
+                );
             }
+            h.shutdown();
         }
     }
 }
