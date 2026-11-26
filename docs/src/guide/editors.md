@@ -4,11 +4,8 @@ Arity ships a language server, started with `arity lsp` (stdio, JSON-RPC). It
 offers formatting, diagnostics with quick fixes, hover, completion, signature
 help, go-to-definition and find-references, rename, document and workspace
 symbols, semantic tokens, folding and selection ranges, document links, document
-color swatches, inlay hints, and call and type hierarchy.
-
-Document outlines include function signatures with parameter defaults and nested
-bindings. Editors without hierarchical outline support receive a flat list with
-each nested binding labeled by its enclosing binding.
+color swatches, inlay hints, and call and type hierarchy. Document outlines
+include function signatures with parameter defaults and nested bindings.
 
 Editors can also start the server for `.Rd` and `.rd` files, making workspace
 symbol search available before you open an R file. Arity does not yet provide
@@ -20,14 +17,11 @@ on; see the [code action reference](../reference/code-actions.md).
 
 Configuration is read from an `arity.toml` discovered from each file's directory
 or, if no project config is found, from the file named by `ARITY_CONFIG` (see
-the [configuration reference](../reference/configuration.md#discovery)). The
-server rechecks config files on subsequent formatting requests and document
-edits, including a user config outside the workspace. A missing or invalid
-`ARITY_CONFIG` file causes formatting to be refused until the config is fixed.
+the [configuration reference](../reference/configuration.md#discovery)).
 
 ## VS Code/Positron
 
-Install the **Arity** extension from the [VS Code
+Install the Arity extension from the [VS Code
 Marketplace](https://marketplace.visualstudio.com/) or [Open
 VSX](https://open-vsx.org/). It bundles the `arity` binary (falling back to a
 download) and starts the language server automatically for R and Rd files.
@@ -257,51 +251,6 @@ To start Arity from an Rd file, associate `.Rd` and `.rd` with the same server
 in your client's filetype or document selector settings. The `rd` language id
 also identifies pathless Rd buffers. This enables workspace symbol search
 without opening an R file first.
-
-## OOP implementation navigation
-
-Go to Implementation can open a registered method body for a recognized generic
-or method registration. On a class name, it opens source declarations for
-confirmed direct subclasses. Results require source locations in the workspace
-or current buffer.
-
-## R6 classes
-
-Arity completes declared R6 fields, methods, and active bindings for workspace
-classes. It distinguishes a generator's API, such as `Counter$new()`, from an
-instance's members. Inside methods, `self`, `private`, and `super` use the
-owning class and its inherited members. Generator aliases and exported parents
-in workspace packages retain their class identity even when their display names
-differ from their bindings.
-
-Signature help shows method parameters and the initializer parameters forwarded
-by `$new(...)`. Arity reads these declarations statically and never runs a
-constructor or active binding. Computed member lists, unresolved parents, and
-reassigned receivers can limit the available information. For receivers without
-a known class, completion falls back to fields found in local construction and
-usage.
-
-Arity also tracks literal `$set(...)` additions and replacements, including
-installations in another workspace file and methods supplied by a known function
-binding. Package `Collate` order and script `source()` order determine which
-members are available. Existing R6 instances retain the members they received at
-construction. Class locks prevent `$set()` changes; object locks separately
-control assignments to methods. Dynamic mutations and custom parent environments
-leave the affected API incomplete.
-
-## Reference classes
-
-Reference Class completion distinguishes fields, accessor functions, methods,
-and the generator's own API. Signature help follows initialization and inherited
-methods, including `callSuper()`. Arity tracks subsequent `$methods(...)`
-installations across workspace files. Inherited methods reflect the parent at
-class declaration, and an instance can retain methods it has already accessed.
-
-Active R6 bindings and Reference Class accessors appear as properties. Reads and
-assignments invoke their accessor functions; Arity never executes those
-functions or uses their bodies to guess a returned value's type. Reference Class
-field locks allow one initialization assignment and remain separate from locks
-on the class definition.
 
 ## DESCRIPTION files
 

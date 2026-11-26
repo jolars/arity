@@ -9,6 +9,16 @@ For VS Code or Positron, the [Arity extension](guide/editors.md#vs-codepositron)
 includes the binary, so you can start with [editor setup](guide/editors.md). For
 formatting inside RStudio, install the [R package](#r-package-cran).
 
+After installtion, verify that Arity is available in your terminal:
+
+```sh
+arity --version
+```
+
+Continue with [Getting started](guide/getting-started.md) to format and lint
+your first file, or [Editor setup](guide/editors.md) to use Arity in your
+editor.
+
 ## Install script
 
 The installer selects the release for your platform and installs to a user-local
@@ -89,27 +99,17 @@ nix shell nixpkgs#arity
 For a persistent NixOS installation, add `pkgs.arity` to
 `environment.systemPackages`.
 
-### mise and Aqua
+### Aqua
 
-[mise](https://mise.jdx.dev/dev-tools/backends/aqua.html) can install Arity
-through its Aqua backend:
-
-```bash
-mise use aqua:jolars/arity
-```
-
-Commit the resulting `mise.toml` to share the selected version. With
-[Aqua](https://aquaproj.github.io/docs/tutorial/) directly, run `aqua init` if
-the project has no `aqua.yaml`, then add and install Arity:
+With [Aqua](https://aquaproj.github.io/docs/tutorial/), run `aqua init` if the
+project has no `aqua.yaml`, then add and install Arity.
 
 ```bash
 aqua g -i jolars/arity
 aqua install
 ```
 
-Commit `aqua.yaml` to share the selected version. Both tools use the
-[`jolars/arity` registry
-entry](https://github.com/aquaproj/aqua-registry/tree/main/pkgs/jolars/arity).
+Commit `aqua.yaml` to share the selected version.
 
 ## Prebuilt binaries
 
@@ -146,15 +146,3 @@ install.packages("arity")
 
 See the [R package documentation](https://github.com/jolars/arity-r) for details
 and [RStudio setup](guide/editors.md#rstudio) for use in the editor.
-
-## Verify the installation {#first-run}
-
-Check that Arity is available in your terminal:
-
-```sh
-arity --version
-```
-
-Continue with [Getting started](guide/getting-started.md) to format and lint
-your first file, or [Editor setup](guide/editors.md) to use Arity in your
-editor.

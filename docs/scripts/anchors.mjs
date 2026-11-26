@@ -1,5 +1,6 @@
-// mdBook and VitePress remove punctuation differently. Keep published fragments.
+// Preserve published fragments when headings or slug rules change.
 export const legacyAliases = new Map([
+  ["aqua", "mise-and-aqua"],
   ["vs-code-positron", "vs-codepositron"],
   ["add-update-roxygen-documentation", "addupdate-roxygen-documentation"],
   ["lint-rules-id", "lintrulesid"],

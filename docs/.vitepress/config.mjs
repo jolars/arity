@@ -163,9 +163,7 @@ export default defineConfig({
     nav: [
       { text: "Guide", link: "/introduction.html" },
       { text: "Reference", link: "/reference/cli.html" },
-      { text: "Development", link: "/development/contributing.html" },
       { text: "Playground", link: "/playground.html" },
-      { text: "Performance", link: "/guide/performance.html" },
     ],
     sidebar: [
       {
