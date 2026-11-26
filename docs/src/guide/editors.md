@@ -72,10 +72,8 @@ rules across every editor and the CLI.
 Arity attaches to Zed's `R` language, which the [R
 extension](https://github.com/ocsmit/zed-r) provides. Install that one first,
 then install **Arity** from the extensions view (`zed: extensions` in the
-command palette).
-
-The Arity extension also recognizes `.Rd` and `.rd` files as `Rd`, so opening
-one starts the server for workspace symbol search.
+command palette). The Arity extension also recognizes `.Rd` and `.rd` files as
+`Rd`, so opening one starts the server for workspace symbol search.
 
 Zed uses the `arity` on your `PATH` when there is one, and otherwise downloads
 the release binary matching your platform. Keeping Arity on the `PATH` is the
