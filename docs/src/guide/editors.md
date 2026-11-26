@@ -203,14 +203,11 @@ language-servers = ["arity"]
 
 ## RStudio
 
-The [development R package](https://github.com/jolars/arity-r) provides a
-**Format with arity** addin and discovers `arity.toml` automatically. These
-features were added after the CRAN 0.1.0 release. Install the development
-version to use them; building from source requires Cargo and Rust 1.89 or newer:
+Install the [arity R package](https://CRAN.R-project.org/package=arity) from the
+RStudio console. The package includes the formatter and the RStudio addin.
 
 ```r
-install.packages("remotes")
-remotes::install_github("jolars/arity-r")
+install.packages("arity")
 ```
 
 Choose **Format with arity** from RStudio's **Addins** menu. It formats selected
@@ -220,21 +217,17 @@ a shortcut, open **Tools > Modify Keyboard Shortcuts** and search for the addin.
 
 The addin discovers configuration from the document's directory, or the working
 directory for untitled buffers. It uses the nearest `arity.toml`, with
-`ARITY_CONFIG` as a fallback when no project config is found. Only formatting
-settings apply; file exclusions and lint configuration do not. See the [R
-package documentation](https://github.com/jolars/arity-r#configuration) for
-configuration overrides and supported selections.
+`ARITY_CONFIG` as a fallback when no project config is found. It reads
+`line-width`, `indent-width`, and `line-ending` from the `[format]` table. See
+the [R package documentation](https://github.com/jolars/arity-r#configuration)
+for configuration overrides.
 
-With the [CRAN package](../installation.md#r-package-cran), format saved files
-from the console:
+To format a saved R file from the console, run this command to rewrite it on
+disk.
 
 ```r
 arity::format_file("R/example.R")
 ```
-
-This rewrites the file on disk. CRAN 0.1.0 takes formatting options as function
-arguments and does not discover `arity.toml`. The R package embeds the
-formatter, so neither installation needs the Arity CLI.
 
 ## Other editors
 
@@ -254,18 +247,11 @@ without opening an R file first.
 
 ## DESCRIPTION files
 
-The server also serves a package's `DESCRIPTION`, which is a different grammar
+The server also treats a package's `DESCRIPTION`, which is a different grammar
 from R. There it offers the packaging diagnostics, completion of canonical field
 names and package names in `Depends`, `Imports`, `Suggests`, `LinkingTo`, and
-`Enhances`, and hover showing a dependency's installed version and title. Field
-names follow the formatter's order, omit fields already declared, and add `: `
-when starting a new header. An unsaved edit counts immediately, so adding a
-package to `Imports` clears the
-[`undeclared-dependency`](../reference/rules.md#undeclared-dependency) findings
-in the R files that use it without saving first.
-
-The installed version is also shown inline, as an inlay hint after each
-dependency:
+`Enhances`, and hover showing a dependency's installed version and title. The
+installed version is also shown inline, as an inlay hint after each dependency:
 
 ```text
 Imports:
@@ -273,22 +259,11 @@ Imports:
     rlang 1.1.4,
 ```
 
-Only indexed packages get one, so a dependency you have not installed stays
-bare. Arity has no setting of its own for these — your editor's inlay hint
-switch (`editor.inlayHints.enabled` in VS Code) turns them off.
-
 Diagnostics are reported only for a `DESCRIPTION` at a package root of its own,
-matching what `arity lint` walks. A complete miniature package under
-`tests/testthat/` is fixture data for a test, so it stays quiet.
+matching `arity lint`. A `DESCRIPTION` is formatted too, by default, so
+format-on-save canonicalizes it the same way it canonicalizes your `.R` files.
+Set `description = false` under `[format]` in `arity.toml` to leave it alone.
 
-A `DESCRIPTION` is formatted too, by default, so format-on-save canonicalizes it
-the same way it canonicalizes your `.R` files. Set `description = false` under
-`[format]` in `arity.toml` to leave it alone.
-
-Only whole-document formatting is offered: canonical field order is a property
-of the whole file, so `editor.formatOnSaveMode: "modifications"` (and
-format-selection generally) will not touch a `DESCRIPTION`.
-
-Editors need to be told to send the file, since most do not recognize
-`DESCRIPTION` on their own. The VS Code extension does this for you; for the
-rest, see the sections below.
+The VS Code extension opens `DESCRIPTION` in Arity automatically. See the
+[Neovim example](#neovim) for explicit file registration or the [setup notes for
+other editors](#other-editors) for what to configure.
