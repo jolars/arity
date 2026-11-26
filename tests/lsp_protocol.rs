@@ -25,9 +25,9 @@ mod config_env;
 #[path = "lsp_protocol/oop.rs"]
 mod oop;
 
-/// Generous so slow CI never trips it; short enough that a genuinely wedged
-/// server fails the test instead of hanging the suite.
-const TIMEOUT: Duration = Duration::from_secs(10);
+/// Keep waits bounded while allowing for scheduling stalls on Windows CI,
+/// where the protocol suite has gone more than 20 seconds between completions.
+const TIMEOUT: Duration = Duration::from_secs(if cfg!(windows) { 60 } else { 10 });
 
 /// A file URI for the single test document. Absolute on the host platform so
 /// URI<->path conversion behaves (mirrors `src/lsp/test_support.rs`).
