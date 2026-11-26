@@ -480,7 +480,7 @@ acronyms, and code identifiers. Never hand-edit generated pages:
   | Generated page                                       | Source                                |
   | ---------------------------------------------------- | ------------------------------------- |
   | `docs/src/reference/cli.md`                          | `build.rs` from clap                  |
-  | `docs/src/reference/rules.md`, `docs/src/version.md` | `docgen`                              |
+  | `docs/src/reference/rules.md`                         | `docgen`                              |
   | benchmark meta/results pages                         | `src/bench_docs.rs` from tracked JSON |
 
 Regenerate all with `task docs-gen`; pinning-test failures mean regenerate, not

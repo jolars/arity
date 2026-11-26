@@ -17,7 +17,9 @@ import {
   sourceRoot,
 } from "../scripts/content.mjs";
 
-const version = readFileSync(join(sourceRoot, "version.md"), "utf8").trim();
+const { version } = JSON.parse(
+  readFileSync(join(projectRoot, "npm/arity-cli/package.json"), "utf8"),
+);
 const guide = [
   "Formatting",
   "Linting",
@@ -203,6 +205,6 @@ export default defineConfig({
         `https://github.com/jolars/arity/edit/main/${page.frontmatter.repositorySource ?? `docs/src/${page.filePath}`}`,
     },
     search: { provider: "local" },
-    footer: { message: `${version} · Released under the MIT license.` },
+    footer: { message: `arity v${version} · Released under the MIT license.` },
   },
 });

@@ -13,7 +13,6 @@ extend-exclude = [
   "docs/src/guide/benchmarks_meta.md",
   "docs/src/guide/benchmarks_results.md",
   "docs/src/guide/benchmarks_lsp.md",
-  "docs/src/version.md",
   ".claude/**/*",
   ".agents/**/*",
   ".github/**/*",

@@ -3,8 +3,7 @@
 //! Run with `cargo run --example docgen`. This renders the same markdown the
 //! snapshot test pins ([`arity::linter::docs::render_rules_page`]) — every
 //! documented rule's section, grouped by category — and writes it as the
-//! single `reference/rules.md` page in the documentation source tree. It also stamps
-//! the crate version into `version.md`, included by the introduction page.
+//! single `reference/rules.md` page in the documentation source tree.
 //!
 //! Living as an `examples/` target (not a `[[bin]]`) keeps arity a single,
 //! publishable crate: `examples/` is outside the Cargo `include` whitelist, so
@@ -22,10 +21,6 @@ fn main() -> io::Result<()> {
         Path::new("docs/src/reference/rules.md"),
         &render_rules_page(),
     )?;
-
-    // Version stamp, included by the introduction page.
-    let version = format!("arity v{}\n", env!("CARGO_PKG_VERSION"));
-    write_if_changed(Path::new("docs/src/version.md"), &version)?;
 
     generate_benchmarks()?;
 

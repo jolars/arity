@@ -83,8 +83,8 @@ the rule's correctness actually requires.
   autofix-correctness harness `assert_fixed_output_is_clean` and
   `fixed_output_is_parseable_and_clean`.
 - `examples/docgen.rs`—generates the whole rule reference
-  `docs/src/reference/rules.md` from `render_rules_page` (and stamps
-  `version.md`). Run with `cargo run --example   docgen`. The page is generated
+  `docs/src/reference/rules.md` from `render_rules_page`.
+  Run with `cargo run --example   docgen`. The page is generated
   end to end—index included—so there is no index to hand-edit.
 - `tests/rule_docs.rs`—pins each rule's rendered section via an **`insta`
   snapshot** (`rule_docs_render`), checks the assembled page covers every rule

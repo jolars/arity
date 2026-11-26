@@ -12,6 +12,7 @@ on:
       - "examples/docgen.rs"
       - "build.rs"
       - "Cargo.*"
+      - "npm/arity-cli/package.json"
       - "rust-toolchain.toml"
       - "Taskfile.yml"
       - "benches/*results.json"

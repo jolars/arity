@@ -20,6 +20,13 @@ const pages = new Map(
   ]),
 );
 pages.set("/index.html", pages.get("/"));
+const { version } = JSON.parse(
+  readFileSync(join(projectRoot, "npm/arity-cli/package.json"), "utf8"),
+);
+assert.ok(
+  pages.get("/").includes(`arity v${version} · Released under the MIT license.`),
+  `Missing CLI version ${version} in the homepage footer`,
+);
 const contributing = pages.get("/development/contributing.html");
 assert.ok(contributing, "Missing contributing guide");
 assert.match(

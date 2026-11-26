@@ -63,7 +63,7 @@ function spec(payload) {
   const chart = {
     $schema: "https://vega.github.io/schema/vega-lite/v5.json",
     width: "container",
-    height: 340,
+    height: Math.max(1, documents.length) * (memory ? 64 : 40),
     data: { values: points },
     config: {
       background: null,

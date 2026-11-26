@@ -15,7 +15,6 @@ export const repositoryPages = {
 export const description =
   "Arity is a language server, formatter, and linter for R.";
 export const partials = [
-  "version.md",
   "guide/benchmarks_meta.md",
   "guide/benchmarks_results.md",
   "guide/benchmarks_lsp.md",
