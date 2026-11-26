@@ -17,7 +17,7 @@ on; see the [code action reference](../reference/code-actions.md).
 
 Configuration is read from an `arity.toml` discovered from each file's directory
 or, if no project config is found, from the file named by `ARITY_CONFIG` (see
-the [configuration reference](../reference/configuration.md#discovery)).
+the [configuration guide](configuration.md#choose-the-configuration-source)).
 
 ## VS Code/Positron
 

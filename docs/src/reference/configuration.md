@@ -1,121 +1,25 @@
 # Configuration reference
 
-For a walkthrough of creating and sharing a project config, see the
-[configuration guide](../guide/configuration.md).
+<span id="editor-support" aria-hidden="true"></span>
+<span id="discovery" aria-hidden="true"></span>
+<span id="reserved-for-future-use" aria-hidden="true"></span>
 
-Arity is configured with a TOML file named `arity.toml`. All keys are optional;
-omitting a key uses its default. Keys are **kebab-case**, and unknown keys are
-rejected with an error (so a typo never silently falls back to a default).
-
-Run [`arity init`](cli.md#arity-init) to write a commented starter file.
-
-## Editor support
-
-Arity publishes a [JSON Schema](https://json-schema.org/) for `arity.toml`, so
-editors with TOML support can offer completion, inline documentation, and
-validation while you edit your configuration.
-
-Schema URL : <https://arity.cc/arity.schema.json>
-
-The schema is generated from Arity's configuration types and checked against the
-repository's own `arity.toml`. It therefore stays aligned with the keys, enums,
-constraints, and defaults accepted by the CLI. The version at the published URL
-tracks the latest Arity release.
-
-Until `arity.toml` is registered with SchemaStore, editors need a manual
-association. With the [Even Better
-TOML](https://marketplace.visualstudio.com/items?itemName=tamasfe.even-better-toml)
-extension for VS Code, add this to your user or workspace `settings.json`:
-
-```jsonc
-{
-  "evenBetterToml.schema.associations": {
-    "^(.*/)?arity\\.toml$": "https://arity.cc/arity.schema.json"
-  }
-}
-```
-
-Editors and language servers that recognize TOML schema directives can instead
-put this comment at the top of `arity.toml`:
-
-```toml
-#:schema https://arity.cc/arity.schema.json
-```
-
-Other editors—including Neovim with `taplo-lsp`, Helix, Zed, and IntelliJ—can
-use the same URL through their JSON Schema association settings.
-
-## Discovery
-
-For a given file, arity looks for `arity.toml` by walking up from the file's
-directory through its ancestors, stopping at the first `arity.toml` it finds or
-at a directory containing a `.git` entry (the repository root), whichever comes
-first.
-
-This applies to file arguments and recursive walks. Nested configs replace
-ancestor configs unless they use `extend`. Stdin uses the working directory,
-even with `--stdin-filename`.
-
-If no project config is found, arity loads the file named by the `ARITY_CONFIG`
-environment variable. This lets you keep a user config at a custom location,
-such as a synced drive. Project configs take precedence and replace the user
-config entirely; files from different discovery steps are not merged.
-
-Relative `ARITY_CONFIG` paths resolve from the process's working directory. An
-absolute path is recommended for editor settings. An unset or empty value uses
-the built-in defaults when no project config is found. A missing or invalid
-fallback file is a configuration error.
-
-To share settings between projects, put `extend = "../shared/arity.toml"` at the
-top level of a project config. Arity resolves the path relative to the file that
-declares it (and expands a leading `~/` to your home directory), then merges the
-referenced config before the current file. Chains are allowed, and a cycle or
-missing file is an error. Child values override inherited values; tables merge
-by key, so overriding `[format] line-width` keeps an inherited `indent-width`.
-`extend-exclude` and `extend-select` arrays append in base-to-child order, while
-`exclude`, `select`, and `ignore` replace inherited arrays. For a project config
-or `--config` file, the selected file still anchors exclude patterns, even when
-they come from an extended file.
-
-On the command line:
-
-- `--config <PATH>` loads an explicit file and skips project discovery and
-  `ARITY_CONFIG`.
-- `--no-config` ignores all config files, including `ARITY_CONFIG`, and uses the
-  built-in defaults.
-
-In VS Code or Positron, set the variable in your user `settings.json`, then run
-**Arity: Restart Server**:
-
-```json
-{
-  "arity.serverEnv": {
-    "ARITY_CONFIG": "P:/Softwares/arity.toml"
-  }
-}
-```
-
-Exclude patterns in a project config or an explicit `--config` file resolve
-relative to that file's directory. The `ARITY_CONFIG` fallback has no project
-location, so its patterns resolve relative to the working directory for CLI
-walks, or the directory being scanned in the language server.
+All settings in `arity.toml` are optional. For help choosing a configuration
+file, sharing settings, or setting up editor completion, see the [configuration
+guide](../guide/configuration.md).
 
 ## Top-level keys
 
-These apply to **both** `format` and `lint`. `exclude` and `extend-exclude`
-govern the shared file walk.
+  | Key              | Type            | Default             | What it controls                                                                                                             |
+  | ---------------- | --------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+  | `extend`         | Path            | Unset               | Load settings from another file before applying this file's settings. Relative paths start from the file declaring `extend`. |
+  | `exclude`        | List of strings | Built-in exclusions | Replace the default gitignore-style patterns for skipping files and directories.                                             |
+  | `extend-exclude` | List of strings | `[]`                | Add patterns to `exclude`, keeping the defaults if `exclude` is unset.                                                       |
+  | `cache`          | Boolean         | `true`              | Reuse results from earlier `arity format --check` runs. Use `--no-cache` for a single run.                                   |
 
-  | Key              | Type             | Default      | Description                                                                                                                                                                                                      |
-  | ---------------- | ---------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `extend`         | string           | unset        | Path to another config file, resolved relative to this file.                                                                                                                                                     |
-  | `exclude`        | array of strings | built-in set | [gitignore-style](https://git-scm.com/docs/gitignore) patterns to skip, anchored according to the [config source](#discovery). Setting it **replaces** the built-in set (below).                                 |
-  | `extend-exclude` | array of strings | `[]`         | Like `exclude`, but **added to** `exclude` rather than replacing it. Use this to skip extra paths while keeping the built-in defaults.                                                                           |
-  | `cache`          | boolean          | `true`       | Enable the persistent result cache (currently the `format --check` already-formatted cache; the cache directory follows `[index] cache-dir`/`$ARITY_CACHE_DIR`). The `--no-cache` CLI flag overrides it per run. |
+The built-in exclusions are:
 
-The built-in default exclude set (the default value of `exclude`; generated or
-vendored files that should not be reformatted or linted) is:
-
-```
+```text
 .git/
 renv/
 revdep/
@@ -125,269 +29,107 @@ extendr-wrappers.R
 import-standalone-*.R
 ```
 
-Excludes apply only to directory walks. A file named **explicitly** on the
-command line is always processed, even if it matches an exclude pattern. Pass
-`--force-exclude` (on `format` and `lint`) to apply the patterns to explicitly
-named files too---useful for runners like pre-commit that pass staged files as
-arguments. The CLI flag `--exclude <PATTERN>` (on `format` and `lint`) adds to
-the configured `exclude`/`extend-exclude` for a single run, anchored alongside
-those patterns.
-
-During directory walks, each directory's config controls its entries. Nested
-configs can change exclusions within their directories. Excluded directories are
-not searched, so configs inside them have no effect. Naming a directory
-explicitly starts a walk using that directory's nearest config.
-
-```toml
-# Keep the built-in defaults and also skip these:
-extend-exclude = ["vendor/", "*.gen.R"]
-
-# Or replace the built-in defaults entirely:
-# exclude = ["vendor/", "*.gen.R"]
-```
-
 ## `[format]`
 
-  | Key            | Type             | Default  | Description                                                           |
-  | -------------- | ---------------- | -------- | --------------------------------------------------------------------- |
-  | `line-width`   | integer (1–1000) | `80`     | The width the formatter tries to keep lines within. Not a hard cap.   |
-  | `indent-width` | integer (1–1000) | `2`      | Number of spaces per indentation level.                               |
-  | `line-ending`  | string           | `"auto"` | Newline style: `"auto"`, `"lf"`, `"crlf"`, or `"native"` (see below). |
-  | `roxygen`      | boolean          | `true`   | Whether to format `#'` blocks in R files.                             |
-  | `description`  | boolean          | `true`   | Whether a package `DESCRIPTION` is formatted.                         |
+  | Key            | Type            | Default  | What it controls                                                                                               |
+  | -------------- | --------------- | -------- | -------------------------------------------------------------------------------------------------------------- |
+  | `line-width`   | Integer, 1–1000 | `80`     | Target line width in columns. Some lines may still be longer.                                                  |
+  | `indent-width` | Integer, 1–1000 | `2`      | Spaces per level of R indentation. DESCRIPTION continuation lines always use four spaces.                      |
+  | `line-ending`  | String          | `"auto"` | Line endings written by the formatter.                                                                         |
+  | `roxygen`      | Boolean         | `true`   | Format `#'` blocks. Set to `false` to preserve their layout while formatting the surrounding R code.           |
+  | `description`  | Boolean         | `true`   | Format package DESCRIPTION files. Set to `false` to leave the file untouched and keep its lint checks enabled. |
 
-`line-ending = "auto"` mirrors the source file's first line ending (defaulting
-to `lf` when the file has none); `"native"` is `crlf` on Windows and `lf`
-elsewhere; `"lf"` and `"crlf"` force that ending.
+The values for `line-ending` are:
 
-```toml
-[format]
-line-width = 80
-indent-width = 2
-line-ending = "auto"
-roxygen = true
-description = true
-```
-
-`line-width` and `indent-width` can be overridden per run with the
-`--line-width`/`--indent-width` flags on `arity format`. They apply to
-`DESCRIPTION` too, except that its continuation indent is always four spaces —
-the file format's convention, and a different axis from R-code nesting.
-
-Set `roxygen = false` to keep each `#'` block's source layout while formatting
-the R code around it. This also preserves `#'` blocks used as Markdown prose by
-`knitr::spin()`. The file's configured `line-ending` still applies to the
-output.
-
-Setting `description = false` leaves `DESCRIPTION` alone, in the CLI (including
-a buffer piped in under `--stdin-filename DESCRIPTION`, which is passed through
-untouched) and in the editor. Reach for it if arity and your package tooling end
-up disagreeing about the file. Note that `extend-exclude` is not a substitute:
-excludes are shared with the linter, so excluding `DESCRIPTION` would also
-silence the packaging rules, and the language server applies no exclude filter
-to formatting at all.
+- `"auto"` uses the first line ending in the input, or LF for input without a
+  line ending.
+- `"native"` uses CRLF on Windows and LF elsewhere.
+- `"lf"` and `"crlf"` always use the specified ending.
 
 ## `[lint]`
 
-  | Key                | Type                     | Default | Description                                                   |
-  | ------------------ | ------------------------ | ------- | ------------------------------------------------------------- |
-  | `select`           | array of strings         | unset   | Base rule IDs to enable; replaces the default selection.      |
-  | `extend-select`    | array of strings         | `[]`    | Additional rule IDs to enable alongside `select` or defaults. |
-  | `ignore`           | array of strings         | `[]`    | Rule IDs to disable, including those in `extend-select`.      |
-  | `per-file-ignores` | table of glob → rule IDs | `{}`    | Rule IDs to disable in matching files.                        |
+  | Key                | Type             | Default       | What it controls                                                     |
+  | ------------------ | ---------------- | ------------- | -------------------------------------------------------------------- |
+  | `select`           | List of rule IDs | Unset         | Replace the default rule selection. Use `[]` to start with no rules. |
+  | `extend-select`    | List of rule IDs | `[]`          | Enable rules in addition to `select` or the defaults.                |
+  | `ignore`           | List of rule IDs | `[]`          | Disable rules even if they appear in `select` or `extend-select`.    |
+  | `per-file-ignores` | Table            | `{}`          | Disable rules in matching files.                                     |
+  | `rules`            | Table            | Rule defaults | Set options for individual rules.                                    |
 
-Rule IDs are the kebab-case names from the [rule reference](rules.md). Unknown
-IDs are reported when linting runs, not when the config is parsed. The
-`--select` and `--ignore` flags on `arity lint` override the corresponding lists
-for a single run. `--extend-select` adds to the configured `extend-select` list.
-All three flags accept repeated arguments or comma-separated IDs.
-
-Arity starts with the defaults, or `select` when set, adds `extend-select`, and
-then removes anything in `ignore`. An empty `select = []` disables the defaults;
-`extend-select` can still add rules. Duplicate IDs run a rule only once.
-
-```toml
-[lint]
-extend-select = ["undesirable-function"]
-ignore = ["unused-binding"]
-```
+Use exact IDs from the [lint rule reference](rules.md).
 
 ### `[lint.per-file-ignores]`
 
-Disable selected rules for matching files while keeping other checks active:
+Each key is a file pattern and each value is a list of rule IDs. Use forward
+slashes on all platforms.
 
-```toml
-[lint.per-file-ignores]
-"sess/inst/tinytest/**" = ["undefined-symbol"]
-"**/helpers.R" = ["unused-binding"]
-```
+  | Pattern     | Meaning                                                |
+  | ----------- | ------------------------------------------------------ |
+  | `helpers.R` | Match this filename in any directory.                  |
+  | `tests/*.R` | Match R files directly inside `tests/`.                |
+  | `tests/**`  | Match files inside `tests/`, including subdirectories. |
+  | `!R/**`     | Match files outside `R/`.                              |
 
-Keys are file globs and values are arrays of exact rule IDs. Unknown IDs are
-lint-time errors, even when no file matches the pattern. Invalid globs are
-configuration errors.
+`*` and `?` match within one path component. `**` can cross directories.
+Relative patterns containing a slash start from the selected config file's
+directory, including when the file is selected by `--config` or `ARITY_CONFIG`.
+When several patterns match, their rule lists are combined. With `extend`, a
+list for the same pattern replaces the inherited list. Use `[]` to clear it.
 
-Use forward slashes on every platform. Patterns without a slash, such as
-`helpers.R` or `*.R`, match basenames in any directory. Relative patterns with a
-slash match from the selected config file's directory, including an explicit
-`--config` or an `ARITY_CONFIG` fallback. `*` and `?` match within one path
-component; `**` crosses directories. For example, `tests/*.R` matches direct
-children and `tests/**` includes nested files.
-
-All matching entries contribute ignores. Their order and specificity do not
-affect the result. A leading `!` complements that entry's pattern:
-
-```toml
-[lint.per-file-ignores]
-"!R/**" = ["unused-binding"] # ignore this rule outside R/
-```
-
-Negation never re-enables a rule ignored by another entry. With `extend`, the
-tables merge by glob: a child's array replaces the inherited array for the same
-glob, while other entries remain. An empty array clears that entry. The selected
-config file anchors inherited globs, just as it anchors inherited excludes.
-
-File ignores apply to recursive walks, explicitly named files, CLI fixes, and
-language-server diagnostics and fixes. With stdin, `--stdin-filename` supplies
-the matching path; omitting it applies no file ignores. Config discovery still
-starts from the working directory for stdin.
-
-Both R and `DESCRIPTION` rules support file ignores. Files remain part of
-project analysis, and parse errors are always reported. `syntax-error` is not a
-selectable rule and cannot appear in this table. Declared globals and framework
-environments are separate semantic inputs.
+Applies to R and DESCRIPTION lint checks, including fixes. For stdin,
+`--stdin-filename` provides the path to match. Syntax errors are always
+reported.
 
 ### `[lint.rules.<id>]`
 
-A few rules take options of their own, set in a table named after the rule ID.
-Rules that take no options have no table.
-
-Unlike `select`, `extend-select`, and `ignore`---where rule IDs are data,
-checked when linting runs---a rule ID here is part of the schema, so a mistyped
-one is reported when the config is *parsed*, alongside any other unknown key.
+Only rules with options have a table here. Set rule options here and enable the
+rules separately with `select` or `extend-select` when needed.
 
 #### `[lint.rules.cyclomatic-complexity]`
 
-The opt-in [`cyclomatic-complexity`](rules.md#cyclomatic-complexity) rule
-reports functions whose native CFG decision count exceeds `max-complexity`. The
-maximum must be a positive integer and defaults to 20. Setting the maximum does
-not enable the rule.
-
-```toml
-[lint]
-extend-select = ["cyclomatic-complexity"]
-
-[lint.rules.cyclomatic-complexity]
-max-complexity = 20
-```
+  | Key              | Type             | Default | What it controls                                                                                   |
+  | ---------------- | ---------------- | ------- | -------------------------------------------------------------------------------------------------- |
+  | `max-complexity` | Positive integer | `20`    | Report functions whose [cyclomatic complexity](rules.md#cyclomatic-complexity) exceeds this value. |
 
 #### `[lint.rules.roxygen-unknown-tag]`
 
-Arity recognizes literal `vctrs::s3_register()` registrations for
-`roxygen2::roxy_tag_parse` in the package's `R/` sources. Use `allowed-tags` for
-other custom tags, such as tags registered by a dependency or tags with computed
-names. List names without the leading `@` and match their case exactly. The list
-defaults to empty.
-
-```toml
-[lint.rules.roxygen-unknown-tag]
-allowed-tags = ["aesthetics"]
-```
+  | Key            | Type            | Default | What it controls                                                                                                     |
+  | -------------- | --------------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
+  | `allowed-tags` | List of strings | `[]`    | Accept extra [roxygen tags](rules.md#roxygen-unknown-tag). Use the exact spelling and case, without the leading `@`. |
 
 #### `[lint.rules.undesirable-function]`
 
-The function-name policy for
-[`undesirable-function`](rules.md#undesirable-function).
+  | Key                | Type                                | Default            | What it controls                                                                                  |
+  | ------------------ | ----------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------- |
+  | `functions`        | Table of function names to messages | Built-in functions | Replace the list of functions flagged by [`undesirable-function`](rules.md#undesirable-function). |
+  | `extend-functions` | Table of function names to messages | `{}`               | Add functions to the list or replace the message for an existing function.                        |
 
-  | Key                | Type                 | Default      | Description                                                      |
-  | ------------------ | -------------------- | ------------ | ---------------------------------------------------------------- |
-  | `functions`        | table of name → hint | built-in set | Flagged functions. **Replaces** the built-in set.                |
-  | `extend-functions` | table of name → hint | `{}`         | Entries added on top of `functions`, overriding same-named ones. |
-
-The value is the advice shown as the diagnostic's suggestion; an empty string
-means "no alternative, just don't call this". The `functions`/`extend-functions`
-split works like `exclude`/`extend-exclude`: reach for `extend-functions` unless
-you really mean to discard the built-in set. Setting `functions = {}` silences
-the rule entirely.
-
-The built-in set covers base-R functions that mutate global state (`attach`,
-`detach`, `.libPaths`, `install.packages`, `setwd`, `sink`, `source`, `options`,
-`par`, `Sys.setenv`, `Sys.setlocale`) and the debugging entry points (`debug`,
-`debugonce`, `undebug`, `trace`, `untrace`). `browser()` is deliberately absent:
-it has its own [`browser`](rules.md#browser) rule.
-
-```toml
-[lint]
-select = ["undesirable-function"]
-
-[lint.rules.undesirable-function]
-extend-functions = { sapply = "use `vapply()` for a stable return type" }
-```
+Each message gives advice in the diagnostic. An empty string flags the function
+without suggesting an alternative. The built-in list includes `.libPaths`,
+`attach`, `debug`, `debugonce`, `detach`, `install.packages`, `options`, `par`,
+`setwd`, `sink`, `source`, `Sys.setenv`, `Sys.setlocale`, `trace`, `undebug`,
+and `untrace`.
 
 ## `[compat]`
 
-The minimum tool and package versions the project supports. Version-aware lint
-rules use the R and roxygen2 floors. Semantic analysis uses the S7 floor to
-resolve declarations and package APIs.
+Write minimum versions as plain strings such as `"4.1"`.
 
-  | Key        | Type           | Default | Description                                                      |
-  | ---------- | -------------- | ------- | ---------------------------------------------------------------- |
-  | `r`        | version string | unset   | Minimum supported R version, e.g. `"4.1"`.                       |
-  | `roxygen2` | version string | unset   | The roxygen2 version the project documents with, e.g. `"7.3.2"`. |
-  | `s7`       | version string | unset   | Minimum supported S7 version, e.g. `"0.2.2.9000"`.               |
+  | Key        | Type           | When unset                                                                 | What it controls                              |
+  | ---------- | -------------- | -------------------------------------------------------------------------- | --------------------------------------------- |
+  | `r`        | Version string | Minimum R version in DESCRIPTION's `Depends`                               | Oldest R version the project supports.        |
+  | `roxygen2` | Version string | DESCRIPTION's `Config/roxygen2/version`, then `RoxygenNote`                | Oldest roxygen2 version the project supports. |
+  | `s7`       | Version string | Minimum S7 version in DESCRIPTION, or the S7 0.2.2 API if none is declared | Which S7 APIs Arity recognizes.               |
 
-Values are plain version strings---the key *is* the `>=` floor, so there is no
-operator syntax.
-
-When a key is unset, the floor is derived per file from the enclosing package's
-`DESCRIPTION`: `Depends: R (>= …)` supplies `r`, and `Config/roxygen2/version`
-(written by roxygen2 8.0.0 and later) or the legacy `RoxygenNote` supplies
-`roxygen2`. An S7 dependency constraint supplies `s7`. An explicit key here
-always wins. With neither a key nor a `DESCRIPTION` fact, the version-aware lint
-rules stay silent and Arity analyzes S7 using the released 0.2.2 API.
-
-A floor of `0.2.2.9000` or higher enables the development S7 APIs, including
-named bindings such as `Point := new_class()` when `:=` resolves to S7.
-
-```toml
-[compat]
-r = "4.1"
-roxygen2 = "7.3.2"
-s7 = "0.2.2.9000"
-```
+If Arity has no minimum R or roxygen2 version for a file, the corresponding
+compatibility rule stays quiet.
 
 ## `[index]`
 
-Controls the R-package symbol index used by the language server (and by
-namespace-aware lint rules) to resolve names.
+The R package index helps Arity resolve names from installed packages.
 
-  | Key             | Type           | Default | Description                                                             |
-  | --------------- | -------------- | ------- | ----------------------------------------------------------------------- |
-  | `library-paths` | array of paths | `[]`    | Explicit R library directories, used when automatic discovery misses.   |
-  | `cache-dir`     | path           | unset   | Override the index cache directory (otherwise XDG/`$ARITY_CACHE_DIR`).  |
-  | `auto-build`    | boolean        | `true`  | Let the language server lazily index referenced-but-unindexed packages. |
-  | `help`          | boolean        | `true`  | Harvest help titles while indexing. `false` stores names only (faster). |
-
-> **Note:** the downloadable CRAN symbol sidecar is *not* configured here.
-> Enabling network access is a per-user decision set via the `ARITY_REMOTE_URL`
-> environment variable, never committed in a shared `arity.toml`.
-
-> **Note:** the same applies to the attach probe (`arity index --attach-probe`),
-> which observes what a meta-package attaches by running `library()` in a fresh
-> R session. Because that executes package attach hooks, it is enabled per run
-> by the flag or per user via the `ARITY_ATTACH_PROBE` environment variable,
-> never from `arity.toml`. Without it, attach sets are still captured for
-> packages following the tidyverse `core` convention, with a built-in table as
-> the offline fallback.
-
-## Reserved for future use
-
-The following are **not yet implemented** but are reserved so the schema can
-grow without breaking changes (adding a key is always backward-compatible under
-the strict unknown-key check):
-
-- `[format].indent-style` (`"space"` or `"tab"`)---tab indentation.
-- `[format].skip` and a `# fmt: skip` comment---opt specific calls out of
-  formatting.
-- `severity` in a `[lint.rules.<id>]` table---overriding a rule's severity.
-- Category names (e.g. `"correctness"`) in `select`, `extend-select`, or
-  `ignore`.
+  | Key             | Type          | Default | What it controls                                                                                     |
+  | --------------- | ------------- | ------- | ---------------------------------------------------------------------------------------------------- |
+  | `library-paths` | List of paths | `[]`    | R library directories to look in for installed packages.                                             |
+  | `cache-dir`     | Path          | Unset   | Where Arity stores the index. If unset, Arity uses `ARITY_CACHE_DIR` or its standard cache location. |
+  | `auto-build`    | Boolean       | `true`  | Let the language server index packages as your code refers to them.                                  |
+  | `help`          | Boolean       | `true`  | Include help topics when building the index. Set to `false` for a smaller index of package symbols.  |
